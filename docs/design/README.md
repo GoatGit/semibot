@@ -15,7 +15,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 ## 核心概念
 
 | 概念 | 定义 |
-|------|------|
+| ---- | ---- |
 | **Agent** | 具有角色、目标、记忆的智能体实例 |
 | **SubAgent** | 被父 Agent 编排调用的子智能体 |
 | **Skill** | Agent 可调用的能力单元（封装一组 Tools） |
@@ -34,7 +34,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 ## 技术栈
 
 | 层级 | 技术 |
-|------|------|
+| ---- | ---- |
 | 前端 | Next.js 14 (App Router) |
 | API 层 | Vercel Serverless Functions |
 | Agent Runtime | Python (Modal/Fly.io) |
