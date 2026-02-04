@@ -12,6 +12,17 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 4. **多语言协作** - Node.js API 层 + Python Runtime
 5. **可组合** - Agent、Skill、Tool 自由组合
 
+## 核心特性
+
+| 特性 | 说明 |
+| ---- | ---- |
+| **多租户** | 组织级隔离，独立配额与权限控制 |
+| **多模型** | OpenAI、Anthropic、Google、本地模型统一适配 |
+| **多语言** | 国际化支持，API 响应与错误消息多语言 |
+| **MCP 兼容** | 完整支持 Model Context Protocol，兼容 Claude MCP |
+| **多 SubAgent** | 父子 Agent 编排，任务分发与结果汇总 |
+| **多 Skills/Tools** | 可组合的能力单元，支持自定义扩展 |
+
 ## 核心概念
 
 | 概念 | 定义 |
@@ -20,6 +31,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 | **SubAgent** | 被父 Agent 编排调用的子智能体 |
 | **Skill** | Agent 可调用的能力单元（封装一组 Tools） |
 | **Tool** | 最小执行单元（API调用、代码执行、数据查询） |
+| **MCP Server** | Model Context Protocol 服务器，提供标准化工具接口 |
 | **Memory** | 短期(对话) + 长期(向量) 记忆系统 |
 | **Session** | 一次完整的用户交互会话 |
 
@@ -29,7 +41,10 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 - [数据模型](./DATA_MODEL.md) - 数据库设计
 - [API 设计](./API_DESIGN.md) - 接口规范
 - [Agent Runtime](./AGENT_RUNTIME.md) - Python 执行引擎
+- [错误码规范](./ERROR_CODES.md) - 错误码定义
+- [测试框架](./TESTING.md) - 测试策略与规范
 - [部署指南](./DEPLOYMENT.md) - 部署配置
+- [原始需求](./原始需求.md) - 产品需求文档
 
 ## 技术栈
 

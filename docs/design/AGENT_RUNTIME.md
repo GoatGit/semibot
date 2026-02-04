@@ -69,7 +69,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["START\n初始化上下文"] --> B["PLAN\n意图解析/生成计划"]
+    A["START\\n初始化上下文"] --> B["PLAN\n意图解析/生成计划"]
     B -->|无需执行| H["RESPOND\n生成响应"]
     B -->|需要执行| C["ACT\n执行步骤/工具调用"]
     B -->|委派| D["DELEGATE\nSubAgent 执行"]

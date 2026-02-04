@@ -130,15 +130,19 @@ SENTRY_DSN=https://xxx@sentry.io/xxx
 
 ```text
 infra/migrations/
-├── 001_init.sql
-├── 002_agents.sql
-├── 003_skills.sql
-├── 004_tools.sql
-├── 005_sessions.sql
-├── 006_messages.sql
-├── 007_memories.sql
-├── 008_execution_logs.sql
-└── 009_usage_logs.sql
+├── 001_init.sql               # 初始化扩展和函数（pgvector、update_updated_at）
+├── 002_organizations.sql      # organizations 表
+├── 003_users.sql              # users 表
+├── 004_api_keys.sql           # api_keys 表
+├── 005_agents.sql             # agents 表
+├── 006_agent_versions.sql     # agent_versions 表
+├── 007_skills.sql             # skills 表
+├── 008_tools.sql              # tools 表
+├── 009_sessions.sql           # sessions 表
+├── 010_messages.sql           # messages 表
+├── 011_memories.sql           # memories 表
+├── 012_execution_logs.sql     # execution_logs 表
+└── 013_usage_logs.sql         # usage_logs 表
 ```
 
 ### 执行迁移
@@ -147,12 +151,16 @@ infra/migrations/
 # 使用 Supabase CLI
 supabase db push
 
-# 或手动执行
+# 或手动执行（按顺序）
+for f in infra/migrations/*.sql; do
+  psql $DATABASE_URL -f "$f"
+done
+
+# 或逐个执行
 psql $DATABASE_URL -f infra/migrations/001_init.sql
-psql $DATABASE_URL -f infra/migrations/002_agents.sql
-# ... 依次执行
-psql $DATABASE_URL -f infra/migrations/008_execution_logs.sql
-psql $DATABASE_URL -f infra/migrations/009_usage_logs.sql
+psql $DATABASE_URL -f infra/migrations/002_organizations.sql
+psql $DATABASE_URL -f infra/migrations/003_users.sql
+# ... 依次执行到 013_usage_logs.sql
 ```
 
 ## 6. 本地开发

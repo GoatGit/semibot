@@ -20,7 +20,46 @@ Authorization: Bearer sk-xxxxxxxxxxxxx
 Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 ```
 
-### 2.3 错误响应
+### 2.3 多语言支持
+
+通过 `Accept-Language` 请求头指定响应语言：
+
+```http
+Accept-Language: zh-CN
+```
+
+**支持的语言**：
+
+| 语言代码 | 语言 |
+| -------- | ---- |
+| zh-CN | 简体中文（默认） |
+| en-US | English |
+| ja-JP | 日本語 |
+| ko-KR | 한국어 |
+
+**响应示例**：
+
+```json
+// Accept-Language: zh-CN
+{
+    "error": {
+        "code": "AUTH_INVALID_TOKEN",
+        "message": "提供的 Token 无效或已过期",
+        "status": 401
+    }
+}
+
+// Accept-Language: en-US
+{
+    "error": {
+        "code": "AUTH_INVALID_TOKEN",
+        "message": "The provided token is invalid or expired",
+        "status": 401
+    }
+}
+```
+
+### 2.4 错误响应
 
 ```json
 {
@@ -801,7 +840,44 @@ POST /sessions/:id/end
 
 ## 8. Chat API (核心)
 
-### 8.1 发送消息
+### 8.1 Agent2UI 消息规范
+
+Chat API 遵循 **Agent2UI** 设计规范：后端只输出结构化 JSON 数据，前端组件负责渲染。
+
+**消息类型定义**：
+
+```typescript
+interface Agent2UIMessage {
+  id: string                    // 消息唯一标识
+  type: Agent2UIType            // 消息类型，决定前端渲染组件
+  data: Agent2UIData            // 类型对应的数据结构
+  timestamp: string             // ISO 8601 时间戳
+  metadata?: {
+    model?: string              // 使用的模型
+    tokens_used?: number        // Token 消耗
+    latency_ms?: number         // 延迟毫秒数
+    [key: string]: unknown
+  }
+}
+
+type Agent2UIType =
+  | 'text'           // 纯文本 → TextBlock
+  | 'markdown'       // Markdown → MarkdownBlock
+  | 'code'           // 代码块 → CodeBlock
+  | 'table'          // 数据表格 → DataTable
+  | 'chart'          // 图表 → Chart
+  | 'image'          // 图片 → ImageView
+  | 'file'           // 文件 → FileDownload
+  | 'plan'           // 执行计划 → PlanView
+  | 'progress'       // 进度 → ProgressView
+  | 'tool_call'      // 工具调用 → ToolCallView
+  | 'tool_result'    // 工具结果 → ToolResultView
+  | 'thinking'       // 思考过程 → ThinkingView
+  | 'report'         // 结构化报告 → ReportView
+  | 'error'          // 错误信息 → ErrorView
+```
+
+### 8.2 发送消息
 
 ```http
 POST /chat
@@ -809,8 +885,15 @@ Content-Type: application/json
 
 {
     "session_id": "session_def456",
-    "message": "帮我搜索一下最新的 AI Agent 技术",
-    "stream": false
+    "message": "帮我分析这份销售数据并生成报告",
+    "stream": false,
+    "attachments": [
+        {
+            "type": "file",
+            "url": "https://example.com/sales.csv",
+            "name": "sales.csv"
+        }
+    ]
 }
 ```
 
@@ -820,31 +903,93 @@ Content-Type: application/json
 {
     "success": true,
     "data": {
-        "id": "msg_ghi789",
         "session_id": "session_def456",
-        "role": "assistant",
-        "content": "我来帮您搜索最新的 AI Agent 技术相关信息...",
-        "tool_calls": [
+        "messages": [
             {
-                "id": "call_001",
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "arguments": "{\"query\": \"latest AI agent technology 2024\"}"
+                "id": "msg_001",
+                "type": "thinking",
+                "data": {
+                    "content": "正在分析销售数据...",
+                    "steps": ["读取 CSV 文件", "解析数据结构", "计算统计指标"]
+                },
+                "timestamp": "2024-01-01T00:00:01Z"
+            },
+            {
+                "id": "msg_002",
+                "type": "table",
+                "data": {
+                    "columns": [
+                        {"key": "product", "title": "产品", "type": "string"},
+                        {"key": "q1", "title": "Q1销量", "type": "number"},
+                        {"key": "q2", "title": "Q2销量", "type": "number"},
+                        {"key": "q3", "title": "Q3销量", "type": "number"},
+                        {"key": "growth", "title": "增长率", "type": "string"}
+                    ],
+                    "rows": [
+                        {"product": "产品A", "q1": 1200, "q2": 1450, "q3": 1680, "growth": "+40%"},
+                        {"product": "产品B", "q1": 800, "q2": 920, "q3": 1100, "growth": "+38%"},
+                        {"product": "产品C", "q1": 650, "q2": 580, "q3": 520, "growth": "-20%"}
+                    ],
+                    "pagination": {"page": 1, "pageSize": 10, "total": 3}
+                },
+                "timestamp": "2024-01-01T00:00:02Z"
+            },
+            {
+                "id": "msg_003",
+                "type": "chart",
+                "data": {
+                    "chartType": "line",
+                    "title": "季度销量趋势",
+                    "xAxis": {"data": ["Q1", "Q2", "Q3"]},
+                    "yAxis": {"name": "销量"},
+                    "series": [
+                        {"name": "产品A", "data": [1200, 1450, 1680]},
+                        {"name": "产品B", "data": [800, 920, 1100]},
+                        {"name": "产品C", "data": [650, 580, 520]}
+                    ]
+                },
+                "timestamp": "2024-01-01T00:00:03Z"
+            },
+            {
+                "id": "msg_004",
+                "type": "report",
+                "data": {
+                    "title": "销售数据分析报告",
+                    "sections": [
+                        {
+                            "heading": "分析结论",
+                            "content": [
+                                {
+                                    "type": "markdown",
+                                    "data": {"content": "根据 Q1-Q3 销售数据分析，主要发现如下：\n\n### 1. 增长趋势\n- 产品A 和 产品B 呈现持续增长态势\n- 产品C 需要关注，连续三个季度下滑"}
+                                }
+                            ]
+                        },
+                        {
+                            "heading": "建议措施",
+                            "content": [
+                                {
+                                    "type": "markdown",
+                                    "data": {"content": "1. 加大产品A的市场投入\n2. 分析产品C下滑原因，考虑产品升级或淘汰\n3. 产品B可考虑扩展到新市场"}
+                                }
+                            ]
+                        }
+                    ],
+                    "summary": "整体销售趋势向好，建议重点关注产品C的改进"
+                },
+                "timestamp": "2024-01-01T00:00:04Z",
+                "metadata": {
+                    "model": "gpt-4o",
+                    "tokens_used": 1256,
+                    "latency_ms": 3456
                 }
             }
-        ],
-        "metadata": {
-            "model": "gpt-4o",
-            "tokens_used": 256,
-            "latency_ms": 1234
-        },
-        "created_at": "2024-01-01T00:00:01Z"
+        ]
     }
 }
 ```
 
-### 8.2 流式响应
+### 8.3 流式响应 (SSE)
 
 ```http
 POST /chat
@@ -857,36 +1002,286 @@ Content-Type: application/json
 }
 ```
 
-**Response** (SSE):
+**Response** (SSE - Agent2UI 格式):
 
 ```text
-event: message_start
-data: {"id": "msg_abc", "role": "assistant"}
+event: session_start
+data: {"session_id": "session_def456", "started_at": "2024-01-01T00:00:00Z"}
 
-event: content_delta
-data: {"delta": "好的"}
+event: message
+data: {"id": "msg_001", "type": "thinking", "data": {"content": "正在分析问题..."}, "timestamp": "2024-01-01T00:00:01Z"}
 
-event: content_delta
-data: {"delta": "，我来"}
+event: message
+data: {"id": "msg_002", "type": "plan", "data": {"steps": [{"id": "1", "title": "理解需求", "status": "completed"}, {"id": "2", "title": "搜索资料", "status": "running"}, {"id": "3", "title": "生成报告", "status": "pending"}], "currentStep": "2"}, "timestamp": "2024-01-01T00:00:02Z"}
 
-event: content_delta
-data: {"delta": "详细解释"}
+event: message
+data: {"id": "msg_003", "type": "tool_call", "data": {"toolName": "web_search", "arguments": {"query": "AI agent technology 2024"}, "status": "calling"}, "timestamp": "2024-01-01T00:00:03Z"}
 
-event: tool_call
-data: {"id": "call_001", "name": "search", "arguments": "..."}
+event: message
+data: {"id": "msg_003", "type": "tool_call", "data": {"toolName": "web_search", "arguments": {"query": "AI agent technology 2024"}, "status": "success", "result": {"items": [...]}, "duration": 1200}, "timestamp": "2024-01-01T00:00:04Z"}
 
-event: tool_result
-data: {"id": "call_001", "result": "..."}
+event: message
+data: {"id": "msg_004", "type": "plan", "data": {"steps": [{"id": "1", "title": "理解需求", "status": "completed"}, {"id": "2", "title": "搜索资料", "status": "completed"}, {"id": "3", "title": "生成报告", "status": "running"}], "currentStep": "3"}, "timestamp": "2024-01-01T00:00:05Z"}
 
-event: message_end
-data: {"tokens_used": 512, "latency_ms": 2345}
+event: message
+data: {"id": "msg_005", "type": "markdown", "data": {"content": "好的，我来详细解释一下..."}, "timestamp": "2024-01-01T00:00:06Z"}
+
+event: message_delta
+data: {"id": "msg_005", "delta": "根据最新研究，AI Agent 技术主要包括..."}
+
+event: message_delta
+data: {"id": "msg_005", "delta": "以下几个核心方向："}
+
+event: message
+data: {"id": "msg_006", "type": "table", "data": {"columns": [...], "rows": [...]}, "timestamp": "2024-01-01T00:00:10Z"}
+
+event: message
+data: {"id": "msg_007", "type": "chart", "data": {"chartType": "bar", "title": "技术对比", "series": [...]}, "timestamp": "2024-01-01T00:00:11Z"}
+
+event: message
+data: {"id": "msg_008", "type": "report", "data": {"title": "AI Agent 技术分析报告", "sections": [...]}, "timestamp": "2024-01-01T00:00:12Z"}
+
+event: session_end
+data: {"session_id": "session_def456", "tokens_used": 2048, "latency_ms": 12000, "message_count": 8}
 ```
 
-### 8.3 获取流式响应 (GET 方式)
+### 8.4 SSE 事件类型说明
+
+| 事件类型 | 说明 | 前端处理 |
+| -------- | ---- | -------- |
+| `session_start` | 会话开始 | 初始化状态 |
+| `message` | 完整的 Agent2UI 消息 | 根据 `type` 路由到对应组件渲染 |
+| `message_delta` | 文本增量更新 | 追加到指定 `id` 消息的 content |
+| `session_end` | 会话结束 | 更新统计信息，结束 loading 状态 |
+| `error` | 错误信息 | 显示错误提示 |
+
+### 8.5 获取流式响应 (GET 方式 - 重连)
 
 ```http
-GET /chat/:session_id/stream
+GET /chat/:session_id/stream?last_event_id=msg_005
 Accept: text/event-stream
+```
+
+用于 SSE 断线重连，从指定 `last_event_id` 后继续接收消息。
+
+### 8.6 Agent2UI 数据结构详解
+
+#### 8.6.1 text / markdown
+
+```json
+{
+    "type": "markdown",
+    "data": {
+        "content": "## 标题\n\n这是正文内容，支持 **加粗** 和 *斜体*。"
+    }
+}
+```
+
+#### 8.6.2 code
+
+```json
+{
+    "type": "code",
+    "data": {
+        "language": "typescript",
+        "content": "function hello() {\n  console.log('Hello, World!');\n}",
+        "filename": "example.ts",
+        "highlightLines": [2]
+    }
+}
+```
+
+#### 8.6.3 table
+
+```json
+{
+    "type": "table",
+    "data": {
+        "columns": [
+            {"key": "name", "title": "名称", "type": "string", "sortable": true},
+            {"key": "value", "title": "数值", "type": "number", "sortable": true},
+            {"key": "date", "title": "日期", "type": "date"}
+        ],
+        "rows": [
+            {"name": "项目A", "value": 100, "date": "2024-01-01"},
+            {"name": "项目B", "value": 200, "date": "2024-01-02"}
+        ],
+        "pagination": {"page": 1, "pageSize": 10, "total": 100},
+        "exportable": true
+    }
+}
+```
+
+#### 8.6.4 chart
+
+```json
+{
+    "type": "chart",
+    "data": {
+        "chartType": "line",
+        "title": "趋势图",
+        "xAxis": {"data": ["Jan", "Feb", "Mar", "Apr"]},
+        "yAxis": {"name": "数值", "min": 0},
+        "series": [
+            {"name": "系列1", "data": [120, 200, 150, 80]},
+            {"name": "系列2", "data": [80, 100, 140, 200]}
+        ],
+        "legend": true
+    }
+}
+```
+
+支持的 `chartType`: `line`, `bar`, `pie`, `scatter`, `area`, `radar`
+
+#### 8.6.5 plan
+
+```json
+{
+    "type": "plan",
+    "data": {
+        "steps": [
+            {"id": "1", "title": "分析需求", "status": "completed", "duration": 1200},
+            {"id": "2", "title": "搜索资料", "status": "completed", "duration": 3400},
+            {"id": "3", "title": "数据处理", "status": "running"},
+            {"id": "4", "title": "生成报告", "status": "pending"}
+        ],
+        "currentStep": "3",
+        "estimatedRemaining": 5000
+    }
+}
+```
+
+`status` 枚举: `pending`, `running`, `completed`, `failed`, `skipped`
+
+#### 8.6.6 tool_call
+
+```json
+{
+    "type": "tool_call",
+    "data": {
+        "toolName": "web_search",
+        "arguments": {"query": "AI news 2024", "limit": 10},
+        "status": "success",
+        "result": {
+            "items": [
+                {"title": "...", "url": "...", "snippet": "..."}
+            ]
+        },
+        "duration": 1500
+    }
+}
+```
+
+`status` 枚举: `calling`, `success`, `error`
+
+#### 8.6.7 thinking
+
+```json
+{
+    "type": "thinking",
+    "data": {
+        "content": "正在分析用户请求...",
+        "steps": [
+            "识别关键信息",
+            "确定执行策略",
+            "准备调用工具"
+        ],
+        "collapsed": false
+    }
+}
+```
+
+#### 8.6.8 report
+
+```json
+{
+    "type": "report",
+    "data": {
+        "title": "数据分析报告",
+        "generatedAt": "2024-01-01T12:00:00Z",
+        "sections": [
+            {
+                "heading": "概述",
+                "content": [
+                    {"type": "markdown", "data": {"content": "本报告分析了..."}}
+                ]
+            },
+            {
+                "heading": "数据展示",
+                "content": [
+                    {"type": "table", "data": {"columns": [...], "rows": [...]}},
+                    {"type": "chart", "data": {"chartType": "bar", ...}}
+                ]
+            },
+            {
+                "heading": "结论与建议",
+                "content": [
+                    {"type": "markdown", "data": {"content": "## 主要发现\n\n1. ..."}}
+                ]
+            }
+        ],
+        "summary": "报告摘要内容...",
+        "exportFormats": ["pdf", "docx", "html"]
+    }
+}
+```
+
+#### 8.6.9 image
+
+```json
+{
+    "type": "image",
+    "data": {
+        "url": "https://example.com/chart.png",
+        "alt": "销售趋势图",
+        "width": 800,
+        "height": 600,
+        "caption": "图1: 2024年Q1-Q3销售趋势"
+    }
+}
+```
+
+#### 8.6.10 file
+
+```json
+{
+    "type": "file",
+    "data": {
+        "name": "report.pdf",
+        "url": "https://example.com/files/report.pdf",
+        "size": 1024000,
+        "mimeType": "application/pdf",
+        "expiresAt": "2024-01-02T00:00:00Z"
+    }
+}
+```
+
+#### 8.6.11 error
+
+```json
+{
+    "type": "error",
+    "data": {
+        "code": "TOOL_EXECUTION_FAILED",
+        "message": "工具执行失败：无法连接到外部服务",
+        "recoverable": true,
+        "suggestion": "请稍后重试，或尝试其他方式"
+    }
+}
+```
+
+#### 8.6.12 progress
+
+```json
+{
+    "type": "progress",
+    "data": {
+        "current": 75,
+        "total": 100,
+        "label": "处理数据中...",
+        "unit": "%"
+    }
+}
 ```
 
 ## 9. Memories API
@@ -1112,7 +1507,7 @@ GET /health
 }
 ```
 
-## 11. 速率限制
+## 12. 速率限制
 
 | 端点 | 限制 |
 | ---- | ---- |
@@ -1139,7 +1534,7 @@ X-RateLimit-Reset: 1704067200
 }
 ```
 
-## 12. WebSocket API
+## 13. WebSocket API
 
 ### 12.1 连接
 
@@ -1181,7 +1576,7 @@ const ws = new WebSocket('wss://api.semibot.dev/v1/ws?token=sk-xxx');
 {"type": "pong"}
 ```
 
-## 13. Usage API
+## 14. Usage API
 
 ### 13.1 获取使用量统计
 
@@ -1259,7 +1654,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 }
 ```
 
-## 14. Execution Logs API
+## 15. Execution Logs API
 
 ### 14.1 获取 Agent 执行日志
 
@@ -1325,7 +1720,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 ---
 
-## 15. 通用约定
+## 16. 通用约定
 
 ### 15.1 分页
 
