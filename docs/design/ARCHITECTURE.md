@@ -2,7 +2,7 @@
 
 ## 1. 架构概览
 
-```
+```text
                             ┌─────────────────┐
                             │   Web Client    │
                             │   (Next.js)     │
@@ -97,7 +97,7 @@
 **职责**: 数据持久化、缓存、队列
 
 | 组件 | 用途 | 服务 |
-|------|------|------|
+| ---- | ---- | ---- |
 | PostgreSQL | 主数据存储 | Supabase / Neon |
 | pgvector | 向量存储(长期记忆) | Supabase |
 | Redis | 任务队列、缓存、会话状态 | Upstash |
@@ -106,7 +106,7 @@
 
 ### 3.1 同步请求-响应
 
-```
+```text
 Client -> API -> Database -> API -> Client
 ```
 
@@ -114,7 +114,7 @@ Client -> API -> Database -> API -> Client
 
 ### 3.2 异步任务队列
 
-```
+```text
 Client -> API -> Redis Queue -> Worker -> Redis -> API -> Client
 ```
 
@@ -122,11 +122,37 @@ Client -> API -> Redis Queue -> Worker -> Redis -> API -> Client
 
 ### 3.3 流式响应 (SSE)
 
-```
+```text
 Client <-- SSE <-- API <-- Redis Pub/Sub <-- Worker
 ```
 
 适用于: 实时对话输出
+
+## 3.4 端到端核心流程（时序）
+
+```mermaid
+sequenceDiagram
+    participant U as User/Client
+    participant GW as API Gateway
+    participant API as API Layer
+    participant DB as PostgreSQL
+    participant Q as Redis Queue
+    participant RT as Agent Runtime
+    participant LLM as LLM Provider
+
+    U->>GW: 请求执行 Agent
+    GW->>API: 鉴权通过/路由
+    API->>DB: 创建 session + message
+    API->>Q: 投递任务
+    API-->>U: 返回 session_id (可选 SSE)
+
+    RT->>Q: 拉取任务
+    RT->>DB: 加载 Agent/Session
+    RT->>LLM: 规划/执行
+    RT->>DB: 写消息/日志/使用量
+    RT-->>API: 结果/流式输出
+    API-->>U: 响应或流式推送
+```
 
 ## 4. 核心组件
 
@@ -134,7 +160,7 @@ Client <-- SSE <-- API <-- Redis Pub/Sub <-- Worker
 
 状态图编排器，控制 Agent 执行流程：
 
-```
+```text
 ┌─────────┐     ┌─────────┐     ┌─────────┐
 │  START  │────▶│  THINK  │────▶│  ACT    │
 └─────────┘     └────┬────┘     └────┬────┘
@@ -156,7 +182,7 @@ Client <-- SSE <-- API <-- Redis Pub/Sub <-- Worker
 
 技能注册中心，管理所有可用技能：
 
-```
+```text
 SkillRegistry
 ├── web_search      # 网页搜索
 ├── code_executor   # 代码执行
@@ -169,7 +195,7 @@ SkillRegistry
 
 分层记忆系统：
 
-```
+```text
 ┌─────────────────────────────────────┐
 │           Memory System             │
 ├─────────────────────────────────────┤
@@ -182,6 +208,24 @@ SkillRegistry
 │  │ - 临时状态   │  │ - 知识库     │  │
 │  └─────────────┘  └──────────────┘  │
 └─────────────────────────────────────┘
+
+## 4.4 多租户与权限隔离
+
+- **组织级隔离**: 所有核心资源（Agents、Sessions、Logs、Usage）必须绑定 `org_id`。
+- **鉴权策略**: API Key/JWT 均映射到 `org_id` + `user_id`，并基于权限声明进行路由控制。
+- **访问边界**: API 层过滤 `org_id`，Runtime 仅处理同组织的任务。
+
+## 4.5 可观测性
+
+- **结构化日志**: execution_logs 记录状态流转与工具调用。
+- **指标**: QPS、平均响应时间、失败率、模型/工具调用耗时。
+- **追踪**: session_id 作为全链路 trace_id。
+
+## 4.6 可靠性与容错
+
+- **任务幂等**: 使用 session_id + step_id 做幂等保护。
+- **超时与重试**: LLM/Tool 调用具备指数退避与最大重试次数。
+- **降级**: 无法执行时返回建议与可恢复操作。
 ```
 
 ## 5. 扩展性设计
@@ -194,7 +238,7 @@ SkillRegistry
 
 ### 5.2 插件化架构
 
-```
+```text
 ┌─────────────────────────────────────┐
 │            Plugin System            │
 ├─────────────────────────────────────┤
