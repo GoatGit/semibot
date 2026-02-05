@@ -15,16 +15,32 @@ from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.constants import (
+    DEFAULT_MIN_SIMILARITY,
+    DEFAULT_SEARCH_LIMIT,
+    EMBEDDING_DIMENSION,
+    MAX_SEARCH_LIMIT,
+    PG_MAX_RETRIES,
+    PG_POOL_ACQUIRE_TIMEOUT,
+    PG_POOL_MAX_SIZE,
+    PG_POOL_MIN_SIZE,
+    PG_RETRY_DELAY_BASE,
+    PG_RETRY_DELAY_MAX,
+)
 from src.memory.base import LongTermMemoryInterface, MemoryEntry, MemorySearchResult
 from src.memory.embedding import EmbeddingService
 from src.utils.logging import get_logger
-
-# Constants
-DEFAULT_SEARCH_LIMIT = 10
-DEFAULT_MIN_SIMILARITY = 0.7
-MAX_SEARCH_LIMIT = 100
-EMBEDDING_DIMENSION = 1536
+from src.utils.validation import (
+    InvalidInputError,
+    MemoryConnectionError,
+    validate_content,
+    validate_float_range,
+    validate_positive_int,
+    validate_uuid,
+    validate_uuid_optional,
+)
 
 
 logger = get_logger(__name__)
@@ -102,14 +118,45 @@ class LongTermMemory(LongTermMemoryInterface):
         self.org_id = org_id
         self._pool: asyncpg.Pool | None = None
 
+    async def __aenter__(self) -> "LongTermMemory":
+        """Async context manager entry."""
+        await self._get_pool()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit."""
+        await self.close()
+
+    @retry(
+        stop=stop_after_attempt(PG_MAX_RETRIES),
+        wait=wait_exponential(
+            multiplier=1, min=PG_RETRY_DELAY_BASE, max=PG_RETRY_DELAY_MAX
+        ),
+        reraise=True,
+    )
     async def _get_pool(self) -> asyncpg.Pool:
-        """Get or create connection pool."""
+        """Get or create connection pool with retry logic."""
         if self._pool is None:
-            self._pool = await asyncpg.create_pool(
-                self.database_url,
-                min_size=2,
-                max_size=10,
-            )
+            try:
+                self._pool = await asyncpg.create_pool(
+                    self.database_url,
+                    min_size=PG_POOL_MIN_SIZE,
+                    max_size=PG_POOL_MAX_SIZE,
+                    command_timeout=PG_POOL_ACQUIRE_TIMEOUT,
+                )
+                logger.info(
+                    "database_pool_created",
+                    min_size=PG_POOL_MIN_SIZE,
+                    max_size=PG_POOL_MAX_SIZE,
+                )
+            except Exception as e:
+                logger.error(
+                    "database_pool_creation_failed",
+                    error=str(e),
+                )
+                raise MemoryConnectionError(
+                    f"Failed to create database connection pool: {e}"
+                ) from e
         return self._pool
 
     async def close(self) -> None:
@@ -146,15 +193,22 @@ class LongTermMemory(LongTermMemoryInterface):
 
         Returns:
             Generated entry ID
+
+        Raises:
+            InvalidInputError: If agent_id is invalid or content is empty
         """
+        # Input validation
+        content = validate_content(content, min_length=1)
+        agent_uuid = validate_uuid(agent_id, "agent_id")
+        session_uuid = validate_uuid_optional(session_id, "session_id")
+        user_uuid = validate_uuid_optional(user_id, "user_id")
+        importance = validate_float_range(importance, "importance", 0.0, 1.0, 0.5)
+
         pool = await self._get_pool()
 
         # Generate embedding
         embedding_result = await self.embedding_service.embed(content)
         embedding = embedding_result.embedding
-
-        # Validate importance is within bounds
-        importance = max(0.0, min(1.0, importance))
 
         entry_id = str(uuid.uuid4())
         effective_org_id = org_id or self.org_id or str(uuid.uuid4())
@@ -173,10 +227,10 @@ class LongTermMemory(LongTermMemoryInterface):
                 )
                 """,
                 uuid.UUID(entry_id),
-                uuid.UUID(effective_org_id),
-                uuid.UUID(agent_id),
-                uuid.UUID(session_id) if session_id else None,
-                uuid.UUID(user_id) if user_id else None,
+                validate_uuid(effective_org_id, "org_id"),
+                agent_uuid,
+                session_uuid,
+                user_uuid,
                 content,
                 embedding,
                 memory_type,
@@ -204,6 +258,7 @@ class LongTermMemory(LongTermMemoryInterface):
         min_importance: float = 0.0,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         memory_type: str | None = None,
+        org_id: str | None = None,
     ) -> list[MemorySearchResult]:
         """
         Search memory by semantic similarity.
@@ -215,18 +270,27 @@ class LongTermMemory(LongTermMemoryInterface):
             min_importance: Minimum importance threshold
             min_similarity: Minimum similarity threshold
             memory_type: Optional filter by memory type
+            org_id: Organization identifier for tenant isolation
 
         Returns:
             List of MemorySearchResult ordered by similarity
+
+        Raises:
+            InvalidInputError: If agent_id is invalid or query is empty
         """
-        # Enforce limit bounds
-        if limit > MAX_SEARCH_LIMIT:
+        # Input validation
+        agent_uuid = validate_uuid(agent_id, "agent_id")
+        query = validate_content(query, min_length=1)
+        limit = validate_positive_int(limit, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT)
+
+        # Tenant isolation: use provided org_id or instance default
+        effective_org_id = org_id or self.org_id
+        if not effective_org_id:
             logger.warning(
-                "search_limit_exceeded",
-                requested_limit=limit,
-                max_limit=MAX_SEARCH_LIMIT,
+                "search_without_org_id",
+                agent_id=agent_id,
+                message="Searching without org_id may expose cross-tenant data",
             )
-            limit = MAX_SEARCH_LIMIT
 
         pool = await self._get_pool()
 
@@ -235,40 +299,99 @@ class LongTermMemory(LongTermMemoryInterface):
         query_embedding = embedding_result.embedding
 
         async with pool.acquire() as conn:
-            # Build query with optional memory_type filter
-            base_query = """
-                SELECT
-                    id, content, memory_type, importance, metadata, created_at,
-                    1 - (embedding <=> $1::vector) as similarity
-                FROM memories
-                WHERE agent_id = $2
-                    AND (expires_at IS NULL OR expires_at > NOW())
-                    AND importance >= $3
-                    AND 1 - (embedding <=> $1::vector) >= $4
-            """
-
-            if memory_type:
-                base_query += " AND memory_type = $6"
-                base_query += " ORDER BY embedding <=> $1::vector LIMIT $5"
-                rows = await conn.fetch(
-                    base_query,
-                    query_embedding,
-                    uuid.UUID(agent_id),
-                    min_importance,
-                    min_similarity,
-                    limit,
-                    memory_type,
-                )
+            # Build query with org_id filter for tenant isolation
+            if effective_org_id:
+                org_uuid = validate_uuid(effective_org_id, "org_id")
+                if memory_type:
+                    rows = await conn.fetch(
+                        """
+                        SELECT
+                            id, content, memory_type, importance, metadata, created_at,
+                            1 - (embedding <=> $1::vector) as similarity
+                        FROM memories
+                        WHERE org_id = $2
+                            AND agent_id = $3
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                            AND importance >= $4
+                            AND 1 - (embedding <=> $1::vector) >= $5
+                            AND memory_type = $7
+                        ORDER BY embedding <=> $1::vector
+                        LIMIT $6
+                        """,
+                        query_embedding,
+                        org_uuid,
+                        agent_uuid,
+                        min_importance,
+                        min_similarity,
+                        limit,
+                        memory_type,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT
+                            id, content, memory_type, importance, metadata, created_at,
+                            1 - (embedding <=> $1::vector) as similarity
+                        FROM memories
+                        WHERE org_id = $2
+                            AND agent_id = $3
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                            AND importance >= $4
+                            AND 1 - (embedding <=> $1::vector) >= $5
+                        ORDER BY embedding <=> $1::vector
+                        LIMIT $6
+                        """,
+                        query_embedding,
+                        org_uuid,
+                        agent_uuid,
+                        min_importance,
+                        min_similarity,
+                        limit,
+                    )
             else:
-                base_query += " ORDER BY embedding <=> $1::vector LIMIT $5"
-                rows = await conn.fetch(
-                    base_query,
-                    query_embedding,
-                    uuid.UUID(agent_id),
-                    min_importance,
-                    min_similarity,
-                    limit,
-                )
+                # Fallback without org_id (security warning already logged)
+                if memory_type:
+                    rows = await conn.fetch(
+                        """
+                        SELECT
+                            id, content, memory_type, importance, metadata, created_at,
+                            1 - (embedding <=> $1::vector) as similarity
+                        FROM memories
+                        WHERE agent_id = $2
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                            AND importance >= $3
+                            AND 1 - (embedding <=> $1::vector) >= $4
+                            AND memory_type = $6
+                        ORDER BY embedding <=> $1::vector
+                        LIMIT $5
+                        """,
+                        query_embedding,
+                        agent_uuid,
+                        min_importance,
+                        min_similarity,
+                        limit,
+                        memory_type,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT
+                            id, content, memory_type, importance, metadata, created_at,
+                            1 - (embedding <=> $1::vector) as similarity
+                        FROM memories
+                        WHERE agent_id = $2
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                            AND importance >= $3
+                            AND 1 - (embedding <=> $1::vector) >= $4
+                        ORDER BY embedding <=> $1::vector
+                        LIMIT $5
+                        """,
+                        query_embedding,
+                        agent_uuid,
+                        min_importance,
+                        min_similarity,
+                        limit,
+                    )
 
         results = []
         for row in rows:
@@ -307,6 +430,7 @@ class LongTermMemory(LongTermMemoryInterface):
         pool = await self._get_pool()
 
         try:
+            entry_uuid = validate_uuid(entry_id, "entry_id")
             async with pool.acquire() as conn:
                 await conn.execute(
                     """
@@ -315,8 +439,14 @@ class LongTermMemory(LongTermMemoryInterface):
                         last_accessed_at = NOW()
                     WHERE id = $1
                     """,
-                    uuid.UUID(entry_id),
+                    entry_uuid,
                 )
+        except InvalidInputError as e:
+            logger.warning(
+                "memory_access_update_invalid_id",
+                entry_id=entry_id,
+                error=str(e),
+            )
         except Exception as e:
             # Non-critical operation, just log warning
             logger.warning(
@@ -334,13 +464,17 @@ class LongTermMemory(LongTermMemoryInterface):
 
         Returns:
             True if deleted successfully
+
+        Raises:
+            InvalidInputError: If entry_id is invalid
         """
+        entry_uuid = validate_uuid(entry_id, "entry_id")
         pool = await self._get_pool()
 
         async with pool.acquire() as conn:
             result = await conn.execute(
                 "DELETE FROM memories WHERE id = $1",
-                uuid.UUID(entry_id),
+                entry_uuid,
             )
 
         deleted = result == "DELETE 1"
@@ -361,7 +495,11 @@ class LongTermMemory(LongTermMemoryInterface):
 
         Returns:
             MemoryEntry if found, None otherwise
+
+        Raises:
+            InvalidInputError: If entry_id is invalid
         """
+        entry_uuid = validate_uuid(entry_id, "entry_id")
         pool = await self._get_pool()
 
         async with pool.acquire() as conn:
@@ -372,7 +510,7 @@ class LongTermMemory(LongTermMemoryInterface):
                 FROM memories
                 WHERE id = $1
                 """,
-                uuid.UUID(entry_id),
+                entry_uuid,
             )
 
         if not row:
@@ -403,8 +541,12 @@ class LongTermMemory(LongTermMemoryInterface):
 
         Returns:
             True if updated successfully
+
+        Raises:
+            InvalidInputError: If entry_id is invalid
         """
-        importance = max(0.0, min(1.0, importance))
+        entry_uuid = validate_uuid(entry_id, "entry_id")
+        importance = validate_float_range(importance, "importance", 0.0, 1.0, 0.5)
 
         pool = await self._get_pool()
 
@@ -415,7 +557,7 @@ class LongTermMemory(LongTermMemoryInterface):
                 SET importance = $2
                 WHERE id = $1
                 """,
-                uuid.UUID(entry_id),
+                entry_uuid,
                 importance,
             )
 
@@ -426,6 +568,7 @@ class LongTermMemory(LongTermMemoryInterface):
         agent_id: str,
         limit: int = DEFAULT_SEARCH_LIMIT,
         memory_type: str | None = None,
+        org_id: str | None = None,
     ) -> list[MemoryEntry]:
         """
         Get memories for an agent without semantic search.
@@ -434,51 +577,97 @@ class LongTermMemory(LongTermMemoryInterface):
             agent_id: Agent identifier
             limit: Maximum results
             memory_type: Optional filter by memory type
+            org_id: Organization identifier for tenant isolation
 
         Returns:
             List of MemoryEntry ordered by importance and recency
+
+        Raises:
+            InvalidInputError: If agent_id is invalid
         """
-        if limit > MAX_SEARCH_LIMIT:
+        agent_uuid = validate_uuid(agent_id, "agent_id")
+        limit = validate_positive_int(limit, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT)
+
+        # Tenant isolation: use provided org_id or instance default
+        effective_org_id = org_id or self.org_id
+        if not effective_org_id:
             logger.warning(
-                "get_by_agent_limit_exceeded",
-                requested_limit=limit,
-                max_limit=MAX_SEARCH_LIMIT,
+                "get_by_agent_without_org_id",
+                agent_id=agent_id,
+                message="Querying without org_id may expose cross-tenant data",
             )
-            limit = MAX_SEARCH_LIMIT
 
         pool = await self._get_pool()
 
         async with pool.acquire() as conn:
-            if memory_type:
-                rows = await conn.fetch(
-                    """
-                    SELECT id, agent_id, session_id, content, importance,
-                           metadata, created_at, expires_at
-                    FROM memories
-                    WHERE agent_id = $1
-                        AND memory_type = $3
-                        AND (expires_at IS NULL OR expires_at > NOW())
-                    ORDER BY importance DESC, created_at DESC
-                    LIMIT $2
-                    """,
-                    uuid.UUID(agent_id),
-                    limit,
-                    memory_type,
-                )
+            if effective_org_id:
+                org_uuid = validate_uuid(effective_org_id, "org_id")
+                if memory_type:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, agent_id, session_id, content, importance,
+                               metadata, created_at, expires_at
+                        FROM memories
+                        WHERE org_id = $1
+                            AND agent_id = $2
+                            AND memory_type = $4
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                        ORDER BY importance DESC, created_at DESC
+                        LIMIT $3
+                        """,
+                        org_uuid,
+                        agent_uuid,
+                        limit,
+                        memory_type,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, agent_id, session_id, content, importance,
+                               metadata, created_at, expires_at
+                        FROM memories
+                        WHERE org_id = $1
+                            AND agent_id = $2
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                        ORDER BY importance DESC, created_at DESC
+                        LIMIT $3
+                        """,
+                        org_uuid,
+                        agent_uuid,
+                        limit,
+                    )
             else:
-                rows = await conn.fetch(
-                    """
-                    SELECT id, agent_id, session_id, content, importance,
-                           metadata, created_at, expires_at
-                    FROM memories
-                    WHERE agent_id = $1
-                        AND (expires_at IS NULL OR expires_at > NOW())
-                    ORDER BY importance DESC, created_at DESC
-                    LIMIT $2
-                    """,
-                    uuid.UUID(agent_id),
-                    limit,
-                )
+                # Fallback without org_id (security warning already logged)
+                if memory_type:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, agent_id, session_id, content, importance,
+                               metadata, created_at, expires_at
+                        FROM memories
+                        WHERE agent_id = $1
+                            AND memory_type = $3
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                        ORDER BY importance DESC, created_at DESC
+                        LIMIT $2
+                        """,
+                        agent_uuid,
+                        limit,
+                        memory_type,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, agent_id, session_id, content, importance,
+                               metadata, created_at, expires_at
+                        FROM memories
+                        WHERE agent_id = $1
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                        ORDER BY importance DESC, created_at DESC
+                        LIMIT $2
+                        """,
+                        agent_uuid,
+                        limit,
+                    )
 
         return [
             MemoryEntry(
