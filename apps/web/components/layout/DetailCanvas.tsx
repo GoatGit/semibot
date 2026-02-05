@@ -64,7 +64,7 @@ export function DetailCanvas() {
   return (
     <div
       className={clsx(
-        'flex flex-col w-[480px]',
+        'flex flex-col w-[640px]',
         'bg-bg-surface border-l border-border-subtle',
         'transition-all duration-normal ease-out'
       )}
