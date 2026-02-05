@@ -24,7 +24,6 @@ import {
 export function DetailCanvas() {
   const {
     detailCanvasMode,
-    hasDetailContent,
     collapseDetail,
     expandDetail,
     maximizeDetail,
@@ -87,7 +86,7 @@ interface DetailHeaderProps {
   isMaximized?: boolean
 }
 
-function DetailHeader({ onCollapse, onMaximize, onMinimize, isMaximized }: DetailHeaderProps) {
+function DetailHeader({ onCollapse, onMaximize, onMinimize, isMaximized: _isMaximized }: DetailHeaderProps) {
   return (
     <div
       className={clsx(

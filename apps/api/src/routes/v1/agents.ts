@@ -2,14 +2,14 @@
  * Agents API 路由
  */
 
-import { Router } from 'express'
+import { Router, type Response } from 'express'
 import { z } from 'zod'
-import { authenticate, requirePermission, type AuthRequest } from '../middleware/auth.js'
-import { asyncHandler, validate } from '../middleware/errorHandler.js'
-import { combinedRateLimit } from '../middleware/rateLimit.js'
-import * as agentService from '../services/agent.service.js'
+import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
+import { asyncHandler, validate } from '../../middleware/errorHandler'
+import { combinedRateLimit } from '../../middleware/rateLimit'
+import * as agentService from '../../services/agent.service'
 
-const router = Router()
+const router: Router = Router()
 
 // ═══════════════════════════════════════════════════════════════
 // Schema 定义
@@ -74,7 +74,7 @@ router.post(
   combinedRateLimit,
   requirePermission('agents:write'),
   validate(createAgentSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const input = req.body
 
@@ -96,9 +96,9 @@ router.get(
   combinedRateLimit,
   requirePermission('agents:read'),
   validate(listAgentsQuerySchema, 'query'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
-    const options = req.query as z.infer<typeof listAgentsQuerySchema>
+    const options = req.query as unknown as z.infer<typeof listAgentsQuerySchema>
 
     const result = await agentService.listAgents(orgId, options)
 
@@ -118,7 +118,7 @@ router.get(
   authenticate,
   combinedRateLimit,
   requirePermission('agents:read'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const agentId = req.params.id
 
@@ -140,7 +140,7 @@ router.put(
   combinedRateLimit,
   requirePermission('agents:write'),
   validate(updateAgentSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const agentId = req.params.id
     const input = req.body
@@ -162,7 +162,7 @@ router.delete(
   authenticate,
   combinedRateLimit,
   requirePermission('agents:write'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const agentId = req.params.id
 

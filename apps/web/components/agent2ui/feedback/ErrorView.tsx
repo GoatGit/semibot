@@ -67,7 +67,7 @@ export function ErrorView({ data, className, onRetry }: ErrorViewProps) {
             </p>
 
             {/* 详细信息 */}
-            {data.details && (
+            {data.details !== undefined && data.details !== null && (
               <pre
                 className={clsx(
                   'mt-3 p-3 rounded text-xs font-mono',

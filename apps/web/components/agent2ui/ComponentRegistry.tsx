@@ -23,7 +23,8 @@ import { ReportView } from './report/ReportView'
 
 // 反馈类组件
 import { ErrorView } from './feedback/ErrorView'
-import { LoadingView } from './feedback/LoadingView'
+// LoadingView is used directly in components, not via registry
+// import { LoadingView } from './feedback/LoadingView'
 
 /**
  * ComponentRegistry - 组件注册中心

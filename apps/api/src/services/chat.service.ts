@@ -4,18 +4,17 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import type { Response } from 'express'
-import { createError } from '../middleware/errorHandler.js'
-import * as sessionService from './session.service.js'
-import * as agentService from './agent.service.js'
+import { createError } from '../middleware/errorHandler'
+import * as sessionService from './session.service'
+import * as agentService from './agent.service'
 import {
-  SESSION_NOT_FOUND,
   VALIDATION_MESSAGE_TOO_LONG,
   SSE_STREAM_ERROR,
-} from '../constants/errorCodes.js'
+} from '../constants/errorCodes'
 import {
   SSE_HEARTBEAT_INTERVAL_MS,
   MAX_MESSAGE_LENGTH,
-} from '../constants/config.js'
+} from '../constants/config'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -203,7 +202,7 @@ export async function handleChat(
 
   try {
     // 保存用户消息
-    const userMessage = await sessionService.addMessage(orgId, sessionId, {
+    await sessionService.addMessage(orgId, sessionId, {
       role: 'user',
       content: input.message,
       parentId: input.parentMessageId,

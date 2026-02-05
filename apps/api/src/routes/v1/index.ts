@@ -2,15 +2,15 @@
  * API v1 路由汇总
  */
 
-import { Router } from 'express'
-import agentsRouter from './agents.js'
-import sessionsRouter from './sessions.js'
-import chatRouter from './chat.js'
+import { Router, type Request, type Response } from 'express'
+import agentsRouter from './agents'
+import sessionsRouter from './sessions'
+import chatRouter from './chat'
 
-const router = Router()
+const router: Router = Router()
 
 // 健康检查
-router.get('/health', (req, res) => {
+router.get('/health', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: {

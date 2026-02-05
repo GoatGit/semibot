@@ -2,25 +2,25 @@
  * Semibot API 服务入口
  */
 
-import express from 'express'
+import express, { type Express, type Request, type Response, type NextFunction } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import compression from 'compression'
-import { errorHandler, notFoundHandler } from './middleware/errorHandler.js'
-import { generalRateLimit } from './middleware/rateLimit.js'
-import v1Router from './routes/v1/index.js'
+import { errorHandler, notFoundHandler } from './middleware/errorHandler'
+import { generalRateLimit } from './middleware/rateLimit'
+import v1Router from './routes/v1/index'
 import {
   SERVER_PORT,
   SERVER_HOST,
   ENABLE_REQUEST_LOGGING,
   LOG_LEVEL,
-} from './constants/config.js'
+} from './constants/config'
 
 // ═══════════════════════════════════════════════════════════════
 // 创建 Express 应用
 // ═══════════════════════════════════════════════════════════════
 
-const app = express()
+const app: Express = express()
 
 // ═══════════════════════════════════════════════════════════════
 // 基础中间件
@@ -49,7 +49,7 @@ app.use(express.urlencoded({ extended: true }))
 
 // 请求日志
 if (ENABLE_REQUEST_LOGGING) {
-  app.use((req, res, next) => {
+  app.use((req: Request, res: Response, next: NextFunction) => {
     const start = Date.now()
 
     res.on('finish', () => {
@@ -74,7 +74,7 @@ app.use(generalRateLimit)
 app.use('/api/v1', v1Router)
 
 // 根路径
-app.get('/', (req, res) => {
+app.get('/', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: {

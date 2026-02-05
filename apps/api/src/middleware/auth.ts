@@ -12,12 +12,11 @@ import {
   AUTH_TOKEN_INVALID,
   AUTH_TOKEN_EXPIRED,
   AUTH_API_KEY_INVALID,
-  AUTH_API_KEY_REVOKED,
   AUTH_PERMISSION_DENIED,
   ERROR_HTTP_STATUS,
   ERROR_MESSAGES,
-} from '../constants/errorCodes.js'
-import { API_KEY_PREFIX } from '../constants/config.js'
+} from '../constants/errorCodes'
+import { API_KEY_PREFIX } from '../constants/config'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义

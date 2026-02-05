@@ -9,7 +9,7 @@ import {
   VALIDATION_FAILED,
   ERROR_HTTP_STATUS,
   ERROR_MESSAGES,
-} from '../constants/errorCodes.js'
+} from '../constants/errorCodes'
 
 // ═══════════════════════════════════════════════════════════════
 // 自定义错误类
@@ -170,7 +170,7 @@ export function asyncHandler<T extends Request>(
  * 请求验证中间件工厂
  */
 export function validate<T>(schema: { parse: (data: unknown) => T }, source: 'body' | 'query' | 'params' = 'body') {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, _res: Response, next: NextFunction): void => {
     try {
       const data = req[source]
       const validated = schema.parse(data)

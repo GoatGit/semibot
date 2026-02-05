@@ -177,7 +177,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
               paddingAngle={2}
               dataKey="value"
               label={({ name, percent }) =>
-                `${name} ${(percent * 100).toFixed(0)}%`
+                `${name ?? ''} ${(((percent as number) ?? 0) * 100).toFixed(0)}%`
               }
               labelLine={{ stroke: 'var(--text-tertiary)' }}
             >

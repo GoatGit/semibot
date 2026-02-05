@@ -2,14 +2,14 @@
  * Chat API 路由 - 支持 SSE 流式响应
  */
 
-import { Router } from 'express'
+import { Router, type Response } from 'express'
 import { z } from 'zod'
-import { authenticate, requirePermission, type AuthRequest } from '../middleware/auth.js'
-import { asyncHandler, validate } from '../middleware/errorHandler.js'
-import { combinedRateLimit } from '../middleware/rateLimit.js'
-import * as chatService from '../services/chat.service.js'
+import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
+import { asyncHandler, validate } from '../../middleware/errorHandler'
+import { combinedRateLimit } from '../../middleware/rateLimit'
+import * as chatService from '../../services/chat.service'
 
-const router = Router()
+const router: Router = Router()
 
 // ═══════════════════════════════════════════════════════════════
 // Schema 定义
@@ -44,7 +44,7 @@ router.post(
   combinedRateLimit,
   requirePermission('chat:write'),
   validate(chatMessageSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const userId = req.user!.userId
     const sessionId = req.params.sessionId
@@ -67,7 +67,7 @@ router.post(
   combinedRateLimit,
   requirePermission('chat:write', 'sessions:write'),
   validate(startChatSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const userId = req.user!.userId
     const { agentId, message } = req.body

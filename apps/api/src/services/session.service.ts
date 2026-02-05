@@ -3,18 +3,17 @@
  */
 
 import { v4 as uuidv4 } from 'uuid'
-import { createError } from '../middleware/errorHandler.js'
+import { createError } from '../middleware/errorHandler'
 import {
   SESSION_NOT_FOUND,
   SESSION_ALREADY_COMPLETED,
-  SESSION_LIMIT_EXCEEDED,
   MESSAGE_LIMIT_EXCEEDED,
-} from '../constants/errorCodes.js'
+} from '../constants/errorCodes'
 import {
   MAX_PAGE_SIZE,
   DEFAULT_PAGE_SIZE,
   MAX_SESSION_MESSAGES,
-} from '../constants/config.js'
+} from '../constants/config'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -253,7 +252,7 @@ export async function updateSessionTitle(
  * 删除会话
  */
 export async function deleteSession(orgId: string, sessionId: string): Promise<void> {
-  const session = await getSession(orgId, sessionId)
+  await getSession(orgId, sessionId) // 验证会话存在
 
   sessionsStore.delete(sessionId)
   messagesStore.delete(sessionId)

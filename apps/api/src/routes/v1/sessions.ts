@@ -2,14 +2,14 @@
  * Sessions API 路由
  */
 
-import { Router } from 'express'
+import { Router, type Response } from 'express'
 import { z } from 'zod'
-import { authenticate, requirePermission, type AuthRequest } from '../middleware/auth.js'
-import { asyncHandler, validate } from '../middleware/errorHandler.js'
-import { combinedRateLimit } from '../middleware/rateLimit.js'
-import * as sessionService from '../services/session.service.js'
+import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
+import { asyncHandler, validate } from '../../middleware/errorHandler'
+import { combinedRateLimit } from '../../middleware/rateLimit'
+import * as sessionService from '../../services/session.service'
 
-const router = Router()
+const router: Router = Router()
 
 // ═══════════════════════════════════════════════════════════════
 // Schema 定义
@@ -66,7 +66,7 @@ router.post(
   combinedRateLimit,
   requirePermission('sessions:write'),
   validate(createSessionSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const userId = req.user!.userId
     const input = req.body
@@ -89,7 +89,7 @@ router.get(
   combinedRateLimit,
   requirePermission('sessions:read'),
   validate(listSessionsQuerySchema, 'query'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const userId = req.user!.userId
     const options = req.query as z.infer<typeof listSessionsQuerySchema>
@@ -112,7 +112,7 @@ router.get(
   authenticate,
   combinedRateLimit,
   requirePermission('sessions:read'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const sessionId = req.params.id
 
@@ -134,7 +134,7 @@ router.put(
   combinedRateLimit,
   requirePermission('sessions:write'),
   validate(updateSessionSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const sessionId = req.params.id
     const { title, status } = req.body
@@ -164,7 +164,7 @@ router.delete(
   authenticate,
   combinedRateLimit,
   requirePermission('sessions:write'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const sessionId = req.params.id
 
@@ -182,7 +182,7 @@ router.get(
   authenticate,
   combinedRateLimit,
   requirePermission('sessions:read'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const sessionId = req.params.id
 
@@ -204,7 +204,7 @@ router.post(
   combinedRateLimit,
   requirePermission('sessions:write'),
   validate(addMessageSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const sessionId = req.params.id
     const input = req.body

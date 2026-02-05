@@ -87,7 +87,7 @@ export function useSession(): UseSessionReturn {
 
     try {
       const response = await apiClient.get<ApiResponse<Session[]>>('/sessions', {
-        params: options,
+        params: options as Record<string, unknown>,
       })
 
       if (response.success && response.data) {

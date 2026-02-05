@@ -4,7 +4,8 @@
  * 提供统一的 API 请求方法，支持认证、错误处理、重试等功能
  */
 
-import type { ApiResponse } from '@/types'
+// ApiResponse type is defined in @/types but used by consumers of this module
+// import type { ApiResponse } from '@/types'
 
 // ═══════════════════════════════════════════════════════════════
 // 常量配置
@@ -140,9 +141,9 @@ async function request<T>(
   }
 
   // 构建请求头
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...customHeaders,
+    ...(customHeaders as Record<string, string>),
   }
 
   const token = getAuthToken()
