@@ -10,6 +10,8 @@ import {
   Settings,
   Plus,
   MessageSquare,
+  Sparkles,
+  Puzzle,
 } from 'lucide-react'
 
 interface NavItem {
@@ -21,6 +23,8 @@ interface NavItem {
 const navItems: NavItem[] = [
   { icon: <Home size={20} />, label: '首页', href: '/' },
   { icon: <Bot size={20} />, label: 'Agents', href: '/agents' },
+  { icon: <Sparkles size={20} />, label: 'Skills', href: '/skills' },
+  { icon: <Puzzle size={20} />, label: 'MCP', href: '/mcp' },
   { icon: <Settings size={20} />, label: '设置', href: '/settings' },
 ]
 
