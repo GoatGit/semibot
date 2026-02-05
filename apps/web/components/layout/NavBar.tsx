@@ -1,6 +1,7 @@
 'use client'
 
 import { useLayoutStore } from '@/stores/layoutStore'
+import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 import {
   Home,
@@ -16,11 +17,10 @@ interface NavItem {
   icon: React.ReactNode
   label: string
   href: string
-  active?: boolean
 }
 
 const navItems: NavItem[] = [
-  { icon: <Home size={20} />, label: '首页', href: '/', active: true },
+  { icon: <Home size={20} />, label: '首页', href: '/' },
   { icon: <Bot size={20} />, label: 'Agents', href: '/agents' },
   { icon: <Settings size={20} />, label: '设置', href: '/settings' },
 ]
@@ -32,9 +32,11 @@ const navItems: NavItem[] = [
  * - 展开状态: 240px
  * - 折叠状态: 60px
  * - 包含: 主导航入口 + 会话列表
+ * - 首页自动展开，其他页面自动收起
  */
 export function NavBar() {
   const { navBarExpanded, toggleNavBar } = useLayoutStore()
+  const pathname = usePathname()
 
   return (
     <nav
@@ -72,7 +74,7 @@ export function NavBar() {
             icon={item.icon}
             label={item.label}
             href={item.href}
-            active={item.active}
+            active={pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))}
             expanded={navBarExpanded}
           />
         ))}
@@ -85,6 +87,7 @@ export function NavBar() {
           icon={<Plus size={20} />}
           label="新建会话"
           href="/chat/new"
+          active={pathname === '/chat/new'}
           expanded={navBarExpanded}
           variant="primary"
         />
