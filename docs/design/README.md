@@ -41,6 +41,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 - [数据模型](./DATA_MODEL.md) - 数据库设计
 - [API 设计](./API_DESIGN.md) - 接口规范
 - [Agent Runtime](./AGENT_RUNTIME.md) - Python 执行引擎
+- [Design System](./DESIGN_SYSTEM.md) - 前端设计系统规范
 - [错误码规范](./ERROR_CODES.md) - 错误码定义
 - [测试框架](./TESTING.md) - 测试策略与规范
 - [部署指南](./DEPLOYMENT.md) - 部署配置
