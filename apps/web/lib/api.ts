@@ -4,24 +4,12 @@
  * 提供统一的 API 请求方法，支持认证、错误处理、重试等功能
  */
 
-// ApiResponse type is defined in @/types but used by consumers of this module
-// import type { ApiResponse } from '@/types'
-
-// ═══════════════════════════════════════════════════════════════
-// 常量配置
-// ═══════════════════════════════════════════════════════════════
-
-/** API 基础路径 */
-const API_BASE_PATH = '/api/v1'
-
-/** 默认请求超时时间 (毫秒) */
-const DEFAULT_TIMEOUT_MS = 30000
-
-/** 最大重试次数 */
-const MAX_RETRIES = 3
-
-/** 重试基础延迟 (毫秒) */
-const RETRY_BASE_DELAY_MS = 1000
+import {
+  API_BASE_PATH,
+  DEFAULT_TIMEOUT_MS,
+  DEFAULT_MAX_RETRIES,
+  RETRY_BASE_DELAY_MS,
+} from '@semibot/shared-config'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -124,7 +112,7 @@ async function request<T>(
     body,
     timeout = DEFAULT_TIMEOUT_MS,
     retry = true,
-    maxRetries = MAX_RETRIES,
+    maxRetries = DEFAULT_MAX_RETRIES,
     headers: customHeaders,
     ...fetchOptions
   } = options

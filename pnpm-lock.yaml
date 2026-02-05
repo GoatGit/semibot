@@ -41,6 +41,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@semibot/shared-config':
+        specifier: workspace:*
+        version: link:../../packages/shared-config
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -126,6 +129,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@semibot/shared-config':
+        specifier: workspace:*
+        version: link:../../packages/shared-config
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -177,6 +183,15 @@ importers:
         version: 3.4.19(tsx@4.21.0)
       typescript:
         specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/shared-config:
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(jiti@1.21.7)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.0
         version: 5.9.3
 
   packages/shared-types:

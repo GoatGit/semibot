@@ -286,7 +286,7 @@ export async function handleChat(
       messageId: assistantMessage.id,
     })
   } catch (error) {
-    console.error(`[Chat] 处理失败 - Session: ${sessionId}`, error)
+    console.error(`[Chat] 处理失败 - Session: ${sessionId}, User: ${userId}, Agent: ${agent.id}`, error)
 
     sendSSEEvent(connection, 'error', {
       code: SSE_STREAM_ERROR,

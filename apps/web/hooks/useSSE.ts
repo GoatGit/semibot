@@ -7,22 +7,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Agent2UIMessage, SSEEvent, SSEDoneData, SSEErrorData } from '@/types'
-
-// ═══════════════════════════════════════════════════════════════
-// 常量配置 (与后端 config.ts 保持一致)
-// ═══════════════════════════════════════════════════════════════
-
-/** SSE 最大重试次数 */
-const SSE_MAX_RETRIES = 5
-
-/** SSE 重连基础延迟 (毫秒) */
-const SSE_RECONNECT_BASE_DELAY_MS = 1000
-
-/** SSE 重连最大延迟 (毫秒) */
-const SSE_RECONNECT_MAX_DELAY_MS = 30000
-
-/** 心跳超时阈值 (毫秒) - 超过此时间未收到心跳则认为断线 */
-const HEARTBEAT_TIMEOUT_MS = 45000
+import {
+  SSE_MAX_RETRIES,
+  SSE_RECONNECT_BASE_DELAY_MS,
+  SSE_RECONNECT_MAX_DELAY_MS,
+  SSE_HEARTBEAT_TIMEOUT_MS,
+} from '@semibot/shared-config'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -121,7 +111,7 @@ export function useSSE(config: SSEConfig): UseSSEReturn {
     heartbeatTimeoutRef.current = setTimeout(() => {
       console.warn('[SSE] 心跳超时，连接可能已断开')
       handleDisconnect(true)
-    }, HEARTBEAT_TIMEOUT_MS)
+    }, SSE_HEARTBEAT_TIMEOUT_MS)
   }, [])
 
   /**

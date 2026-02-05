@@ -8,6 +8,7 @@ import {
   SESSION_NOT_FOUND,
   SESSION_ALREADY_COMPLETED,
   MESSAGE_LIMIT_EXCEEDED,
+  MESSAGE_NOT_FOUND,
 } from '../constants/errorCodes'
 import {
   MAX_PAGE_SIZE,
@@ -325,7 +326,7 @@ export async function updateMessage(
   const messageIndex = messages.findIndex((m) => m.id === messageId)
 
   if (messageIndex === -1) {
-    throw createError(SESSION_NOT_FOUND)
+    throw createError(MESSAGE_NOT_FOUND)
   }
 
   const updatedMessage: Message = {

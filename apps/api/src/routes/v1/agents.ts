@@ -98,7 +98,8 @@ router.get(
   validate(listAgentsQuerySchema, 'query'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
-    const options = req.query as unknown as z.infer<typeof listAgentsQuerySchema>
+    // req.query 已被 validate 中间件验证并转换
+    const options = req.query
 
     const result = await agentService.listAgents(orgId, options)
 

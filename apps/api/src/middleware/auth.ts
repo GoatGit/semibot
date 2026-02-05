@@ -46,7 +46,25 @@ interface JWTPayload {
 // 辅助函数
 // ═══════════════════════════════════════════════════════════════
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'development-secret-change-in-production'
+/**
+ * 获取 JWT Secret
+ * 生产环境必须设置 JWT_SECRET 环境变量
+ */
+function getJWTSecret(): string {
+  const secret = process.env.JWT_SECRET
+
+  if (!secret && process.env.NODE_ENV === 'production') {
+    throw new Error('[Auth] 生产环境必须设置 JWT_SECRET 环境变量')
+  }
+
+  if (!secret) {
+    console.warn('[Auth] 未设置 JWT_SECRET，使用开发环境默认值（请勿用于生产）')
+  }
+
+  return secret ?? 'development-secret-change-in-production'
+}
+
+const JWT_SECRET = getJWTSecret()
 
 /**
  * 发送认证错误响应
