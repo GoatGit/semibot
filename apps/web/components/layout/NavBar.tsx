@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useCallback } from 'react'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
@@ -9,8 +10,6 @@ import {
   Settings,
   Plus,
   MessageSquare,
-  ChevronLeft,
-  ChevronRight
 } from 'lucide-react'
 
 interface NavItem {
@@ -33,18 +32,35 @@ const navItems: NavItem[] = [
  * - 折叠状态: 60px
  * - 包含: 主导航入口 + 会话列表
  * - 首页自动展开，其他页面自动收起
+ * - 折叠状态下鼠标悬停自动展开
  */
 export function NavBar() {
-  const { navBarExpanded, toggleNavBar } = useLayoutStore()
+  const { navBarExpanded } = useLayoutStore()
   const pathname = usePathname()
+  const [isHovered, setIsHovered] = useState(false)
+
+  // 实际显示的展开状态：固定展开 或 悬停展开
+  const isExpanded = navBarExpanded || isHovered
+
+  const handleMouseEnter = useCallback(() => {
+    if (!navBarExpanded) {
+      setIsHovered(true)
+    }
+  }, [navBarExpanded])
+
+  const handleMouseLeave = useCallback(() => {
+    setIsHovered(false)
+  }, [])
 
   return (
     <nav
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className={clsx(
         'flex flex-col h-full',
         'bg-bg-surface border-r border-border-subtle',
         'transition-all duration-normal ease-out',
-        navBarExpanded ? 'w-60' : 'w-[60px]'
+        isExpanded ? 'w-60' : 'w-[60px]'
       )}
     >
       {/* Logo 区域 */}
@@ -58,8 +74,8 @@ export function NavBar() {
           <div className="w-8 h-8 rounded-lg bg-primary-500 flex items-center justify-center">
             <Bot size={18} className="text-neutral-950" />
           </div>
-          {navBarExpanded && (
-            <span className="font-display font-semibold text-lg text-text-primary">
+          {isExpanded && (
+            <span className="font-display font-semibold text-lg text-text-primary whitespace-nowrap">
               Semibot
             </span>
           )}
@@ -75,7 +91,7 @@ export function NavBar() {
             label={item.label}
             href={item.href}
             active={pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))}
-            expanded={navBarExpanded}
+            expanded={isExpanded}
           />
         ))}
 
@@ -88,41 +104,18 @@ export function NavBar() {
           label="新建会话"
           href="/chat/new"
           active={pathname === '/chat/new'}
-          expanded={navBarExpanded}
+          expanded={isExpanded}
           variant="primary"
         />
 
         {/* 会话列表占位 */}
-        {navBarExpanded && (
+        {isExpanded && (
           <div className="mt-2 space-y-1">
             <SessionItem title="销售数据分析" time="14:30" />
             <SessionItem title="市场调研报告" time="10:15" />
             <SessionItem title="竞品分析" time="昨天" />
           </div>
         )}
-      </div>
-
-      {/* 折叠按钮 */}
-      <div className="p-2 border-t border-border-subtle">
-        <button
-          onClick={toggleNavBar}
-          className={clsx(
-            'flex items-center justify-center w-full h-10',
-            'rounded-md text-text-secondary',
-            'hover:bg-interactive-hover hover:text-text-primary',
-            'transition-colors duration-fast'
-          )}
-          aria-label={navBarExpanded ? '折叠导航栏' : '展开导航栏'}
-        >
-          {navBarExpanded ? (
-            <>
-              <ChevronLeft size={18} />
-              <span className="ml-2 text-sm">折叠</span>
-            </>
-          ) : (
-            <ChevronRight size={18} />
-          )}
-        </button>
       </div>
     </nav>
   )
