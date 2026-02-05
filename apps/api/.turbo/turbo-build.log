@@ -1,0 +1,214 @@
+
+
+> @semibot/api@0.1.0 build /Users/yanghuaiyuan/Documents/AI/semibot/apps/api
+> tsc
+
+[96msrc/index.ts[0m:[93m23[0m:[93m7[0m - [91merror[0m[90m TS2742: [0mThe inferred type of 'app' cannot be named without a reference to '.pnpm/@types+express-serve-static-core@4.19.8/node_modules/@types/express-serve-static-core'. This is likely not portable. A type annotation is necessary.
+
+[7m23[0m const app = express()
+[7m  [0m [91m      ~~~[0m
+
+[96msrc/index.ts[0m:[93m77[0m:[93m15[0m - [91merror[0m[90m TS6133: [0m'req' is declared but its value is never read.
+
+[7m77[0m app.get('/', (req, res) => {
+[7m  [0m [91m              ~~~[0m
+
+[96msrc/middleware/auth.ts[0m:[93m15[0m:[93m3[0m - [91merror[0m[90m TS6133: [0m'AUTH_API_KEY_REVOKED' is declared but its value is never read.
+
+[7m15[0m   AUTH_API_KEY_REVOKED,
+[7m  [0m [91m  ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/middleware/errorHandler.ts[0m:[93m173[0m:[93m25[0m - [91merror[0m[90m TS6133: [0m'res' is declared but its value is never read.
+
+[7m173[0m   return (req: Request, res: Response, next: NextFunction): void => {
+[7m   [0m [91m                        ~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m7[0m:[93m67[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/auth.js' or its corresponding type declarations.
+
+[7m7[0m import { authenticate, requirePermission, type AuthRequest } from '../middleware/auth.js'
+[7m [0m [91m                                                                  ~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m8[0m:[93m40[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/errorHandler.js' or its corresponding type declarations.
+
+[7m8[0m import { asyncHandler, validate } from '../middleware/errorHandler.js'
+[7m [0m [91m                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m9[0m:[93m35[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/rateLimit.js' or its corresponding type declarations.
+
+[7m9[0m import { combinedRateLimit } from '../middleware/rateLimit.js'
+[7m [0m [91m                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m10[0m:[93m31[0m - [91merror[0m[90m TS2307: [0mCannot find module '../services/agent.service.js' or its corresponding type declarations.
+
+[7m10[0m import * as agentService from '../services/agent.service.js'
+[7m  [0m [91m                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m12[0m:[93m7[0m - [91merror[0m[90m TS2742: [0mThe inferred type of 'router' cannot be named without a reference to '.pnpm/@types+express-serve-static-core@4.19.8/node_modules/@types/express-serve-static-core'. This is likely not portable. A type annotation is necessary.
+
+[7m12[0m const router = Router()
+[7m  [0m [91m      ~~~~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m77[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m77[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m  [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m99[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m99[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m  [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m121[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m121[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m143[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m143[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/agents.ts[0m:[93m165[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m165[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/chat.ts[0m:[93m7[0m:[93m67[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/auth.js' or its corresponding type declarations.
+
+[7m7[0m import { authenticate, requirePermission, type AuthRequest } from '../middleware/auth.js'
+[7m [0m [91m                                                                  ~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/chat.ts[0m:[93m8[0m:[93m40[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/errorHandler.js' or its corresponding type declarations.
+
+[7m8[0m import { asyncHandler, validate } from '../middleware/errorHandler.js'
+[7m [0m [91m                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/chat.ts[0m:[93m9[0m:[93m35[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/rateLimit.js' or its corresponding type declarations.
+
+[7m9[0m import { combinedRateLimit } from '../middleware/rateLimit.js'
+[7m [0m [91m                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/chat.ts[0m:[93m10[0m:[93m30[0m - [91merror[0m[90m TS2307: [0mCannot find module '../services/chat.service.js' or its corresponding type declarations.
+
+[7m10[0m import * as chatService from '../services/chat.service.js'
+[7m  [0m [91m                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/chat.ts[0m:[93m12[0m:[93m7[0m - [91merror[0m[90m TS2742: [0mThe inferred type of 'router' cannot be named without a reference to '.pnpm/@types+express-serve-static-core@4.19.8/node_modules/@types/express-serve-static-core'. This is likely not portable. A type annotation is necessary.
+
+[7m12[0m const router = Router()
+[7m  [0m [91m      ~~~~~~[0m
+
+[96msrc/routes/v1/chat.ts[0m:[93m47[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m47[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m  [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/chat.ts[0m:[93m70[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m70[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m  [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/index.ts[0m:[93m10[0m:[93m7[0m - [91merror[0m[90m TS2742: [0mThe inferred type of 'router' cannot be named without a reference to '.pnpm/@types+express-serve-static-core@4.19.8/node_modules/@types/express-serve-static-core'. This is likely not portable. A type annotation is necessary.
+
+[7m10[0m const router = Router()
+[7m  [0m [91m      ~~~~~~[0m
+
+[96msrc/routes/v1/index.ts[0m:[93m13[0m:[93m24[0m - [91merror[0m[90m TS6133: [0m'req' is declared but its value is never read.
+
+[7m13[0m router.get('/health', (req, res) => {
+[7m  [0m [91m                       ~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m7[0m:[93m67[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/auth.js' or its corresponding type declarations.
+
+[7m7[0m import { authenticate, requirePermission, type AuthRequest } from '../middleware/auth.js'
+[7m [0m [91m                                                                  ~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m8[0m:[93m40[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/errorHandler.js' or its corresponding type declarations.
+
+[7m8[0m import { asyncHandler, validate } from '../middleware/errorHandler.js'
+[7m [0m [91m                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m9[0m:[93m35[0m - [91merror[0m[90m TS2307: [0mCannot find module '../middleware/rateLimit.js' or its corresponding type declarations.
+
+[7m9[0m import { combinedRateLimit } from '../middleware/rateLimit.js'
+[7m [0m [91m                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m10[0m:[93m33[0m - [91merror[0m[90m TS2307: [0mCannot find module '../services/session.service.js' or its corresponding type declarations.
+
+[7m10[0m import * as sessionService from '../services/session.service.js'
+[7m  [0m [91m                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m12[0m:[93m7[0m - [91merror[0m[90m TS2742: [0mThe inferred type of 'router' cannot be named without a reference to '.pnpm/@types+express-serve-static-core@4.19.8/node_modules/@types/express-serve-static-core'. This is likely not portable. A type annotation is necessary.
+
+[7m12[0m const router = Router()
+[7m  [0m [91m      ~~~~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m69[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m69[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m  [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m92[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m92[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m  [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m115[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m115[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m137[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m137[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m167[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m167[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m185[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m185[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/routes/v1/sessions.ts[0m:[93m207[0m:[93m41[0m - [91merror[0m[90m TS7006: [0mParameter 'res' implicitly has an 'any' type.
+
+[7m207[0m   asyncHandler(async (req: AuthRequest, res) => {
+[7m   [0m [91m                                        ~~~[0m
+
+[96msrc/services/chat.service.ts[0m:[93m11[0m:[93m3[0m - [91merror[0m[90m TS6133: [0m'SESSION_NOT_FOUND' is declared but its value is never read.
+
+[7m11[0m   SESSION_NOT_FOUND,
+[7m  [0m [91m  ~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/services/chat.service.ts[0m:[93m206[0m:[93m11[0m - [91merror[0m[90m TS6133: [0m'userMessage' is declared but its value is never read.
+
+[7m206[0m     const userMessage = await sessionService.addMessage(orgId, sessionId, {
+[7m   [0m [91m          ~~~~~~~~~~~[0m
+
+[96msrc/services/session.service.ts[0m:[93m10[0m:[93m3[0m - [91merror[0m[90m TS6133: [0m'SESSION_LIMIT_EXCEEDED' is declared but its value is never read.
+
+[7m10[0m   SESSION_LIMIT_EXCEEDED,
+[7m  [0m [91m  ~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/services/session.service.ts[0m:[93m256[0m:[93m9[0m - [91merror[0m[90m TS6133: [0m'session' is declared but its value is never read.
+
+[7m256[0m   const session = await getSession(orgId, sessionId)
+[7m   [0m [91m        ~~~~~~~[0m
+
+
+Found 39 errors in 9 files.
+
+Errors  Files
+     2  src/index.ts[90m:23[0m
+     1  src/middleware/auth.ts[90m:15[0m
+     1  src/middleware/errorHandler.ts[90m:173[0m
+    10  src/routes/v1/agents.ts[90m:7[0m
+     7  src/routes/v1/chat.ts[90m:7[0m
+     2  src/routes/v1/index.ts[90m:10[0m
+    12  src/routes/v1/sessions.ts[90m:7[0m
+     2  src/services/chat.service.ts[90m:11[0m
+     2  src/services/session.service.ts[90m:10[0m
+[41m[30m ELIFECYCLE [39m[49m [31mCommand failed with exit code 1.[39m

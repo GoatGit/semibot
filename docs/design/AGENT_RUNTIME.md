@@ -472,6 +472,254 @@ class WebSearchSkill(BaseSkill):
         }
 
 
+# ===== 浏览器工具 =====
+
+class BrowserTool(BaseTool):
+    """浏览器控制工具 - 基于 Playwright"""
+    
+    name = "browser"
+    
+    @property
+    def schema(self) -> dict:
+        return {
+            "name": "browser",
+            "description": "Control a web browser to navigate, interact, and extract information from web pages",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["navigate", "snapshot", "screenshot", "click", "type", "scroll", "wait", "evaluate", "extract"],
+                        "description": "The browser action to perform"
+                    },
+                    "url": {"type": "string", "description": "URL to navigate to (for 'navigate' action)"},
+                    "selector": {"type": "string", "description": "CSS selector or XPath for element targeting"},
+                    "ref": {"type": "integer", "description": "Element reference from semantic snapshot"},
+                    "text": {"type": "string", "description": "Text to type (for 'type' action)"},
+                    "script": {"type": "string", "description": "JavaScript to execute (for 'evaluate' action)"},
+                    "full_page": {"type": "boolean", "default": False, "description": "Capture full page screenshot"}
+                },
+                "required": ["action"]
+            }
+        }
+    
+    def __init__(self, config: dict = None):
+        self.config = config or {}
+        self.browser = None
+        self.page = None
+        self._element_refs: dict[int, str] = {}  # ref -> selector mapping
+    
+    async def _ensure_browser(self):
+        """确保浏览器实例已启动"""
+        if not self.browser:
+            from playwright.async_api import async_playwright
+            playwright = await async_playwright().start()
+            self.browser = await playwright.chromium.launch(
+                headless=self.config.get("headless", True)
+            )
+            self.page = await self.browser.new_page(
+                viewport=self.config.get("viewport", {"width": 1280, "height": 720})
+            )
+    
+    async def execute(self, action: str, **params) -> dict:
+        """执行浏览器动作"""
+        await self._ensure_browser()
+        
+        actions = {
+            "navigate": self._navigate,
+            "snapshot": self._semantic_snapshot,
+            "screenshot": self._screenshot,
+            "click": self._click,
+            "type": self._type,
+            "scroll": self._scroll,
+            "wait": self._wait,
+            "evaluate": self._evaluate,
+            "extract": self._extract,
+        }
+        
+        handler = actions.get(action)
+        if not handler:
+            return {"error": f"Unknown action: {action}"}
+        
+        try:
+            return await handler(**params)
+        except Exception as e:
+            return {"error": str(e), "action": action}
+    
+    async def _navigate(self, url: str, **kwargs) -> dict:
+        """导航到指定 URL"""
+        await self.page.goto(url, wait_until="domcontentloaded")
+        return {"success": True, "url": self.page.url, "title": await self.page.title()}
+    
+    async def _semantic_snapshot(self, selector: str = None, **kwargs) -> dict:
+        """
+        获取语义快照 - 通过 ARIA 树生成结构化页面表示
+        相比截图更高效：体积小 (<50KB vs 5MB)，解析快，交互精确
+        """
+        # 获取可访问性树
+        snapshot = await self.page.accessibility.snapshot(
+            interesting_only=True,
+            root=await self.page.query_selector(selector) if selector else None
+        )
+        
+        # 转换为结构化文本并生成元素引用
+        self._element_refs = {}
+        ref_counter = [0]
+        
+        def node_to_text(node: dict, depth: int = 0) -> str:
+            if not node:
+                return ""
+            
+            lines = []
+            indent = "│  " * depth
+            prefix = "├─ " if depth > 0 else ""
+            
+            role = node.get("role", "")
+            name = node.get("name", "")
+            
+            # 为可交互元素分配引用
+            ref_str = ""
+            if role in ("button", "link", "textbox", "checkbox", "menuitem", "tab"):
+                ref_counter[0] += 1
+                ref = ref_counter[0]
+                self._element_refs[ref] = self._generate_selector(node)
+                ref_str = f" ref={ref}"
+            
+            node_text = f"[{role}{ref_str}]"
+            if name:
+                node_text += f" {name}"
+            
+            lines.append(f"{indent}{prefix}{node_text}")
+            
+            for child in node.get("children", []):
+                lines.append(node_to_text(child, depth + 1))
+            
+            return "\n".join(filter(None, lines))
+        
+        text_tree = node_to_text(snapshot)
+        
+        return {
+            "snapshot": text_tree,
+            "refs": self._element_refs,
+            "url": self.page.url,
+            "title": await self.page.title()
+        }
+    
+    def _generate_selector(self, node: dict) -> str:
+        """根据节点属性生成 CSS 选择器"""
+        role = node.get("role", "")
+        name = node.get("name", "")
+        
+        # 优先使用 role + name 组合
+        if role and name:
+            return f"[role='{role}'][aria-label='{name}'], {role}:has-text('{name}')"
+        return f"[role='{role}']" if role else "*"
+    
+    async def _click(self, selector: str = None, ref: int = None, **kwargs) -> dict:
+        """点击元素 - 支持选择器或语义引用"""
+        target = selector or self._element_refs.get(ref)
+        if not target:
+            return {"error": "No selector or valid ref provided"}
+        
+        await self.page.click(target)
+        return {"success": True, "clicked": target}
+    
+    async def _type(self, selector: str, text: str, **kwargs) -> dict:
+        """在元素中输入文本"""
+        await self.page.fill(selector, text)
+        return {"success": True, "typed": text}
+    
+    async def _screenshot(self, selector: str = None, full_page: bool = False, **kwargs) -> dict:
+        """截取屏幕截图"""
+        import base64
+        
+        options = {"full_page": full_page}
+        if selector:
+            element = await self.page.query_selector(selector)
+            screenshot = await element.screenshot() if element else await self.page.screenshot(**options)
+        else:
+            screenshot = await self.page.screenshot(**options)
+        
+        return {
+            "screenshot": base64.b64encode(screenshot).decode(),
+            "format": "png"
+        }
+    
+    async def _scroll(self, direction: str = "down", amount: int = 500, **kwargs) -> dict:
+        """滚动页面"""
+        delta = amount if direction == "down" else -amount
+        await self.page.mouse.wheel(0, delta)
+        return {"success": True, "scrolled": delta}
+    
+    async def _wait(self, selector: str, state: str = "visible", timeout: int = 30000, **kwargs) -> dict:
+        """等待元素状态"""
+        await self.page.wait_for_selector(selector, state=state, timeout=timeout)
+        return {"success": True, "selector": selector, "state": state}
+    
+    async def _evaluate(self, script: str, **kwargs) -> dict:
+        """执行 JavaScript"""
+        result = await self.page.evaluate(script)
+        return {"result": result}
+    
+    async def _extract(self, selectors: dict, **kwargs) -> dict:
+        """提取页面数据"""
+        data = {}
+        for key, selector in selectors.items():
+            elements = await self.page.query_selector_all(selector)
+            data[key] = [await el.text_content() for el in elements]
+        return {"data": data}
+    
+    async def close(self):
+        """关闭浏览器"""
+        if self.browser:
+            await self.browser.close()
+            self.browser = None
+            self.page = None
+
+
+# ===== 浏览器技能示例 =====
+
+class WebScrapingSkill(BaseSkill):
+    """网页抓取技能 - 结合浏览器工具实现复杂抓取"""
+    
+    async def execute(self, context: dict) -> dict:
+        url = context.get("url")
+        extract_config = context.get("extract", {})
+        
+        # 1. 导航到目标页面
+        nav_result = await self.call_tool("browser", {
+            "action": "navigate",
+            "url": url
+        })
+        
+        if nav_result.get("error"):
+            return nav_result
+        
+        # 2. 获取语义快照用于理解页面结构
+        snapshot = await self.call_tool("browser", {
+            "action": "snapshot"
+        })
+        
+        # 3. 根据配置提取数据
+        if extract_config:
+            data = await self.call_tool("browser", {
+                "action": "extract",
+                "selectors": extract_config
+            })
+            return {
+                "url": url,
+                "title": nav_result.get("title"),
+                "snapshot": snapshot.get("snapshot"),
+                "extracted_data": data.get("data")
+            }
+        
+        return {
+            "url": url,
+            "title": nav_result.get("title"),
+            "snapshot": snapshot.get("snapshot")
+        }
+
+
 # ===== 统一动作执行器 =====
 
 class ActionExecutor:

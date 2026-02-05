@@ -1,0 +1,140 @@
+name: Deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  deploy-web:
+    name: Deploy Web to Vercel
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@latest
+
+      - name: Pull Vercel environment information
+        run: vercel pull --yes --environment=${{ github.event.inputs.environment || 'production' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project
+        run: vercel build ${{ github.event.inputs.environment == 'production' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel
+        run: vercel deploy --prebuilt ${{ github.event.inputs.environment == 'production' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+  deploy-runtime:
+    name: Deploy Runtime
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    needs: [deploy-web]
+
+    defaults:
+      run:
+        working-directory: runtime
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # Placeholder: Deploy to Fly.io
+      # Uncomment and configure when ready
+      # - name: Setup Fly.io CLI
+      #   uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # - name: Deploy to Fly.io
+      #   run: flyctl deploy --remote-only
+      #   env:
+      #     FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      # Placeholder: Deploy to Modal
+      # Uncomment and configure when ready
+      # - name: Install Modal CLI
+      #   run: pip install modal
+
+      # - name: Deploy to Modal
+      #   run: modal deploy src/main.py
+      #   env:
+      #     MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      #     MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+
+      - name: Runtime deployment placeholder
+        run: |
+          echo "Runtime deployment configured for: ${{ github.event.inputs.environment || 'production' }}"
+          echo "Configure Fly.io or Modal deployment by uncommenting the relevant steps above."
+
+  run-migrations:
+    name: Run Database Migrations
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    needs: [deploy-web, deploy-runtime]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Placeholder: Run database migrations
+      # Configure based on your migration tool (Prisma, Drizzle, etc.)
+      - name: Run database migrations
+        run: |
+          echo "Database migration placeholder"
+          echo "Configure your migration command here, e.g.:"
+          echo "  - pnpm prisma migrate deploy"
+          echo "  - pnpm drizzle-kit push"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

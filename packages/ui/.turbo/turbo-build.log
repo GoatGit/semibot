@@ -1,0 +1,5 @@
+
+
+> @semibot/ui@0.1.0 build /Users/yanghuaiyuan/Documents/AI/semibot/packages/ui
+> tsup src/index.ts --format cjs,esm --dts --external react
+

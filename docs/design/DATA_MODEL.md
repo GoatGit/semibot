@@ -380,7 +380,7 @@ CREATE TABLE tools (
     org_id UUID,                                         -- 所属组织（逻辑外键 -> organizations.id，NULL 表示系统内置）
     name VARCHAR(100) NOT NULL,                          -- 工具名称
     type VARCHAR(50) NOT NULL                            -- 工具类型
-        CHECK (type IN ('api', 'code', 'query', 'mcp')),
+        CHECK (type IN ('api', 'code', 'query', 'mcp', 'browser')),
     description TEXT,                                    -- 工具描述
     schema JSONB NOT NULL,                               -- OpenAPI 风格的参数定义
     implementation JSONB NOT NULL,                       -- 执行配置
@@ -419,7 +419,7 @@ COMMENT ON COLUMN tools.created_by IS '逻辑外键，关联 users.id';
 | id | UUID | 主键 |
 | org_id | UUID | 所属组织（NULL 表示系统内置） |
 | name | VARCHAR(100) | 工具名称（组织内唯一） |
-| type | VARCHAR(50) | 工具类型：api/code/query/mcp |
+| type | VARCHAR(50) | 工具类型：api/code/query/mcp/browser |
 | description | TEXT | 工具描述 |
 | schema | JSONB | OpenAPI 风格的参数定义 |
 | implementation | JSONB | 执行配置 |
@@ -510,6 +510,66 @@ MCP (Model Context Protocol) 是一种标准化的 AI 工具集成协议，允�
 | url | 条件 | sse/websocket 传输时的服务器 URL |
 | tool_name | 是 | 要调用的工具名称 |
 | timeout_ms | 否 | 超时时间，默认 30000ms |
+
+**Browser 类型**:
+
+Browser 类型工具通过 CDP (Chrome DevTools Protocol) 控制浏览器执行自动化操作。
+
+```json
+// Browser 类型
+{
+    "type": "browser",
+    "browser": "chromium",                      // 浏览器类型：chromium/firefox/webkit
+    "headless": true,                           // 是否无头模式
+    "action": "navigate",                       // 动作类型，见下表
+    "timeout_ms": 30000,                        // 操作超时时间
+    "viewport": {                               // 视口配置
+        "width": 1280,
+        "height": 720
+    },
+    "user_agent": "...",                        // 自定义 User-Agent (可选)
+    "proxy": "http://proxy:8080"                // 代理服务器 (可选)
+}
+```
+
+**Browser 动作类型**:
+
+| 动作 | 说明 | 参数 |
+| ---- | ---- | ---- |
+| navigate | 导航到 URL | `url` |
+| snapshot | 获取语义快照 (ARIA 树) | `selector` (可选) |
+| screenshot | 截取屏幕截图 | `selector`, `full_page` |
+| click | 点击元素 | `selector` 或 `ref` |
+| type | 输入文本 | `selector`, `text` |
+| scroll | 滚动页面 | `direction`, `amount` |
+| wait | 等待元素/条件 | `selector`, `state` |
+| evaluate | 执行 JavaScript | `script` |
+| extract | 提取页面数据 | `selectors` |
+
+**Semantic Snapshot 说明**:
+
+Semantic Snapshot 通过解析页面的可访问性树 (ARIA Tree) 生成结构化文本表示，相比截图更高效精确：
+
+- **体积小**：通常 < 50KB，远小于截图的 5MB
+- **精度高**：元素带有唯一引用 `[ref=N]`，可直接用于交互
+- **速度快**：文本解析比计算机视觉快 10-100 倍
+
+示例输出：
+
+```text
+[document] Example Page
+├─ [header]
+│  └─ [nav]
+│     ├─ [link ref=1] Home
+│     ├─ [link ref=2] Products
+│     └─ [link ref=3] Contact
+├─ [main]
+│  ├─ [heading] Welcome
+│  ├─ [paragraph] This is the main content...
+│  └─ [button ref=4] Get Started
+└─ [footer]
+   └─ [text] © 2024 Example Inc.
+```
 
 ### 2.5 sessions - 会话
 
