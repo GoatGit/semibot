@@ -15,14 +15,24 @@ from datetime import datetime, timezone
 from typing import Any
 
 import redis.asyncio as redis
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.constants import (
+    DEFAULT_TTL_SECONDS,
+    MAX_SESSION_ENTRIES,
+    REDIS_KEY_PREFIX,
+    REDIS_MAX_RETRIES,
+    REDIS_RETRY_DELAY_BASE,
+    REDIS_RETRY_DELAY_MAX,
+)
 from src.memory.base import MemoryEntry, ShortTermMemoryInterface
 from src.utils.logging import get_logger
-
-# Constants
-DEFAULT_TTL_SECONDS = 3600  # 1 hour
-MAX_SESSION_ENTRIES = 100
-REDIS_KEY_PREFIX = "semibot:memory:short_term"
+from src.utils.validation import (
+    InvalidInputError,
+    MemoryConnectionError,
+    validate_content,
+    validate_positive_int,
+)
 
 
 logger = get_logger(__name__)
@@ -79,14 +89,43 @@ class ShortTermMemory(ShortTermMemoryInterface):
         self.default_ttl = default_ttl
         self._client: redis.Redis | None = None
 
+    async def __aenter__(self) -> "ShortTermMemory":
+        """Async context manager entry."""
+        await self._get_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit."""
+        await self.close()
+
+    @retry(
+        stop=stop_after_attempt(REDIS_MAX_RETRIES),
+        wait=wait_exponential(
+            multiplier=1, min=REDIS_RETRY_DELAY_BASE, max=REDIS_RETRY_DELAY_MAX
+        ),
+        reraise=True,
+    )
     async def _get_client(self) -> redis.Redis:
-        """Get or create Redis client."""
+        """Get or create Redis client with retry logic."""
         if self._client is None:
-            self._client = redis.from_url(
-                self.redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-            )
+            try:
+                self._client = redis.from_url(
+                    self.redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                )
+                # Test connection
+                await self._client.ping()
+            except Exception as e:
+                logger.error(
+                    "redis_connection_failed",
+                    redis_url=self.redis_url,
+                    error=str(e),
+                )
+                self._client = None
+                raise MemoryConnectionError(
+                    f"Failed to connect to Redis: {e}"
+                ) from e
         return self._client
 
     async def close(self) -> None:
@@ -123,7 +162,18 @@ class ShortTermMemory(ShortTermMemoryInterface):
 
         Returns:
             Generated entry ID
+
+        Raises:
+            InvalidInputError: If session_id is empty or content is empty
         """
+        # Input validation
+        if not session_id or not session_id.strip():
+            raise InvalidInputError("session_id cannot be empty")
+        content = validate_content(content, min_length=1)
+        ttl_seconds = validate_positive_int(
+            ttl_seconds, "ttl_seconds", DEFAULT_TTL_SECONDS
+        )
+
         client = await self._get_client()
         entry_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)

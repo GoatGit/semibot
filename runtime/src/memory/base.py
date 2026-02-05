@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
+
+
+def _utc_now() -> datetime:
+    """Get current UTC time (timezone-aware)."""
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -18,7 +23,7 @@ class MemoryEntry:
     session_id: str | None = None
     importance: float = 0.5
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utc_now)
     expires_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,7 +51,7 @@ class MemoryEntry:
             metadata=data.get("metadata", {}),
             created_at=datetime.fromisoformat(data["created_at"])
             if data.get("created_at")
-            else datetime.utcnow(),
+            else datetime.now(timezone.utc),
             expires_at=datetime.fromisoformat(data["expires_at"])
             if data.get("expires_at")
             else None,
@@ -192,6 +197,7 @@ class MemorySystem:
         query: str,
         limit: int = 5,
         min_importance: float = 0.0,
+        org_id: str | None = None,
     ) -> str:
         """
         Search long-term memory.
@@ -201,6 +207,7 @@ class MemorySystem:
             query: Search query
             limit: Maximum results
             min_importance: Minimum importance threshold
+            org_id: Organization identifier for tenant isolation
 
         Returns:
             Concatenated relevant memory context
@@ -213,6 +220,7 @@ class MemorySystem:
             query=query,
             limit=limit,
             min_importance=min_importance,
+            org_id=org_id,
         )
 
         if not results:
@@ -326,8 +334,9 @@ class LongTermMemoryInterface(ABC):
         query: str,
         limit: int = 5,
         min_importance: float = 0.0,
+        org_id: str | None = None,
     ) -> list[MemorySearchResult]:
-        """Search memory by semantic similarity."""
+        """Search memory by semantic similarity with tenant isolation."""
         pass
 
     @abstractmethod

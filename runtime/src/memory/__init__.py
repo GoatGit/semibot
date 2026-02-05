@@ -56,6 +56,7 @@ from .embedding import (
     EmbeddingResult,
     EmbeddingService,
     OpenAIEmbeddingProvider,
+    RedisEmbeddingCache,
 )
 from .long_term import LongTermMemory
 from .short_term import ShortTermMemory
@@ -76,4 +77,5 @@ __all__ = [
     "EmbeddingProvider",
     "EmbeddingResult",
     "OpenAIEmbeddingProvider",
+    "RedisEmbeddingCache",
 ]
