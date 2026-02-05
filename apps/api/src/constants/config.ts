@@ -158,3 +158,103 @@ export const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info'
 
 /** 是否启用请求日志 */
 export const ENABLE_REQUEST_LOGGING = process.env.ENABLE_REQUEST_LOGGING !== 'false'
+
+// ═══════════════════════════════════════════════════════════════
+// LLM 提供商配置
+// ═══════════════════════════════════════════════════════════════
+
+/** OpenAI 配置 */
+export const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
+export const OPENAI_API_BASE_URL = process.env.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1'
+export const OPENAI_ORG_ID = process.env.OPENAI_ORG_ID ?? ''
+
+/** Anthropic 配置 */
+export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? ''
+export const ANTHROPIC_API_BASE_URL = process.env.ANTHROPIC_API_BASE_URL ?? 'https://api.anthropic.com'
+
+/** Google AI 配置 */
+export const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY ?? ''
+export const GOOGLE_AI_API_BASE_URL = process.env.GOOGLE_AI_API_BASE_URL ?? 'https://generativelanguage.googleapis.com'
+
+/** Azure OpenAI 配置 */
+export const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY ?? ''
+export const AZURE_OPENAI_API_BASE_URL = process.env.AZURE_OPENAI_API_BASE_URL ?? ''
+export const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION ?? '2024-02-15-preview'
+export const AZURE_OPENAI_DEPLOYMENT_NAME = process.env.AZURE_OPENAI_DEPLOYMENT_NAME ?? ''
+
+/** 自定义 LLM 配置 (兼容 OpenAI API 的第三方服务) */
+export const CUSTOM_LLM_API_KEY = process.env.CUSTOM_LLM_API_KEY ?? ''
+export const CUSTOM_LLM_API_BASE_URL = process.env.CUSTOM_LLM_API_BASE_URL ?? ''
+export const CUSTOM_LLM_MODEL_NAME = process.env.CUSTOM_LLM_MODEL_NAME ?? ''
+
+/** 默认 LLM 提供商 */
+export const DEFAULT_LLM_PROVIDER = process.env.DEFAULT_LLM_PROVIDER ?? 'openai'
+
+/** 默认模型名称 */
+export const DEFAULT_MODEL_NAME = process.env.DEFAULT_MODEL_NAME ?? 'gpt-4o'
+
+/**
+ * 获取 LLM 配置
+ */
+export interface LLMProviderConfig {
+  apiKey: string
+  baseUrl: string
+  orgId?: string
+  apiVersion?: string
+  deploymentName?: string
+  modelName?: string
+}
+
+export function getLLMConfig(provider: string): LLMProviderConfig | null {
+  switch (provider) {
+    case 'openai':
+      if (!OPENAI_API_KEY) return null
+      return {
+        apiKey: OPENAI_API_KEY,
+        baseUrl: OPENAI_API_BASE_URL,
+        orgId: OPENAI_ORG_ID || undefined,
+      }
+    case 'anthropic':
+      if (!ANTHROPIC_API_KEY) return null
+      return {
+        apiKey: ANTHROPIC_API_KEY,
+        baseUrl: ANTHROPIC_API_BASE_URL,
+      }
+    case 'google':
+      if (!GOOGLE_AI_API_KEY) return null
+      return {
+        apiKey: GOOGLE_AI_API_KEY,
+        baseUrl: GOOGLE_AI_API_BASE_URL,
+      }
+    case 'azure':
+      if (!AZURE_OPENAI_API_KEY || !AZURE_OPENAI_API_BASE_URL) return null
+      return {
+        apiKey: AZURE_OPENAI_API_KEY,
+        baseUrl: AZURE_OPENAI_API_BASE_URL,
+        apiVersion: AZURE_OPENAI_API_VERSION,
+        deploymentName: AZURE_OPENAI_DEPLOYMENT_NAME || undefined,
+      }
+    case 'custom':
+      if (!CUSTOM_LLM_API_KEY || !CUSTOM_LLM_API_BASE_URL) return null
+      return {
+        apiKey: CUSTOM_LLM_API_KEY,
+        baseUrl: CUSTOM_LLM_API_BASE_URL,
+        modelName: CUSTOM_LLM_MODEL_NAME || undefined,
+      }
+    default:
+      return null
+  }
+}
+
+/**
+ * 获取所有已配置的 LLM 提供商
+ */
+export function getConfiguredLLMProviders(): string[] {
+  const providers: string[] = []
+  if (OPENAI_API_KEY) providers.push('openai')
+  if (ANTHROPIC_API_KEY) providers.push('anthropic')
+  if (GOOGLE_AI_API_KEY) providers.push('google')
+  if (AZURE_OPENAI_API_KEY && AZURE_OPENAI_API_BASE_URL) providers.push('azure')
+  if (CUSTOM_LLM_API_KEY && CUSTOM_LLM_API_BASE_URL) providers.push('custom')
+  return providers
+}
