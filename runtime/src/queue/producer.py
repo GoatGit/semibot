@@ -7,11 +7,27 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import redis.asyncio as redis
 
+from src.constants.config import (
+    DEFAULT_QUEUE_NAME,
+    MAX_QUEUE_LENGTH,
+    PUBSUB_MESSAGE_TIMEOUT,
+    QUEUE_LENGTH_WARNING_THRESHOLD,
+    RESULT_CHANNEL_PREFIX,
+    RESULT_WAIT_TIMEOUT,
+)
+
 logger = logging.getLogger(__name__)
+
+
+class QueueFullError(Exception):
+    """Raised when queue length exceeds maximum limit."""
+
+    pass
 
 
 @dataclass
@@ -65,8 +81,9 @@ class TaskProducer:
     def __init__(
         self,
         redis_url: str,
-        queue_name: str = "agent:tasks",
-        result_channel_prefix: str = "agent:results",
+        queue_name: str = DEFAULT_QUEUE_NAME,
+        result_channel_prefix: str = RESULT_CHANNEL_PREFIX,
+        max_queue_length: int = MAX_QUEUE_LENGTH,
     ):
         """
         Initialize the task producer.
@@ -75,10 +92,12 @@ class TaskProducer:
             redis_url: Redis connection URL
             queue_name: Name of the task queue
             result_channel_prefix: Prefix for result pub/sub channels
+            max_queue_length: Maximum queue length (backpressure control)
         """
         self.redis_url = redis_url
         self.queue_name = queue_name
         self.result_channel_prefix = result_channel_prefix
+        self.max_queue_length = max_queue_length
         self._redis: redis.Redis | None = None
         self._pubsub: redis.client.PubSub | None = None
 
@@ -90,7 +109,7 @@ class TaskProducer:
                 encoding="utf-8",
                 decode_responses=True,
             )
-            logger.info(f"Producer connected to Redis: {self.redis_url}")
+            logger.info(f"[Producer] Connected to Redis: {self.redis_url}")
 
     async def disconnect(self) -> None:
         """Disconnect from Redis."""
@@ -100,7 +119,7 @@ class TaskProducer:
         if self._redis:
             await self._redis.close()
             self._redis = None
-            logger.info("Producer disconnected from Redis")
+            logger.info("[Producer] Disconnected from Redis")
 
     async def enqueue(self, payload: TaskPayload) -> str:
         """
@@ -111,6 +130,10 @@ class TaskProducer:
 
         Returns:
             Task ID
+
+        Raises:
+            QueueFullError: If queue length exceeds max_queue_length
+            RuntimeError: If failed to connect to Redis
         """
         if not self._redis:
             await self.connect()
@@ -118,16 +141,38 @@ class TaskProducer:
         if not self._redis:
             raise RuntimeError("Failed to connect to Redis")
 
+        # Backpressure control: check queue length
+        queue_len = await self._redis.llen(self.queue_name)
+
+        if queue_len >= QUEUE_LENGTH_WARNING_THRESHOLD:
+            logger.warning(
+                f"[Producer] 队列积压严重 (当前: {queue_len}, "
+                f"阈值: {QUEUE_LENGTH_WARNING_THRESHOLD})"
+            )
+
+        if queue_len >= self.max_queue_length:
+            logger.error(
+                f"[Producer] 队列已满，拒绝任务 (当前: {queue_len}, "
+                f"限制: {self.max_queue_length})"
+            )
+            raise QueueFullError(
+                f"Queue length exceeded: {queue_len} >= {self.max_queue_length}"
+            )
+
+        # Add enqueue timestamp to metadata
+        payload.metadata["enqueued_at"] = datetime.now(timezone.utc).isoformat()
+
         task_data = json.dumps(payload.to_dict())
 
         # Push to queue (LPUSH for FIFO with BRPOP)
         await self._redis.lpush(self.queue_name, task_data)
 
         logger.info(
-            f"Enqueued task: {payload.task_id}",
+            f"[Producer] Enqueued task: {payload.task_id}",
             extra={
                 "session_id": payload.session_id,
                 "agent_id": payload.agent_id,
+                "queue_length": queue_len + 1,
             },
         )
 
@@ -136,7 +181,7 @@ class TaskProducer:
     async def wait_for_result(
         self,
         session_id: str,
-        timeout: int = 300,
+        timeout: int = RESULT_WAIT_TIMEOUT,
     ) -> dict[str, Any] | None:
         """
         Wait for a task result via pub/sub.
@@ -169,13 +214,16 @@ class TaskProducer:
                 # Check timeout
                 elapsed = asyncio.get_event_loop().time() - start_time
                 if elapsed >= timeout:
-                    logger.warning(f"Timeout waiting for result: {session_id}")
+                    logger.warning(
+                        f"[Producer] 等待结果超时 (session_id: {session_id}, "
+                        f"timeout: {timeout}s)"
+                    )
                     return None
 
                 # Get message
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True,
-                    timeout=1.0,
+                    timeout=PUBSUB_MESSAGE_TIMEOUT,
                 )
 
                 if message and message["type"] == "message":
@@ -217,7 +265,7 @@ class TaskProducer:
         length = await self._redis.llen(self.queue_name)
         await self._redis.delete(self.queue_name)
 
-        logger.warning(f"Cleared {length} tasks from queue")
+        logger.warning(f"[Producer] Cleared {length} tasks from queue")
         return length
 
 
