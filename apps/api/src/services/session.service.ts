@@ -1,8 +1,9 @@
 /**
  * Session 服务层
+ *
+ * 使用数据库持久化实现 Session/Message CRUD
  */
 
-import { v4 as uuidv4 } from 'uuid'
 import { createError } from '../middleware/errorHandler'
 import {
   SESSION_NOT_FOUND,
@@ -10,11 +11,9 @@ import {
   MESSAGE_LIMIT_EXCEEDED,
   MESSAGE_NOT_FOUND,
 } from '../constants/errorCodes'
-import {
-  MAX_PAGE_SIZE,
-  DEFAULT_PAGE_SIZE,
-  MAX_SESSION_MESSAGES,
-} from '../constants/config'
+import { MAX_SESSION_MESSAGES } from '../constants/config'
+import * as sessionRepository from '../repositories/session.repository'
+import * as messageRepository from '../repositories/message.repository'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -94,11 +93,45 @@ export interface PaginatedResult<T> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 模拟数据存储 (开发用，生产环境使用数据库)
+// 辅助函数
 // ═══════════════════════════════════════════════════════════════
 
-const sessionsStore = new Map<string, Session>()
-const messagesStore = new Map<string, Message[]>()
+/**
+ * 将数据库行转换为 Session 对象
+ */
+function rowToSession(row: sessionRepository.SessionRow): Session {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    agentId: row.agent_id,
+    userId: row.user_id,
+    status: row.status,
+    title: row.title ?? undefined,
+    metadata: row.metadata ?? undefined,
+    startedAt: row.started_at,
+    endedAt: row.ended_at ?? undefined,
+    createdAt: row.created_at,
+  }
+}
+
+/**
+ * 将数据库行转换为 Message 对象
+ */
+function rowToMessage(row: messageRepository.MessageRow): Message {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    parentId: row.parent_id ?? undefined,
+    role: row.role,
+    content: row.content,
+    toolCalls: row.tool_calls ?? undefined,
+    toolCallId: row.tool_call_id ?? undefined,
+    tokensUsed: row.tokens_used ?? undefined,
+    latencyMs: row.latency_ms ?? undefined,
+    metadata: row.metadata ?? undefined,
+    createdAt: row.created_at,
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 服务方法
@@ -112,37 +145,28 @@ export async function createSession(
   userId: string,
   input: CreateSessionInput
 ): Promise<Session> {
-  const now = new Date().toISOString()
-
-  const session: Session = {
-    id: uuidv4(),
+  const row = await sessionRepository.create({
     orgId,
     agentId: input.agentId,
     userId,
-    status: 'active',
     title: input.title,
     metadata: input.metadata,
-    startedAt: now,
-    createdAt: now,
-  }
+  })
 
-  sessionsStore.set(session.id, session)
-  messagesStore.set(session.id, [])
-
-  return session
+  return rowToSession(row)
 }
 
 /**
  * 获取会话
  */
 export async function getSession(orgId: string, sessionId: string): Promise<Session> {
-  const session = sessionsStore.get(sessionId)
+  const row = await sessionRepository.findByIdAndOrg(sessionId, orgId)
 
-  if (!session || session.orgId !== orgId) {
+  if (!row) {
     throw createError(SESSION_NOT_FOUND)
   }
 
-  return session
+  return rowToSession(row)
 }
 
 /**
@@ -153,52 +177,18 @@ export async function listSessions(
   userId: string,
   options: ListSessionsOptions = {}
 ): Promise<PaginatedResult<Session>> {
-  const {
-    page = 1,
-    limit = DEFAULT_PAGE_SIZE,
-    agentId,
-    status,
-  } = options
-
-  // 限制分页大小
-  const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
-  if (limit > MAX_PAGE_SIZE) {
-    console.warn(
-      `[SessionService] 分页大小超出限制，已截断 - 请求: ${limit}, 限制: ${MAX_PAGE_SIZE}`
-    )
-  }
-
-  let sessions = Array.from(sessionsStore.values()).filter(
-    (s) => s.orgId === orgId && s.userId === userId
-  )
-
-  // 按 Agent 筛选
-  if (agentId) {
-    sessions = sessions.filter((s) => s.agentId === agentId)
-  }
-
-  // 按状态筛选
-  if (status) {
-    sessions = sessions.filter((s) => s.status === status)
-  }
-
-  // 排序 (按创建时间倒序)
-  sessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-
-  // 分页
-  const total = sessions.length
-  const totalPages = Math.ceil(total / actualLimit)
-  const offset = (page - 1) * actualLimit
-  const data = sessions.slice(offset, offset + actualLimit)
+  const result = await sessionRepository.findByUserAndOrg({
+    orgId,
+    userId,
+    page: options.page,
+    limit: options.limit,
+    agentId: options.agentId,
+    status: options.status,
+  })
 
   return {
-    data,
-    meta: {
-      total,
-      page,
-      limit: actualLimit,
-      totalPages,
-    },
+    data: result.data.map(rowToSession),
+    meta: result.meta,
   }
 }
 
@@ -210,23 +200,20 @@ export async function updateSessionStatus(
   sessionId: string,
   status: SessionStatus
 ): Promise<Session> {
+  // 先获取会话检查状态
   const session = await getSession(orgId, sessionId)
 
   if (session.status === 'completed' || session.status === 'failed') {
     throw createError(SESSION_ALREADY_COMPLETED)
   }
 
-  const updatedSession: Session = {
-    ...session,
-    status,
-    ...(status === 'completed' || status === 'failed'
-      ? { endedAt: new Date().toISOString() }
-      : {}),
+  const row = await sessionRepository.updateStatus(sessionId, orgId, status)
+
+  if (!row) {
+    throw createError(SESSION_NOT_FOUND)
   }
 
-  sessionsStore.set(sessionId, updatedSession)
-
-  return updatedSession
+  return rowToSession(row)
 }
 
 /**
@@ -237,26 +224,31 @@ export async function updateSessionTitle(
   sessionId: string,
   title: string
 ): Promise<Session> {
-  const session = await getSession(orgId, sessionId)
+  const row = await sessionRepository.updateTitle(sessionId, orgId, title)
 
-  const updatedSession: Session = {
-    ...session,
-    title,
+  if (!row) {
+    throw createError(SESSION_NOT_FOUND)
   }
 
-  sessionsStore.set(sessionId, updatedSession)
-
-  return updatedSession
+  return rowToSession(row)
 }
 
 /**
  * 删除会话
  */
 export async function deleteSession(orgId: string, sessionId: string): Promise<void> {
-  await getSession(orgId, sessionId) // 验证会话存在
+  // 先验证会话存在
+  await getSession(orgId, sessionId)
 
-  sessionsStore.delete(sessionId)
-  messagesStore.delete(sessionId)
+  // 删除所有消息
+  await messageRepository.deleteBySessionId(sessionId)
+
+  // 删除会话
+  const deleted = await sessionRepository.remove(sessionId, orgId)
+
+  if (!deleted) {
+    throw createError(SESSION_NOT_FOUND)
+  }
 }
 
 /**
@@ -266,9 +258,12 @@ export async function getSessionMessages(
   orgId: string,
   sessionId: string
 ): Promise<Message[]> {
-  await getSession(orgId, sessionId) // 验证会话存在
+  // 先验证会话存在
+  await getSession(orgId, sessionId)
 
-  return messagesStore.get(sessionId) ?? []
+  const rows = await messageRepository.findBySessionId(sessionId)
+
+  return rows.map(rowToMessage)
 }
 
 /**
@@ -279,36 +274,37 @@ export async function addMessage(
   sessionId: string,
   input: AddMessageInput
 ): Promise<Message> {
-  await getSession(orgId, sessionId) // 验证会话存在
+  // 先验证会话存在
+  const session = await getSession(orgId, sessionId)
 
-  const messages = messagesStore.get(sessionId) ?? []
+  // 检查会话状态 - 已完成或失败的会话不允许添加消息
+  if (session.status === 'completed' || session.status === 'failed') {
+    throw createError(SESSION_ALREADY_COMPLETED)
+  }
 
   // 检查消息数量限制
-  if (messages.length >= MAX_SESSION_MESSAGES) {
+  const messageCount = await messageRepository.countBySessionId(sessionId)
+
+  if (messageCount >= MAX_SESSION_MESSAGES) {
     console.warn(
-      `[SessionService] 会话消息数已达上限 - 会话: ${sessionId}, 当前: ${messages.length}, 限制: ${MAX_SESSION_MESSAGES}`
+      `[SessionService] 会话消息数已达上限 - 会话: ${sessionId}, 当前: ${messageCount}, 限制: ${MAX_SESSION_MESSAGES}`
     )
     throw createError(MESSAGE_LIMIT_EXCEEDED)
   }
 
-  const message: Message = {
-    id: uuidv4(),
+  const row = await messageRepository.create({
     sessionId,
-    parentId: input.parentId,
     role: input.role,
     content: input.content,
+    parentId: input.parentId,
     toolCalls: input.toolCalls,
     toolCallId: input.toolCallId,
     tokensUsed: input.tokensUsed,
     latencyMs: input.latencyMs,
     metadata: input.metadata,
-    createdAt: new Date().toISOString(),
-  }
+  })
 
-  messages.push(message)
-  messagesStore.set(sessionId, messages)
-
-  return message
+  return rowToMessage(row)
 }
 
 /**
@@ -320,22 +316,19 @@ export async function updateMessage(
   messageId: string,
   updates: Partial<Pick<Message, 'content' | 'tokensUsed' | 'latencyMs' | 'metadata'>>
 ): Promise<Message> {
+  // 先验证会话存在
   await getSession(orgId, sessionId)
 
-  const messages = messagesStore.get(sessionId) ?? []
-  const messageIndex = messages.findIndex((m) => m.id === messageId)
+  const row = await messageRepository.update(messageId, {
+    content: updates.content,
+    tokensUsed: updates.tokensUsed,
+    latencyMs: updates.latencyMs,
+    metadata: updates.metadata,
+  })
 
-  if (messageIndex === -1) {
+  if (!row) {
     throw createError(MESSAGE_NOT_FOUND)
   }
 
-  const updatedMessage: Message = {
-    ...messages[messageIndex],
-    ...updates,
-  }
-
-  messages[messageIndex] = updatedMessage
-  messagesStore.set(sessionId, messages)
-
-  return updatedMessage
+  return rowToMessage(row)
 }

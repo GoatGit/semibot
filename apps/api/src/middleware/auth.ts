@@ -98,7 +98,7 @@ function extractToken(req: Request): string | null {
 }
 
 /**
- * 验证 API Key (模拟实现，实际需要查询数据库)
+ * 验证 API Key (查询数据库)
  */
 async function validateApiKey(
   apiKey: string
@@ -108,13 +108,7 @@ async function validateApiKey(
     return { valid: false, error: AUTH_API_KEY_INVALID }
   }
 
-  // TODO: 实际实现需要:
-  // 1. 从数据库查询 API Key (通过前缀匹配)
-  // 2. 验证哈希
-  // 3. 检查是否过期/吊销
-  // 4. 检查 Redis 黑名单
-
-  // 模拟验证 - 开发环境使用
+  // 开发环境快捷测试 Key
   if (process.env.NODE_ENV === 'development' && apiKey === 'sk-dev-test-key') {
     return {
       valid: true,
@@ -127,7 +121,28 @@ async function validateApiKey(
     }
   }
 
-  return { valid: false, error: AUTH_API_KEY_INVALID }
+  try {
+    // 动态导入以避免循环依赖
+    const { validateApiKey: validateApiKeyFromDb } = await import('../services/api-keys.service')
+    const result = await validateApiKeyFromDb(apiKey)
+
+    if (!result) {
+      return { valid: false, error: AUTH_API_KEY_INVALID }
+    }
+
+    return {
+      valid: true,
+      user: {
+        userId: result.userId,
+        orgId: result.orgId,
+        role: 'api_service',
+        permissions: result.permissions,
+      },
+    }
+  } catch (error) {
+    console.error('[Auth] API Key 验证失败:', error)
+    return { valid: false, error: AUTH_API_KEY_INVALID }
+  }
 }
 
 /**

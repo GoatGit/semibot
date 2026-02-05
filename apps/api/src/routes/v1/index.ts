@@ -6,6 +6,14 @@ import { Router, type Request, type Response } from 'express'
 import agentsRouter from './agents'
 import sessionsRouter from './sessions'
 import chatRouter from './chat'
+import authRouter from './auth'
+import organizationsRouter from './organizations'
+import apiKeysRouter from './api-keys'
+import skillsRouter from './skills'
+import toolsRouter from './tools'
+import mcpRouter from './mcp'
+import memoryRouter from './memory'
+import logsRouter from './logs'
 
 const router: Router = Router()
 
@@ -21,9 +29,19 @@ router.get('/health', (_req: Request, res: Response) => {
   })
 })
 
-// API 路由
+// Auth 路由 (无需认证)
+router.use('/auth', authRouter)
+
+// API 路由 (需要认证)
 router.use('/agents', agentsRouter)
 router.use('/sessions', sessionsRouter)
 router.use('/chat', chatRouter)
+router.use('/organizations', organizationsRouter)
+router.use('/api-keys', apiKeysRouter)
+router.use('/skills', skillsRouter)
+router.use('/tools', toolsRouter)
+router.use('/mcp', mcpRouter)
+router.use('/memory', memoryRouter)
+router.use('/logs', logsRouter)
 
 export default router

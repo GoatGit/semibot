@@ -1,15 +1,16 @@
 /**
  * Agent 服务层
+ *
+ * 使用数据库持久化实现 Agent CRUD
  */
 
-import { v4 as uuidv4 } from 'uuid'
-import { createError } from '../middleware/errorHandler.js'
+import { createError } from '../middleware/errorHandler'
 import {
   AGENT_NOT_FOUND,
   AGENT_INACTIVE,
   AGENT_LIMIT_EXCEEDED,
-} from '../constants/errorCodes.js'
-import { MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE } from '../constants/config.js'
+} from '../constants/errorCodes'
+import * as agentRepository from '../repositories/agent.repository'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -79,12 +80,6 @@ export interface PaginatedResult<T> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 模拟数据存储 (开发用，生产环境使用数据库)
-// ═══════════════════════════════════════════════════════════════
-
-const agentsStore = new Map<string, Agent>()
-
-// ═══════════════════════════════════════════════════════════════
 // 默认配置
 // ═══════════════════════════════════════════════════════════════
 
@@ -97,6 +92,42 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   fallbackModel: 'gpt-4o-mini',
 }
 
+const MAX_AGENTS_PER_ORG = 100
+
+// ═══════════════════════════════════════════════════════════════
+// 辅助函数
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 将数据库行转换为 Agent 对象
+ */
+function rowToAgent(row: agentRepository.AgentRow): Agent {
+  const config = row.config as Record<string, unknown>
+
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    name: row.name,
+    description: row.description ?? undefined,
+    systemPrompt: row.system_prompt,
+    config: {
+      model: (config.model as string) ?? DEFAULT_AGENT_CONFIG.model,
+      temperature: (config.temperature as number) ?? DEFAULT_AGENT_CONFIG.temperature,
+      maxTokens: (config.maxTokens as number) ?? DEFAULT_AGENT_CONFIG.maxTokens,
+      timeoutSeconds: (config.timeoutSeconds as number) ?? DEFAULT_AGENT_CONFIG.timeoutSeconds,
+      retryAttempts: config.retryAttempts as number | undefined,
+      fallbackModel: config.fallbackModel as string | undefined,
+    },
+    skills: row.skills ?? [],
+    subAgents: row.sub_agents ?? [],
+    version: row.version,
+    isActive: row.is_active,
+    isPublic: row.is_public,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 服务方法
 // ═══════════════════════════════════════════════════════════════
@@ -105,67 +136,60 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
  * 创建 Agent
  */
 export async function createAgent(orgId: string, input: CreateAgentInput): Promise<Agent> {
-  // 检查配额 (模拟)
-  const orgAgents = Array.from(agentsStore.values()).filter((a) => a.orgId === orgId)
-  const maxAgents = 100 // 从组织配额获取
+  // 检查配额
+  const count = await agentRepository.countByOrg(orgId)
 
-  if (orgAgents.length >= maxAgents) {
+  if (count >= MAX_AGENTS_PER_ORG) {
     console.warn(
-      `[AgentService] Agent 数量已达上限 - 组织: ${orgId}, 当前: ${orgAgents.length}, 限制: ${maxAgents}`
+      `[AgentService] Agent 数量已达上限 - 组织: ${orgId}, 当前: ${count}, 限制: ${MAX_AGENTS_PER_ORG}`
     )
     throw createError(AGENT_LIMIT_EXCEEDED)
   }
 
-  const now = new Date().toISOString()
-  const agent: Agent = {
-    id: uuidv4(),
+  const config = { ...DEFAULT_AGENT_CONFIG, ...input.config }
+
+  const row = await agentRepository.create({
     orgId,
     name: input.name,
     description: input.description,
     systemPrompt: input.systemPrompt,
-    config: { ...DEFAULT_AGENT_CONFIG, ...input.config },
-    skills: input.skills ?? [],
-    subAgents: input.subAgents ?? [],
-    version: 1,
-    isActive: true,
-    isPublic: input.isPublic ?? false,
-    createdAt: now,
-    updatedAt: now,
-  }
+    config,
+    skills: input.skills,
+    subAgents: input.subAgents,
+    isPublic: input.isPublic,
+  })
 
-  agentsStore.set(agent.id, agent)
-
-  return agent
+  return rowToAgent(row)
 }
 
 /**
  * 获取 Agent
  */
 export async function getAgent(orgId: string, agentId: string): Promise<Agent> {
-  const agent = agentsStore.get(agentId)
+  const row = await agentRepository.findByIdAndOrg(agentId, orgId)
 
-  if (!agent || agent.orgId !== orgId) {
+  if (!row) {
     throw createError(AGENT_NOT_FOUND)
   }
 
-  return agent
+  return rowToAgent(row)
 }
 
 /**
  * 获取 Agent (允许公开访问)
  */
 export async function getAgentPublic(agentId: string): Promise<Agent> {
-  const agent = agentsStore.get(agentId)
+  const row = await agentRepository.findById(agentId)
 
-  if (!agent) {
+  if (!row) {
     throw createError(AGENT_NOT_FOUND)
   }
 
-  if (!agent.isPublic && !agent.isActive) {
+  if (!row.is_public && !row.is_active) {
     throw createError(AGENT_NOT_FOUND)
   }
 
-  return agent
+  return rowToAgent(row)
 }
 
 /**
@@ -175,55 +199,17 @@ export async function listAgents(
   orgId: string,
   options: ListAgentsOptions = {}
 ): Promise<PaginatedResult<Agent>> {
-  const {
-    page = 1,
-    limit = DEFAULT_PAGE_SIZE,
-    isActive,
-    search,
-  } = options
-
-  // 限制分页大小
-  const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
-  if (limit > MAX_PAGE_SIZE) {
-    console.warn(
-      `[AgentService] 分页大小超出限制，已截断 - 请求: ${limit}, 限制: ${MAX_PAGE_SIZE}`
-    )
-  }
-
-  let agents = Array.from(agentsStore.values()).filter((a) => a.orgId === orgId)
-
-  // 筛选活跃状态
-  if (isActive !== undefined) {
-    agents = agents.filter((a) => a.isActive === isActive)
-  }
-
-  // 搜索
-  if (search) {
-    const searchLower = search.toLowerCase()
-    agents = agents.filter(
-      (a) =>
-        a.name.toLowerCase().includes(searchLower) ||
-        a.description?.toLowerCase().includes(searchLower)
-    )
-  }
-
-  // 排序 (按更新时间倒序)
-  agents.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-
-  // 分页
-  const total = agents.length
-  const totalPages = Math.ceil(total / actualLimit)
-  const offset = (page - 1) * actualLimit
-  const data = agents.slice(offset, offset + actualLimit)
+  const result = await agentRepository.findByOrg({
+    orgId,
+    page: options.page,
+    limit: options.limit,
+    isActive: options.isActive,
+    search: options.search,
+  })
 
   return {
-    data,
-    meta: {
-      total,
-      page,
-      limit: actualLimit,
-      totalPages,
-    },
+    data: result.data.map(rowToAgent),
+    meta: result.meta,
   }
 }
 
@@ -235,39 +221,41 @@ export async function updateAgent(
   agentId: string,
   input: UpdateAgentInput
 ): Promise<Agent> {
-  const agent = await getAgent(orgId, agentId)
+  // 先获取现有 Agent
+  const existing = await getAgent(orgId, agentId)
 
-  const updatedAgent: Agent = {
-    ...agent,
-    ...(input.name !== undefined && { name: input.name }),
-    ...(input.description !== undefined && { description: input.description }),
-    ...(input.systemPrompt !== undefined && { systemPrompt: input.systemPrompt }),
-    ...(input.config !== undefined && { config: { ...agent.config, ...input.config } }),
-    ...(input.skills !== undefined && { skills: input.skills }),
-    ...(input.subAgents !== undefined && { subAgents: input.subAgents }),
-    ...(input.isActive !== undefined && { isActive: input.isActive }),
-    ...(input.isPublic !== undefined && { isPublic: input.isPublic }),
-    version: agent.version + 1,
-    updatedAt: new Date().toISOString(),
+  // 合并配置
+  const config = input.config
+    ? { ...existing.config, ...input.config }
+    : undefined
+
+  const row = await agentRepository.update(agentId, orgId, {
+    name: input.name,
+    description: input.description,
+    systemPrompt: input.systemPrompt,
+    config,
+    skills: input.skills,
+    subAgents: input.subAgents,
+    isActive: input.isActive,
+    isPublic: input.isPublic,
+  })
+
+  if (!row) {
+    throw createError(AGENT_NOT_FOUND)
   }
 
-  agentsStore.set(agentId, updatedAgent)
-
-  return updatedAgent
+  return rowToAgent(row)
 }
 
 /**
  * 删除 Agent (软删除)
  */
 export async function deleteAgent(orgId: string, agentId: string): Promise<void> {
-  const agent = await getAgent(orgId, agentId)
+  const deleted = await agentRepository.softDelete(agentId, orgId)
 
-  // 软删除 - 标记为不活跃
-  agentsStore.set(agentId, {
-    ...agent,
-    isActive: false,
-    updatedAt: new Date().toISOString(),
-  })
+  if (!deleted) {
+    throw createError(AGENT_NOT_FOUND)
+  }
 }
 
 /**
