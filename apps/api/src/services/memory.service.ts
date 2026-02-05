@@ -163,11 +163,11 @@ export async function listMemories(
  * 搜索相似记忆
  */
 export async function searchSimilarMemories(
-  _orgId: string,
+  orgId: string,
   input: SearchMemoryInput
 ): Promise<Array<Memory & { similarity: number }>> {
-  // Note: orgId is reserved for future multi-tenant filtering
   const results = await memoryRepository.searchSimilar(
+    orgId,
     input.agentId,
     input.embedding,
     input.limit ?? 10,

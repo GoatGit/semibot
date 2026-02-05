@@ -165,6 +165,7 @@ export async function findAll(params: ListMemoriesParams): Promise<PaginatedResu
  * 搜索相似记忆（向量检索）
  */
 export async function searchSimilar(
+  orgId: string,
   agentId: string,
   embedding: number[],
   limit: number = 10,
@@ -173,7 +174,8 @@ export async function searchSimilar(
   const result = await sql`
     SELECT *, (1 - (embedding <=> ${JSON.stringify(embedding)}::vector))::FLOAT as similarity
     FROM memories
-    WHERE agent_id = ${agentId}
+    WHERE org_id = ${orgId}
+      AND agent_id = ${agentId}
       AND (expires_at IS NULL OR expires_at > NOW())
       AND embedding IS NOT NULL
       AND (1 - (embedding <=> ${JSON.stringify(embedding)}::vector)) >= ${minSimilarity}

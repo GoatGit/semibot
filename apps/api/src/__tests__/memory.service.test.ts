@@ -178,6 +178,7 @@ describe('Memory Service', () => {
       expect(result).toHaveLength(1)
       expect(result[0].similarity).toBe(0.95)
       expect(mockMemoryRepository.searchSimilar).toHaveBeenCalledWith(
+        mockOrgId,
         mockAgentId,
         embedding,
         10,
