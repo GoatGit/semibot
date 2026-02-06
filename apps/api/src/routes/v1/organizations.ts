@@ -71,9 +71,9 @@ router.get('/current', authenticate, async (req: AuthRequest, res: Response) => 
         plan: org.plan,
         quota: org.quota,
         settings: org.settings,
-        owner_id: org.ownerId,
-        is_active: org.isActive,
-        created_at: org.createdAt,
+        ownerId: org.ownerId,
+        isActive: org.isActive,
+        createdAt: org.createdAt,
       },
     })
   } catch (error) {
@@ -118,7 +118,7 @@ router.put('/current', authenticate, async (req: AuthRequest, res: Response) => 
         name: org.name,
         slug: org.slug,
         settings: org.settings,
-        updated_at: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       },
     })
   } catch (error) {
@@ -163,11 +163,11 @@ router.get('/current/members', authenticate, async (req: AuthRequest, res: Respo
         email: m.email,
         name: m.name,
         role: m.role,
-        joined_at: m.joinedAt,
-        last_login_at: m.lastLoginAt,
+        joinedAt: m.joinedAt,
+        lastLoginAt: m.lastLoginAt,
       })),
       meta: {
-        next_cursor: result.nextCursor,
+        nextCursor: result.nextCursor,
       },
     })
   } catch (error) {

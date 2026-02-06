@@ -347,3 +347,208 @@ export interface SSEErrorData {
   code: string
   message: string
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Memory 类型
+// ═══════════════════════════════════════════════════════════════
+
+export type MemoryType = 'episodic' | 'semantic' | 'procedural'
+
+export interface Memory {
+  id: string
+  agentId: string
+  sessionId?: string
+  content: string
+  embedding?: number[]
+  memoryType: MemoryType
+  importance: number
+  metadata: Record<string, unknown>
+  expiresAt?: string
+  createdAt: string
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 执行日志类型
+// ═══════════════════════════════════════════════════════════════
+
+export interface ExecutionLog {
+  id: string
+  orgId: string
+  agentId: string
+  sessionId: string
+  requestId?: string
+  stepId?: string
+  actionId?: string
+  state: string
+  actionType?: string
+  actionName?: string
+  actionInput?: Record<string, unknown>
+  actionOutput?: Record<string, unknown>
+  errorCode?: string
+  errorMessage?: string
+  retryCount: number
+  durationMs?: number
+  tokensInput: number
+  tokensOutput: number
+  model?: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DTO 类型 (用于 API 请求)
+// ═══════════════════════════════════════════════════════════════
+
+export interface AgentModelConfigInput {
+  model?: string
+  temperature?: number
+  maxTokens?: number
+  timeoutSeconds?: number
+  retryAttempts?: number
+  fallbackModel?: string
+}
+
+export interface CreateAgentInput {
+  name: string
+  description?: string
+  systemPrompt: string
+  config?: AgentModelConfigInput
+  skills?: string[]
+  subAgents?: string[]
+  isPublic?: boolean
+}
+
+export interface UpdateAgentInput {
+  name?: string
+  description?: string
+  systemPrompt?: string
+  config?: AgentModelConfigInput
+  skills?: string[]
+  subAgents?: string[]
+  isActive?: boolean
+  isPublic?: boolean
+}
+
+export interface SkillToolInput {
+  name: string
+  type: 'function' | 'mcp'
+  config?: Record<string, unknown>
+}
+
+export interface CreateSkillInput {
+  name: string
+  description?: string
+  triggerKeywords?: string[]
+  tools?: SkillToolInput[]
+  config?: {
+    maxExecutionTime?: number
+    retryAttempts?: number
+    requiresApproval?: boolean
+  }
+}
+
+export interface UpdateSkillInput {
+  name?: string
+  description?: string
+  triggerKeywords?: string[]
+  tools?: SkillToolInput[]
+  config?: {
+    maxExecutionTime?: number
+    retryAttempts?: number
+    requiresApproval?: boolean
+  }
+  isActive?: boolean
+}
+
+export interface CreateToolInput {
+  name: string
+  description?: string
+  type: string
+  schema?: {
+    parameters?: Record<string, unknown>
+    returns?: Record<string, unknown>
+  }
+  config?: {
+    timeout?: number
+    retryAttempts?: number
+    requiresApproval?: boolean
+    rateLimit?: number
+  }
+}
+
+export interface UpdateToolInput {
+  name?: string
+  description?: string
+  type?: string
+  schema?: {
+    parameters?: Record<string, unknown>
+    returns?: Record<string, unknown>
+  }
+  config?: {
+    timeout?: number
+    retryAttempts?: number
+    requiresApproval?: boolean
+    rateLimit?: number
+  }
+  isActive?: boolean
+}
+
+export type McpTransport = 'stdio' | 'http' | 'websocket'
+export type McpAuthType = 'none' | 'api_key' | 'oauth'
+
+export interface CreateMcpServerInput {
+  name: string
+  description?: string
+  endpoint: string
+  transport: McpTransport
+  authType?: McpAuthType
+  authConfig?: {
+    apiKey?: string
+    oauthClientId?: string
+    oauthClientSecret?: string
+  }
+}
+
+export interface UpdateMcpServerInput {
+  name?: string
+  description?: string
+  endpoint?: string
+  transport?: McpTransport
+  authType?: McpAuthType
+  authConfig?: {
+    apiKey?: string
+    oauthClientId?: string
+    oauthClientSecret?: string
+  }
+  isActive?: boolean
+}
+
+export interface CreateMemoryInput {
+  agentId: string
+  sessionId?: string
+  userId?: string
+  content: string
+  embedding?: number[]
+  memoryType?: MemoryType
+  importance?: number
+  metadata?: Record<string, unknown>
+  expiresAt?: string
+}
+
+export interface SearchMemoriesInput {
+  agentId: string
+  embedding: number[]
+  limit?: number
+  minSimilarity?: number
+}
+
+export interface CreateApiKeyInput {
+  name: string
+  permissions?: string[]
+  expiresAt?: string
+}
+
+export interface UpdateOrganizationInput {
+  name?: string
+  settings?: Record<string, unknown>
+}

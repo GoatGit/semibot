@@ -29,7 +29,7 @@ const loginSchema = z.object({
 })
 
 const refreshSchema = z.object({
-  refresh_token: z.string().min(1, '刷新令牌不能为空'),
+  refreshToken: z.string().min(1, '刷新令牌不能为空'),
 })
 
 // ═══════════════════════════════════════════════════════════════
@@ -98,8 +98,8 @@ router.post('/register', async (req: Request, res: Response) => {
         user: result.user,
         organization: result.organization,
         token: result.token,
-        refresh_token: result.refreshToken,
-        expires_at: result.expiresAt,
+        refreshToken: result.refreshToken,
+        expiresAt: result.expiresAt,
       },
     })
   } catch (error) {
@@ -139,8 +139,8 @@ router.post('/login', async (req: Request, res: Response) => {
       data: {
         user: result.user,
         token: result.token,
-        refresh_token: result.refreshToken,
-        expires_at: result.expiresAt,
+        refreshToken: result.refreshToken,
+        expiresAt: result.expiresAt,
       },
     })
   } catch (error) {
@@ -171,17 +171,17 @@ router.post('/refresh', async (req: Request, res: Response) => {
       return
     }
 
-    const { refresh_token } = validation.data
+    const { refreshToken } = validation.data
 
-    const result = await authService.refreshToken(refresh_token)
+    const result = await authService.refreshToken(refreshToken)
 
     res.json({
       success: true,
       data: {
         user: result.user,
         token: result.token,
-        refresh_token: result.refreshToken,
-        expires_at: result.expiresAt,
+        refreshToken: result.refreshToken,
+        expiresAt: result.expiresAt,
       },
     })
   } catch (error) {

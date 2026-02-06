@@ -19,7 +19,7 @@ const router: Router = Router()
 const createApiKeySchema = z.object({
   name: z.string().min(1, '名称不能为空').max(100, '名称最长100字符'),
   permissions: z.array(z.string()).optional(),
-  expires_at: z.string().datetime().optional(),
+  expiresAt: z.string().datetime().optional(),
 })
 
 // ═══════════════════════════════════════════════════════════════
@@ -73,12 +73,12 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
       return
     }
 
-    const { name, permissions, expires_at } = validation.data
+    const { name, permissions, expiresAt } = validation.data
 
     const apiKey = await apiKeysService.createApiKey(req.user!.orgId, req.user!.userId, {
       name,
       permissions,
-      expiresAt: expires_at,
+      expiresAt,
     })
 
     res.status(201).json({
@@ -87,10 +87,10 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
         id: apiKey.id,
         name: apiKey.name,
         key: apiKey.key, // 完整密钥只在创建时返回一次
-        key_prefix: apiKey.keyPrefix,
+        keyPrefix: apiKey.keyPrefix,
         permissions: apiKey.permissions,
-        expires_at: apiKey.expiresAt,
-        created_at: apiKey.createdAt,
+        expiresAt: apiKey.expiresAt,
+        createdAt: apiKey.createdAt,
       },
     })
   } catch (error) {
@@ -111,11 +111,11 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
       data: keys.map((k) => ({
         id: k.id,
         name: k.name,
-        key_prefix: k.keyPrefix,
+        keyPrefix: k.keyPrefix,
         permissions: k.permissions,
-        last_used_at: k.lastUsedAt,
-        expires_at: k.expiresAt,
-        is_active: k.isActive,
+        lastUsedAt: k.lastUsedAt,
+        expiresAt: k.expiresAt,
+        isActive: k.isActive,
       })),
     })
   } catch (error) {
