@@ -4,14 +4,10 @@ import { useState } from 'react'
 import clsx from 'clsx'
 import { ZoomIn, Download, X } from 'lucide-react'
 
+import type { ImageData } from '@/types'
+
 interface ImageViewProps {
-  data: {
-    src: string
-    alt?: string
-    caption?: string
-    width?: number
-    height?: number
-  }
+  data: ImageData
   metadata?: Record<string, unknown>
 }
 
@@ -28,20 +24,21 @@ export function ImageView({ data }: ImageViewProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
 
-  const { src, alt = '图片', caption, width, height } = data
+  // 使用类型定义的字段名: url, alt, caption, width, height
+  const { url, alt = '图片', caption, width, height } = data
 
   const handleDownload = async () => {
     try {
-      const response = await fetch(src)
+      const response = await fetch(url)
       const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
+      const blobUrl = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url
+      a.href = blobUrl
       a.download = alt || 'image'
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
-      window.URL.revokeObjectURL(url)
+      window.URL.revokeObjectURL(blobUrl)
     } catch (error) {
       console.error('[ImageView] 下载失败:', error)
     }
@@ -68,7 +65,7 @@ export function ImageView({ data }: ImageViewProps) {
 
         {/* 图片 */}
         <img
-          src={src}
+          src={url}
           alt={alt}
           width={width}
           height={height}
@@ -144,7 +141,7 @@ export function ImageView({ data }: ImageViewProps) {
 
           {/* 放大的图片 */}
           <img
-            src={src}
+            src={url}
             alt={alt}
             className="max-w-[90vw] max-h-[90vh] object-contain"
             onClick={(e) => e.stopPropagation()}

@@ -15,7 +15,8 @@ export interface ProgressViewProps {
 }
 
 export function ProgressView({ data, className }: ProgressViewProps) {
-  const percentage = Math.min(100, Math.max(0, (data.progress / data.total) * 100))
+  // 使用类型定义的字段名: current, total, percentage, label
+  const percentage = data.percentage ?? Math.min(100, Math.max(0, (data.current / data.total) * 100))
   const isIndeterminate = data.total <= 0
 
   return (
@@ -23,7 +24,7 @@ export function ProgressView({ data, className }: ProgressViewProps) {
       {/* 标签和百分比 */}
       <div className="flex items-center justify-between text-sm">
         <span className="text-text-secondary">
-          {data.message || '处理中'}
+          {data.label || '处理中'}
         </span>
         {!isIndeterminate && (
           <span className="text-text-primary font-mono">
@@ -67,7 +68,7 @@ export function ProgressView({ data, className }: ProgressViewProps) {
       {/* 详细进度 */}
       {!isIndeterminate && data.total > 0 && (
         <div className="text-xs text-text-tertiary text-right">
-          {data.progress} / {data.total}
+          {data.current} / {data.total}
         </div>
       )}
     </div>

@@ -53,6 +53,12 @@ export { ProgressView, type ProgressViewProps } from './process/ProgressView'
 export { ReportView, type ReportViewProps } from './report/ReportView'
 
 // ═══════════════════════════════════════════════════════════════
+// 媒体类组件
+// ═══════════════════════════════════════════════════════════════
+export { ImageView } from './media/ImageView'
+export { FileDownload } from './media/FileDownload'
+
+// ═══════════════════════════════════════════════════════════════
 // 反馈类组件
 // ═══════════════════════════════════════════════════════════════
 export { ErrorView, type ErrorViewProps } from './feedback/ErrorView'

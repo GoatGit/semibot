@@ -9,6 +9,10 @@ import {
   Bar,
   PieChart,
   Pie,
+  ScatterChart,
+  Scatter,
+  AreaChart,
+  Area,
   Cell,
   XAxis,
   YAxis,
@@ -22,7 +26,7 @@ import type { ChartData } from '@/types'
 /**
  * Chart - 图表组件
  *
- * 使用 Recharts 渲染图表，支持 line/bar/pie 类型
+ * 使用 Recharts 渲染图表，支持 line/bar/pie/scatter/area 类型
  */
 
 export interface ChartProps {
@@ -202,6 +206,105 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
               iconSize={8}
             />
           </PieChart>
+        )
+
+      case 'scatter':
+        return (
+          <ScatterChart>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--border-subtle)"
+            />
+            <XAxis
+              dataKey="name"
+              stroke="var(--text-tertiary)"
+              fontSize={12}
+              tickLine={false}
+              axisLine={{ stroke: 'var(--border-default)' }}
+              name={data.xAxis?.name}
+            />
+            <YAxis
+              stroke="var(--text-tertiary)"
+              fontSize={12}
+              tickLine={false}
+              axisLine={{ stroke: 'var(--border-default)' }}
+              name={data.yAxis?.name}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'var(--bg-elevated)',
+                border: '1px solid var(--border-default)',
+                borderRadius: '8px',
+                fontSize: '12px',
+              }}
+              labelStyle={{ color: 'var(--text-primary)' }}
+              cursor={{ strokeDasharray: '3 3' }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: '12px' }}
+              iconType="circle"
+              iconSize={8}
+            />
+            {data.series.map((series, index) => (
+              <Scatter
+                key={series.name}
+                name={series.name}
+                data={chartData}
+                fill={CHART_COLORS[index % CHART_COLORS.length]}
+              />
+            ))}
+          </ScatterChart>
+        )
+
+      case 'area':
+        return (
+          <AreaChart data={chartData}>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--border-subtle)"
+              vertical={false}
+            />
+            <XAxis
+              dataKey="name"
+              stroke="var(--text-tertiary)"
+              fontSize={12}
+              tickLine={false}
+              axisLine={{ stroke: 'var(--border-default)' }}
+            />
+            <YAxis
+              stroke="var(--text-tertiary)"
+              fontSize={12}
+              tickLine={false}
+              axisLine={{ stroke: 'var(--border-default)' }}
+              name={data.yAxis?.name}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'var(--bg-elevated)',
+                border: '1px solid var(--border-default)',
+                borderRadius: '8px',
+                fontSize: '12px',
+              }}
+              labelStyle={{ color: 'var(--text-primary)' }}
+              itemStyle={{ color: 'var(--text-secondary)' }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: '12px' }}
+              iconType="rect"
+              iconSize={10}
+            />
+            {data.series.map((series, index) => (
+              <Area
+                key={series.name}
+                type="monotone"
+                dataKey={series.name}
+                stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                fill={CHART_COLORS[index % CHART_COLORS.length]}
+                fillOpacity={0.3}
+                strokeWidth={2}
+              />
+            ))}
+          </AreaChart>
         )
 
       default:

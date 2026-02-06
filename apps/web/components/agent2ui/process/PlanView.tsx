@@ -38,6 +38,12 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
             <XCircle className="w-4 h-4 text-neutral-0" />
           </div>
         )
+      case 'skipped':
+        return (
+          <div className="w-8 h-8 rounded-full bg-neutral-600 flex items-center justify-center">
+            <Circle className="w-3 h-3 text-neutral-400" />
+          </div>
+        )
       case 'pending':
       default:
         return (
@@ -54,6 +60,7 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
       running: '进行中',
       completed: '已完成',
       failed: '失败',
+      skipped: '已跳过',
     }
     return labels[status]
   }
@@ -73,6 +80,7 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
                     step.status === 'running' && 'text-primary-500',
                     step.status === 'completed' && 'text-success-500',
                     step.status === 'failed' && 'text-error-500',
+                    step.status === 'skipped' && 'text-neutral-400',
                     step.status === 'pending' && 'text-text-tertiary'
                   )}
                 >
@@ -127,6 +135,7 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
                   step.status === 'running' && 'text-primary-500',
                   step.status === 'completed' && 'text-text-primary',
                   step.status === 'failed' && 'text-error-500',
+                  step.status === 'skipped' && 'text-neutral-400',
                   step.status === 'pending' && 'text-text-secondary'
                 )}
               >
@@ -138,6 +147,7 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
                   step.status === 'running' && 'bg-primary-500/10 text-primary-500',
                   step.status === 'completed' && 'bg-success-500/10 text-success-500',
                   step.status === 'failed' && 'bg-error-500/10 text-error-500',
+                  step.status === 'skipped' && 'bg-neutral-700/50 text-neutral-400',
                   step.status === 'pending' && 'bg-neutral-700/50 text-text-tertiary'
                 )}
               >
