@@ -7,6 +7,7 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { sql } from '../lib/db'
+import * as redis from '../lib/redis'
 import {
   BCRYPT_ROUNDS,
   JWT_EXPIRES_IN_SECONDS,
@@ -349,11 +350,88 @@ export async function refreshToken(token: string): Promise<Omit<AuthResult, 'org
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Token 黑名单
+// ═══════════════════════════════════════════════════════════════
+
+/** Token 黑名单 Redis Key 前缀 */
+const TOKEN_BLACKLIST_PREFIX = 'token:blacklist:'
+
 /**
- * 登出 (可选: 将 Token 加入黑名单)
- * 目前为简单实现，客户端直接删除 Token 即可
+ * 将 Token 添加到黑名单
+ *
+ * @param token - 要加入黑名单的 Token
+ * @param ttlSeconds - 黑名单 TTL (应设置为 Token 剩余有效期)
  */
-export async function logout(userId: string): Promise<void> {
-  // TODO: 如需实现 Token 黑名单，可在此处将 Token 加入 Redis 黑名单
+export async function addToBlacklist(token: string, ttlSeconds: number): Promise<void> {
+  if (ttlSeconds <= 0) {
+    console.warn(`[Auth] Token 黑名单 TTL <= 0，跳过添加 (TTL: ${ttlSeconds}s)`)
+    return
+  }
+
+  const key = `${TOKEN_BLACKLIST_PREFIX}${token}`
+  await redis.setWithExpiry(key, '1', ttlSeconds)
+  console.log(`[Auth] Token 已加入黑名单 (TTL: ${ttlSeconds}s)`)
+}
+
+/**
+ * 检查 Token 是否在黑名单中
+ *
+ * @param token - 要检查的 Token
+ * @returns 是否在黑名单中
+ */
+export async function isBlacklisted(token: string): Promise<boolean> {
+  const key = `${TOKEN_BLACKLIST_PREFIX}${token}`
+  return redis.exists(key)
+}
+
+/**
+ * 计算 Token 剩余有效期 (秒)
+ *
+ * @param token - JWT Token
+ * @returns 剩余有效期 (秒)，如果 Token 无效或已过期返回 0
+ */
+function getTokenRemainingTTL(token: string): number {
+  try {
+    const decoded = jwt.decode(token) as { exp?: number } | null
+    if (!decoded?.exp) {
+      return 0
+    }
+    const now = Math.floor(Date.now() / 1000)
+    const remaining = decoded.exp - now
+    return remaining > 0 ? remaining : 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * 登出 - 将 Token 加入黑名单
+ *
+ * @param userId - 用户 ID (用于日志)
+ * @param token - 当前访问 Token
+ * @param refreshTokenValue - 刷新 Token (可选)
+ */
+export async function logout(
+  userId: string,
+  token?: string,
+  refreshTokenValue?: string
+): Promise<void> {
+  // 将访问 Token 加入黑名单
+  if (token) {
+    const accessTTL = getTokenRemainingTTL(token)
+    if (accessTTL > 0) {
+      await addToBlacklist(token, accessTTL)
+    }
+  }
+
+  // 将刷新 Token 加入黑名单
+  if (refreshTokenValue) {
+    const refreshTTL = getTokenRemainingTTL(refreshTokenValue)
+    if (refreshTTL > 0) {
+      await addToBlacklist(refreshTokenValue, refreshTTL)
+    }
+  }
+
   console.log(`[Auth] 用户 ${userId} 已登出`)
 }

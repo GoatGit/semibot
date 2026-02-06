@@ -4,12 +4,14 @@
  * 使用数据库持久化实现 MCP Server CRUD
  */
 
+import { spawn } from 'child_process'
 import { createError } from '../middleware/errorHandler'
 import {
   MCP_SERVER_NOT_FOUND,
   MCP_SERVER_LIMIT_EXCEEDED,
   MCP_CONNECTION_FAILED,
 } from '../constants/errorCodes'
+import { MCP_CONNECTION_TIMEOUT_MS } from '../constants/config'
 import * as mcpRepository from '../repositories/mcp.repository'
 
 // ═══════════════════════════════════════════════════════════════
@@ -231,26 +233,316 @@ export async function deleteMcpServer(orgId: string, serverId: string): Promise<
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// MCP 连接测试辅助函数
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * MCP 初始化请求消息
+ */
+const MCP_INITIALIZE_REQUEST = JSON.stringify({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: {
+    protocolVersion: '2024-11-05',
+    capabilities: {},
+    clientInfo: {
+      name: 'semibot',
+      version: '1.0.0',
+    },
+  },
+})
+
+/**
+ * MCP 列出工具请求消息
+ */
+const MCP_LIST_TOOLS_REQUEST = JSON.stringify({
+  jsonrpc: '2.0',
+  id: 2,
+  method: 'tools/list',
+  params: {},
+})
+
+/**
+ * MCP 列出资源请求消息
+ */
+const MCP_LIST_RESOURCES_REQUEST = JSON.stringify({
+  jsonrpc: '2.0',
+  id: 3,
+  method: 'resources/list',
+  params: {},
+})
+
+/**
+ * 测试 stdio 类型的 MCP Server 连接
+ *
+ * @param endpoint - 可执行文件路径 (如: npx -y @modelcontextprotocol/server-filesystem)
+ * @param authConfig - 认证配置
+ * @returns 连接测试结果
+ */
+async function testStdioConnection(
+  endpoint: string,
+  authConfig?: McpAuthConfig
+): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
+  return new Promise((resolve, reject) => {
+    const parts = endpoint.split(' ')
+    const command = parts[0]
+    const args = parts.slice(1)
+
+    // 设置环境变量
+    const env = { ...process.env }
+    if (authConfig?.apiKey) {
+      env.MCP_API_KEY = authConfig.apiKey
+    }
+
+    const child = spawn(command, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let initializeDone = false
+    let toolsReceived = false
+    let resourcesReceived = false
+    const tools: McpTool[] = []
+    const resources: McpResource[] = []
+
+    const timeout = setTimeout(() => {
+      child.kill()
+      console.warn(`[McpService] stdio 连接超时 (限制: ${MCP_CONNECTION_TIMEOUT_MS}ms)`)
+      reject(new Error('连接超时'))
+    }, MCP_CONNECTION_TIMEOUT_MS)
+
+    child.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString()
+
+      // 解析 JSON-RPC 响应
+      const lines = stdout.split('\n')
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const response = JSON.parse(line)
+
+          if (response.id === 1 && response.result) {
+            // 初始化成功
+            initializeDone = true
+            // 发送列出工具请求
+            child.stdin.write(MCP_LIST_TOOLS_REQUEST + '\n')
+            // 发送列出资源请求
+            child.stdin.write(MCP_LIST_RESOURCES_REQUEST + '\n')
+          } else if (response.id === 2 && response.result?.tools) {
+            // 工具列表
+            toolsReceived = true
+            for (const tool of response.result.tools) {
+              tools.push({
+                name: tool.name,
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+              })
+            }
+          } else if (response.id === 3) {
+            // 资源列表 (可能为空)
+            resourcesReceived = true
+            if (response.result?.resources) {
+              for (const resource of response.result.resources) {
+                resources.push({
+                  uri: resource.uri,
+                  name: resource.name,
+                  description: resource.description,
+                  mimeType: resource.mimeType,
+                })
+              }
+            }
+          }
+
+          // 所有请求都完成后关闭
+          if (initializeDone && toolsReceived && resourcesReceived) {
+            clearTimeout(timeout)
+            child.kill()
+            resolve({ tools, resources })
+          }
+        } catch {
+          // 不是有效的 JSON，忽略
+        }
+      }
+      // 保留未完成的行
+      stdout = lines[lines.length - 1]
+    })
+
+    child.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
+
+    child.on('error', (error) => {
+      clearTimeout(timeout)
+      console.error('[McpService] stdio 进程错误:', error.message)
+      reject(new Error(`进程启动失败: ${error.message}`))
+    })
+
+    child.on('close', (code) => {
+      clearTimeout(timeout)
+      if (!initializeDone) {
+        console.error('[McpService] stdio 进程退出，未完成初始化:', stderr)
+        reject(new Error(`进程异常退出 (code: ${code})`))
+      }
+    })
+
+    // 发送初始化请求
+    child.stdin.write(MCP_INITIALIZE_REQUEST + '\n')
+  })
+}
+
+/**
+ * 测试 HTTP/SSE 类型的 MCP Server 连接
+ *
+ * @param endpoint - HTTP 端点 URL
+ * @param authConfig - 认证配置
+ * @returns 连接测试结果
+ */
+async function testHttpConnection(
+  endpoint: string,
+  authConfig?: McpAuthConfig
+): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  if (authConfig?.apiKey) {
+    headers['Authorization'] = `Bearer ${authConfig.apiKey}`
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), MCP_CONNECTION_TIMEOUT_MS)
+
+  try {
+    // 发送初始化请求
+    const initResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: MCP_INITIALIZE_REQUEST,
+      signal: controller.signal,
+    })
+
+    if (!initResponse.ok) {
+      throw new Error(`HTTP ${initResponse.status}: ${initResponse.statusText}`)
+    }
+
+    const initResult = await initResponse.json() as { error?: { message: string }; result?: unknown }
+    if (initResult.error) {
+      throw new Error(`MCP 初始化失败: ${initResult.error.message}`)
+    }
+
+    // 获取工具列表
+    const toolsResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: MCP_LIST_TOOLS_REQUEST,
+      signal: controller.signal,
+    })
+
+    const toolsResult = await toolsResponse.json() as { result?: { tools?: Record<string, unknown>[] } }
+    const tools: McpTool[] = (toolsResult.result?.tools || []).map((tool: Record<string, unknown>) => ({
+      name: tool.name as string,
+      description: tool.description as string | undefined,
+      inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+    }))
+
+    // 获取资源列表
+    const resourcesResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: MCP_LIST_RESOURCES_REQUEST,
+      signal: controller.signal,
+    })
+
+    const resourcesResult = await resourcesResponse.json() as { result?: { resources?: Record<string, unknown>[] } }
+    const resources: McpResource[] = (resourcesResult.result?.resources || []).map((resource: Record<string, unknown>) => ({
+      uri: resource.uri as string,
+      name: resource.name as string,
+      description: resource.description as string | undefined,
+      mimeType: resource.mimeType as string | undefined,
+    }))
+
+    clearTimeout(timeout)
+    return { tools, resources }
+  } catch (error) {
+    clearTimeout(timeout)
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.warn(`[McpService] HTTP 连接超时 (限制: ${MCP_CONNECTION_TIMEOUT_MS}ms)`)
+      throw new Error('连接超时')
+    }
+    throw error
+  }
+}
+
+/**
+ * 测试 WebSocket 类型的 MCP Server 连接
+ *
+ * @param endpoint - WebSocket 端点 URL
+ * @param authConfig - 认证配置
+ * @returns 连接测试结果
+ */
+async function testWebSocketConnection(
+  endpoint: string,
+  authConfig?: McpAuthConfig
+): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
+  // WebSocket 实现需要 ws 库，这里使用简化的 HTTP 回退
+  // 大多数 MCP Server 同时支持 HTTP 和 WebSocket
+  const httpEndpoint = endpoint.replace(/^ws/, 'http')
+  console.log(`[McpService] WebSocket 端点回退到 HTTP: ${httpEndpoint}`)
+  return testHttpConnection(httpEndpoint, authConfig)
+}
+
 /**
  * 测试 MCP Server 连接
  */
-export async function testConnection(orgId: string, serverId: string): Promise<{ success: boolean; tools: McpTool[]; resources: McpResource[] }> {
+export async function testConnection(
+  orgId: string,
+  serverId: string
+): Promise<{ success: boolean; tools: McpTool[]; resources: McpResource[]; message?: string }> {
   const server = await getMcpServer(orgId, serverId)
 
-  try {
-    // TODO: 实现实际的 MCP 连接测试
-    // 这里是一个占位实现，实际应该使用 MCP SDK 进行连接测试
+  // 更新状态为连接中
+  await mcpRepository.update(serverId, orgId, {
+    status: 'connecting',
+  })
 
-    // 模拟连接成功，更新状态
+  try {
+    let result: { tools: McpTool[]; resources: McpResource[] }
+
+    switch (server.transport) {
+      case 'stdio':
+        result = await testStdioConnection(server.endpoint, server.authConfig)
+        break
+      case 'http':
+        result = await testHttpConnection(server.endpoint, server.authConfig)
+        break
+      case 'websocket':
+        result = await testWebSocketConnection(server.endpoint, server.authConfig)
+        break
+      default:
+        throw new Error(`不支持的传输类型: ${server.transport}`)
+    }
+
+    // 更新状态为已连接，同步工具和资源
     await mcpRepository.update(serverId, orgId, {
       status: 'connected',
       lastConnectedAt: new Date().toISOString(),
+      tools: result.tools,
+      resources: result.resources,
     })
+
+    console.log(
+      `[McpService] MCP Server 连接成功 - Server: ${serverId}, Tools: ${result.tools.length}, Resources: ${result.resources.length}`
+    )
 
     return {
       success: true,
-      tools: server.tools,
-      resources: server.resources,
+      tools: result.tools,
+      resources: result.resources,
+      message: '连接成功',
     }
   } catch (error) {
     // 更新状态为错误
@@ -258,8 +550,10 @@ export async function testConnection(orgId: string, serverId: string): Promise<{
       status: 'error',
     })
 
-    console.error(`[McpService] MCP Server 连接失败 - Server: ${serverId}, Error:`, error)
-    throw createError(MCP_CONNECTION_FAILED)
+    const errorMessage = error instanceof Error ? error.message : '未知错误'
+    console.error(`[McpService] MCP Server 连接失败 - Server: ${serverId}, Error: ${errorMessage}`)
+
+    throw createError(MCP_CONNECTION_FAILED, errorMessage)
   }
 }
 

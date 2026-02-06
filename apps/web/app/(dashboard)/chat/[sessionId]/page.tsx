@@ -5,6 +5,12 @@ import { useParams } from 'next/navigation'
 import clsx from 'clsx'
 import { Send, Paperclip, Mic, StopCircle, Bot, User } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import {
+  MOCK_RESPONSE_DELAY_MS,
+  TYPING_INDICATOR_DELAYS,
+  TIME_FORMAT_OPTIONS,
+  DEFAULT_LOCALE,
+} from '@/constants/config'
 
 interface Message {
   id: string
@@ -63,7 +69,7 @@ export default function ChatSessionPage() {
 
     // 模拟 Agent 回复
     // TODO: 实际实现时调用 API
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await new Promise((resolve) => setTimeout(resolve, MOCK_RESPONSE_DELAY_MS))
 
     const agentMessage: Message = {
       id: `msg-${Date.now() + 1}`,
@@ -108,11 +114,11 @@ export default function ChatSessionPage() {
                   <span className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse" />
                   <span
                     className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse"
-                    style={{ animationDelay: '0.2s' }}
+                    style={{ animationDelay: `${TYPING_INDICATOR_DELAYS.DOT_2}s` }}
                   />
                   <span
                     className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse"
-                    style={{ animationDelay: '0.4s' }}
+                    style={{ animationDelay: `${TYPING_INDICATOR_DELAYS.DOT_3}s` }}
                   />
                 </div>
               </div>
@@ -236,10 +242,7 @@ function MessageBubble({ message }: MessageBubbleProps) {
           )}
         >
           <span>
-            {message.timestamp.toLocaleTimeString('zh-CN', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
+            {message.timestamp.toLocaleTimeString(DEFAULT_LOCALE, TIME_FORMAT_OPTIONS)}
           </span>
           {isUser && message.status === 'sending' && <span>发送中...</span>}
           {isUser && message.status === 'sent' && <span>已发送</span>}

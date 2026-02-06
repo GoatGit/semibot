@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
+import { MCP_SERVER_TYPES, MCP_TOOLS_DISPLAY_LIMIT } from '@/constants/config'
 
 interface McpServer {
   id: string
@@ -109,7 +110,7 @@ export default function McpPage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [newServerName, setNewServerName] = useState('')
   const [newServerEndpoint, setNewServerEndpoint] = useState('')
-  const [newServerType, setNewServerType] = useState<'stdio' | 'sse' | 'http'>('stdio')
+  const [newServerType, setNewServerType] = useState<typeof MCP_SERVER_TYPES[number]>('stdio')
 
   const handleAddServer = () => {
     if (!newServerName.trim() || !newServerEndpoint.trim()) return
@@ -273,7 +274,7 @@ export default function McpPage() {
                   连接类型
                 </label>
                 <div className="flex gap-2">
-                  {(['stdio', 'http', 'sse'] as const).map((type) => (
+                  {MCP_SERVER_TYPES.map((type) => (
                     <button
                       key={type}
                       onClick={() => setNewServerType(type)}
@@ -423,7 +424,7 @@ function ServerCard({ server, onReconnect }: ServerCardProps) {
         {/* 工具标签 */}
         {server.tools.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-4">
-            {server.tools.slice(0, 3).map((tool) => (
+            {server.tools.slice(0, MCP_TOOLS_DISPLAY_LIMIT).map((tool) => (
               <span
                 key={tool}
                 className="px-2 py-0.5 text-xs bg-bg-elevated text-text-secondary rounded"
@@ -431,9 +432,9 @@ function ServerCard({ server, onReconnect }: ServerCardProps) {
                 {tool}
               </span>
             ))}
-            {server.tools.length > 3 && (
+            {server.tools.length > MCP_TOOLS_DISPLAY_LIMIT && (
               <span className="px-2 py-0.5 text-xs bg-bg-elevated text-text-tertiary rounded">
-                +{server.tools.length - 3}
+                +{server.tools.length - MCP_TOOLS_DISPLAY_LIMIT}
               </span>
             )}
           </div>

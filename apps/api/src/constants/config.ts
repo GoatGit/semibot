@@ -88,6 +88,9 @@ export const TOOL_TIMEOUT_CODE_EXECUTOR_MS = 60000
 /** 工具调用超时 (毫秒) - 浏览器控制 */
 export const TOOL_TIMEOUT_BROWSER_MS = 30000
 
+/** MCP 连接测试超时 (毫秒) */
+export const MCP_CONNECTION_TIMEOUT_MS = 10000
+
 /** 单步骤总超时 (毫秒) */
 export const STEP_TIMEOUT_MS = 180000
 

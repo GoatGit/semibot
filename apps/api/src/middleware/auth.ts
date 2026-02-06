@@ -169,6 +169,19 @@ function validateJWT(token: string): { valid: boolean; user?: AuthUser; error?: 
   }
 }
 
+/**
+ * 检查 Token 是否在黑名单中
+ */
+async function checkTokenBlacklist(token: string): Promise<boolean> {
+  try {
+    const { isBlacklisted } = await import('../services/auth.service')
+    return isBlacklisted(token)
+  } catch (error) {
+    console.error('[Auth] 黑名单检查失败:', error)
+    return false
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 中间件
 // ═══════════════════════════════════════════════════════════════
@@ -205,16 +218,37 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
         sendAuthError(res, AUTH_API_KEY_INVALID)
       })
   } else {
-    // JWT 认证
-    const result = validateJWT(token)
+    // JWT 认证 - 先检查黑名单，再验证 Token
+    checkTokenBlacklist(token)
+      .then((isBlacklisted) => {
+        if (isBlacklisted) {
+          console.warn('[Auth] Token 已被加入黑名单')
+          sendAuthError(res, AUTH_TOKEN_INVALID)
+          return
+        }
 
-    if (!result.valid || !result.user) {
-      sendAuthError(res, result.error ?? AUTH_TOKEN_INVALID)
-      return
-    }
+        const result = validateJWT(token)
 
-    req.user = result.user
-    next()
+        if (!result.valid || !result.user) {
+          sendAuthError(res, result.error ?? AUTH_TOKEN_INVALID)
+          return
+        }
+
+        req.user = result.user
+        next()
+      })
+      .catch(() => {
+        // 黑名单检查失败时，继续验证 Token (降级处理)
+        const result = validateJWT(token)
+
+        if (!result.valid || !result.user) {
+          sendAuthError(res, result.error ?? AUTH_TOKEN_INVALID)
+          return
+        }
+
+        req.user = result.user
+        next()
+      })
   }
 }
 
