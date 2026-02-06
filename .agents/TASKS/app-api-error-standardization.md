@@ -4,7 +4,7 @@
 **Label:** Semibot: 统一 API 错误抛出方式
 **Description:** 将所有 throw { code } 改为使用 createError()，替换 console.log 为 logger
 **Type:** Refactor
-**Status:** Pending
+**Status:** Completed
 **Priority:** P2 - Medium
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

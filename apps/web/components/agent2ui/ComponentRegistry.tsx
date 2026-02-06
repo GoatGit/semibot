@@ -21,6 +21,10 @@ import { ProgressView } from './process/ProgressView'
 // 报告类组件
 import { ReportView } from './report/ReportView'
 
+// 媒体类组件
+import { ImageView } from './media/ImageView'
+import { FileDownload } from './media/FileDownload'
+
 // 反馈类组件
 import { ErrorView } from './feedback/ErrorView'
 // LoadingView is used directly in components, not via registry
@@ -45,8 +49,8 @@ const defaultComponentMap: Record<Agent2UIType, Agent2UIComponent> = {
   code: CodeBlock,
   table: DataTable,
   chart: Chart,
-  image: TextBlock, // TODO: 实现 ImageView 组件
-  file: TextBlock, // TODO: 实现 FileDownload 组件
+  image: ImageView,
+  file: FileDownload,
   plan: PlanView,
   progress: ProgressView,
   tool_call: ToolCallView,

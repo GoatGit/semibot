@@ -4,7 +4,7 @@
 **Label:** Semibot: 实现前端认证系统
 **Description:** 添加登录/注册页面、路由守卫、Token 管理
 **Type:** Feature
-**Status:** Pending
+**Status:** Completed
 **Priority:** P0 - Critical
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

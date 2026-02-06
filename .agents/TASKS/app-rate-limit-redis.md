@@ -4,7 +4,7 @@
 **Label:** Semibot: Rate Limit 改用 Redis 存储
 **Description:** 将 rate limit 从内存 Map 改为 Redis，支持分布式部署
 **Type:** Enhancement
-**Status:** Pending
+**Status:** Completed
 **Priority:** P1 - High
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

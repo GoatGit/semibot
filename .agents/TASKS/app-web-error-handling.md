@@ -4,7 +4,7 @@
 **Label:** Semibot: 完善前端错误处理机制
 **Description:** 添加 loading/error 组件、错误边界、统一 API 错误处理
 **Type:** Enhancement
-**Status:** Pending
+**Status:** Completed
 **Priority:** P1 - High
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

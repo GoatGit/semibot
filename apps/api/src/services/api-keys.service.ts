@@ -7,6 +7,8 @@
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { sql } from '../lib/db'
+import { createError } from '../middleware/errorHandler'
+import { apiKeysLogger as logger } from '../lib/logger'
 import { API_KEY_PREFIX, API_KEY_LENGTH_BYTES, BCRYPT_ROUNDS } from '../constants/config'
 import { RESOURCE_NOT_FOUND, AUTH_PERMISSION_DENIED } from '../constants/errorCodes'
 
@@ -158,14 +160,14 @@ export async function deleteApiKey(
   `
 
   if (result.length === 0) {
-    throw { code: RESOURCE_NOT_FOUND }
+    throw createError(RESOURCE_NOT_FOUND)
   }
 
   const apiKey = result[0] as { id: string; user_id: string }
 
   // 只有创建者、admin 或 owner 可以删除
   if (apiKey.user_id !== userId && userRole !== 'owner' && userRole !== 'admin') {
-    throw { code: AUTH_PERMISSION_DENIED }
+    throw createError(AUTH_PERMISSION_DENIED)
   }
 
   await sql`
@@ -212,7 +214,7 @@ export async function validateApiKey(key: string): Promise<ValidatedApiKey | nul
     if (isValid) {
       // 检查是否过期
       if (candidate.expires_at && new Date(candidate.expires_at) < new Date()) {
-        console.warn(`[ApiKeys] API Key ${candidate.id} 已过期`)
+        logger.warn(`API Key ${candidate.id} 已过期`)
         return null
       }
 

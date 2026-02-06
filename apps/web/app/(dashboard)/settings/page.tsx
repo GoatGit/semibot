@@ -6,6 +6,15 @@ import { User, Key, Palette, Globe, Bell, Shield, ChevronRight, Eye, EyeOff, Plu
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
+import {
+  API_KEY_MASK_PREFIX_LENGTH,
+  API_KEY_MASK_SUFFIX_LENGTH,
+  API_KEY_MASK_CHAR_COUNT,
+  THEMES,
+  LANGUAGES,
+  DEFAULT_THEME,
+  DEFAULT_LANGUAGE,
+} from '@/constants/config'
 
 type SettingsSection = 'profile' | 'api-keys' | 'preferences' | 'notifications' | 'security'
 
@@ -156,7 +165,7 @@ function ApiKeysSection() {
   ])
 
   const maskKey = (key: string) => {
-    return key.slice(0, 7) + '•'.repeat(20) + key.slice(-4)
+    return key.slice(0, API_KEY_MASK_PREFIX_LENGTH) + '•'.repeat(API_KEY_MASK_CHAR_COUNT) + key.slice(-API_KEY_MASK_SUFFIX_LENGTH)
   }
 
   return (
@@ -208,8 +217,8 @@ function ApiKeysSection() {
 }
 
 function PreferencesSection() {
-  const [theme, setTheme] = useState<'dark' | 'light' | 'system'>('dark')
-  const [language, setLanguage] = useState<'zh-CN' | 'en-US'>('zh-CN')
+  const [theme, setTheme] = useState<typeof THEMES[number]>(DEFAULT_THEME)
+  const [language, setLanguage] = useState<typeof LANGUAGES[number]>(DEFAULT_LANGUAGE)
 
   return (
     <div className="max-w-2xl space-y-6">

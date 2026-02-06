@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { PATHS_WITHOUT_DETAIL, HOME_PATH } from '@/constants/config'
 
 /**
  * Layout Store - 布局状态管理
@@ -11,12 +12,6 @@ import { create } from 'zustand'
  */
 
 export type DetailCanvasMode = 'collapsed' | 'normal' | 'maximized'
-
-// 不需要显示详情画布的路径
-const PATHS_WITHOUT_DETAIL = ['/settings', '/agents']
-
-// 首页路径（导航栏展开）
-const HOME_PATH = '/'
 
 interface LayoutState {
   // 状态

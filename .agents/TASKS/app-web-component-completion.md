@@ -4,7 +4,7 @@
 **Label:** Semibot: 补全缺失的前端组件
 **Description:** 实现 ImageView、FileDownload 等未完成组件，补充基础 UI 组件
 **Type:** Feature
-**Status:** Pending
+**Status:** Completed
 **Priority:** P1 - High
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

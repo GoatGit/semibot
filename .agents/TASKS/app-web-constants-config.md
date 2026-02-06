@@ -4,7 +4,7 @@
 **Label:** Semibot: 提取前端硬编码值到配置文件
 **Description:** 创建 constants/config.ts 并提取所有硬编码值
 **Type:** Refactor
-**Status:** Pending
+**Status:** Completed
 **Priority:** P0 - Critical
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

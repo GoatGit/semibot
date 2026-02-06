@@ -4,7 +4,7 @@
 **Label:** Semibot: 实现 Queue Service Redis 集成
 **Description:** 完成 queue.service.ts 中的 6 个 TODO，实现 Redis Stream 队列
 **Type:** Feature
-**Status:** Pending
+**Status:** Completed
 **Priority:** P1 - High
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

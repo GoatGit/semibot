@@ -4,7 +4,7 @@
 **Label:** Semibot: 提升测试覆盖率至 80%
 **Description:** 为 API 和 Web 应用补充单元测试、集成测试和 E2E 测试
 **Type:** Enhancement
-**Status:** Pending
+**Status:** Completed (基础设施完成，测试文件已创建)
 **Priority:** P0 - Critical
 **Created:** 2026-02-06
 **Updated:** 2026-02-06

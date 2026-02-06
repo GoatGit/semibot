@@ -7,6 +7,8 @@ import type { Response } from 'express'
 import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
 import * as agentService from './agent.service'
+import * as llmService from './llm.service'
+import type { LLMMessage, LLMStreamChunk } from './llm.service'
 import {
   VALIDATION_MESSAGE_TOO_LONG,
   SSE_STREAM_ERROR,
@@ -213,77 +215,110 @@ export async function handleChat(
       content: '正在分析您的问题...',
     })
 
-    // 模拟执行计划
+    // 获取历史消息
+    const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
+
+    // 构建 LLM 消息
+    const llmMessages: LLMMessage[] = [
+      {
+        role: 'system',
+        content: agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`,
+      },
+      ...historyMessages.slice(-20).map((msg) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      })),
+    ]
+
+    // 发送计划状态
     sendAgent2UIMessage(connection, 'plan', {
       steps: [
         { id: '1', title: '理解问题', status: 'completed' },
-        { id: '2', title: '收集信息', status: 'running' },
-        { id: '3', title: '生成回答', status: 'pending' },
+        { id: '2', title: '生成回答', status: 'running' },
       ],
       currentStep: '2',
     })
 
-    // 模拟工具调用 (延迟模拟)
-    await delay(500)
-
-    sendAgent2UIMessage(connection, 'tool_call', {
-      toolName: 'knowledge_search',
-      arguments: { query: input.message },
-      status: 'calling',
-    })
-
-    await delay(800)
-
-    sendAgent2UIMessage(connection, 'tool_call', {
-      toolName: 'knowledge_search',
-      arguments: { query: input.message },
-      status: 'success',
-      result: { found: true, snippets: ['相关信息...'] },
-      duration: 800,
-    })
-
-    // 更新计划状态
-    sendAgent2UIMessage(connection, 'plan', {
-      steps: [
-        { id: '1', title: '理解问题', status: 'completed' },
-        { id: '2', title: '收集信息', status: 'completed' },
-        { id: '3', title: '生成回答', status: 'running' },
-      ],
-      currentStep: '3',
-    })
-
-    // 模拟流式文本响应
-    const responseText = `您好！我是 ${agent.name}，很高兴为您服务。\n\n关于您的问题："${input.message}"\n\n这是一个模拟的响应，实际实现中会调用 LLM 服务生成回答。`
-
-    // 逐字发送 (模拟流式)
-    for (let i = 0; i < responseText.length; i += 10) {
-      const chunk = responseText.slice(i, i + 10)
-      sendAgent2UIMessage(connection, 'text', { content: chunk })
-      await delay(50)
+    // 检查 LLM 服务是否可用
+    if (!llmService.isLLMAvailable()) {
+      console.warn('[Chat] LLM 服务不可用，使用模拟响应')
+      await handleMockResponse(connection, agent.name, input.message, orgId, sessionId)
+      return
     }
+
+    // 调用 LLM 流式生成
+    let fullContent = ''
+    let totalTokens = 0
+    const startTime = Date.now()
+
+    await llmService.generateStream(
+      llmMessages,
+      {
+        model: agent.config?.model ?? undefined,
+        temperature: agent.config?.temperature ?? 0.7,
+        maxTokens: agent.config?.maxTokens ?? 4096,
+      },
+      (chunk: LLMStreamChunk) => {
+        if (!connection.isActive) return
+
+        switch (chunk.type) {
+          case 'text':
+            if (chunk.content) {
+              fullContent += chunk.content
+              sendAgent2UIMessage(connection, 'text', { content: chunk.content })
+            }
+            break
+
+          case 'tool_call':
+            if (chunk.toolCall) {
+              sendAgent2UIMessage(connection, 'tool_call', {
+                toolName: chunk.toolCall.function.name,
+                arguments: JSON.parse(chunk.toolCall.function.arguments || '{}'),
+                status: 'calling',
+              })
+            }
+            break
+
+          case 'done':
+            if (chunk.usage) {
+              totalTokens = chunk.usage.totalTokens
+            }
+            break
+
+          case 'error':
+            sendSSEEvent(connection, 'error', {
+              code: chunk.error?.code ?? SSE_STREAM_ERROR,
+              message: chunk.error?.message ?? '生成失败',
+            })
+            break
+        }
+      }
+    )
+
+    const latencyMs = Date.now() - startTime
 
     // 完成计划
     sendAgent2UIMessage(connection, 'plan', {
       steps: [
         { id: '1', title: '理解问题', status: 'completed' },
-        { id: '2', title: '收集信息', status: 'completed' },
-        { id: '3', title: '生成回答', status: 'completed' },
+        { id: '2', title: '生成回答', status: 'completed' },
       ],
-      currentStep: '3',
+      currentStep: '2',
     })
 
     // 保存助手消息
     const assistantMessage = await sessionService.addMessage(orgId, sessionId, {
       role: 'assistant',
-      content: responseText,
-      tokensUsed: responseText.length, // 模拟
-      latencyMs: 2000, // 模拟
+      content: fullContent,
+      tokensUsed: totalTokens,
+      latencyMs,
     })
 
     // 发送完成事件
     sendSSEEvent(connection, 'done', {
       sessionId,
       messageId: assistantMessage.id,
+      usage: { tokens: totalTokens, latencyMs },
     })
   } catch (error) {
     console.error(`[Chat] 处理失败 - Session: ${sessionId}, User: ${userId}, Agent: ${agent.id}`, error)
@@ -297,6 +332,52 @@ export async function handleChat(
     closeSSEConnection(connection.id)
     res.end()
   }
+}
+
+/**
+ * 模拟响应 (当 LLM 服务不可用时)
+ */
+async function handleMockResponse(
+  connection: SSEConnection,
+  agentName: string,
+  userMessage: string,
+  orgId: string,
+  sessionId: string
+): Promise<void> {
+  const responseText = `您好！我是 ${agentName}，很高兴为您服务。\n\n关于您的问题："${userMessage}"\n\n当前 LLM 服务暂时不可用，这是一个模拟响应。请配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY 环境变量以启用真实 LLM 调用。`
+
+  // 逐字发送 (模拟流式)
+  for (let i = 0; i < responseText.length; i += 10) {
+    const chunk = responseText.slice(i, i + 10)
+    sendAgent2UIMessage(connection, 'text', { content: chunk })
+    await delay(30)
+  }
+
+  // 完成计划
+  sendAgent2UIMessage(connection, 'plan', {
+    steps: [
+      { id: '1', title: '理解问题', status: 'completed' },
+      { id: '2', title: '生成回答', status: 'completed' },
+    ],
+    currentStep: '2',
+  })
+
+  // 保存助手消息
+  const assistantMessage = await sessionService.addMessage(orgId, sessionId, {
+    role: 'assistant',
+    content: responseText,
+    tokensUsed: responseText.length,
+    latencyMs: 500,
+  })
+
+  // 发送完成事件
+  sendSSEEvent(connection, 'done', {
+    sessionId,
+    messageId: assistantMessage.id,
+  })
+
+  // 关闭连接
+  closeSSEConnection(connection.id)
 }
 
 /**
