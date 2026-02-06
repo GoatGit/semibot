@@ -1,0 +1,9 @@
+# SSL Certificates - Never commit to version control
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Keep README
+!README.md
