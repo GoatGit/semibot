@@ -85,7 +85,7 @@ export interface TableColumn {
 export interface ChartData {
   chartType: 'line' | 'bar' | 'pie' | 'scatter' | 'area'
   title?: string
-  xAxis?: { data: string[] }
+  xAxis?: { data: string[]; name?: string }
   yAxis?: { name: string }
   series: ChartSeries[]
 }
@@ -98,6 +98,7 @@ export interface ChartSeries {
 export interface ImageData {
   url: string
   alt?: string
+  caption?: string
   width?: number
   height?: number
 }
@@ -117,13 +118,15 @@ export interface PlanData {
 export interface PlanStep {
   id: string
   title: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
   substeps?: PlanStep[]
 }
 
 export interface ProgressData {
-  progress: number
+  current: number
   total: number
+  percentage?: number
+  label?: string
   message?: string
 }
 
