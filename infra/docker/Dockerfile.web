@@ -1,5 +1,5 @@
 # =============================================================================
-# Semibot API Service - Node.js 20 Alpine Multi-stage Build
+# Semibot Web Service - Next.js Multi-stage Build
 # =============================================================================
 
 # Build arguments for version pinning
@@ -19,7 +19,7 @@ WORKDIR /app
 
 # Copy workspace configuration
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
 COPY packages/shared-types/package.json ./packages/shared-types/
 
 # Install dependencies
@@ -38,16 +38,19 @@ WORKDIR /app
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY --from=deps /app/packages/shared-types/node_modules ./packages/shared-types/node_modules
 
 # Copy source code
 COPY tsconfig.json ./
-COPY apps/api ./apps/api
+COPY apps/web ./apps/web
 COPY packages/shared-types ./packages/shared-types
 
+# Set Next.js telemetry off
+ENV NEXT_TELEMETRY_DISABLED=1
+
 # Build the application
-WORKDIR /app/apps/api
+WORKDIR /app/apps/web
 RUN pnpm build
 
 # -----------------------------------------------------------------------------
@@ -60,29 +63,37 @@ RUN apk add --no-cache dumb-init
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 semibot
+    adduser --system --uid 1001 nextjs
 
 WORKDIR /app
 
-# Copy built application
-COPY --from=builder --chown=semibot:nodejs /app/apps/api/dist ./dist
-COPY --from=builder --chown=semibot:nodejs /app/apps/api/package.json ./
-COPY --from=builder --chown=semibot:nodejs /app/node_modules ./node_modules
-
 # Set environment variables
 ENV NODE_ENV=production
-ENV PORT=3001
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Copy built application
+COPY --from=builder /app/apps/web/public ./public
+
+# Set correct permissions for prerender cache
+RUN mkdir .next
+RUN chown nextjs:nodejs .next
+
+# Copy standalone build
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
 
 # Switch to non-root user
-USER semibot
+USER nextjs
 
 # Expose port
-EXPOSE 3001
+EXPOSE 3000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+CMD ["node", "apps/web/server.js"]
