@@ -4,13 +4,14 @@ The PlannerAgent is responsible for analyzing user requests and generating
 execution plans. It breaks down complex tasks into actionable steps.
 """
 
-import logging
 from typing import Any
 
 from src.agents.base import AgentConfig, BaseAgent
+from src.orchestrator.execution import parse_plan_response
 from src.orchestrator.state import AgentState, ExecutionPlan, Message, PlanStep
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 PLANNER_SYSTEM_PROMPT = """You are an expert planning agent. Your role is to analyze user requests
@@ -210,7 +211,7 @@ Please analyze this request and create an execution plan.
             )
 
             # Parse the response
-            return self._parse_plan_response(response)
+            return parse_plan_response(response)
 
         except Exception as e:
             logger.error(f"Plan generation failed: {e}")
@@ -228,33 +229,3 @@ Please analyze this request and create an execution plan.
             lines.append(f"- {name}: {description}")
 
         return "\n".join(lines)
-
-    def _parse_plan_response(self, response: dict[str, Any]) -> ExecutionPlan:
-        """Parse the LLM response into an ExecutionPlan."""
-        content = response.get("content", {})
-
-        # Handle direct response (no tools needed)
-        if "direct_response" in content:
-            return ExecutionPlan(
-                goal=content.get("goal", "Answer the question"),
-                steps=[],
-            )
-
-        # Parse steps
-        steps = []
-        for i, step_data in enumerate(content.get("steps", [])):
-            step = PlanStep(
-                id=step_data.get("id", f"step_{i}"),
-                title=step_data.get("title", ""),
-                tool=step_data.get("tool"),
-                params=step_data.get("params", {}),
-                parallel=step_data.get("parallel", False),
-            )
-            steps.append(step)
-
-        return ExecutionPlan(
-            goal=content.get("goal", ""),
-            steps=steps,
-            requires_delegation=content.get("requires_delegation", False),
-            delegate_to=content.get("delegate_to"),
-        )

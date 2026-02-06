@@ -1,6 +1,7 @@
-"""Queue configuration constants.
+"""Configuration constants for the runtime module.
 
-All magic numbers and hardcoded values for the queue module should be defined here.
+All magic numbers and hardcoded values should be defined here.
+Includes constants for: Queue, Memory, LLM, Orchestrator modules.
 """
 
 # =============================================================================
@@ -54,3 +55,124 @@ MAX_QUEUE_LENGTH = 10000
 
 QUEUE_LENGTH_WARNING_THRESHOLD = 5000
 """Queue length threshold for warning logs."""
+
+# =============================================================================
+# Short-term Memory (Redis)
+# =============================================================================
+
+DEFAULT_TTL_SECONDS = 3600
+"""Default TTL for short-term memory entries (1 hour)."""
+
+MAX_SESSION_ENTRIES = 100
+"""Maximum number of entries per session in short-term memory."""
+
+REDIS_KEY_PREFIX = "semibot:memory:short_term"
+"""Redis key prefix for short-term memory."""
+
+REDIS_MAX_RETRIES = 3
+"""Maximum retries for Redis connection."""
+
+REDIS_RETRY_DELAY_BASE = 1
+"""Base delay in seconds for Redis retry exponential backoff."""
+
+REDIS_RETRY_DELAY_MAX = 10
+"""Maximum delay in seconds for Redis retry exponential backoff."""
+
+# =============================================================================
+# Long-term Memory (PostgreSQL + pgvector)
+# =============================================================================
+
+DEFAULT_SEARCH_LIMIT = 5
+"""Default number of results for memory search."""
+
+MAX_SEARCH_LIMIT = 100
+"""Maximum number of results for memory search."""
+
+DEFAULT_MIN_SIMILARITY = 0.7
+"""Default minimum similarity threshold for vector search."""
+
+EMBEDDING_DIMENSION = 1536
+"""Vector embedding dimension (OpenAI text-embedding-ada-002)."""
+
+PG_POOL_MIN_SIZE = 2
+"""Minimum PostgreSQL connection pool size."""
+
+PG_POOL_MAX_SIZE = 10
+"""Maximum PostgreSQL connection pool size."""
+
+PG_POOL_ACQUIRE_TIMEOUT = 30
+"""Timeout in seconds for acquiring a PostgreSQL connection."""
+
+PG_MAX_RETRIES = 3
+"""Maximum retries for PostgreSQL connection."""
+
+PG_RETRY_DELAY_BASE = 1
+"""Base delay in seconds for PostgreSQL retry exponential backoff."""
+
+PG_RETRY_DELAY_MAX = 10
+"""Maximum delay in seconds for PostgreSQL retry exponential backoff."""
+
+# =============================================================================
+# Embedding Service
+# =============================================================================
+
+DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
+"""Default OpenAI embedding model."""
+
+EMBEDDING_BATCH_SIZE = 100
+"""Maximum batch size for embedding requests."""
+
+EMBEDDING_CACHE_PREFIX = "semibot:embedding:cache"
+"""Redis key prefix for embedding cache."""
+
+EMBEDDING_CACHE_TTL = 604800
+"""Embedding cache TTL in seconds (7 days)."""
+
+EMBEDDING_MAX_RETRIES = 3
+"""Maximum retries for embedding API calls."""
+
+EMBEDDING_REQUEST_TIMEOUT = 30
+"""Timeout in seconds for embedding API requests."""
+
+EMBEDDING_RETRY_DELAY_BASE = 1
+"""Base delay in seconds for embedding retry exponential backoff."""
+
+EMBEDDING_RETRY_DELAY_MAX = 10
+"""Maximum delay in seconds for embedding retry exponential backoff."""
+
+# =============================================================================
+# LLM Provider
+# =============================================================================
+
+LLM_MAX_RETRIES = 3
+"""Maximum retries for LLM API calls."""
+
+LLM_RETRY_DELAY_BASE = 1
+"""Base delay in seconds for LLM retry exponential backoff."""
+
+LLM_RETRY_DELAY_MAX = 10
+"""Maximum delay in seconds for LLM retry exponential backoff."""
+
+DEFAULT_TASK_MODEL_ROUTING = {
+    "planning": "gpt-4o",
+    "execution": "gpt-4o-mini",
+    "reflection": "gpt-4o-mini",
+    "complex_reasoning": "claude-3-sonnet",
+}
+"""Default model routing for different task types."""
+
+DEFAULT_LLM_MODEL = "gpt-4o"
+"""Default LLM model for general tasks."""
+
+DEFAULT_FALLBACK_MODEL = "gpt-4o-mini"
+"""Default fallback model when primary fails."""
+
+# =============================================================================
+# Orchestrator
+# =============================================================================
+
+MAX_REPLAN_ATTEMPTS = 3
+"""Maximum number of replan attempts after all actions fail."""
+
+DEFAULT_MAX_ITERATIONS = 10
+"""Default maximum iterations for agent execution."""

@@ -4,7 +4,6 @@ Produces tasks to Redis queue for async processing.
 """
 
 import json
-import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,8 +19,9 @@ from src.constants.config import (
     RESULT_CHANNEL_PREFIX,
     RESULT_WAIT_TIMEOUT,
 )
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class QueueFullError(Exception):

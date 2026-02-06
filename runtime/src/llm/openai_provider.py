@@ -1,14 +1,15 @@
 """OpenAI LLM Provider implementation."""
 
-import logging
 from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.constants import LLM_MAX_RETRIES, LLM_RETRY_DELAY_BASE, LLM_RETRY_DELAY_MAX
 from src.llm.base import LLMConfig, LLMProvider, LLMResponse
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class OpenAIProvider(LLMProvider):
@@ -49,8 +50,8 @@ class OpenAIProvider(LLMProvider):
         )
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
+        stop=stop_after_attempt(LLM_MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=LLM_RETRY_DELAY_BASE, max=LLM_RETRY_DELAY_MAX),
     )
     async def chat(
         self,
@@ -74,7 +75,13 @@ class OpenAIProvider(LLMProvider):
 
         Returns:
             LLMResponse with the model's response
+
+        Raises:
+            ValueError: If messages is empty or invalid
         """
+        # Validate messages
+        self._validate_messages(messages)
+
         # Build request parameters
         params: dict[str, Any] = {
             "model": self.config.model,
@@ -152,7 +159,13 @@ class OpenAIProvider(LLMProvider):
 
         Yields:
             String chunks of the response
+
+        Raises:
+            ValueError: If messages is empty or invalid
         """
+        # Validate messages
+        self._validate_messages(messages)
+
         params: dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,

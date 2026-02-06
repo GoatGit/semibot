@@ -4,14 +4,18 @@ The ExecutorAgent is responsible for executing plans by invoking tools
 and skills. It handles the actual work of carrying out the planned steps.
 """
 
-import asyncio
-import logging
 from typing import Any
 
 from src.agents.base import AgentConfig, BaseAgent
+from src.orchestrator.execution import (
+    execute_parallel,
+    execute_single,
+    is_critical_failure,
+)
 from src.orchestrator.state import AgentState, PlanStep, ToolCallResult
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 EXECUTOR_SYSTEM_PROMPT = """You are an execution agent. Your role is to execute planned tasks
@@ -120,17 +124,17 @@ class ExecutorAgent(BaseAgent):
         # Execute parallel actions first
         if parallel_actions:
             logger.info(f"Executing {len(parallel_actions)} actions in parallel")
-            parallel_results = await self._execute_parallel(parallel_actions)
+            parallel_results = await execute_parallel(parallel_actions, self.action_executor)
             results.extend(parallel_results)
 
         # Then execute sequential actions
         for action in sequential_actions:
             logger.info(f"Executing action: {action.tool}")
-            result = await self._execute_single(action)
+            result = await execute_single(action, self.action_executor)
             results.append(result)
 
             # Check for critical failures
-            if not result.success and self._is_critical_failure(result):
+            if not result.success and is_critical_failure(result):
                 logger.warning(f"Critical failure in action {action.tool}")
                 break
 
@@ -140,122 +144,6 @@ class ExecutorAgent(BaseAgent):
             "pending_actions": [],
             "current_step": "observe",
         }
-
-    async def _execute_parallel(
-        self,
-        actions: list[PlanStep],
-    ) -> list[ToolCallResult]:
-        """Execute multiple actions in parallel."""
-        tasks = [self._execute_single(action) for action in actions]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Convert exceptions to error results
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                processed_results.append(
-                    ToolCallResult(
-                        tool_name=actions[i].tool or "unknown",
-                        params=actions[i].params,
-                        error=str(result),
-                        success=False,
-                    )
-                )
-            else:
-                processed_results.append(result)
-
-        return processed_results
-
-    async def _execute_single(self, action: PlanStep) -> ToolCallResult:
-        """Execute a single action."""
-        import time
-
-        start_time = time.time()
-
-        try:
-            # Update action status
-            action.status = "running"
-
-            # Execute via action executor
-            result = await self.action_executor.execute(
-                name=action.tool,
-                params=action.params,
-            )
-
-            duration_ms = int((time.time() - start_time) * 1000)
-
-            # Check for errors in result
-            has_error = "error" in result and result["error"]
-
-            tool_result = ToolCallResult(
-                tool_name=action.tool or "unknown",
-                params=action.params,
-                result=result.get("result") if not has_error else None,
-                error=result.get("error") if has_error else None,
-                success=not has_error,
-                duration_ms=duration_ms,
-            )
-
-            # Update action status
-            action.status = "completed" if tool_result.success else "failed"
-            action.result = tool_result.result
-            action.error = tool_result.error
-
-            return tool_result
-
-        except asyncio.TimeoutError:
-            duration_ms = int((time.time() - start_time) * 1000)
-            action.status = "failed"
-            action.error = "Execution timeout"
-            return ToolCallResult(
-                tool_name=action.tool or "unknown",
-                params=action.params,
-                error="Execution timeout",
-                success=False,
-                duration_ms=duration_ms,
-            )
-
-        except Exception as e:
-            duration_ms = int((time.time() - start_time) * 1000)
-            logger.error(f"Action execution failed: {e}")
-            action.status = "failed"
-            action.error = str(e)
-            return ToolCallResult(
-                tool_name=action.tool or "unknown",
-                params=action.params,
-                error=str(e),
-                success=False,
-                duration_ms=duration_ms,
-            )
-
-    def _is_critical_failure(self, result: ToolCallResult) -> bool:
-        """
-        Determine if a failure is critical and should stop execution.
-
-        Critical failures include:
-        - Authentication errors
-        - Rate limiting
-        - Service unavailable
-
-        Args:
-            result: The failed tool call result
-
-        Returns:
-            True if this is a critical failure
-        """
-        if not result.error:
-            return False
-
-        critical_patterns = [
-            "authentication",
-            "unauthorized",
-            "rate limit",
-            "quota exceeded",
-            "service unavailable",
-        ]
-
-        error_lower = result.error.lower()
-        return any(pattern in error_lower for pattern in critical_patterns)
 
     async def analyze_failure(
         self,
