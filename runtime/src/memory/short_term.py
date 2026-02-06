@@ -37,6 +37,32 @@ from src.utils.validation import (
 
 logger = get_logger(__name__)
 
+# Lua script for atomic add and trim operation
+# This ensures no race condition when checking and trimming entries
+TRIM_AND_ADD_SCRIPT = """
+local key = KEYS[1]
+local max_entries = tonumber(ARGV[1])
+local entry_json = ARGV[2]
+local timestamp = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+
+-- Add new entry
+redis.call('ZADD', key, timestamp, entry_json)
+
+-- Check and trim if needed
+local count = redis.call('ZCARD', key)
+local trimmed = 0
+if count > max_entries then
+    trimmed = count - max_entries
+    redis.call('ZREMRANGEBYRANK', key, 0, trimmed - 1)
+end
+
+-- Set TTL
+redis.call('EXPIRE', key, ttl)
+
+return trimmed
+"""
+
 
 class ShortTermMemory(ShortTermMemoryInterface):
     """
@@ -191,27 +217,25 @@ class ShortTermMemory(ShortTermMemoryInterface):
         entry_json = json.dumps(entry.to_dict())
         timestamp = now.timestamp()
 
-        # Use pipeline for atomic operations
-        async with client.pipeline() as pipe:
-            # Add to sorted set (ordered by timestamp)
-            pipe.zadd(session_key, {entry_json: timestamp})
+        # Use Lua script for atomic add and trim operation
+        # This prevents race conditions when multiple concurrent writes happen
+        trimmed = await client.eval(
+            TRIM_AND_ADD_SCRIPT,
+            1,  # Number of keys
+            session_key,
+            MAX_SESSION_ENTRIES,
+            entry_json,
+            timestamp,
+            ttl_seconds,
+        )
 
-            # Set TTL on the session key
-            pipe.expire(session_key, ttl_seconds)
-
-            # Trim to max entries (keep most recent)
-            entry_count = await client.zcard(session_key)
-            if entry_count >= MAX_SESSION_ENTRIES:
-                logger.warning(
-                    "session_entries_limit_reached",
-                    session_id=session_id,
-                    current_count=entry_count,
-                    limit=MAX_SESSION_ENTRIES,
-                )
-                # Remove oldest entries beyond limit
-                pipe.zremrangebyrank(session_key, 0, -MAX_SESSION_ENTRIES - 1)
-
-            await pipe.execute()
+        if trimmed > 0:
+            logger.warning(
+                "session_entries_trimmed",
+                session_id=session_id,
+                trimmed_count=trimmed,
+                limit=MAX_SESSION_ENTRIES,
+            )
 
         logger.debug(
             "short_term_memory_saved",

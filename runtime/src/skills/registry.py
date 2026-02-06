@@ -4,12 +4,12 @@ Central registry for all available tools and skills.
 Provides lookup, execution, and schema generation.
 """
 
-import logging
 from typing import Any
 
 from src.skills.base import BaseSkill, BaseTool, ToolResult
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SkillRegistry:

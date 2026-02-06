@@ -6,12 +6,17 @@ The LLMRouter handles:
 - Cost optimization by using cheaper models for simple tasks
 """
 
-import logging
 from typing import Any, AsyncIterator
 
+from src.constants import (
+    DEFAULT_FALLBACK_MODEL,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_TASK_MODEL_ROUTING,
+)
 from src.llm.base import LLMConfig, LLMProvider, LLMResponse
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LLMRouter(LLMProvider):
@@ -42,8 +47,8 @@ class LLMRouter(LLMProvider):
     def __init__(
         self,
         providers: dict[str, LLMProvider] | None = None,
-        default_model: str = "gpt-4o",
-        fallback_model: str = "gpt-4o-mini",
+        default_model: str = DEFAULT_LLM_MODEL,
+        fallback_model: str = DEFAULT_FALLBACK_MODEL,
         task_routing: dict[str, str] | None = None,
     ):
         """
@@ -62,12 +67,7 @@ class LLMRouter(LLMProvider):
         self.providers = providers or {}
         self.default_model = default_model
         self.fallback_model = fallback_model
-        self.task_routing = task_routing or {
-            "planning": "gpt-4o",
-            "execution": "gpt-4o-mini",
-            "reflection": "gpt-4o-mini",
-            "complex_reasoning": "claude-3-sonnet",
-        }
+        self.task_routing = task_routing or DEFAULT_TASK_MODEL_ROUTING
 
     def register_provider(self, model: str, provider: LLMProvider) -> None:
         """
@@ -129,7 +129,13 @@ class LLMRouter(LLMProvider):
 
         Returns:
             LLMResponse from the model
+
+        Raises:
+            ValueError: If messages is empty or no provider available
         """
+        # Validate messages
+        self._validate_messages(messages)
+
         model = model or self.default_model
         provider = self.get_provider(model)
 
@@ -191,7 +197,13 @@ class LLMRouter(LLMProvider):
 
         Yields:
             String chunks of the response
+
+        Raises:
+            ValueError: If messages is empty or no provider available
         """
+        # Validate messages
+        self._validate_messages(messages)
+
         model = model or self.default_model
         provider = self.get_provider(model)
 

@@ -12,10 +12,15 @@ an updated state. These nodes implement the core Agent execution logic:
 - RESPOND: Generate final response
 """
 
-import asyncio
-import logging
 from typing import Any
 
+from src.constants import MAX_REPLAN_ATTEMPTS
+from src.orchestrator.execution import (
+    execute_parallel,
+    execute_single,
+    parse_plan_response,
+    parse_reflection_response,
+)
 from src.orchestrator.state import (
     AgentState,
     ExecutionPlan,
@@ -24,8 +29,9 @@ from src.orchestrator.state import (
     ReflectionResult,
     ToolCallResult,
 )
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def start_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
@@ -134,7 +140,7 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         )
 
         # Parse plan from response
-        plan = _parse_plan_response(plan_response)
+        plan = parse_plan_response(plan_response)
 
         # Check if this is a simple question (no tools needed)
         if not plan.steps:
@@ -204,12 +210,12 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
 
     # Execute parallel actions
     if parallel_actions:
-        parallel_results = await _execute_parallel(parallel_actions, action_executor)
+        parallel_results = await execute_parallel(parallel_actions, action_executor)
         results.extend(parallel_results)
 
     # Execute sequential actions
     for action in sequential_actions:
-        result = await _execute_single(action, action_executor)
+        result = await execute_single(action, action_executor)
         results.append(result)
 
     return {
@@ -343,8 +349,12 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
     all_failed = all(not r.success for r in tool_results) if tool_results else False
 
     # If all failed, try replanning
-    if all_failed and current_iteration < 3:
-        logger.info("All actions failed, attempting replan")
+    if all_failed and current_iteration < MAX_REPLAN_ATTEMPTS:
+        logger.info(
+            "replan_attempt",
+            current_iteration=current_iteration,
+            max_attempts=MAX_REPLAN_ATTEMPTS,
+        )
         return {
             "iteration": current_iteration,
             "current_step": "plan",
@@ -416,7 +426,7 @@ async def reflect_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                 plan=state["plan"],
                 results=state["tool_results"],
             )
-            reflection = _parse_reflection_response(reflection_response)
+            reflection = parse_reflection_response(reflection_response)
         except Exception as e:
             logger.warning(f"Reflection generation failed: {e}")
 
@@ -525,88 +535,3 @@ If the request is a simple question that doesn't require tools, respond with an 
 """
 
 
-def _parse_plan_response(response: dict[str, Any]) -> ExecutionPlan:
-    """Parse the LLM's plan response into an ExecutionPlan."""
-    # This would parse the LLM's structured output
-    # For now, return a basic plan structure
-    return ExecutionPlan(
-        goal=response.get("goal", ""),
-        steps=[
-            PlanStep(
-                id=f"step_{i}",
-                title=step.get("title", ""),
-                tool=step.get("tool"),
-                params=step.get("params", {}),
-                parallel=step.get("parallel", False),
-            )
-            for i, step in enumerate(response.get("steps", []))
-        ],
-        requires_delegation=response.get("requires_delegation", False),
-        delegate_to=response.get("delegate_to"),
-    )
-
-
-def _parse_reflection_response(response: dict[str, Any]) -> ReflectionResult:
-    """Parse the LLM's reflection response."""
-    return ReflectionResult(
-        summary=response.get("summary", "Task completed."),
-        lessons_learned=response.get("lessons_learned", []),
-        worth_remembering=response.get("worth_remembering", False),
-        importance=response.get("importance", 0.5),
-    )
-
-
-async def _execute_parallel(
-    actions: list[PlanStep], executor: Any
-) -> list[ToolCallResult]:
-    """Execute actions in parallel."""
-    tasks = [_execute_single(action, executor) for action in actions]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Convert exceptions to error results
-    processed_results = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            processed_results.append(
-                ToolCallResult(
-                    tool_name=actions[i].tool or "unknown",
-                    params=actions[i].params,
-                    error=str(result),
-                    success=False,
-                )
-            )
-        else:
-            processed_results.append(result)
-
-    return processed_results
-
-
-async def _execute_single(action: PlanStep, executor: Any) -> ToolCallResult:
-    """Execute a single action."""
-    import time
-
-    start_time = time.time()
-    try:
-        result = await executor.execute(
-            name=action.tool,
-            params=action.params,
-        )
-        duration_ms = int((time.time() - start_time) * 1000)
-
-        return ToolCallResult(
-            tool_name=action.tool or "unknown",
-            params=action.params,
-            result=result.get("result"),
-            error=result.get("error"),
-            success=not result.get("error"),
-            duration_ms=duration_ms,
-        )
-    except Exception as e:
-        duration_ms = int((time.time() - start_time) * 1000)
-        return ToolCallResult(
-            tool_name=action.tool or "unknown",
-            params=action.params,
-            error=str(e),
-            success=False,
-            duration_ms=duration_ms,
-        )

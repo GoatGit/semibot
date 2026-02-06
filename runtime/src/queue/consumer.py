@@ -5,7 +5,6 @@ Consumes tasks from Redis queue and executes agents.
 
 import asyncio
 import json
-import logging
 import signal
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,8 +22,9 @@ from src.constants.config import (
     QUEUE_POLL_TIMEOUT,
     RESULT_CHANNEL_PREFIX,
 )
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

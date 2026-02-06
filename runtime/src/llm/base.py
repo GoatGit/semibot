@@ -78,6 +78,27 @@ class LLMProvider(ABC):
         """Get the model name."""
         return self.config.model
 
+    def _validate_messages(self, messages: list[dict[str, str]]) -> None:
+        """
+        Validate messages list before sending to LLM.
+
+        Args:
+            messages: List of message dicts
+
+        Raises:
+            ValueError: If messages is empty or invalid
+        """
+        if not messages:
+            raise ValueError("messages cannot be empty")
+
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                raise ValueError(f"Message {i} must be a dict, got {type(msg).__name__}")
+            if "role" not in msg:
+                raise ValueError(f"Message {i} missing 'role' field")
+            if "content" not in msg and "tool_calls" not in msg:
+                raise ValueError(f"Message {i} missing 'content' field")
+
     @abstractmethod
     async def chat(
         self,
