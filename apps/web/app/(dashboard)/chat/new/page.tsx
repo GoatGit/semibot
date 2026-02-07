@@ -1,13 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Sparkles, Code, FileSearch, BarChart3, PenTool, ArrowRight } from 'lucide-react'
+import { Bot, Sparkles, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
+import { apiClient } from '@/lib/api'
+import type { ApiResponse, Agent } from '@/types'
 
-interface AgentTemplate {
+interface AgentOption {
   id: string
   name: string
   description: string
@@ -15,7 +17,8 @@ interface AgentTemplate {
   color: string
 }
 
-const agentTemplates: AgentTemplate[] = [
+// 默认 Agent 模板（当无法加载真实 Agent 列表时使用）
+const defaultTemplates: AgentOption[] = [
   {
     id: 'general',
     name: '通用助手',
@@ -53,31 +56,156 @@ const agentTemplates: AgentTemplate[] = [
   },
 ]
 
+// 根据 Agent 名称选择图标
+function getAgentIcon(name: string): React.ReactNode {
+  const lowerName = name.toLowerCase()
+  if (lowerName.includes('代码') || lowerName.includes('code')) {
+    return <Code size={24} />
+  }
+  if (lowerName.includes('研究') || lowerName.includes('research')) {
+    return <FileSearch size={24} />
+  }
+  if (lowerName.includes('数据') || lowerName.includes('data')) {
+    return <BarChart3 size={24} />
+  }
+  if (lowerName.includes('创意') || lowerName.includes('写作') || lowerName.includes('creative')) {
+    return <PenTool size={24} />
+  }
+  return <Bot size={24} />
+}
+
+// 根据索引分配颜色
+function getAgentColor(index: number): string {
+  const colors = ['primary', 'info', 'success', 'warning', 'error']
+  return colors[index % colors.length]
+}
+
 /**
  * New Chat Page - 新建会话页面
  *
  * 提供快速开始选项:
- * - 选择 Agent 模板
+ * - 选择 Agent
  * - 直接输入开始对话
  */
 export default function NewChatPage() {
   const router = useRouter()
-  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [isCreating, setIsCreating] = useState(false)
+  const [agents, setAgents] = useState<AgentOption[]>([])
+  const [isLoadingAgents, setIsLoadingAgents] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // 加载 Agent 列表
+  useEffect(() => {
+    const loadAgents = async () => {
+      try {
+        setIsLoadingAgents(true)
+        const response = await apiClient.get<ApiResponse<Agent[]>>('/agents')
+
+        if (response.success && response.data && response.data.length > 0) {
+          const agentOptions: AgentOption[] = response.data
+            .filter((a) => a.isActive)
+            .map((agent, index) => ({
+              id: agent.id,
+              name: agent.name,
+              description: agent.description ?? '智能 AI 助手',
+              icon: getAgentIcon(agent.name),
+              color: getAgentColor(index),
+            }))
+          setAgents(agentOptions)
+        } else {
+          // 使用默认模板
+          setAgents(defaultTemplates)
+        }
+      } catch (err) {
+        console.error('[NewChat] 加载 Agent 列表失败:', err)
+        // 使用默认模板
+        setAgents(defaultTemplates)
+      } finally {
+        setIsLoadingAgents(false)
+      }
+    }
+
+    loadAgents()
+  }, [])
 
   const handleStartChat = async () => {
-    if (!message.trim() && !selectedTemplate) return
+    if (!message.trim() && !selectedAgentId) return
 
     setIsCreating(true)
+    setError(null)
 
-    // 模拟创建会话
-    // TODO: 实际实现时调用 API 创建会话
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    try {
+      // 确定使用的 Agent ID
+      const agentId = selectedAgentId ?? agents[0]?.id
 
-    // 生成临时会话 ID 并跳转
-    const sessionId = `session-${Date.now()}`
-    router.push(`/chat/${sessionId}`)
+      if (!agentId) {
+        throw new Error('请先选择一个 Agent')
+      }
+
+      // 调用 API 创建会话并发送第一条消息
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api/v1'}/chat/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+          'Authorization': `Bearer ${localStorage.getItem('auth_token') ?? ''}`,
+        },
+        body: JSON.stringify({
+          agentId,
+          message: message.trim() || '你好，请介绍一下你自己',
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error?.message ?? `创建会话失败: ${response.status}`)
+      }
+
+      // 从响应中解析 sessionId
+      // SSE 流的第一个 done 事件会包含 sessionId
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+      let sessionId: string | null = null
+
+      if (reader) {
+        let buffer = ''
+        while (!sessionId) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              try {
+                const data = JSON.parse(line.slice(5).trim())
+                if (data.sessionId) {
+                  sessionId = data.sessionId
+                  break
+                }
+              } catch {
+                // 忽略解析错误
+              }
+            }
+          }
+        }
+        reader.cancel()
+      }
+
+      if (sessionId) {
+        router.push(`/chat/${sessionId}`)
+      } else {
+        throw new Error('无法获取会话 ID')
+      }
+    } catch (err) {
+      console.error('[NewChat] 创建会话失败:', err)
+      setError(err instanceof Error ? err.message : '创建会话失败')
+      setIsCreating(false)
+    }
   }
 
   const getColorClasses = (color: string, isSelected: boolean) => {
@@ -123,38 +251,52 @@ export default function NewChatPage() {
             </div>
             <h1 className="text-2xl font-semibold text-text-primary">开始新会话</h1>
             <p className="text-text-secondary mt-2">
-              选择一个 Agent 模板，或直接输入您的问题开始对话
+              选择一个 Agent，或直接输入您的问题开始对话
             </p>
           </div>
 
-          {/* Agent 模板选择 */}
-          <div className="mb-8">
-            <h2 className="text-sm font-medium text-text-secondary mb-4">选择 Agent 模板</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {agentTemplates.map((template) => {
-                const isSelected = selectedTemplate === template.id
-                const colors = getColorClasses(template.color, isSelected)
-
-                return (
-                  <button
-                    key={template.id}
-                    onClick={() => setSelectedTemplate(isSelected ? null : template.id)}
-                    className={clsx(
-                      'flex flex-col items-start p-4 rounded-lg border',
-                      'transition-all duration-fast text-left',
-                      colors.bg,
-                      colors.border
-                    )}
-                  >
-                    <div className={clsx('mb-3', colors.text)}>{template.icon}</div>
-                    <h3 className="text-sm font-medium text-text-primary">{template.name}</h3>
-                    <p className="text-xs text-text-secondary mt-1 line-clamp-2">
-                      {template.description}
-                    </p>
-                  </button>
-                )
-              })}
+          {/* 错误提示 */}
+          {error && (
+            <div className="flex items-center gap-2 p-4 mb-6 rounded-lg bg-error-500/10 border border-error-500/20">
+              <AlertCircle size={20} className="text-error-500 flex-shrink-0" />
+              <p className="text-sm text-error-500">{error}</p>
             </div>
+          )}
+
+          {/* Agent 选择 */}
+          <div className="mb-8">
+            <h2 className="text-sm font-medium text-text-secondary mb-4">选择 Agent</h2>
+            {isLoadingAgents ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-500" />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {agents.map((agent) => {
+                  const isSelected = selectedAgentId === agent.id
+                  const colors = getColorClasses(agent.color, isSelected)
+
+                  return (
+                    <button
+                      key={agent.id}
+                      onClick={() => setSelectedAgentId(isSelected ? null : agent.id)}
+                      className={clsx(
+                        'flex flex-col items-start p-4 rounded-lg border',
+                        'transition-all duration-fast text-left',
+                        colors.bg,
+                        colors.border
+                      )}
+                    >
+                      <div className={clsx('mb-3', colors.text)}>{agent.icon}</div>
+                      <h3 className="text-sm font-medium text-text-primary">{agent.name}</h3>
+                      <p className="text-xs text-text-secondary mt-1 line-clamp-2">
+                        {agent.description}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* 快速开始 */}
@@ -176,16 +318,16 @@ export default function NewChatPage() {
                 />
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-text-tertiary">
-                    {selectedTemplate && (
+                    {selectedAgentId && (
                       <span>
-                        已选择: {agentTemplates.find((t) => t.id === selectedTemplate)?.name}
+                        已选择: {agents.find((a) => a.id === selectedAgentId)?.name}
                       </span>
                     )}
                   </div>
                   <Button
                     onClick={handleStartChat}
                     loading={isCreating}
-                    disabled={!message.trim() && !selectedTemplate}
+                    disabled={!message.trim() && !selectedAgentId}
                     rightIcon={<ArrowRight size={16} />}
                   >
                     开始对话
