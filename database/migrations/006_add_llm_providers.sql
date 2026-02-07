@@ -109,11 +109,11 @@ CREATE TABLE IF NOT EXISTS llm_fallback_rules (
     primary_model_id UUID NOT NULL,                                 -- 主模型（逻辑外键 -> llm_models.id）
     fallback_model_id UUID NOT NULL,                                -- 备用模型（逻辑外键 -> llm_models.id）
     priority INTEGER DEFAULT 0,                                     -- 优先级（数值越大优先级越高）
-    trigger_conditions JSONB DEFAULT '{                             -- 触发条件
+    trigger_conditions JSONB DEFAULT '{
         "error_codes": ["rate_limit", "service_unavailable", "timeout"],
         "max_latency_ms": 30000,
         "max_retries": 3
-    }',
+    }',                                                            -- 触发条件
     is_active BOOLEAN DEFAULT true,                                 -- 是否启用
     created_by UUID,                                                -- 创建者
     created_at TIMESTAMPTZ DEFAULT NOW(),                           -- 创建时间
