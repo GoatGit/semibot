@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
+import { Card, CardHeader, CardDescription, CardContent } from '@/components/ui/Card'
 
 type TabId = 'config' | 'tools' | 'prompts' | 'testing' | 'analytics'
 
@@ -66,8 +66,8 @@ export default function AgentDetailPage() {
   })
 
   const tabs = [
-    { id: 'config' as const, label: '基本配置', icon: <Settings size={16} /> },
-    { id: 'tools' as const, label: '工具配置', icon: <Wrench size={16} /> },
+    { id: 'config' as const, label: '基础设置', icon: <Settings size={16} /> },
+    { id: 'tools' as const, label: '工具设置', icon: <Wrench size={16} /> },
     { id: 'prompts' as const, label: 'Prompt 模板', icon: <Code size={16} /> },
     { id: 'testing' as const, label: '测试运行', icon: <MessageSquare size={16} /> },
     { id: 'analytics' as const, label: '使用分析', icon: <BarChart3 size={16} />, disabled: isNew },
@@ -106,7 +106,10 @@ export default function AgentDetailPage() {
                 <Bot size={20} className="text-primary-400" />
               </div>
               <div>
-                <h1 className="text-lg font-semibold text-text-primary">
+                <h1
+                  className="text-lg font-semibold text-text-primary"
+                  data-testid="agent-detail-name"
+                >
                   {isNew ? '创建新 Agent' : agentData.name}
                 </h1>
                 {!isNew && (
@@ -201,7 +204,7 @@ function ConfigTab({ agentData, setAgentData }: ConfigTabProps) {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>基本信息</CardTitle>
+          <div className="text-lg font-semibold text-text-primary">基本信息</div>
           <CardDescription>设置 Agent 的名称和描述</CardDescription>
         </CardHeader>
         <CardContent>
@@ -238,8 +241,8 @@ function ConfigTab({ agentData, setAgentData }: ConfigTabProps) {
 
       <Card>
         <CardHeader>
-          <CardTitle>模型配置</CardTitle>
-          <CardDescription>选择和配置 AI 模型参数</CardDescription>
+          <div className="text-lg font-semibold text-text-primary">参数设置</div>
+          <CardDescription>选择 AI 参数</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -318,7 +321,7 @@ function ToolsTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>可用工具</CardTitle>
+          <div className="text-lg font-semibold text-text-primary">可用工具</div>
           <CardDescription>选择 Agent 可以使用的工具</CardDescription>
         </CardHeader>
         <CardContent>
@@ -345,7 +348,7 @@ function ToolsTab() {
                     />
                   </div>
                   <div>
-                    <h3 className="text-sm font-medium text-text-primary">{tool.name}</h3>
+                    <div className="text-sm font-medium text-text-primary">{tool.name}</div>
                     <p className="text-xs text-text-secondary">{tool.description}</p>
                   </div>
                 </div>
@@ -385,14 +388,14 @@ function PromptsTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>System Prompt</CardTitle>
+          <div className="text-lg font-semibold text-text-primary">角色设定</div>
           <CardDescription>定义 Agent 的角色和行为</CardDescription>
         </CardHeader>
         <CardContent>
           <textarea
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
-            placeholder="输入 System Prompt..."
+            placeholder="输入角色设定..."
             className={clsx(
               'w-full h-48 px-3 py-2 rounded-md resize-none font-mono text-sm',
               'bg-bg-surface border border-border-default',
@@ -409,7 +412,7 @@ function PromptsTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Prompt 模板</CardTitle>
+          <div className="text-lg font-semibold text-text-primary">Prompt 模板</div>
           <CardDescription>预设的 Prompt 模板</CardDescription>
         </CardHeader>
         <CardContent>
@@ -441,7 +444,7 @@ function TestingTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>测试对话</CardTitle>
+          <div className="text-lg font-semibold text-text-primary">测试对话</div>
           <CardDescription>在发布前测试 Agent 的表现</CardDescription>
         </CardHeader>
         <CardContent>
@@ -465,7 +468,7 @@ function AnalyticsTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>使用统计</CardTitle>
+          <div className="text-lg font-semibold text-text-primary">使用统计</div>
           <CardDescription>过去 30 天的使用数据</CardDescription>
         </CardHeader>
         <CardContent>

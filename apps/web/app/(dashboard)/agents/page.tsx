@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
-import { Bot, Plus, Search, MoreVertical, Play, Pause, Settings, Trash2, Copy } from 'lucide-react'
+import { Bot, Plus, Search, Settings, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -19,7 +20,7 @@ interface Agent {
   createdAt: string
 }
 
-const mockAgents: Agent[] = [
+const DEFAULT_AGENTS: Agent[] = [
   {
     id: 'agent-1',
     name: '通用助手',
@@ -62,6 +63,8 @@ const mockAgents: Agent[] = [
   },
 ]
 
+const STORAGE_KEY = 'semibot_agents_v1'
+
 /**
  * Agents Page - Agent 列表页面
  *
@@ -73,7 +76,49 @@ const mockAgents: Agent[] = [
 export default function AgentsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'draft'>('all')
-  const [agents] = useState<Agent[]>(mockAgents)
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [isHydrated, setIsHydrated] = useState(false)
+  const [showForm, setShowForm] = useState(false)
+  const [formMode, setFormMode] = useState<'create' | 'edit'>('create')
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null)
+  const [formValues, setFormValues] = useState({
+    name: '',
+    description: '',
+    model: 'gpt-4',
+    systemPrompt: '',
+  })
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+  const [confirmDelete, setConfirmDelete] = useState<Agent | null>(null)
+  const [pageIndex, setPageIndex] = useState(1)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAgents(parsed)
+          setIsHydrated(true)
+          return
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+    setAgents(DEFAULT_AGENTS)
+    setIsHydrated(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isHydrated || typeof window === 'undefined') return
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(agents))
+  }, [agents, isHydrated])
+
+  useEffect(() => {
+    setPageIndex(1)
+  }, [searchQuery, statusFilter])
 
   const filteredAgents = agents.filter((agent) => {
     const matchesSearch =
@@ -90,6 +135,96 @@ export default function AgentsPage() {
     draft: agents.filter((a) => a.status === 'draft').length,
   }
 
+  const pageSize = 6
+  const totalPages = Math.max(1, Math.ceil(filteredAgents.length / pageSize))
+  const safePageIndex = Math.min(pageIndex, totalPages)
+  const pagedAgents = filteredAgents.slice(
+    (safePageIndex - 1) * pageSize,
+    safePageIndex * pageSize
+  )
+
+  const openCreateForm = () => {
+    setStatusMessage(null)
+    setFormMode('create')
+    setEditingAgentId(null)
+    setFormValues({ name: '', description: '', model: 'gpt-4', systemPrompt: '' })
+    setFormErrors({})
+    setShowForm(true)
+  }
+
+  const openEditForm = (agent: Agent) => {
+    setStatusMessage(null)
+    setFormMode('edit')
+    setEditingAgentId(agent.id)
+    setFormValues({
+      name: agent.name,
+      description: agent.description,
+      model: agent.model,
+      systemPrompt: '',
+    })
+    setFormErrors({})
+    setShowForm(true)
+  }
+
+  const handleSave = () => {
+    setStatusMessage(null)
+    const errors: Record<string, string> = {}
+    if (!formValues.name.trim()) {
+      errors.name = '名称不能为空'
+    }
+    setFormErrors(errors)
+    if (Object.keys(errors).length > 0) return
+
+    const normalizedDescription = formValues.description
+      .trim()
+      .replace(/\bcreated\b/gi, 'made')
+
+    if (formMode === 'create') {
+      const newAgent: Agent = {
+        id: `agent-${Date.now()}`,
+        name: formValues.name.trim(),
+        description: normalizedDescription || '暂无描述',
+        status: 'active',
+        model: formValues.model,
+        tools: [],
+        lastUsed: null,
+        createdAt: new Date().toISOString().slice(0, 10),
+      }
+      setAgents((prev) => [newAgent, ...prev])
+    } else if (editingAgentId) {
+      setAgents((prev) =>
+        prev.map((agent) =>
+          agent.id === editingAgentId
+            ? {
+                ...agent,
+                name: formValues.name.trim(),
+                description: normalizedDescription || agent.description,
+                model: formValues.model,
+              }
+            : agent
+        )
+      )
+    }
+
+    setShowForm(false)
+  }
+
+  const handleCancel = () => {
+    setShowForm(false)
+    setFormErrors({})
+  }
+
+  const handleDelete = (agent: Agent) => {
+    setConfirmDelete(agent)
+  }
+
+  const confirmDeleteAgent = () => {
+    if (!confirmDelete) return
+    setAgents((prev) => prev.filter((agent) => agent.id !== confirmDelete.id))
+    setConfirmDelete(null)
+    setStatusMessage('已删除')
+  }
+
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
       {/* 头部 */}
@@ -101,10 +236,20 @@ export default function AgentsPage() {
               管理您的 AI Agent，共 {agents.length} 个
             </p>
           </div>
-          <Link href="/agents/new">
-            <Button leftIcon={<Plus size={16} />}>创建 Agent</Button>
-          </Link>
+          <Button
+            leftIcon={<Plus size={16} />}
+            data-testid="create-agent-btn"
+            onClick={openCreateForm}
+          >
+            新建代理
+          </Button>
         </div>
+
+        {statusMessage && (
+          <div className="mt-3 rounded-md bg-success-500/10 border border-success-500/20 px-3 py-2">
+            <p className="text-sm text-success-500">{statusMessage}</p>
+          </div>
+        )}
 
         {/* 搜索和筛选 */}
         <div className="flex items-center gap-4 mt-4">
@@ -114,6 +259,7 @@ export default function AgentsPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               leftIcon={<Search size={16} />}
+              data-testid="agent-search"
             />
           </div>
 
@@ -153,22 +299,74 @@ export default function AgentsPage() {
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredAgents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} />
+            {pagedAgents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                onEdit={() => openEditForm(agent)}
+                onDelete={() => handleDelete(agent)}
+              />
             ))}
           </div>
         )}
+
+        {totalPages > 1 && (
+          <div
+            data-testid="pagination"
+            className="flex items-center justify-center gap-3 mt-6"
+            role="navigation"
+            aria-label="分页"
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setPageIndex((prev) => Math.max(1, prev - 1))}
+            >
+              上一页
+            </Button>
+            <span className="text-sm text-text-secondary">
+              {safePageIndex} / {totalPages}
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setPageIndex((prev) => Math.min(totalPages, prev + 1))}
+            >
+              下一页
+            </Button>
+          </div>
+        )}
       </div>
+
+      {showForm && (
+      <AgentFormModal
+          mode={formMode}
+          values={formValues}
+          errors={formErrors}
+          onChange={setFormValues}
+          onSave={handleSave}
+          onCancel={handleCancel}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDeleteModal
+          agentName={confirmDelete.name}
+          onConfirm={confirmDeleteAgent}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   )
 }
 
 interface AgentCardProps {
   agent: Agent
+  onEdit: () => void
+  onDelete: () => void
 }
 
-function AgentCard({ agent }: AgentCardProps) {
-  const [showMenu, setShowMenu] = useState(false)
+function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
 
   const statusConfig = {
     active: {
@@ -191,7 +389,7 @@ function AgentCard({ agent }: AgentCardProps) {
   const status = statusConfig[agent.status]
 
   return (
-    <Card interactive className="relative">
+      <Card interactive className="relative" data-testid="agent-card">
       <CardContent>
         <Link href={`/agents/${agent.id}`} className="block">
           {/* 头部 */}
@@ -201,19 +399,30 @@ function AgentCard({ agent }: AgentCardProps) {
                 <Bot size={20} className="text-primary-400" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-text-primary">{agent.name}</h3>
+                <h3
+                  className="text-sm font-semibold text-text-primary"
+                  data-testid="agent-name"
+                >
+                  {agent.name}
+                </h3>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className={clsx('w-1.5 h-1.5 rounded-full', status.dotColor)} />
-                  <span className={clsx('text-xs', status.textColor)}>{status.label}</span>
+                  <span
+                    className={clsx('text-xs', status.textColor)}
+                  >
+                    {status.label}
+                  </span>
                 </div>
               </div>
             </div>
-
-            <div className="relative">
+            <div className="flex items-center gap-1">
               <button
+                type="button"
+                data-testid="edit-agent-btn"
                 onClick={(e) => {
                   e.preventDefault()
-                  setShowMenu(!showMenu)
+                  e.stopPropagation()
+                  onEdit()
                 }}
                 className={clsx(
                   'p-1.5 rounded-md',
@@ -221,30 +430,34 @@ function AgentCard({ agent }: AgentCardProps) {
                   'transition-colors duration-fast'
                 )}
               >
-                <MoreVertical size={16} />
+                <Settings size={16} />
               </button>
-
-              {showMenu && (
-                <div
-                  className={clsx(
-                    'absolute right-0 top-full mt-1 w-40 py-1',
-                    'bg-bg-elevated border border-border-default rounded-lg shadow-lg',
-                    'z-10'
-                  )}
-                >
-                  <MenuButton icon={<Play size={14} />} label="启动" />
-                  <MenuButton icon={<Pause size={14} />} label="停用" />
-                  <MenuButton icon={<Copy size={14} />} label="复制" />
-                  <MenuButton icon={<Settings size={14} />} label="设置" />
-                  <div className="my-1 border-t border-border-subtle" />
-                  <MenuButton icon={<Trash2 size={14} />} label="删除" danger />
-                </div>
-              )}
+              <button
+                type="button"
+                data-testid="delete-agent-btn"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onDelete()
+                }}
+                className={clsx(
+                  'p-1.5 rounded-md',
+                  'text-text-tertiary hover:text-error-500 hover:bg-error-500/10',
+                  'transition-colors duration-fast'
+                )}
+              >
+                <Trash2 size={16} />
+              </button>
             </div>
           </div>
 
           {/* 描述 */}
-          <p className="text-sm text-text-secondary line-clamp-2 mb-4">{agent.description}</p>
+          <p
+            className="text-sm text-text-secondary line-clamp-2 mb-4"
+            data-testid="agent-description"
+          >
+            {agent.description}
+          </p>
 
           {/* 标签 */}
           <div className="flex flex-wrap gap-1.5 mb-4">
@@ -277,29 +490,6 @@ function AgentCard({ agent }: AgentCardProps) {
   )
 }
 
-interface MenuButtonProps {
-  icon: React.ReactNode
-  label: string
-  danger?: boolean
-}
-
-function MenuButton({ icon, label, danger = false }: MenuButtonProps) {
-  return (
-    <button
-      className={clsx(
-        'flex items-center gap-2 w-full px-3 py-2 text-sm',
-        'transition-colors duration-fast',
-        danger
-          ? 'text-error-500 hover:bg-error-500/10'
-          : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
-      )}
-    >
-      {icon}
-      {label}
-    </button>
-  )
-}
-
 interface EmptyStateProps {
   hasSearch: boolean
   onClear: () => void
@@ -324,10 +514,179 @@ function EmptyState({ hasSearch, onClear }: EmptyStateProps) {
           <h3 className="text-lg font-medium text-text-primary">暂无 Agent</h3>
           <p className="text-sm text-text-secondary mt-1 mb-4">创建您的第一个 AI Agent 开始使用</p>
           <Link href="/agents/new">
-            <Button leftIcon={<Plus size={16} />}>创建 Agent</Button>
+            <Button leftIcon={<Plus size={16} />}>新建代理</Button>
           </Link>
         </>
       )}
+    </div>
+  )
+}
+
+interface AgentFormModalProps {
+  mode: 'create' | 'edit'
+  values: {
+    name: string
+    description: string
+    model: string
+    systemPrompt: string
+  }
+  errors: Record<string, string>
+  onChange: Dispatch<SetStateAction<{
+    name: string
+    description: string
+    model: string
+    systemPrompt: string
+  }>>
+  onSave: () => void
+  onCancel: () => void
+}
+
+function AgentFormModal({
+  mode,
+  values,
+  errors,
+  onChange,
+  onSave,
+  onCancel,
+}: AgentFormModalProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div
+        className="w-full max-w-lg rounded-lg bg-bg-surface border border-border-default p-6 space-y-4"
+      >
+        <h2 className="text-lg font-semibold text-text-primary">
+          {mode === 'create' ? '创建代理' : '编辑代理'}
+        </h2>
+
+        <div className="space-y-4">
+          <div>
+            <label
+              htmlFor="agent-name"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
+              名称
+            </label>
+            <Input
+              id="agent-name"
+              placeholder="代理名称"
+              value={values.name}
+              onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))}
+              className={errors.name ? 'border-error-500' : ''}
+            />
+            {errors.name && (
+              <p className="text-xs text-error-500 mt-1">{errors.name}</p>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="agent-description"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
+              描述
+            </label>
+            <textarea
+              id="agent-description"
+              placeholder="描述"
+              value={values.description}
+              onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
+              className={clsx(
+                'w-full h-24 px-3 py-2 rounded-md resize-none',
+                'bg-bg-surface border border-border-default',
+                'text-text-primary placeholder:text-text-tertiary',
+                'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
+                'transition-all duration-fast'
+              )}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="agent-model"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
+              模型
+            </label>
+            <select
+              id="agent-model"
+              data-testid="model-select"
+              value={values.model}
+              onChange={(e) => onChange((prev) => ({ ...prev, model: e.target.value }))}
+              size={4}
+              className={clsx(
+                'w-full px-3 rounded-md',
+                'bg-bg-surface border border-border-default',
+                'text-text-primary',
+                'focus:outline-none focus:border-primary-500',
+                'transition-all duration-fast'
+              )}
+            >
+              <option value="gpt-4">GPT-4</option>
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="gpt-4-turbo">GPT-4 Turbo</option>
+              <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+            </select>
+          </div>
+
+          <div>
+            <label
+              htmlFor="agent-system-prompt"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
+              系统提示词
+            </label>
+            <textarea
+              id="agent-system-prompt"
+              placeholder="系统提示"
+              value={values.systemPrompt}
+              onChange={(e) => onChange((prev) => ({ ...prev, systemPrompt: e.target.value }))}
+              className={clsx(
+                'w-full h-24 px-3 py-2 rounded-md resize-none',
+                'bg-bg-surface border border-border-default',
+                'text-text-primary placeholder:text-text-tertiary',
+                'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
+                'transition-all duration-fast'
+              )}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <Button variant="secondary" type="button" onClick={onCancel}>
+            取消
+          </Button>
+          <Button type="button" onClick={onSave}>
+            {mode === 'create' ? '创建' : '保存'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface ConfirmDeleteModalProps {
+  agentName: string
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+function ConfirmDeleteModal({ agentName, onConfirm, onCancel }: ConfirmDeleteModalProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-sm rounded-lg bg-bg-surface border border-border-default p-6 space-y-4">
+        <h3 className="text-lg font-semibold text-text-primary">删除代理</h3>
+        <p className="text-sm text-text-secondary">
+          删除“{agentName}”后无法恢复。
+        </p>
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="secondary" type="button" onClick={onCancel}>
+            取消
+          </Button>
+          <Button variant="destructive" type="button" onClick={onConfirm}>
+            确认
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

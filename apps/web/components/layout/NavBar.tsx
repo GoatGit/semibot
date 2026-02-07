@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { useLayoutStore } from '@/stores/layoutStore'
+import { useAuthStore } from '@/stores/authStore'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 import {
@@ -12,7 +13,10 @@ import {
   MessageSquare,
   Sparkles,
   Puzzle,
+  User,
+  LogOut,
 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 
 interface NavItem {
   icon: React.ReactNode
@@ -40,8 +44,11 @@ const navItems: NavItem[] = [
  */
 export function NavBar() {
   const { navBarExpanded } = useLayoutStore()
+  const { user, logout } = useAuthStore()
   const pathname = usePathname()
+  const router = useRouter()
   const [isHovered, setIsHovered] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
 
   // 实际显示的展开状态：固定展开 或 悬停展开
   const isExpanded = navBarExpanded || isHovered
@@ -120,6 +127,58 @@ export function NavBar() {
             <SessionItem title="竞品分析" time="昨天" />
           </div>
         )}
+      </div>
+
+      {/* 用户菜单 */}
+      <div className="border-t border-border-subtle p-2">
+        <div className="relative">
+          <button
+            type="button"
+            data-testid="user-menu"
+            aria-label="用户"
+            onClick={() => setShowUserMenu((prev) => !prev)}
+            className={clsx(
+              'flex items-center gap-3 w-full h-10 px-3 rounded-md',
+              'transition-colors duration-fast',
+              'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
+            )}
+          >
+            <div className="w-7 h-7 rounded-full bg-primary-500/20 flex items-center justify-center">
+              <User size={14} className="text-primary-400" />
+            </div>
+            {isExpanded && (
+              <span className="text-sm font-medium truncate">
+                {user?.name || '用户'}
+              </span>
+            )}
+          </button>
+
+          {showUserMenu && (
+            <div
+              className={clsx(
+                'absolute bottom-full left-0 mb-2 w-full',
+                'bg-bg-elevated border border-border-default rounded-lg shadow-lg',
+                'z-20'
+              )}
+            >
+              <button
+                type="button"
+                className={clsx(
+                  'flex items-center gap-2 w-full px-3 py-2 text-sm',
+                  'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
+                )}
+                onClick={() => {
+                  logout()
+                  setShowUserMenu(false)
+                  router.push('/login')
+                }}
+              >
+                <LogOut size={14} />
+                退出登录
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </nav>
   )

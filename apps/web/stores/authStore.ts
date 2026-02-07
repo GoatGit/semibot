@@ -84,6 +84,11 @@ export const useAuthStore = create<AuthState>()(
 
       // 登出
       logout: () => {
+        // 清除 cookie（用于中间件认证）
+        if (typeof document !== 'undefined') {
+          document.cookie = 'auth_token=; path=/; max-age=0; samesite=strict'
+        }
+
         // 清除 localStorage
         if (typeof window !== 'undefined') {
           localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN)

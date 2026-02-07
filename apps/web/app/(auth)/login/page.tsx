@@ -21,8 +21,10 @@ interface LoginResponse {
       role: 'owner' | 'admin' | 'member'
     }
     token: string
-    refresh_token: string
-    expires_at: string
+    refreshToken?: string
+    refresh_token?: string
+    expiresAt?: string
+    expires_at?: string
   }
   error?: {
     code: string
@@ -45,11 +47,20 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
 
+  const normalizeEmail = (value: string) => value.trim().toLowerCase()
+  const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!email.trim() || !password.trim()) {
-      setError('请填写邮箱和密码')
+    const normalizedEmail = normalizeEmail(email)
+    if (!normalizedEmail || !password.trim()) {
+      setError('邮箱和密码不能为空')
+      return
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      setError('邮箱格式无效')
       return
     }
 
@@ -57,12 +68,16 @@ function LoginForm() {
 
     try {
       const response = await apiClient.post<LoginResponse>('/auth/login', {
-        email: email.trim(),
+        email: normalizedEmail,
         password,
       })
 
       if (response.success && response.data) {
-        const { user, token, refresh_token, expires_at } = response.data
+        const { user, token } = response.data
+        const refreshToken =
+          response.data.refreshToken ?? response.data.refresh_token ?? ''
+        const expiresAt =
+          response.data.expiresAt ?? response.data.expires_at ?? ''
 
         // 存储到 cookie (用于中间件验证)
         if (typeof document !== 'undefined') {
@@ -82,15 +97,20 @@ function LoginForm() {
           },
           {
             accessToken: token,
-            refreshToken: refresh_token,
-            expiresAt: expires_at,
+            refreshToken,
+            expiresAt,
           }
         )
 
         // 跳转
         router.push(redirectTo)
       } else {
-        setError(response.error?.message || '登录失败')
+        const errorCode = response.error?.code
+        if (errorCode === 'AUTH_USER_NOT_FOUND' || errorCode === 'AUTH_INVALID_PASSWORD') {
+          setError('邮箱或密码错误')
+        } else {
+          setError(response.error?.message || '登录失败')
+        }
       }
     } catch (err) {
       console.error('[Login] 登录失败:', err)
@@ -105,7 +125,7 @@ function LoginForm() {
           登录账户
         </h2>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           {/* 错误提示 */}
           {error && (
             <div className="p-3 rounded-md bg-error-500/10 border border-error-500/20">
@@ -115,32 +135,48 @@ function LoginForm() {
 
           {/* 邮箱 */}
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">
+            <label
+              htmlFor="login-email"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
               邮箱
             </label>
             <Input
+              id="login-email"
               type="email"
               placeholder="请输入邮箱"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                if (error) setError(null)
+              }}
               leftIcon={<Mail size={16} />}
               disabled={isLoading}
+              aria-label="邮箱"
             />
           </div>
 
           {/* 密码 */}
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">
+            <label
+              htmlFor="login-password"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
               密码
             </label>
             <div className="relative">
               <Input
+                id="login-password"
                 type={showPassword ? 'text' : 'password'}
                 placeholder="请输入密码"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value)
+                  if (error) setError(null)
+                }}
                 leftIcon={<Lock size={16} />}
                 disabled={isLoading}
+                aria-label="密码"
               />
               <button
                 type="button"
@@ -184,7 +220,7 @@ function LoginForm() {
           <Button
             type="submit"
             className="w-full"
-            disabled={isLoading || !email.trim() || !password.trim()}
+            disabled={isLoading}
           >
             {isLoading ? (
               <>

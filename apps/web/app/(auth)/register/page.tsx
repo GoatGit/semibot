@@ -26,8 +26,10 @@ interface RegisterResponse {
       name: string
     }
     token: string
-    refresh_token: string
-    expires_at: string
+    refreshToken?: string
+    refresh_token?: string
+    expiresAt?: string
+    expires_at?: string
   }
   error?: {
     code: string
@@ -116,7 +118,11 @@ export default function RegisterPage() {
       })
 
       if (response.success && response.data) {
-        const { user, organization, token, refresh_token, expires_at } = response.data
+        const { user, organization, token } = response.data
+        const refreshToken =
+          response.data.refreshToken ?? response.data.refresh_token ?? ''
+        const expiresAt =
+          response.data.expiresAt ?? response.data.expires_at ?? ''
 
         // 存储到 cookie
         if (typeof document !== 'undefined') {
@@ -135,8 +141,8 @@ export default function RegisterPage() {
           },
           {
             accessToken: token,
-            refreshToken: refresh_token,
-            expiresAt: expires_at,
+            refreshToken,
+            expiresAt,
           }
         )
 
@@ -176,10 +182,14 @@ export default function RegisterPage() {
 
           {/* 姓名 */}
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">
+            <label
+              htmlFor="register-name"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
               姓名 <span className="text-error-500">*</span>
             </label>
             <Input
+              id="register-name"
               type="text"
               placeholder="请输入姓名"
               value={formData.name}
@@ -195,10 +205,14 @@ export default function RegisterPage() {
 
           {/* 邮箱 */}
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">
+            <label
+              htmlFor="register-email"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
               邮箱 <span className="text-error-500">*</span>
             </label>
             <Input
+              id="register-email"
               type="email"
               placeholder="请输入邮箱"
               value={formData.email}
@@ -214,11 +228,15 @@ export default function RegisterPage() {
 
           {/* 密码 */}
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">
+            <label
+              htmlFor="register-password"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
               密码 <span className="text-error-500">*</span>
             </label>
             <div className="relative">
               <Input
+                id="register-password"
                 type={showPassword ? 'text' : 'password'}
                 placeholder={`至少 ${PASSWORD_LENGTH.MIN} 位`}
                 value={formData.password}
@@ -246,10 +264,14 @@ export default function RegisterPage() {
 
           {/* 确认密码 */}
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">
+            <label
+              htmlFor="register-confirm-password"
+              className="block text-sm font-medium text-text-secondary mb-1.5"
+            >
               确认密码 <span className="text-error-500">*</span>
             </label>
             <Input
+              id="register-confirm-password"
               type={showPassword ? 'text' : 'password'}
               placeholder="请再次输入密码"
               value={formData.confirmPassword}
