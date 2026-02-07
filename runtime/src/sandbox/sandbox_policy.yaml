@@ -1,0 +1,208 @@
+# Sandbox Security Policy Configuration
+# This file defines security policies for sandbox execution
+
+policies:
+  # Default settings for all tools
+  default:
+    sandbox_enabled: true
+    max_execution_time: 30s
+    max_memory: 512MB
+    max_cpu: 1.0
+    network_access: false
+    filesystem_access: workspace_only
+
+  # Tool-specific policies
+  tools:
+    # Low risk - read-only operations
+    file_read:
+      risk_level: low
+      sandbox_enabled: false
+      allowed_paths:
+        - /workspace/**
+      denied_paths:
+        - /workspace/.env
+        - /workspace/**/*.key
+        - /workspace/**/*.pem
+        - /workspace/**/*.secret
+        - /workspace/**/credentials*
+
+    # Medium risk - file modifications
+    file_write:
+      risk_level: medium
+      sandbox_enabled: true
+      allowed_paths:
+        - /workspace/**
+      denied_paths:
+        - /workspace/.env
+        - /workspace/**/*.key
+
+    file_edit:
+      risk_level: medium
+      sandbox_enabled: true
+      allowed_paths:
+        - /workspace/**
+      denied_paths:
+        - /workspace/.env
+
+    # High risk - code execution
+    code_run:
+      risk_level: high
+      sandbox_enabled: true
+      supported_languages:
+        - python
+        - javascript
+        - typescript
+        - bash
+      max_execution_time: 120s
+      max_memory: 1GB
+      network_access: false
+
+    # High risk - shell commands
+    shell_exec:
+      risk_level: high
+      sandbox_enabled: true
+      max_execution_time: 60s
+      allowed_commands:
+        - ls
+        - cat
+        - head
+        - tail
+        - grep
+        - find
+        - wc
+        - sort
+        - uniq
+        - awk
+        - sed
+        - python
+        - python3
+        - node
+        - npm
+        - pip
+      denied_commands:
+        - rm -rf /
+        - rm -rf /*
+        - sudo
+        - su
+        - curl
+        - wget
+        - nc
+        - netcat
+        - ssh
+        - scp
+        - rsync
+        - chmod 777
+        - chown
+        - mount
+        - umount
+        - mkfs
+        - dd
+        - iptables
+
+    # High risk - browser automation
+    browser_automation:
+      risk_level: high
+      sandbox_enabled: true
+      network_access: true
+      max_execution_time: 300s
+      allowed_domains:
+        - "*.example.com"
+      denied_domains:
+        - "*.internal.*"
+        - localhost
+        - "127.*"
+        - "10.*"
+        - "192.168.*"
+        - "172.16.*"
+
+    # Critical risk - requires approval
+    system_admin:
+      risk_level: critical
+      sandbox_enabled: true
+      requires_approval: true
+      max_execution_time: 60s
+
+  # Agent role-based policies
+  agent_roles:
+    code_assistant:
+      inherits: default
+      tools:
+        - file_read
+        - file_write
+        - file_edit
+        - code_run
+        - shell_exec
+      max_memory: 1GB
+
+    data_analyst:
+      inherits: default
+      tools:
+        - file_read
+        - code_run
+      max_memory: 2GB
+      max_execution_time: 300s
+
+    web_scraper:
+      inherits: default
+      tools:
+        - browser_automation
+        - file_write
+      network_access: true
+
+    readonly_assistant:
+      inherits: default
+      tools:
+        - file_read
+      sandbox_enabled: false
+
+# Network isolation settings
+network:
+  default: none
+
+  allowlist:
+    enabled: true
+    domains:
+      - api.openai.com
+      - api.anthropic.com
+      - "*.githubusercontent.com"
+      - pypi.org
+      - "*.pypi.org"
+      - npmjs.com
+      - "*.npmjs.com"
+    ips: []
+
+  denylist:
+    enabled: true
+    domains:
+      - "*.internal.*"
+      - "*.local"
+      - localhost
+      - "127.*"
+      - "10.*"
+      - "192.168.*"
+      - "172.16.*"
+      - "172.17.*"
+      - "172.18.*"
+      - "172.19.*"
+      - "172.20.*"
+      - "172.21.*"
+      - "172.22.*"
+      - "172.23.*"
+      - "172.24.*"
+      - "172.25.*"
+      - "172.26.*"
+      - "172.27.*"
+      - "172.28.*"
+      - "172.29.*"
+      - "172.30.*"
+      - "172.31.*"
+    ports:
+      - 22    # SSH
+      - 23    # Telnet
+      - 3306  # MySQL
+      - 5432  # PostgreSQL
+      - 6379  # Redis
+      - 27017 # MongoDB
+      - 9200  # Elasticsearch
+      - 2375  # Docker
+      - 2376  # Docker TLS

@@ -1,0 +1,48 @@
+# Sandbox Docker Image
+# Lightweight secure container for executing AI agent tools
+
+FROM python:3.11-slim
+
+# Install minimal dependencies (avoid nodejs/npm to reduce network issues)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    coreutils \
+    findutils \
+    grep \
+    sed \
+    gawk \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user for security
+RUN groupadd -g 1000 sandbox \
+    && useradd -u 1000 -g sandbox -s /bin/bash -m sandbox
+
+# Create workspace directories
+RUN mkdir -p /workspace /output /tmp/sandbox \
+    && chown -R sandbox:sandbox /workspace /output /tmp/sandbox
+
+# Install common Python packages
+RUN pip install --no-cache-dir \
+    numpy>=1.24.0 \
+    pandas>=2.0.0 \
+    requests>=2.28.0 \
+    pyyaml>=6.0
+
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Security: Remove unnecessary setuid binaries
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
+
+# Switch to non-root user
+USER sandbox
+WORKDIR /workspace
+
+# Set environment
+ENV HOME=/home/sandbox
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["tail", "-f", "/dev/null"]

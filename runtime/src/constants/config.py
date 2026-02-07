@@ -176,3 +176,61 @@ MAX_REPLAN_ATTEMPTS = 3
 
 DEFAULT_MAX_ITERATIONS = 10
 """Default maximum iterations for agent execution."""
+
+# =============================================================================
+# Sandbox Security
+# =============================================================================
+
+SANDBOX_POOL_SIZE = 5
+"""Default number of pre-warmed sandbox containers."""
+
+SANDBOX_MAX_MEMORY_MB = 512
+"""Default maximum memory per sandbox in MB."""
+
+SANDBOX_MAX_CPU_CORES = 1.0
+"""Default maximum CPU cores per sandbox."""
+
+SANDBOX_DEFAULT_TIMEOUT = 30
+"""Default execution timeout in seconds."""
+
+SANDBOX_MAX_TIMEOUT = 300
+"""Maximum allowed execution timeout in seconds."""
+
+SANDBOX_DOCKER_IMAGE = "semibot/sandbox:latest"
+"""Default Docker image for sandbox containers."""
+
+SANDBOX_WORKING_DIR = "/workspace"
+"""Default working directory inside sandbox."""
+
+SANDBOX_NETWORK_MODE = "none"
+"""Default network mode for sandbox (none = no network access)."""
+
+SANDBOX_MAX_OUTPUT_SIZE = 10 * 1024 * 1024
+"""Maximum output size in bytes (10MB)."""
+
+SANDBOX_AUDIT_LOG_DIR = "/var/log/semibot/sandbox"
+"""Directory for sandbox audit logs."""
+
+SANDBOX_AUDIT_MAX_ENTRIES = 10000
+"""Maximum in-memory audit log entries."""
+
+SANDBOX_POLICY_FILE = "sandbox_policy.yaml"
+"""Default sandbox policy configuration file."""
+
+# High-risk tools that require sandbox execution
+SANDBOX_REQUIRED_TOOLS = [
+    "code_run",
+    "shell_exec",
+    "browser_automation",
+    "file_write",
+    "file_edit",
+]
+"""Tools that must execute in sandbox."""
+
+# Low-risk tools that can bypass sandbox
+SANDBOX_BYPASS_TOOLS = [
+    "file_read",
+    "search",
+    "llm_call",
+]
+"""Tools that can execute without sandbox."""
