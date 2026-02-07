@@ -15,5 +15,8 @@
 
 ## 详细规范
 
-- [编码规范](.claude/rules/coding-standards.md) - 硬编码规范、边界日志
-- [数据库规范](.claude/rules/database.md) - 外键约束、SQL 脚本规范
+- [编码规范](.claude/rules/coding-standards.md) - 硬编码规范、边界日志、日志规范、错误处理
+- [数据库规范](.claude/rules/database.md) - 外键约束、SQL 脚本、软删除、审计字段、乐观锁
+- [API 规范](.claude/rules/api-standards.md) - 字段命名、DTO 类型、输入验证、响应格式
+- [安全规范](.claude/rules/security.md) - 多租户隔离、限流、SSE 连接限制
+- [并发规范](.claude/rules/concurrency.md) - Redis 原子操作、异步批量、资源关闭

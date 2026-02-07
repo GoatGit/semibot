@@ -71,3 +71,99 @@ const truncated = content.slice(0, MAX_LENGTH);
 - 文档/内容长度截断
 - 请求体大小限制
 - 用户配额/限制检查
+
+---
+
+## 日志规范
+
+**统一使用项目日志工具**，禁止混用不同日志库。
+
+### TypeScript/Node.js
+
+```typescript
+// ✅ 使用项目 logger
+import { logger } from '@/lib/logger';
+
+logger.info('操作成功', { userId, action });
+logger.warn('边界触发', { current, limit });
+logger.error('操作失败', { error: err.message });
+
+// ❌ 禁止直接使用 console
+console.log('xxx');
+```
+
+### Python
+
+```python
+# ✅ 统一使用项目 logger
+from src.utils.logging import get_logger
+logger = get_logger(__name__)
+
+# ❌ 禁止混用
+import logging
+logger = logging.getLogger(__name__)
+```
+
+### 日志级别规范
+
+| 场景 | 级别 |
+|------|------|
+| 增删改成功 | INFO |
+| 查询/搜索结果 | DEBUG |
+| 边界/限制触发 | WARN |
+| 错误/异常 | ERROR |
+| 健康检查失败 | ERROR |
+
+---
+
+## 错误处理
+
+### API 错误抛出
+
+```typescript
+// ✅ 使用 createError
+import { createError } from '@/lib/errors';
+
+throw createError(404, 'RESOURCE_NOT_FOUND', '资源不存在');
+
+// ❌ 禁止直接抛对象
+throw { code: 404, message: '资源不存在' };
+```
+
+### 输入验证
+
+**所有 API 路由必须使用 Zod Schema 验证。**
+
+```typescript
+// ✅ 使用 Zod 验证
+const schema = z.object({
+  id: z.string().uuid(),
+  content: z.string().min(1),
+});
+
+router.post('/', validate(schema), handler);
+```
+
+---
+
+## 废弃 API
+
+及时更新废弃的 API 和依赖。
+
+```python
+# ❌ Python 3.12 已废弃
+from datetime import datetime
+created_at = datetime.utcnow()
+
+# ✅ 使用 timezone-aware
+from datetime import datetime, timezone
+created_at = datetime.now(timezone.utc)
+```
+
+---
+
+## 代码去重
+
+- 禁止功能重复实现（如同时存在 Agent 类和 Node 函数做相同事情）
+- 常量定义禁止重复，统一在一处定义
+- 明确架构选型后保持一致
