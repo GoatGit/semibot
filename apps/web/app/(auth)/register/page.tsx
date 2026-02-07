@@ -127,6 +127,8 @@ export default function RegisterPage() {
         // 存储到 cookie
         if (typeof document !== 'undefined') {
           document.cookie = `auth_token=${token}; path=/; max-age=${24 * 60 * 60}; samesite=strict`
+          // 同时存储到 localStorage (用于 API 请求)
+          localStorage.setItem('auth_token', token)
         }
 
         // 更新 store

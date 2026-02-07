@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { Bot, Sparkles, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle } from 'lucide-react'
@@ -15,6 +15,7 @@ interface AgentOption {
   description: string
   icon: React.ReactNode
   color: string
+  isFallback?: boolean
 }
 
 // 默认 Agent 模板（当无法加载真实 Agent 列表时使用）
@@ -25,6 +26,7 @@ const defaultTemplates: AgentOption[] = [
     description: '多功能 AI 助手，可以帮助您完成各种任务',
     icon: <Bot size={24} />,
     color: 'primary',
+    isFallback: true,
   },
   {
     id: 'code',
@@ -32,6 +34,7 @@ const defaultTemplates: AgentOption[] = [
     description: '专注于编程和代码审查的 AI 助手',
     icon: <Code size={24} />,
     color: 'info',
+    isFallback: true,
   },
   {
     id: 'research',
@@ -39,6 +42,7 @@ const defaultTemplates: AgentOption[] = [
     description: '帮助您搜索、整理和分析信息',
     icon: <FileSearch size={24} />,
     color: 'success',
+    isFallback: true,
   },
   {
     id: 'data',
@@ -46,6 +50,7 @@ const defaultTemplates: AgentOption[] = [
     description: '数据处理、可视化和洞察分析',
     icon: <BarChart3 size={24} />,
     color: 'warning',
+    isFallback: true,
   },
   {
     id: 'creative',
@@ -53,6 +58,7 @@ const defaultTemplates: AgentOption[] = [
     description: '文案创作、内容生成和编辑',
     icon: <PenTool size={24} />,
     color: 'error',
+    isFallback: true,
   },
 ]
 
@@ -95,40 +101,46 @@ export default function NewChatPage() {
   const [agents, setAgents] = useState<AgentOption[]>([])
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [usingFallbackAgents, setUsingFallbackAgents] = useState(false)
 
   // 加载 Agent 列表
-  useEffect(() => {
-    const loadAgents = async () => {
-      try {
-        setIsLoadingAgents(true)
-        const response = await apiClient.get<ApiResponse<Agent[]>>('/agents')
+  const loadAgents = useCallback(async () => {
+    try {
+      setIsLoadingAgents(true)
+      const response = await apiClient.get<ApiResponse<Agent[]>>('/agents')
 
-        if (response.success && response.data && response.data.length > 0) {
-          const agentOptions: AgentOption[] = response.data
-            .filter((a) => a.isActive)
-            .map((agent, index) => ({
-              id: agent.id,
-              name: agent.name,
-              description: agent.description ?? '智能 AI 助手',
-              icon: getAgentIcon(agent.name),
-              color: getAgentColor(index),
-            }))
+      if (response.success && response.data && response.data.length > 0) {
+        const agentOptions: AgentOption[] = response.data
+          .filter((a) => a.isActive)
+          .map((agent, index) => ({
+            id: agent.id,
+            name: agent.name,
+            description: agent.description ?? '智能 AI 助手',
+            icon: getAgentIcon(agent.name),
+            color: getAgentColor(index),
+            isFallback: false,
+          }))
+        if (agentOptions.length > 0) {
           setAgents(agentOptions)
-        } else {
-          // 使用默认模板
-          setAgents(defaultTemplates)
+          setUsingFallbackAgents(false)
+          return
         }
-      } catch (err) {
-        console.error('[NewChat] 加载 Agent 列表失败:', err)
-        // 使用默认模板
-        setAgents(defaultTemplates)
-      } finally {
-        setIsLoadingAgents(false)
       }
-    }
 
-    loadAgents()
+      setAgents(defaultTemplates)
+      setUsingFallbackAgents(true)
+    } catch (err) {
+      console.error('[NewChat] 加载 Agent 列表失败:', err)
+      setAgents(defaultTemplates)
+      setUsingFallbackAgents(true)
+    } finally {
+      setIsLoadingAgents(false)
+    }
   }, [])
+
+  useEffect(() => {
+    loadAgents()
+  }, [loadAgents])
 
   const handleStartChat = async () => {
     if (!message.trim() && !selectedAgentId) return
@@ -137,8 +149,16 @@ export default function NewChatPage() {
     setError(null)
 
     try {
-      // 确定使用的 Agent ID
-      const agentId = selectedAgentId ?? agents[0]?.id
+      // 确定使用的 Agent
+      const selectedAgent = selectedAgentId
+        ? agents.find((a) => a.id === selectedAgentId)
+        : agents[0]
+
+      if (!selectedAgent || selectedAgent.isFallback || usingFallbackAgents) {
+        throw new Error('未加载到可用 Agent，请先创建或启用 Agent')
+      }
+
+      const agentId = selectedAgent.id
 
       if (!agentId) {
         throw new Error('请先选择一个 Agent')
@@ -297,6 +317,17 @@ export default function NewChatPage() {
                 })}
               </div>
             )}
+            {usingFallbackAgents && !isLoadingAgents && (
+              <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-warning-500/10 border border-warning-500/20">
+                <AlertCircle size={18} className="text-warning-500 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-warning-500">
+                  <p>未加载到可用 Agent，无法开始对话。</p>
+                  <a href="/agents" className="underline underline-offset-4">
+                    去创建或启用 Agent
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 快速开始 */}
@@ -327,7 +358,7 @@ export default function NewChatPage() {
                   <Button
                     onClick={handleStartChat}
                     loading={isCreating}
-                    disabled={!message.trim() && !selectedAgentId}
+                    disabled={(!message.trim() && !selectedAgentId) || usingFallbackAgents}
                     rightIcon={<ArrowRight size={16} />}
                   >
                     开始对话

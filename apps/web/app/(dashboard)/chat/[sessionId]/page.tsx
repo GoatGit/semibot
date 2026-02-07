@@ -42,14 +42,12 @@ export default function ChatSessionPage() {
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([])
   const [isLoadingSession, setIsLoadingSession] = useState(true)
   const [sessionError, setSessionError] = useState<string | null>(null)
-  const [currentSession, setCurrentSession] = useState<Session | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const { setCurrentSession: setStoreSession } = useSessionStore()
 
   // 使用 useChat hook 进行真实对话
   const {
-    connectionState,
     agent2uiState,
     isSending,
     sendMessage,
@@ -130,7 +128,6 @@ export default function ChatSessionPage() {
         }
 
         const session = sessionResponse.data
-        setCurrentSession(session)
         setStoreSession({
           id: session.id,
           agentId: session.agentId,
@@ -266,7 +263,7 @@ export default function ChatSessionPage() {
         <AlertCircle size={48} className="text-error-400 mb-4" />
         <p className="text-text-primary mb-2">加载会话失败</p>
         <p className="text-text-secondary text-sm mb-4">{sessionError}</p>
-        <Button onClick={() => router.push('/chat')} variant="outline">
+        <Button onClick={() => router.push('/chat')} variant="secondary">
           返回会话列表
         </Button>
       </div>

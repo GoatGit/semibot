@@ -83,6 +83,8 @@ function LoginForm() {
         if (typeof document !== 'undefined') {
           const maxAge = rememberMe ? 30 * 24 * 60 * 60 : 24 * 60 * 60 // 30天或1天
           document.cookie = `auth_token=${token}; path=/; max-age=${maxAge}; samesite=strict`
+          // 同时存储到 localStorage (用于 API 请求)
+          localStorage.setItem('auth_token', token)
         }
 
         // 更新 store

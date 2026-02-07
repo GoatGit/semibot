@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { Plus, Trash2, MessageSquare, Bot, AlertCircle } from 'lucide-react'
