@@ -23,6 +23,8 @@ export type Agent2UIType =
   | 'error'
   | 'thinking'
   | 'report'
+  | 'sandbox_log'
+  | 'sandbox_output'
 
 export interface Agent2UIMessage {
   id: string
@@ -47,6 +49,8 @@ export type Agent2UIData =
   | ErrorData
   | ThinkingData
   | ReportData
+  | SandboxLogData
+  | SandboxOutputData
 
 // ═══════════════════════════════════════════════════════════════
 // 各类型数据结构
@@ -164,6 +168,44 @@ export interface ReportData {
 export interface ReportSection {
   heading: string
   content: Agent2UIMessage[]
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 沙箱日志类型
+// ═══════════════════════════════════════════════════════════════
+
+export type SandboxLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export interface SandboxLogData {
+  sandboxId: string
+  level: SandboxLogLevel
+  message: string
+  timestamp: string
+  source?: string
+}
+
+export type SandboxOutputStream = 'stdout' | 'stderr'
+
+export interface SandboxOutputData {
+  sandboxId: string
+  stream: SandboxOutputStream
+  content: string
+  timestamp: string
+  exitCode?: number
+}
+
+export type SandboxStatus = 'starting' | 'running' | 'success' | 'error' | 'timeout'
+
+export interface SandboxStatusData {
+  sandboxId: string
+  status: SandboxStatus
+  startedAt?: string
+  endedAt?: string
+  durationMs?: number
+  resourceUsage?: {
+    cpuPercent?: number
+    memoryMb?: number
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

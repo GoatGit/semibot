@@ -17,6 +17,8 @@ import { PlanView } from './process/PlanView'
 import { ToolCallView } from './process/ToolCallView'
 import { ThinkingView } from './process/ThinkingView'
 import { ProgressView } from './process/ProgressView'
+import { SandboxLogView } from './process/SandboxLogView'
+import { SandboxOutputView } from './process/SandboxOutputView'
 
 // 报告类组件
 import { ReportView } from './report/ReportView'
@@ -58,6 +60,8 @@ const defaultComponentMap: Record<Agent2UIType, Agent2UIComponent> = {
   error: ErrorView,
   thinking: ThinkingView,
   report: ReportView,
+  sandbox_log: SandboxLogView,
+  sandbox_output: SandboxOutputView,
 }
 
 /**
