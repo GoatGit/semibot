@@ -18,7 +18,17 @@ import {
 import {
   SSE_HEARTBEAT_INTERVAL_MS,
   MAX_MESSAGE_LENGTH,
+  CHAT_EXECUTION_MODE,
+  CHAT_RUNTIME_ENABLED_ORGS,
+  type ChatExecutionMode,
 } from '../constants/config'
+import {
+  getRuntimeAdapter,
+  isRuntimeAvailable,
+  type RuntimeInputState,
+  type RuntimeExecutionResult,
+} from '../adapters/runtime.adapter'
+import { getRuntimeMonitor } from './runtime-monitor.service'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -173,9 +183,30 @@ export function sendAgent2UIMessage(
   return sendSSEEvent(connection, 'message', message)
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════��══════════
 // Chat 服务方法
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * 决定使用哪种执行模式
+ */
+function determineExecutionMode(orgId: string): ChatExecutionMode {
+  const monitor = getRuntimeMonitor()
+
+  // 检查是否触发自动回退
+  if (monitor.shouldFallback()) {
+    console.warn(`[Chat] 自动回退到 direct 模式 - 原因: ${monitor.getFallbackReason()}`)
+    return 'direct_llm'
+  }
+
+  // 检查是否在白名���中
+  if (CHAT_RUNTIME_ENABLED_ORGS.includes(orgId)) {
+    return 'runtime_orchestrator'
+  }
+
+  // 使用默认模式
+  return CHAT_EXECUTION_MODE
+}
 
 /**
  * 处理聊天消息 (SSE 流式响应)
@@ -200,6 +231,187 @@ export async function handleChat(
 
   // 获取 Agent
   const agent = await agentService.getAgent(orgId, session.agentId)
+
+  // 决定执行模式
+  const executionMode = determineExecutionMode(orgId)
+
+  console.log(`[Chat] 执行模式: ${executionMode} - Session: ${sessionId}, Org: ${orgId}`)
+
+  // 根据模式选择执行路径
+  if (executionMode === 'runtime_orchestrator') {
+    await handleChatWithRuntime(orgId, userId, sessionId, input, res, agent, session)
+  } else {
+    await handleChatDirect(orgId, userId, sessionId, input, res, agent, session)
+  }
+}
+
+/**
+ * 使用 Runtime Orchestrator 处理聊天
+ */
+async function handleChatWithRuntime(
+  orgId: string,
+  userId: string,
+  sessionId: string,
+  input: ChatInput,
+  res: Response,
+  agent: any,
+  session: any
+): Promise<void> {
+  // 创建 SSE 连接
+  const connection = createSSEConnection(res, sessionId, userId)
+  const startTime = Date.now()
+  const monitor = getRuntimeMonitor()
+
+  try {
+    // 检查 Runtime 是否可用
+    const runtimeReady = await isRuntimeAvailable()
+    if (!runtimeReady) {
+      console.warn('[Chat] Runtime 不可用，回退到 direct 模式')
+
+      // 记录失败
+      monitor.recordExecution({
+        sessionId,
+        orgId,
+        mode: 'runtime_orchestrator',
+        success: false,
+        error: 'Runtime service unavailable',
+        latencyMs: Date.now() - startTime,
+        timestamp: Date.now(),
+      })
+
+      await handleChatDirect(orgId, userId, sessionId, input, res, agent, session)
+      return
+    }
+
+    // 保存用户消息
+    await sessionService.addMessage(orgId, sessionId, {
+      role: 'user',
+      content: input.message,
+      parentId: input.parentMessageId,
+    })
+
+    // 获取历史消息
+    const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
+
+    // 构建 Runtime 输入
+    const runtimeInput: RuntimeInputState = {
+      session_id: sessionId,
+      agent_id: agent.id,
+      org_id: orgId,
+      user_message: input.message,
+      history_messages: historyMessages.slice(-20).map((msg) => ({
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+      })),
+      agent_config: {
+        system_prompt: agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`,
+        model: agent.config?.model,
+        temperature: agent.config?.temperature ?? 0.7,
+        max_tokens: agent.config?.maxTokens ?? 4096,
+      },
+      metadata: {
+        user_id: userId,
+      },
+    }
+
+    // 执行 Runtime 编排
+    const adapter = getRuntimeAdapter()
+    let fullContent = ''
+    let totalTokens = 0
+    let latencyMs = 0
+
+    await adapter.executeWithStreaming(connection, runtimeInput, async (result: RuntimeExecutionResult) => {
+      latencyMs = Date.now() - startTime
+
+      if (result.success) {
+        fullContent = result.final_response || ''
+        totalTokens = result.usage?.total_tokens || 0
+
+        // 记录成功
+        monitor.recordExecution({
+          sessionId,
+          orgId,
+          mode: 'runtime_orchestrator',
+          success: true,
+          latencyMs,
+          timestamp: Date.now(),
+        })
+
+        // 保存助手消息
+        const assistantMessage = await sessionService.addMessage(orgId, sessionId, {
+          role: 'assistant',
+          content: fullContent,
+          tokensUsed: totalTokens,
+          latencyMs,
+        })
+
+        // 发送完成事件
+        sendSSEEvent(connection, 'done', {
+          sessionId,
+          messageId: assistantMessage.id,
+          usage: { tokens: totalTokens, latencyMs },
+          executionMode: 'runtime_orchestrator',
+        })
+      } else {
+        console.error('[Chat] Runtime 执行失败，错误:', result.error)
+
+        // 记录失败
+        monitor.recordExecution({
+          sessionId,
+          orgId,
+          mode: 'runtime_orchestrator',
+          success: false,
+          error: result.error,
+          latencyMs,
+          timestamp: Date.now(),
+        })
+
+        sendSSEEvent(connection, 'error', {
+          code: SSE_STREAM_ERROR,
+          message: result.error || 'Runtime 执行失败',
+        })
+      }
+    })
+  } catch (error) {
+    const latencyMs = Date.now() - startTime
+    console.error(`[Chat] Runtime 模式处理失败 - Session: ${sessionId}`, error)
+
+    // 记录失败
+    monitor.recordExecution({
+      sessionId,
+      orgId,
+      mode: 'runtime_orchestrator',
+      success: false,
+      error: error instanceof Error ? error.message : '未知错误',
+      latencyMs,
+      timestamp: Date.now(),
+    })
+
+    sendSSEEvent(connection, 'error', {
+      code: SSE_STREAM_ERROR,
+      message: error instanceof Error ? error.message : '处理失败',
+    })
+  } finally {
+    // 关闭连接
+    closeSSEConnection(connection.id)
+    res.end()
+  }
+}
+
+/**
+ * 使用 Direct LLM 处理聊天（原有逻辑）
+ */
+async function handleChatDirect(
+  orgId: string,
+  userId: string,
+  sessionId: string,
+  input: ChatInput,
+  res: Response,
+  agent: any,
+  session: any
+): Promise<void> {
+  const startTime = Date.now()
+  const monitor = getRuntimeMonitor()
 
   const boundSkills = await skillService.getActiveSkillsByIds(orgId, agent.skills ?? [])
   const anthropicContainerSkills = boundSkills.flatMap((skill) => {
@@ -258,6 +470,18 @@ export async function handleChat(
     // 检查 LLM 服务是否可用
     if (!llmService.isLLMAvailable()) {
       console.warn('[Chat] LLM 服务不可用，终止本次请求')
+
+      // 记录失败
+      monitor.recordExecution({
+        sessionId,
+        orgId,
+        mode: 'direct_llm',
+        success: false,
+        error: 'LLM service unavailable',
+        latencyMs: Date.now() - startTime,
+        timestamp: Date.now(),
+      })
+
       sendSSEEvent(connection, 'error', {
         code: LLM_UNAVAILABLE,
         message: '当前没有可用的 LLM Provider，请先完成模型服务配置',
@@ -268,7 +492,6 @@ export async function handleChat(
     // 调用 LLM 流式生成
     let fullContent = ''
     let totalTokens = 0
-    const startTime = Date.now()
 
     await llmService.generateStream(
       llmMessages,
@@ -334,14 +557,37 @@ export async function handleChat(
       latencyMs,
     })
 
+    // 记录成功
+    monitor.recordExecution({
+      sessionId,
+      orgId,
+      mode: 'direct_llm',
+      success: true,
+      latencyMs,
+      timestamp: Date.now(),
+    })
+
     // 发送完成事件
     sendSSEEvent(connection, 'done', {
       sessionId,
       messageId: assistantMessage.id,
       usage: { tokens: totalTokens, latencyMs },
+      executionMode: 'direct_llm',
     })
   } catch (error) {
+    const latencyMs = Date.now() - startTime
     console.error(`[Chat] 处理失败 - Session: ${sessionId}, User: ${userId}, Agent: ${agent.id}`, error)
+
+    // 记录失败
+    monitor.recordExecution({
+      sessionId,
+      orgId,
+      mode: 'direct_llm',
+      success: false,
+      error: error instanceof Error ? error.message : '未知错误',
+      latencyMs,
+      timestamp: Date.now(),
+    })
 
     sendSSEEvent(connection, 'error', {
       code: SSE_STREAM_ERROR,

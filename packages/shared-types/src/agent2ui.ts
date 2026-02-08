@@ -26,6 +26,11 @@ export type Agent2UIType =
   | 'progress'    // Progress indicator
   | 'tool_call'   // Tool invocation
   | 'tool_result' // Tool result
+  | 'skill_call'  // Skill invocation
+  | 'skill_result' // Skill result
+  | 'mcp_call'    // MCP tool invocation
+  | 'mcp_result'  // MCP tool result
+  | 'plan_step'   // Plan step update
   | 'error'       // Error message
   | 'thinking'    // Thinking process
   | 'report';     // Structured report
@@ -198,6 +203,70 @@ export interface ToolResultData {
 }
 
 /**
+ * Skill call data
+ */
+export interface SkillCallData {
+  skillId: string;
+  skillName: string;
+  arguments: Record<string, unknown>;
+  status: ToolCallStatus;
+  result?: unknown;
+  error?: string;
+  duration?: number;
+}
+
+/**
+ * Skill result data
+ */
+export interface SkillResultData {
+  skillId: string;
+  skillName: string;
+  result: unknown;
+  success: boolean;
+  error?: string;
+  duration?: number;
+}
+
+/**
+ * MCP call data
+ */
+export interface McpCallData {
+  serverId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  status: ToolCallStatus;
+  result?: unknown;
+  error?: string;
+  duration?: number;
+}
+
+/**
+ * MCP result data
+ */
+export interface McpResultData {
+  serverId: string;
+  toolName: string;
+  result: unknown;
+  success: boolean;
+  error?: string;
+  duration?: number;
+}
+
+/**
+ * Plan step update data
+ */
+export interface PlanStepData {
+  stepId: string;
+  title: string;
+  status: PlanStepStatus;
+  tool?: string;
+  params?: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  durationMs?: number;
+}
+
+/**
  * Error data
  */
 export interface ErrorData {
@@ -253,6 +322,11 @@ export type Agent2UIData =
   | ProgressData
   | ToolCallData
   | ToolResultData
+  | SkillCallData
+  | SkillResultData
+  | McpCallData
+  | McpResultData
+  | PlanStepData
   | ErrorData
   | ThinkingData
   | ReportData;
