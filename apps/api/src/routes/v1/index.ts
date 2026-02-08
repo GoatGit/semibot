@@ -16,6 +16,7 @@ import memoryRouter from './memory'
 import logsRouter from './logs'
 import llmProvidersRouter from './llm-providers'
 import usersRouter from './users'
+import skillDefinitionsRouter from './skill-definitions'
 
 const router: Router = Router()
 
@@ -47,5 +48,6 @@ router.use('/memory', memoryRouter)
 router.use('/logs', logsRouter)
 router.use('/llm-providers', llmProvidersRouter)
 router.use('/users', usersRouter)
+router.use('/skill-definitions', skillDefinitionsRouter)
 
 export default router
