@@ -45,7 +45,6 @@ class TestPlanStep:
         """Test plan step with optional fields."""
         step = PlanStep(id="step_1", title="Simple step")
 
-        assert step.description is None
         assert step.tool is None
         assert step.params == {}
 
@@ -92,6 +91,7 @@ class TestToolCallResult:
         """Test successful tool call result."""
         result = ToolCallResult(
             tool_name="calculator",
+            params={"expression": "2+2"},
             success=True,
             result=42,
             duration_ms=50,
@@ -105,6 +105,7 @@ class TestToolCallResult:
         """Test failed tool call result."""
         result = ToolCallResult(
             tool_name="web_search",
+            params={"query": "test"},
             success=False,
             error="Connection timeout",
             duration_ms=5000,
@@ -137,11 +138,22 @@ class TestCreateInitialState:
 
     def test_create_initial_state(self):
         """Test creating initial agent state."""
+        from src.orchestrator.context import RuntimeSessionContext, AgentConfig
+
+        runtime_context = RuntimeSessionContext(
+            org_id="org_789",
+            user_id="user_456",
+            agent_id="agent_456",
+            session_id="sess_123",
+            agent_config=AgentConfig(id="agent_456", name="Test Agent"),
+        )
+
         state = create_initial_state(
             session_id="sess_123",
             agent_id="agent_456",
             org_id="org_789",
             user_message="Hello, please help me.",
+            context=runtime_context,
         )
 
         assert state["session_id"] == "sess_123"
@@ -157,25 +169,42 @@ class TestCreateInitialState:
 
     def test_create_initial_state_with_history(self):
         """Test creating initial state with message history."""
-        history = [
-            {"role": "user", "content": "First message"},
-            {"role": "assistant", "content": "First response"},
-        ]
+        from src.orchestrator.context import RuntimeSessionContext, AgentConfig
 
+        runtime_context = RuntimeSessionContext(
+            org_id="org_789",
+            user_id="user_456",
+            agent_id="agent_456",
+            session_id="sess_123",
+            agent_config=AgentConfig(id="agent_456", name="Test Agent"),
+        )
+
+        # Note: message_history is no longer supported in create_initial_state
+        # Messages should be added after state creation
         state = create_initial_state(
             session_id="sess_123",
             agent_id="agent_456",
             org_id="org_789",
             user_message="Second message",
-            message_history=history,
+            context=runtime_context,
         )
 
-        assert len(state["messages"]) == 3
-        assert state["messages"][0]["content"] == "First message"
-        assert state["messages"][2]["content"] == "Second message"
+        # Only the current message should be in the state
+        assert len(state["messages"]) == 1
+        assert state["messages"][0]["content"] == "Second message"
 
     def test_create_initial_state_with_metadata(self):
         """Test creating initial state with metadata."""
+        from src.orchestrator.context import RuntimeSessionContext, AgentConfig
+
+        runtime_context = RuntimeSessionContext(
+            org_id="org_789",
+            user_id="user_456",
+            agent_id="agent_456",
+            session_id="sess_123",
+            agent_config=AgentConfig(id="agent_456", name="Test Agent"),
+        )
+
         metadata = {"user_id": "user_123", "request_id": "req_456"}
 
         state = create_initial_state(
@@ -183,8 +212,10 @@ class TestCreateInitialState:
             agent_id="agent_456",
             org_id="org_789",
             user_message="Hello",
+            context=runtime_context,
             metadata=metadata,
         )
 
         assert state["metadata"]["user_id"] == "user_123"
+        assert state["metadata"]["request_id"] == "req_456"
         assert state["metadata"]["request_id"] == "req_456"

@@ -120,10 +120,31 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             "current_step": "respond",
         }
 
-    # Get available skills for the prompt
+    # Build CapabilityGraph from RuntimeSessionContext
     available_skills = []
-    if skill_registry:
+    runtime_context = state.get("context")
+
+    if runtime_context:
+        # Use CapabilityGraph to get available capabilities
+        from src.orchestrator.capability import CapabilityGraph
+
+        capability_graph = CapabilityGraph(runtime_context)
+        available_skills = capability_graph.get_schemas_for_planner()
+
+        logger.info(
+            "Capability graph built for planning",
+            extra={
+                "session_id": state["session_id"],
+                "capability_count": len(available_skills),
+            },
+        )
+    elif skill_registry:
+        # Fallback to skill_registry for backward compatibility
         available_skills = skill_registry.get_all_schemas()
+        logger.warning(
+            "Using skill_registry fallback (no RuntimeSessionContext)",
+            extra={"session_id": state["session_id"]},
+        )
 
     # Build planning prompt
     messages = state["messages"]
@@ -169,9 +190,10 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
     ACT node: Execute pending actions (tool/skill calls).
 
     This node:
-    1. Executes pending actions from the plan
-    2. Supports parallel execution for independent actions
-    3. Collects results and errors
+    1. Validates actions against capability graph
+    2. Executes pending actions from the plan
+    3. Supports parallel execution for independent actions
+    4. Collects results and errors
 
     Args:
         state: Current agent state
@@ -202,9 +224,58 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
             "current_step": "observe",
         }
 
+    # Build CapabilityGraph for validation
+    capability_graph = None
+    runtime_context = state.get("context")
+
+    if runtime_context:
+        from src.orchestrator.capability import CapabilityGraph
+
+        capability_graph = CapabilityGraph(runtime_context)
+        capability_graph.build()
+
+    # Validate actions against capability graph
+    validated_actions = []
+    for action in pending_actions:
+        tool_name = action.tool
+
+        if not tool_name:
+            logger.warning(
+                "Action has no tool specified, skipping",
+                extra={"session_id": state["session_id"], "action_id": action.id},
+            )
+            continue
+
+        # Validate action if capability_graph is available
+        if capability_graph:
+            if not capability_graph.validate_action(tool_name):
+                logger.error(
+                    "Action validation failed: not in capability graph",
+                    extra={
+                        "session_id": state["session_id"],
+                        "action_id": action.id,
+                        "tool_name": tool_name,
+                        "available_capabilities": capability_graph.list_capabilities(),
+                    },
+                )
+                # Skip this action - it's not in the capability graph
+                continue
+
+        validated_actions.append(action)
+
+    if not validated_actions:
+        logger.warning(
+            "No valid actions to execute after validation",
+            extra={"session_id": state["session_id"]},
+        )
+        return {
+            "current_step": "observe",
+            "pending_actions": [],
+        }
+
     # Separate parallel and sequential actions
-    parallel_actions = [a for a in pending_actions if a.parallel]
-    sequential_actions = [a for a in pending_actions if not a.parallel]
+    parallel_actions = [a for a in validated_actions if a.parallel]
+    sequential_actions = [a for a in validated_actions if not a.parallel]
 
     results: list[ToolCallResult] = []
 

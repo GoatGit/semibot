@@ -5,6 +5,7 @@ __all__ = [
     "AgentState",
     "RuntimeSessionContext",
     "create_initial_state",
+    "CapabilityGraph",
     "ActionExecutor",
     "execute_single",
     "execute_parallel",
@@ -28,6 +29,10 @@ def __getattr__(name: str):
         from src.orchestrator.state import create_initial_state as state_factory
 
         return state_factory
+    if name == "CapabilityGraph":
+        from src.orchestrator.capability import CapabilityGraph as capability_graph_type
+
+        return capability_graph_type
     if name in {"ActionExecutor", "execute_single", "execute_parallel"}:
         from src.orchestrator.executor import (
             ActionExecutor,
