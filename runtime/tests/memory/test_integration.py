@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from src.memory.short_term import ShortTermMemory
 from src.memory.long_term import LongTermMemory
 from src.memory.embedding import EmbeddingService
-from src.memory.models import MemoryEntry, MemorySearchResult
+from src.memory.base import MemoryEntry, MemorySearchResult
 
 
 # Skip if integration test environment not available

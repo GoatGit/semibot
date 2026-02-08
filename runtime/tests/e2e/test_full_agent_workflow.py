@@ -7,9 +7,9 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.orchestrator.unified_executor import UnifiedExecutor
+from src.orchestrator.unified_executor import UnifiedActionExecutor
 from src.orchestrator.context import RuntimeSessionContext, AgentConfig, RuntimePolicy
-from src.queue.models import TaskMessage
+from src.queue.consumer import TaskMessage
 
 
 @pytest.fixture
