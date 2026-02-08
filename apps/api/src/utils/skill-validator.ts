@@ -244,7 +244,7 @@ export async function validatePackageStructure(packagePath: string): Promise<Val
     try {
       const content = await fs.readFile(skillMdPath, 'utf-8')
       if (content.trim().length === 0) {
-        warnings.push('SKILL.md is empty')
+        errors.push('SKILL.md is empty')
       }
 
       // 尝试解析 Frontmatter

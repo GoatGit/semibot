@@ -273,7 +273,8 @@ describe('Skill Validator', () => {
 
       const result = await validatePackageStructure(tempDir)
 
-      expect(result.warnings).toContain('SKILL.md is empty')
+      expect(result.valid).toBe(false)
+      expect(result.errors).toContain('SKILL.md is empty')
     })
 
     it('应该解析 SKILL.md Frontmatter', async () => {
