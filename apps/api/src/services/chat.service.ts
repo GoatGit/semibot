@@ -13,11 +13,13 @@ import type { LLMMessage, LLMStreamChunk } from './llm.service'
 import {
   VALIDATION_MESSAGE_TOO_LONG,
   SSE_STREAM_ERROR,
+  SSE_CONNECTION_LIMIT,
   LLM_UNAVAILABLE,
 } from '../constants/errorCodes'
 import {
   SSE_HEARTBEAT_INTERVAL_MS,
   MAX_MESSAGE_LENGTH,
+  MAX_SSE_CONNECTIONS_PER_USER,
   CHAT_EXECUTION_MODE,
   CHAT_RUNTIME_ENABLED_ORGS,
   type ChatExecutionMode,
@@ -29,34 +31,11 @@ import {
   type RuntimeExecutionResult,
 } from '../adapters/runtime.adapter'
 import { getRuntimeMonitor } from './runtime-monitor.service'
+import type { Agent2UIMessage, Agent2UIType } from '@semibot/shared-types'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
 // ═══════════════════════════════════════════════════════════════
-
-export type Agent2UIType =
-  | 'text'
-  | 'markdown'
-  | 'code'
-  | 'table'
-  | 'chart'
-  | 'image'
-  | 'file'
-  | 'plan'
-  | 'progress'
-  | 'tool_call'
-  | 'tool_result'
-  | 'error'
-  | 'thinking'
-  | 'report'
-
-export interface Agent2UIMessage {
-  id: string
-  type: Agent2UIType
-  data: unknown
-  timestamp: string
-  metadata?: Record<string, unknown>
-}
 
 export interface ChatInput {
   message: string
@@ -84,8 +63,21 @@ const sseConnections = new Map<string, SSEConnection>()
 export function createSSEConnection(
   res: Response,
   sessionId: string,
-  userId: string
+  userId: string,
+  orgId: string
 ): SSEConnection {
+  // 检查用户连接数限制
+  const userConnections = Array.from(sseConnections.values()).filter(
+    (conn) => conn.userId === userId
+  ).length
+
+  if (userConnections >= MAX_SSE_CONNECTIONS_PER_USER) {
+    console.warn(
+      `[Chat] 用户连接数已达上限 (用户: ${userId}, 当前: ${userConnections}, 限制: ${MAX_SSE_CONNECTIONS_PER_USER})`
+    )
+    throw createError(SSE_CONNECTION_LIMIT, 'SSE 连接数已达上限，请关闭其他连接后重试')
+  }
+
   const connection: SSEConnection = {
     id: uuidv4(),
     res,
@@ -114,7 +106,7 @@ export function createSSEConnection(
 
   sseConnections.set(connection.id, connection)
 
-  console.log(`[Chat] SSE 连接已创建 - ID: ${connection.id}, Session: ${sessionId}`)
+  console.log(`[Chat] SSE 连接已创建 - ID: ${connection.id}, Session: ${sessionId}, 用户连接数: ${userConnections + 1}/${MAX_SSE_CONNECTIONS_PER_USER}`)
 
   return connection
 }
@@ -258,7 +250,7 @@ async function handleChatWithRuntime(
   session: any
 ): Promise<void> {
   // 创建 SSE 连接
-  const connection = createSSEConnection(res, sessionId, userId)
+  const connection = createSSEConnection(res, sessionId, userId, orgId)
   const startTime = Date.now()
   const monitor = getRuntimeMonitor()
 
@@ -428,7 +420,7 @@ async function handleChatDirect(
   })
 
   // 创建 SSE 连接
-  const connection = createSSEConnection(res, sessionId, userId)
+  const connection = createSSEConnection(res, sessionId, userId, orgId)
 
   try {
     // 保存用户消息
