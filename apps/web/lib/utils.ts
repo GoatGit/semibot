@@ -11,6 +11,13 @@
  */
 export { clsx } from 'clsx'
 
+/**
+ * 合并类名并支持 Tailwind CSS 冲突解决
+ */
+export function cn(...inputs: (string | undefined | null | false)[]): string {
+  return inputs.filter(Boolean).join(' ')
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 格式化函数
 // ═══════════════════════════════════════════════════════════════

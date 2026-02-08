@@ -97,6 +97,31 @@ export const SKILL_MANIFEST_FETCH_TIMEOUT_MS = 10000
 /** Anthropic Skills 目录 URL（可选，建议配置） */
 export const ANTHROPIC_SKILLS_CATALOG_URL = process.env.ANTHROPIC_SKILLS_CATALOG_URL ?? ''
 
+// ═══════════════════════════════════════════════════════════════
+// Skill 管理配置
+// ═══════════════════════════════════════════════════════════════
+
+/** Skill 包存储路径 */
+export const SKILL_STORAGE_PATH = process.env.SKILL_STORAGE_PATH ?? '/var/lib/semibot/skills'
+
+/** Skill 包最大大小 (MB) */
+export const SKILL_MAX_SIZE_MB = process.env.SKILL_MAX_SIZE_MB ? parseInt(process.env.SKILL_MAX_SIZE_MB, 10) : 100
+
+/** Skill 包最大大小 (字节) */
+export const SKILL_MAX_SIZE_BYTES = SKILL_MAX_SIZE_MB * 1024 * 1024
+
+/** 最大并发安装数 */
+export const SKILL_MAX_CONCURRENT_INSTALLS = process.env.SKILL_MAX_CONCURRENT_INSTALLS ? parseInt(process.env.SKILL_MAX_CONCURRENT_INSTALLS, 10) : 50
+
+/** Skill 安装超时 (毫秒) */
+export const SKILL_INSTALL_TIMEOUT_MS = 60000
+
+/** Skill 下载超时 (毫秒) */
+export const SKILL_DOWNLOAD_TIMEOUT_MS = 30000
+
+/** Skill 验证超时 (毫秒) */
+export const SKILL_VALIDATION_TIMEOUT_MS = 10000
+
 /** 单步骤总超时 (毫秒) */
 export const STEP_TIMEOUT_MS = 180000
 

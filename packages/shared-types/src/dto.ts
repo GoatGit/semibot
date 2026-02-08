@@ -158,7 +158,284 @@ export interface SkillToolInput {
 }
 
 /**
- * Create Skill request DTO
+ * Skill package status
+ */
+export type SkillPackageStatus =
+  | 'pending'       // 等待处理
+  | 'downloading'   // 下载中
+  | 'validating'    // 校验中
+  | 'installing'    // 安装中
+  | 'active'        // 已激活
+  | 'failed'        // 失败
+  | 'deprecated';   // 已废弃
+
+/**
+ * Skill package source type
+ */
+export type SkillSourceType =
+  | 'git'           // Git 仓库
+  | 'url'           // HTTP(S) URL
+  | 'registry'      // 技能注册中心
+  | 'local'         // 本地文件
+  | 'anthropic';    // Anthropic Skills
+
+/**
+ * Skill install operation type
+ */
+export type SkillInstallOperation =
+  | 'install'       // 安装
+  | 'update'        // 更新
+  | 'rollback'      // 回滚
+  | 'uninstall';    // 卸载
+
+/**
+ * Skill install log status
+ */
+export type SkillInstallLogStatus =
+  | 'pending'       // 等待中
+  | 'running'       // 运行中
+  | 'success'       // 成功
+  | 'failed';       // 失败
+
+/**
+ * Skill Definition - 平台级技能定义（管理员管理，全租户可见）
+ */
+export interface SkillDefinition {
+  /** 技能定义唯一标识 */
+  id: string;
+  /** 技能标识符（如 text-editor, code-analyzer） */
+  skillId: string;
+  /** 技能名称 */
+  name: string;
+  /** 技能描述 */
+  description?: string;
+  /** 触发关键词 */
+  triggerKeywords: string[];
+  /** 技能分类 */
+  category?: string;
+  /** 标签 */
+  tags: string[];
+  /** 图标 URL */
+  iconUrl?: string;
+  /** 作者 */
+  author?: string;
+  /** 主页 URL */
+  homepageUrl?: string;
+  /** 文档 URL */
+  documentationUrl?: string;
+  /** 当前激活版本 */
+  currentVersion?: string;
+  /** 是否启用 */
+  isActive: boolean;
+  /** 是否公开（全租户可见） */
+  isPublic: boolean;
+  /** 创建者 ID */
+  createdBy?: string;
+  /** 创建时间 */
+  createdAt: string;
+  /** 更新时间 */
+  updatedAt: string;
+}
+
+/**
+ * Skill Package - 可执行目录包（按版本存储）
+ */
+export interface SkillPackage {
+  /** 包记录唯一标识 */
+  id: string;
+  /** 关联的技能定义 ID */
+  skillDefinitionId: string;
+  /** 版本号 */
+  version: string;
+  /** 来源类型 */
+  sourceType: SkillSourceType;
+  /** 来源 URL */
+  sourceUrl?: string;
+  /** 来源引用（git commit/tag/branch） */
+  sourceRef?: string;
+  /** Manifest URL */
+  manifestUrl?: string;
+  /** Manifest 内容 */
+  manifestContent?: Record<string, unknown>;
+  /** 包存储路径 */
+  packagePath: string;
+  /** SHA256 校验值 */
+  checksumSha256: string;
+  /** 文件大小（字节） */
+  fileSizeBytes?: number;
+  /** 状态 */
+  status: SkillPackageStatus;
+  /** 校验结果 */
+  validationResult?: {
+    hasSkillMd: boolean;
+    hasScripts: boolean;
+    hasReferences: boolean;
+    entryFile?: string;
+    errors?: string[];
+    warnings?: string[];
+  };
+  /** 工具配置列表 */
+  tools: SkillToolInput[];
+  /** 包配置 */
+  config: Record<string, unknown>;
+  /** 安装完成时间 */
+  installedAt?: string;
+  /** 安装者 ID */
+  installedBy?: string;
+  /** 废弃时间 */
+  deprecatedAt?: string;
+  /** 废弃原因 */
+  deprecatedReason?: string;
+  /** 创建时间 */
+  createdAt: string;
+  /** 更新时间 */
+  updatedAt: string;
+}
+
+/**
+ * Skill Install Log - 安装日志
+ */
+export interface SkillInstallLog {
+  /** 日志记录唯一标识 */
+  id: string;
+  /** 关联的包记录 ID */
+  skillPackageId: string;
+  /** 关联的技能定义 ID */
+  skillDefinitionId: string;
+  /** 操作类型 */
+  operation: SkillInstallOperation;
+  /** 状态 */
+  status: SkillInstallLogStatus;
+  /** 当前步骤 */
+  step?: string;
+  /** 进度百分比（0-100） */
+  progress: number;
+  /** 日志消息 */
+  message?: string;
+  /** 错误码 */
+  errorCode?: string;
+  /** 错误详情 */
+  errorMessage?: string;
+  /** 错误堆栈 */
+  errorStack?: string;
+  /** 元数��� */
+  metadata: Record<string, unknown>;
+  /** 开始时间 */
+  startedAt: string;
+  /** 完成时间 */
+  completedAt?: string;
+  /** 耗时（毫秒） */
+  durationMs?: number;
+  /** 操作者 ID */
+  installedBy?: string;
+  /** 创建时间 */
+  createdAt: string;
+}
+
+/**
+ * Create Skill Definition request DTO
+ */
+export interface CreateSkillDefinitionInput {
+  /** 技能标识符 */
+  skillId: string;
+  /** 技能名称 */
+  name: string;
+  /** 技能描述 */
+  description?: string;
+  /** 触发关键词 */
+  triggerKeywords?: string[];
+  /** 技能分类 */
+  category?: string;
+  /** 标签 */
+  tags?: string[];
+  /** 图标 URL */
+  iconUrl?: string;
+  /** 作者 */
+  author?: string;
+  /** 主页 URL */
+  homepageUrl?: string;
+  /** 文档 URL */
+  documentationUrl?: string;
+}
+
+/**
+ * Update Skill Definition request DTO
+ */
+export interface UpdateSkillDefinitionInput {
+  /** 技能名称 */
+  name?: string;
+  /** 技能描述 */
+  description?: string;
+  /** 触发关键词 */
+  triggerKeywords?: string[];
+  /** 技能分类 */
+  category?: string;
+  /** 标签 */
+  tags?: string[];
+  /** 图标 URL */
+  iconUrl?: string;
+  /** 作者 */
+  author?: string;
+  /** 主页 URL */
+  homepageUrl?: string;
+  /** 文档 URL */
+  documentationUrl?: string;
+  /** 是否启用 */
+  isActive?: boolean;
+}
+
+/**
+ * Install Skill Package request DTO
+ */
+export interface InstallSkillPackageInput {
+  /** 技能定义 ID */
+  skillDefinitionId: string;
+  /** 版本号 */
+  version: string;
+  /** 来源类型 */
+  sourceType: SkillSourceType;
+  /** 来源 URL */
+  sourceUrl?: string;
+  /** 来源引用 */
+  sourceRef?: string;
+  /** Manifest URL */
+  manifestUrl?: string;
+  /** 工具配置 */
+  tools?: SkillToolInput[];
+  /** 包配置 */
+  config?: Record<string, unknown>;
+}
+
+/**
+ * Publish Skill Version request DTO
+ */
+export interface PublishSkillVersionInput {
+  /** 版本号 */
+  version: string;
+  /** 来源类型 */
+  sourceType: SkillSourceType;
+  /** 来源 URL */
+  sourceUrl?: string;
+  /** 来源引用 */
+  sourceRef?: string;
+  /** Manifest URL */
+  manifestUrl?: string;
+  /** 发布说明 */
+  releaseNotes?: string;
+}
+
+/**
+ * Rollback Skill Version request DTO
+ */
+export interface RollbackSkillVersionInput {
+  /** 目标版本号 */
+  targetVersion: string;
+  /** 回滚原因 */
+  reason?: string;
+}
+
+/**
+ * Create Skill request DTO (Legacy - 向后兼容)
  */
 export interface CreateSkillInput {
   /** Skill name */
@@ -178,7 +455,7 @@ export interface CreateSkillInput {
 }
 
 /**
- * Update Skill request DTO
+ * Update Skill request DTO (Legacy - 向后兼容)
  */
 export interface UpdateSkillInput {
   /** Skill name */
