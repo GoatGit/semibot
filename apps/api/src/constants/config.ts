@@ -188,7 +188,6 @@ export const AZURE_OPENAI_DEPLOYMENT_NAME = process.env.AZURE_OPENAI_DEPLOYMENT_
 /** 自定义 LLM 配置 (兼容 OpenAI API 的第三方服务) */
 export const CUSTOM_LLM_API_KEY = process.env.CUSTOM_LLM_API_KEY ?? ''
 export const CUSTOM_LLM_API_BASE_URL = process.env.CUSTOM_LLM_API_BASE_URL ?? ''
-export const CUSTOM_LLM_MODEL_NAME = process.env.CUSTOM_LLM_MODEL_NAME ?? ''
 
 /** 默认 LLM 提供商 */
 export const DEFAULT_LLM_PROVIDER = process.env.DEFAULT_LLM_PROVIDER ?? 'openai'
@@ -205,7 +204,6 @@ export interface LLMProviderConfig {
   orgId?: string
   apiVersion?: string
   deploymentName?: string
-  modelName?: string
 }
 
 export function getLLMConfig(provider: string): LLMProviderConfig | null {
@@ -242,7 +240,6 @@ export function getLLMConfig(provider: string): LLMProviderConfig | null {
       return {
         apiKey: CUSTOM_LLM_API_KEY,
         baseUrl: CUSTOM_LLM_API_BASE_URL,
-        modelName: CUSTOM_LLM_MODEL_NAME || undefined,
       }
     default:
       return null

@@ -115,15 +115,29 @@ export async function findById(id: string): Promise<AgentRow | null> {
  * 根据 ID 和组织 ID 获取 Agent
  */
 export async function findByIdAndOrg(id: string, orgId: string): Promise<AgentRow | null> {
+  console.log('[AgentRepo] findByIdAndOrg - id:', id, 'orgId:', orgId)
   const result = await sql`
     SELECT * FROM agents WHERE id = ${id} AND org_id = ${orgId}
   `
+  console.log('[AgentRepo] findByIdAndOrg result length:', result.length)
 
   if (result.length === 0) {
     return null
   }
 
   return result[0] as unknown as AgentRow
+}
+
+/**
+ * 调试：仅按 org_id 查询
+ */
+export async function debugFindByOrgId(orgId: string): Promise<AgentRow[]> {
+  console.log('[AgentRepo] debugFindByOrgId - orgId:', orgId)
+  const result = await sql`
+    SELECT * FROM agents WHERE org_id = ${orgId}
+  `
+  console.log('[AgentRepo] debugFindByOrgId result length:', result.length)
+  return result as unknown as AgentRow[]
 }
 
 /**
@@ -134,33 +148,70 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
-  // 构建 WHERE 条件
-  let whereClause = sql`org_id = ${orgId}`
+  console.log('[AgentRepo] findByOrg called with orgId:', orgId, 'isActive:', isActive, 'search:', search)
 
-  if (isActive !== undefined) {
-    whereClause = sql`${whereClause} AND is_active = ${isActive}`
-  }
+  // 根据条件选择不同的查询
+  let countResult
+  let dataResult
 
-  if (search) {
+  if (search && isActive !== undefined) {
     const searchPattern = `%${search}%`
-    whereClause = sql`${whereClause} AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})`
+    countResult = await sql`
+      SELECT COUNT(*) as total FROM agents
+      WHERE org_id = ${orgId} AND is_active = ${isActive}
+      AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
+    `
+    dataResult = await sql`
+      SELECT * FROM agents
+      WHERE org_id = ${orgId} AND is_active = ${isActive}
+      AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
+      ORDER BY updated_at DESC
+      LIMIT ${actualLimit} OFFSET ${offset}
+    `
+  } else if (search) {
+    const searchPattern = `%${search}%`
+    countResult = await sql`
+      SELECT COUNT(*) as total FROM agents
+      WHERE org_id = ${orgId}
+      AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
+    `
+    dataResult = await sql`
+      SELECT * FROM agents
+      WHERE org_id = ${orgId}
+      AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
+      ORDER BY updated_at DESC
+      LIMIT ${actualLimit} OFFSET ${offset}
+    `
+  } else if (isActive !== undefined) {
+    countResult = await sql`
+      SELECT COUNT(*) as total FROM agents
+      WHERE org_id = ${orgId} AND is_active = ${isActive}
+    `
+    dataResult = await sql`
+      SELECT * FROM agents
+      WHERE org_id = ${orgId} AND is_active = ${isActive}
+      ORDER BY updated_at DESC
+      LIMIT ${actualLimit} OFFSET ${offset}
+    `
+  } else {
+    console.log('[AgentRepo] Executing basic query for orgId:', orgId)
+    countResult = await sql`
+      SELECT COUNT(*) as total FROM agents WHERE org_id = ${orgId}
+    `
+    console.log('[AgentRepo] Count result:', countResult)
+    dataResult = await sql`
+      SELECT * FROM agents
+      WHERE org_id = ${orgId}
+      ORDER BY updated_at DESC
+      LIMIT ${actualLimit} OFFSET ${offset}
+    `
+    console.log('[AgentRepo] Data result length:', dataResult.length)
   }
 
-  // 获取总数
-  const countResult = await sql`
-    SELECT COUNT(*) as total FROM agents WHERE ${whereClause}
-  `
   const total = parseInt((countResult[0] as { total: string }).total, 10)
-
-  // 获取分页数据
-  const dataResult = await sql`
-    SELECT * FROM agents
-    WHERE ${whereClause}
-    ORDER BY updated_at DESC
-    LIMIT ${actualLimit} OFFSET ${offset}
-  `
-
   const data = dataResult as unknown as AgentRow[]
+
+  console.log('[AgentRepo] findByOrg result - total:', total, 'data length:', data.length)
 
   return {
     data,

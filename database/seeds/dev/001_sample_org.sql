@@ -51,7 +51,9 @@ INSERT INTO organizations (id, name, slug, owner_id, plan, quota, settings) VALU
 -- ----------------------------------------------------------------------------
 -- 2. 创建示例用户
 -- ----------------------------------------------------------------------------
--- 密码哈希说明：以下哈希对应密码 "password123"（仅供开发测试）
+-- 密码哈希说明：
+-- - 大部分示例账号哈希对应密码 "password123"（仅供开发测试）
+-- - 账号 12611171@qq.com 对应密码 "admin123"
 -- 实际使用时应通过 bcrypt 或 argon2 生成
 
 INSERT INTO users (id, email, password_hash, name, org_id, role, email_verified) VALUES
@@ -91,6 +93,15 @@ INSERT INTO users (id, email, password_hash, name, org_id, role, email_verified)
     'Demo User',
     '33333333-3333-3333-3333-333333333333',
     'owner',
+    true
+),
+(
+    '77777777-7777-7777-7777-777777777777',
+    '12611171@qq.com',
+    '$2a$10$Invd7eYxqUtluU1DJ.WeCeyquaR2GBrEBUwiX6TBLFf0WZBXRYlFe',
+    'QQ Test User',
+    '11111111-1111-1111-1111-111111111111',
+    'member',
     true
 );
 

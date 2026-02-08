@@ -12,6 +12,7 @@ import type { LLMMessage, LLMStreamChunk } from './llm.service'
 import {
   VALIDATION_MESSAGE_TOO_LONG,
   SSE_STREAM_ERROR,
+  LLM_UNAVAILABLE,
 } from '../constants/errorCodes'
 import {
   SSE_HEARTBEAT_INTERVAL_MS,
@@ -241,8 +242,11 @@ export async function handleChat(
 
     // 检查 LLM 服务是否可用
     if (!llmService.isLLMAvailable()) {
-      console.warn('[Chat] LLM 服务不可用，使用模拟响应')
-      await handleMockResponse(connection, agent.name, input.message, orgId, sessionId)
+      console.warn('[Chat] LLM 服务不可用，终止本次请求')
+      sendSSEEvent(connection, 'error', {
+        code: LLM_UNAVAILABLE,
+        message: '当前没有可用的 LLM Provider，请先完成模型服务配置',
+      })
       return
     }
 
@@ -335,52 +339,6 @@ export async function handleChat(
 }
 
 /**
- * 模拟响应 (当 LLM 服务不可用时)
- */
-async function handleMockResponse(
-  connection: SSEConnection,
-  agentName: string,
-  userMessage: string,
-  orgId: string,
-  sessionId: string
-): Promise<void> {
-  const responseText = `您好！我是 ${agentName}，很高兴为您服务。\n\n关于您的问题："${userMessage}"\n\n当前 LLM 服务暂时不可用，这是一个模拟响应。请配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY 环境变量以启用真实 LLM 调用。`
-
-  // 逐字发送 (模拟流式)
-  for (let i = 0; i < responseText.length; i += 10) {
-    const chunk = responseText.slice(i, i + 10)
-    sendAgent2UIMessage(connection, 'text', { content: chunk })
-    await delay(30)
-  }
-
-  // 完成计划
-  sendAgent2UIMessage(connection, 'plan', {
-    steps: [
-      { id: '1', title: '理解问题', status: 'completed' },
-      { id: '2', title: '生成回答', status: 'completed' },
-    ],
-    currentStep: '2',
-  })
-
-  // 保存助手消息
-  const assistantMessage = await sessionService.addMessage(orgId, sessionId, {
-    role: 'assistant',
-    content: responseText,
-    tokensUsed: responseText.length,
-    latencyMs: 500,
-  })
-
-  // 发送完成事件
-  sendSSEEvent(connection, 'done', {
-    sessionId,
-    messageId: assistantMessage.id,
-  })
-
-  // 关闭连接
-  closeSSEConnection(connection.id)
-}
-
-/**
  * 创建新会话并开始对话
  */
 export async function startNewChat(
@@ -401,12 +359,4 @@ export async function startNewChat(
 
   // 处理对话
   await handleChat(orgId, userId, session.id, input, res)
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 辅助函数
-// ═══════════════════════════════════════════════════════════════
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }

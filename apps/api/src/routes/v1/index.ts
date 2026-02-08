@@ -14,6 +14,8 @@ import toolsRouter from './tools'
 import mcpRouter from './mcp'
 import memoryRouter from './memory'
 import logsRouter from './logs'
+import llmProvidersRouter from './llm-providers'
+import usersRouter from './users'
 
 const router: Router = Router()
 
@@ -43,5 +45,7 @@ router.use('/tools', toolsRouter)
 router.use('/mcp', mcpRouter)
 router.use('/memory', memoryRouter)
 router.use('/logs', logsRouter)
+router.use('/llm-providers', llmProvidersRouter)
+router.use('/users', usersRouter)
 
 export default router

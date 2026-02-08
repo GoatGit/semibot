@@ -9,8 +9,10 @@ import {
   AGENT_NOT_FOUND,
   AGENT_INACTIVE,
   AGENT_LIMIT_EXCEEDED,
+  LLM_UNAVAILABLE,
 } from '../constants/errorCodes'
 import * as agentRepository from '../repositories/agent.repository'
+import { getAvailableModels } from './llm.service'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -84,12 +86,12 @@ export interface PaginatedResult<T> {
 // ═══════════════════════════════════════════════════════════════
 
 const DEFAULT_AGENT_CONFIG: AgentConfig = {
-  model: 'gpt-4o',
+  model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
   temperature: 0.7,
   maxTokens: 4096,
   timeoutSeconds: 120,
   retryAttempts: 3,
-  fallbackModel: 'gpt-4o-mini',
+  fallbackModel: process.env.FALLBACK_LLM_MODEL ?? 'gpt-4o-mini',
 }
 
 const MAX_AGENTS_PER_ORG = 100
@@ -146,13 +148,38 @@ export async function createAgent(orgId: string, input: CreateAgentInput): Promi
     throw createError(AGENT_LIMIT_EXCEEDED)
   }
 
-  const config = { ...DEFAULT_AGENT_CONFIG, ...input.config }
+  const availableModels = await getAvailableModels().catch(() => [] as string[])
+  if (availableModels.length === 0) {
+    console.error(`[AgentService] 创建 Agent 失败：组织 ${orgId} 当前无可用模型`)
+    throw createError(LLM_UNAVAILABLE, '当前没有可用模型，无法创建 Agent')
+  }
+
+  if (input.config?.model && !availableModels.includes(input.config.model)) {
+    throw createError(
+      LLM_UNAVAILABLE,
+      `模型 ${input.config.model} 当前不可用，请选择可用模型`
+    )
+  }
+
+  const primaryModel = input.config?.model || availableModels[0] || DEFAULT_AGENT_CONFIG.model
+  const fallbackModel =
+    input.config?.fallbackModel ||
+    availableModels.find((model) => model !== primaryModel) ||
+    DEFAULT_AGENT_CONFIG.fallbackModel
+
+  const config = {
+    ...DEFAULT_AGENT_CONFIG,
+    ...input.config,
+    model: primaryModel,
+    fallbackModel,
+  }
+  const systemPrompt = input.systemPrompt?.trim() || 'You are a helpful AI assistant.'
 
   const row = await agentRepository.create({
     orgId,
     name: input.name,
     description: input.description,
-    systemPrompt: input.systemPrompt,
+    systemPrompt,
     config,
     skills: input.skills,
     subAgents: input.subAgents,

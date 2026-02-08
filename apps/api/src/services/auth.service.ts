@@ -6,8 +6,10 @@
 
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import crypto from 'crypto'
 import { sql } from '../lib/db'
 import * as redis from '../lib/redis'
+import { sendPasswordResetEmail } from './email.service'
 import {
   BCRYPT_ROUNDS,
   JWT_EXPIRES_IN_SECONDS,
@@ -18,6 +20,8 @@ import {
   AUTH_USER_NOT_FOUND,
   AUTH_INVALID_PASSWORD,
   AUTH_REFRESH_TOKEN_INVALID,
+  AUTH_RESET_TOKEN_INVALID,
+  AUTH_RESET_TOKEN_EXPIRED,
   AUTH_USER_INACTIVE,
 } from '../constants/errorCodes'
 
@@ -78,6 +82,10 @@ function getJWTSecret(): string {
 }
 
 const JWT_SECRET = getJWTSecret()
+const PASSWORD_RESET_TTL_SECONDS = 15 * 60
+const PASSWORD_RESET_TOKEN_PREFIX = 'auth:password_reset:'
+const PASSWORD_RESET_REQUEST_PREFIX = 'auth:password_reset_request:'
+const PASSWORD_RESET_REQUEST_TTL_SECONDS = 60
 
 /**
  * 生成 URL 友好的 slug
@@ -348,6 +356,72 @@ export async function refreshToken(token: string): Promise<Omit<AuthResult, 'org
     refreshToken: newRefreshToken,
     expiresAt,
   }
+}
+
+/**
+ * 请求重置密码
+ * 为安全起见，无论邮箱是否存在都返回成功
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase()
+  const requestThrottleKey = `${PASSWORD_RESET_REQUEST_PREFIX}${normalizedEmail}`
+  const hasRecentRequest = await redis.exists(requestThrottleKey)
+  if (hasRecentRequest) {
+    return
+  }
+  await redis.setWithExpiry(requestThrottleKey, '1', PASSWORD_RESET_REQUEST_TTL_SECONDS)
+
+  const result = await sql`
+    SELECT id FROM users
+    WHERE email = ${normalizedEmail} AND is_active = true
+    LIMIT 1
+  `
+
+  if (result.length === 0) {
+    return
+  }
+
+  const user = result[0] as { id: string }
+  const resetToken = crypto.randomBytes(32).toString('hex')
+  const redisKey = `${PASSWORD_RESET_TOKEN_PREFIX}${resetToken}`
+
+  await redis.setWithExpiry(redisKey, user.id, PASSWORD_RESET_TTL_SECONDS)
+
+  await sendPasswordResetEmail({
+    email: normalizedEmail,
+    resetToken,
+  })
+}
+
+/**
+ * 重置密码
+ */
+export async function resetPassword(resetToken: string, newPassword: string): Promise<void> {
+  const redisKey = `${PASSWORD_RESET_TOKEN_PREFIX}${resetToken}`
+  const userId = await redis.get(redisKey)
+
+  if (!userId) {
+    throw { code: AUTH_RESET_TOKEN_EXPIRED }
+  }
+
+  const result = await sql`
+    SELECT id FROM users
+    WHERE id = ${userId} AND is_active = true
+    LIMIT 1
+  `
+
+  if (result.length === 0) {
+    throw { code: AUTH_RESET_TOKEN_INVALID }
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS)
+  await sql`
+    UPDATE users
+    SET password_hash = ${passwordHash}, updated_at = NOW()
+    WHERE id = ${userId}
+  `
+
+  await redis.del(redisKey)
 }
 
 // ═══════════════════════════════════════════════════════════════

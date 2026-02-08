@@ -6,6 +6,7 @@
 
 import type {
   LLMProvider,
+  LLMModelInfo,
   LLMMessage,
   LLMConfig,
   LLMResponse,
@@ -48,24 +49,86 @@ interface AnthropicResponse {
   }
 }
 
+interface AnthropicModel {
+  id: string
+  type: string
+  display_name?: string
+}
+
+interface AnthropicModelsResponse {
+  data: AnthropicModel[]
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Anthropic Provider
 // ═══════════════════════════════════════════════════════════════
 
 export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic'
-  readonly models = ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku', 'claude-3-5-sonnet']
+  models: string[] = []
 
   private apiKey: string | null
   private baseUrl: string
+  private modelsCache: string[] | null = null
+  private modelsCacheTime: number = 0
+  private readonly CACHE_TTL = 5 * 60 * 1000
 
   constructor() {
-    this.apiKey = process.env.ANTHROPIC_API_KEY ?? null
-    this.baseUrl = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com/v1'
+    this.apiKey = process.env.ANTHROPIC_API_KEY || null
+    this.baseUrl = process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com/v1'
   }
 
   isAvailable(): boolean {
     return !!this.apiKey
+  }
+
+  async fetchModels(): Promise<string[]> {
+    const modelInfos = await this.fetchModelInfos()
+    return modelInfos.map((model) => model.id)
+  }
+
+  async fetchModelInfos(): Promise<LLMModelInfo[]> {
+    if (!this.apiKey) {
+      return []
+    }
+
+    if (this.modelsCache && Date.now() - this.modelsCacheTime < this.CACHE_TTL) {
+      return this.modelsCache.map((model) => ({ id: model }))
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/models`, {
+        method: 'GET',
+        headers: {
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+      })
+
+      if (!response.ok) {
+        console.error('[Anthropic] 获取模型列表失败:', response.statusText)
+        return (this.modelsCache ?? []).map((model) => ({ id: model }))
+      }
+
+      const data = await response.json() as AnthropicModelsResponse
+
+      const models = data.data
+        .map((m) => ({
+          id: m.id,
+          displayName: m.display_name,
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id))
+
+      this.modelsCache = models.map((model) => model.id)
+      this.modelsCacheTime = Date.now()
+      this.models = this.modelsCache
+
+      console.log(`[Anthropic] 获取到 ${models.length} 个模型`)
+      return models
+    } catch (error) {
+      console.error('[Anthropic] 获取模型列表出错:', error)
+      return (this.modelsCache ?? []).map((model) => ({ id: model }))
+    }
   }
 
   async generate(messages: LLMMessage[], config: LLMConfig): Promise<LLMResponse> {

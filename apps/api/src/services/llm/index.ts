@@ -72,6 +72,11 @@ export interface LLMResponse {
   }
 }
 
+export interface LLMModelInfo {
+  id: string
+  displayName?: string
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Provider 接口
 // ═══════════════════════════════════════════════════════════════
@@ -84,6 +89,16 @@ export interface LLMProvider {
    * 检查 Provider 是否可用
    */
   isAvailable(): boolean
+
+  /**
+   * 从 API 获取可用模型列表
+   */
+  fetchModels(): Promise<string[]>
+
+  /**
+   * 从 API 获取可用模型元数据
+   */
+  fetchModelInfos?(): Promise<LLMModelInfo[]>
 
   /**
    * 生成完整响应 (非流式)
@@ -146,3 +161,5 @@ export function getProviderForModel(model: string): LLMProvider | undefined {
 
 export { OpenAIProvider } from './openai.provider'
 export { AnthropicProvider } from './anthropic.provider'
+export { CustomProvider } from './custom.provider'
+export { GoogleAIProvider } from './google.provider'

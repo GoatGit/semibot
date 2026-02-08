@@ -18,7 +18,7 @@ const router: Router = Router()
 const createAgentSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(1000).optional(),
-  systemPrompt: z.string().min(1).max(10000),
+  systemPrompt: z.string().max(10000).optional(),
   config: z
     .object({
       model: z.string().optional(),
@@ -57,7 +57,7 @@ const updateAgentSchema = z.object({
 const listAgentsQuerySchema = z.object({
   page: z.coerce.number().min(1).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
-  isActive: z.enum(['true', 'false']).optional().transform((val) => val === 'true'),
+  isActive: z.enum(['true', 'false']).optional().transform((val) => val === undefined ? undefined : val === 'true'),
   search: z.string().max(100).optional(),
 })
 

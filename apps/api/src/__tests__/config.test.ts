@@ -157,12 +157,5 @@ describe('LLM Configuration', () => {
         expect(config).toHaveProperty('apiVersion')
       }
     })
-
-    it('should include modelName for custom config', () => {
-      if (CUSTOM_LLM_API_KEY && CUSTOM_LLM_API_BASE_URL) {
-        const config = getLLMConfig('custom')
-        expect(config?.modelName === undefined || typeof config?.modelName === 'string').toBe(true)
-      }
-    })
   })
 })

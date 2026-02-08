@@ -17,6 +17,10 @@ vi.mock('../lib/redis', () => ({
   del: vi.fn().mockResolvedValue(1),
 }))
 
+vi.mock('../services/email.service', () => ({
+  sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
+}))
+
 // Mock bcryptjs
 vi.mock('bcryptjs', () => ({
   default: {
@@ -44,12 +48,15 @@ import { sql } from '../lib/db'
 import * as redis from '../lib/redis'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import { sendPasswordResetEmail } from '../services/email.service'
 
 // 需要在 mock 之后导入
 const mockSql = sql as unknown as ReturnType<typeof vi.fn>
 const mockRedis = redis as {
   setWithExpiry: ReturnType<typeof vi.fn>
   exists: ReturnType<typeof vi.fn>
+  get: ReturnType<typeof vi.fn>
+  del: ReturnType<typeof vi.fn>
 }
 
 describe('Auth Service', () => {
@@ -368,6 +375,63 @@ describe('Auth Service', () => {
       const result = await isBlacklisted('valid_token')
 
       expect(result).toBe(false)
+    })
+  })
+
+  describe('Password Reset', () => {
+    it('requestPasswordReset should return silently for unknown email', async () => {
+      mockRedis.exists.mockResolvedValueOnce(false)
+      mockSql.mockResolvedValueOnce([])
+
+      const { requestPasswordReset } = await import('../services/auth.service')
+      await expect(requestPasswordReset('unknown@example.com')).resolves.not.toThrow()
+
+      expect(mockRedis.setWithExpiry).toHaveBeenCalledTimes(1)
+      expect(sendPasswordResetEmail).not.toHaveBeenCalled()
+    })
+
+    it('requestPasswordReset should generate token and send email for existing user', async () => {
+      mockRedis.exists.mockResolvedValueOnce(false)
+      mockSql.mockResolvedValueOnce([{ id: 'user-123' }])
+
+      const { requestPasswordReset } = await import('../services/auth.service')
+      await requestPasswordReset('user@example.com')
+
+      expect(mockRedis.setWithExpiry).toHaveBeenCalledTimes(2)
+      expect(sendPasswordResetEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'user@example.com' })
+      )
+    })
+
+    it('requestPasswordReset should skip when throttled', async () => {
+      mockRedis.exists.mockResolvedValueOnce(true)
+
+      const { requestPasswordReset } = await import('../services/auth.service')
+      await expect(requestPasswordReset('user@example.com')).resolves.not.toThrow()
+
+      expect(mockSql).not.toHaveBeenCalled()
+      expect(sendPasswordResetEmail).not.toHaveBeenCalled()
+    })
+
+    it('resetPassword should throw when token missing', async () => {
+      mockRedis.get.mockResolvedValueOnce(null)
+
+      const { resetPassword } = await import('../services/auth.service')
+      await expect(resetPassword('invalid', 'new-password-123')).rejects.toEqual({
+        code: 'AUTH_RESET_TOKEN_EXPIRED',
+      })
+    })
+
+    it('resetPassword should update password and clear token', async () => {
+      mockRedis.get.mockResolvedValueOnce('user-123')
+      mockSql
+        .mockResolvedValueOnce([{ id: 'user-123' }])
+        .mockResolvedValueOnce([])
+
+      const { resetPassword } = await import('../services/auth.service')
+      await expect(resetPassword('valid-token', 'new-password-123')).resolves.not.toThrow()
+
+      expect(mockRedis.del).toHaveBeenCalledTimes(1)
     })
   })
 })

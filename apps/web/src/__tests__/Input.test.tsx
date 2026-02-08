@@ -33,7 +33,7 @@ describe('Input Component', () => {
   })
 
   it('should render with error state', () => {
-    render(<Input error="This field is required" />)
+    render(<Input error errorMessage="This field is required" />)
     expect(screen.getByText('This field is required')).toBeInTheDocument()
   })
 

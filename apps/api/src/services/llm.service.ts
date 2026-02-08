@@ -13,13 +13,16 @@ import {
   type LLMConfig,
   type LLMResponse,
   type LLMStreamChunk,
+  type LLMModelInfo,
+  type LLMProvider,
   registerProvider,
   getProvider,
-  getProviderForModel,
   getAvailableProviders,
 } from './llm/index'
 import { OpenAIProvider } from './llm/openai.provider'
 import { AnthropicProvider } from './llm/anthropic.provider'
+import { CustomProvider } from './llm/custom.provider'
+import { GoogleAIProvider } from './llm/google.provider'
 
 // ═══════════════════════════════════════════════════════════════
 // 初始化 Providers
@@ -37,6 +40,14 @@ function initializeProviders(): void {
   // 注册 Anthropic Provider
   const anthropic = new AnthropicProvider()
   registerProvider(anthropic)
+
+  // 注册 Google AI Provider
+  const google = new GoogleAIProvider()
+  registerProvider(google)
+
+  // 注册 Custom Provider (兼容 OpenAI API 的第三方服务)
+  const custom = new CustomProvider()
+  registerProvider(custom)
 
   isInitialized = true
   console.log('[LLM] Providers 初始化完成')
@@ -58,6 +69,22 @@ const DEFAULT_CONFIG: Partial<LLMConfig> = {
   topP: 1,
 }
 
+async function resolveProviderForModel(model: string): Promise<LLMProvider | undefined> {
+  for (const provider of getAvailableProviders()) {
+    const models = await provider.fetchModels()
+
+    const matched = models.some((configuredModel) => {
+      return model === configuredModel || model.startsWith(configuredModel) || configuredModel.startsWith(model)
+    })
+
+    if (matched) {
+      return provider
+    }
+  }
+
+  return undefined
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 服务方法
 // ═══════════════════════════════════════════════════════════════
@@ -75,11 +102,11 @@ export async function generate(
     ...config,
   }
 
-  const provider = getProviderForModel(fullConfig.model)
+  const provider = await resolveProviderForModel(fullConfig.model)
 
   if (!provider || !provider.isAvailable()) {
     // 尝试 Fallback
-    const fallbackProvider = getProviderForModel(FALLBACK_MODEL)
+    const fallbackProvider = await resolveProviderForModel(FALLBACK_MODEL)
     if (fallbackProvider?.isAvailable()) {
       console.warn(
         `[LLM] Provider 不可用，使用 Fallback: ${fullConfig.model} -> ${FALLBACK_MODEL}`
@@ -108,11 +135,11 @@ export async function generateStream(
     ...config,
   }
 
-  const provider = getProviderForModel(fullConfig.model)
+  const provider = await resolveProviderForModel(fullConfig.model)
 
   if (!provider || !provider.isAvailable()) {
     // 尝试 Fallback
-    const fallbackProvider = getProviderForModel(FALLBACK_MODEL)
+    const fallbackProvider = await resolveProviderForModel(FALLBACK_MODEL)
     if (fallbackProvider?.isAvailable()) {
       console.warn(
         `[LLM] Provider 不可用，使用 Fallback: ${fullConfig.model} -> ${FALLBACK_MODEL}`
@@ -144,10 +171,10 @@ export function isLLMAvailable(): boolean {
 /**
  * 获取可用的模型列表
  */
-export function getAvailableModels(): string[] {
+export async function getAvailableModels(): Promise<string[]> {
   const models: string[] = []
   for (const provider of getAvailableProviders()) {
-    models.push(...provider.models)
+    models.push(...(await provider.fetchModels()))
   }
   return models
 }
@@ -155,26 +182,70 @@ export function getAvailableModels(): string[] {
 /**
  * 获取 Provider 状态
  */
-export function getProviderStatus(): Array<{
+export async function getProviderStatus(): Promise<Array<{
   name: string
   available: boolean
   models: string[]
-}> {
+  modelInfos: LLMModelInfo[]
+}>> {
   initializeProviders()
 
   const openai = getProvider('openai')
   const anthropic = getProvider('anthropic')
+  const google = getProvider('google')
+  const custom = getProvider('custom')
+
+  const loadProviderModels = async (
+    provider?: LLMProvider
+  ): Promise<{ models: string[]; modelInfos: LLMModelInfo[] }> => {
+    if (!provider || !provider.isAvailable()) {
+      return { models: [], modelInfos: [] }
+    }
+
+    if (provider.fetchModelInfos) {
+      const modelInfos = await provider.fetchModelInfos()
+      return {
+        models: modelInfos.map((model) => model.id),
+        modelInfos,
+      }
+    }
+
+    const models = await provider.fetchModels()
+    return {
+      models,
+      modelInfos: models.map((modelId) => ({ id: modelId })),
+    }
+  }
+
+  const openaiModels = await loadProviderModels(openai)
+  const anthropicModels = await loadProviderModels(anthropic)
+  const googleModels = await loadProviderModels(google)
+  const customModels = await loadProviderModels(custom)
 
   return [
     {
       name: 'openai',
       available: openai?.isAvailable() ?? false,
-      models: openai?.models ?? [],
+      models: openaiModels.models,
+      modelInfos: openaiModels.modelInfos,
     },
     {
       name: 'anthropic',
       available: anthropic?.isAvailable() ?? false,
-      models: anthropic?.models ?? [],
+      models: anthropicModels.models,
+      modelInfos: anthropicModels.modelInfos,
+    },
+    {
+      name: 'google',
+      available: google?.isAvailable() ?? false,
+      models: googleModels.models,
+      modelInfos: googleModels.modelInfos,
+    },
+    {
+      name: 'custom',
+      available: custom?.isAvailable() ?? false,
+      models: customModels.models,
+      modelInfos: customModels.modelInfos,
     },
   ]
 }

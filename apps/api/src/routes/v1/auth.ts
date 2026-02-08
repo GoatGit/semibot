@@ -8,6 +8,7 @@ import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
 import * as authService from '../../services/auth.service'
 import { authenticate, type AuthRequest } from '../../middleware/auth'
+import { authRateLimit } from '../../middleware/rateLimit'
 import { ERROR_HTTP_STATUS, ERROR_MESSAGES, VALIDATION_FAILED } from '../../constants/errorCodes'
 
 const router: Router = Router()
@@ -30,6 +31,15 @@ const loginSchema = z.object({
 
 const refreshSchema = z.object({
   refreshToken: z.string().min(1, '刷新令牌不能为空'),
+})
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email('邮箱格式无效'),
+})
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1, '重置令牌不能为空'),
+  password: z.string().min(8, '密码至少8位').max(100, '密码最长100位'),
 })
 
 // ═══════════════════════════════════════════════════════════════
@@ -182,6 +192,78 @@ router.post('/refresh', async (req: Request, res: Response) => {
         token: result.token,
         refreshToken: result.refreshToken,
         expiresAt: result.expiresAt,
+      },
+    })
+  } catch (error) {
+    handleError(res, error)
+  }
+})
+
+/**
+ * POST /auth/forgot-password
+ * 请求重置密码邮件
+ */
+router.post('/forgot-password', authRateLimit, async (req: Request, res: Response) => {
+  try {
+    const validation = forgotPasswordSchema.safeParse(req.body)
+
+    if (!validation.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: VALIDATION_FAILED,
+          message: '数据校验失败',
+          details: validation.error.errors.map((e) => ({
+            field: e.path.join('.'),
+            message: e.message,
+          })),
+        },
+      })
+      return
+    }
+
+    await authService.requestPasswordReset(validation.data.email)
+
+    res.json({
+      success: true,
+      data: {
+        message: '如果邮箱存在，重置链接已发送',
+      },
+    })
+  } catch (error) {
+    handleError(res, error)
+  }
+})
+
+/**
+ * POST /auth/reset-password
+ * 使用重置令牌设置新密码
+ */
+router.post('/reset-password', authRateLimit, async (req: Request, res: Response) => {
+  try {
+    const validation = resetPasswordSchema.safeParse(req.body)
+
+    if (!validation.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: VALIDATION_FAILED,
+          message: '数据校验失败',
+          details: validation.error.errors.map((e) => ({
+            field: e.path.join('.'),
+            message: e.message,
+          })),
+        },
+      })
+      return
+    }
+
+    await authService.resetPassword(validation.data.token, validation.data.password)
+
+    res.json({
+      success: true,
+      data: {
+        message: '密码重置成功',
       },
     })
   } catch (error) {

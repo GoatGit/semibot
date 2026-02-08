@@ -48,6 +48,7 @@ class ActionExecutor:
         sandbox_manager: SandboxManager | None = None,
         policy_engine: PolicyEngine | None = None,
         skill_registry: Any = None,
+        llm_provider: Any = None,
     ):
         """
         Initialize ActionExecutor.
@@ -60,6 +61,7 @@ class ActionExecutor:
         self.sandbox_manager = sandbox_manager
         self.policy_engine = policy_engine or PolicyEngine()
         self.skill_registry = skill_registry
+        self.llm_provider = llm_provider
 
     async def execute(
         self,
@@ -253,9 +255,13 @@ class ActionExecutor:
         else:
             # Use skill registry for custom tools
             if self.skill_registry:
-                skill = self.skill_registry.get(tool_name)
-                if skill:
-                    return await skill.execute(params)
+                result = await self.skill_registry.execute(tool_name, params)
+                return {
+                    "success": result.success,
+                    "output": result.result,
+                    "error": result.error,
+                    "metadata": result.metadata,
+                }
 
             raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -282,13 +288,67 @@ class ActionExecutor:
     async def _execute_search(self, params: dict[str, Any]) -> dict[str, Any]:
         """Execute search (low risk)."""
         query = params.get("query", "")
-        # Placeholder - integrate with actual search implementation
-        return {"success": True, "output": f"Search results for: {query}"}
+        if not query:
+            return {"success": False, "error": "Query not specified"}
+
+        if not self.skill_registry:
+            return {"success": False, "error": "Skill registry not configured"}
+
+        # Prefer explicit web_search tool; fallback to generic search
+        tool_name = "web_search"
+        if hasattr(self.skill_registry, "list_tools"):
+            tools = self.skill_registry.list_tools()
+            if tool_name not in tools and "search" in tools:
+                tool_name = "search"
+
+        result = await self.skill_registry.execute(
+            tool_name,
+            {
+                "query": query,
+                "max_results": params.get("max_results", 5),
+                "search_depth": params.get("search_depth", "basic"),
+            },
+        )
+
+        return {
+            "success": result.success,
+            "output": result.result,
+            "error": result.error,
+            "metadata": result.metadata,
+        }
 
     async def _execute_llm_call(self, params: dict[str, Any]) -> dict[str, Any]:
         """Execute LLM call (low risk)."""
-        # Placeholder - integrate with LLM provider
-        return {"success": True, "output": "LLM response placeholder"}
+        if not self.llm_provider:
+            return {"success": False, "error": "LLM provider not configured"}
+
+        messages = params.get("messages", [])
+        if not isinstance(messages, list) or not messages:
+            return {"success": False, "error": "messages must be a non-empty list"}
+
+        try:
+            response = await self.llm_provider.chat(
+                messages=messages,
+                tools=params.get("tools"),
+                temperature=params.get("temperature"),
+                max_tokens=params.get("max_tokens"),
+                response_format=params.get("response_format"),
+                model=params.get("model"),
+            )
+
+            content = getattr(response, "content", None)
+            usage = getattr(response, "usage", None)
+            if isinstance(response, dict):
+                content = response.get("content", "")
+                usage = response.get("usage")
+
+            return {
+                "success": True,
+                "output": content or "",
+                "usage": usage,
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     def _build_tool_command(self, tool_name: str, params: dict[str, Any]) -> str:
         """Build command for generic tool execution."""

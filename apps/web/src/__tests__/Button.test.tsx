@@ -52,8 +52,8 @@ describe('Button Component', () => {
     expect(screen.getByTestId('icon')).toBeInTheDocument()
   })
 
-  it('should render as a link when href is provided', () => {
-    render(<Button href="/test">Link Button</Button>)
-    expect(screen.getByRole('link')).toHaveAttribute('href', '/test')
+  it('should support destructive variant', () => {
+    render(<Button variant="destructive">Delete</Button>)
+    expect(screen.getByRole('button')).toBeInTheDocument()
   })
 })

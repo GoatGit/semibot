@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Agent } from '@/types'
+import { useLLMModels, type LLMModel } from '@/hooks/useLLMModels'
 
 export default function AgentsPage() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -22,7 +23,7 @@ export default function AgentsPage() {
   const [formValues, setFormValues] = useState({
     name: '',
     description: '',
-    model: 'gpt-4o',
+    model: '',  // 将在模型列表加载后设置默认值
     systemPrompt: '',
   })
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -31,6 +32,9 @@ export default function AgentsPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [pageIndex, setPageIndex] = useState(1)
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+
+  // 获取 LLM 模型列表
+  const { models: llmModels, loading: modelsLoading, error: modelsError } = useLLMModels()
 
   // 加载 Agent 列表
   const loadAgents = useCallback(async () => {
@@ -87,7 +91,9 @@ export default function AgentsPage() {
     setStatusMessage(null)
     setFormMode('create')
     setEditingAgentId(null)
-    setFormValues({ name: '', description: '', model: 'gpt-4o', systemPrompt: '' })
+    // 使用第一个可用模型作为默认值
+    const defaultModel = llmModels.length > 0 ? llmModels[0].modelId : ''
+    setFormValues({ name: '', description: '', model: defaultModel, systemPrompt: '' })
     setFormErrors({})
     setShowForm(true)
   }
@@ -96,10 +102,14 @@ export default function AgentsPage() {
     setStatusMessage(null)
     setFormMode('edit')
     setEditingAgentId(agent.id)
+    // 如果 agent 的模型不在可用列表中，使用第一个可用模型
+    const agentModel = agent.config?.model || ''
+    const isModelAvailable = llmModels.some(m => m.modelId === agentModel)
+    const defaultModel = llmModels.length > 0 ? llmModels[0].modelId : ''
     setFormValues({
       name: agent.name,
       description: agent.description || '',
-      model: agent.config?.model || 'gpt-4o',
+      model: isModelAvailable ? agentModel : defaultModel,
       systemPrompt: agent.systemPrompt || '',
     })
     setFormErrors({})
@@ -111,6 +121,9 @@ export default function AgentsPage() {
     const errors: Record<string, string> = {}
     if (!formValues.name.trim()) {
       errors.name = '名称不能为空'
+    }
+    if (!formValues.model) {
+      errors.model = '请选择可用模型'
     }
     setFormErrors(errors)
     if (Object.keys(errors).length > 0) return
@@ -129,7 +142,8 @@ export default function AgentsPage() {
         })
 
         if (response.success && response.data) {
-          setAgents((prev) => [response.data, ...prev])
+          const newAgent = response.data
+          setAgents((prev) => [newAgent, ...prev])
           setStatusMessage({ type: 'success', text: '创建成功' })
           setShowForm(false)
         }
@@ -144,8 +158,9 @@ export default function AgentsPage() {
         })
 
         if (response.success && response.data) {
+          const updatedAgent = response.data
           setAgents((prev) =>
-            prev.map((agent) => (agent.id === editingAgentId ? response.data : agent))
+            prev.map((agent) => (agent.id === editingAgentId ? updatedAgent : agent))
           )
           setStatusMessage({ type: 'success', text: '更新成功' })
           setShowForm(false)
@@ -317,6 +332,9 @@ export default function AgentsPage() {
           values={formValues}
           errors={formErrors}
           isSubmitting={isSubmitting}
+          models={llmModels}
+          modelsLoading={modelsLoading}
+          modelsError={modelsError}
           onChange={setFormValues}
           onSave={handleSave}
           onCancel={handleCancel}
@@ -481,6 +499,9 @@ interface AgentFormModalProps {
   }
   errors: Record<string, string>
   isSubmitting: boolean
+  models: LLMModel[]
+  modelsLoading: boolean
+  modelsError: Error | null
   onChange: Dispatch<SetStateAction<{
     name: string
     description: string
@@ -496,10 +517,22 @@ function AgentFormModal({
   values,
   errors,
   isSubmitting,
+  models,
+  modelsLoading,
+  modelsError,
   onChange,
   onSave,
   onCancel,
 }: AgentFormModalProps) {
+  // 按 Provider 分组模型
+  const groupedModels = models.reduce<Record<string, LLMModel[]>>((acc, model) => {
+    const provider = model.providerName || 'Other'
+    if (!acc[provider]) {
+      acc[provider] = []
+    }
+    acc[provider].push(model)
+    return acc
+  }, {})
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div
@@ -565,7 +598,7 @@ function AgentFormModal({
               data-testid="model-select"
               value={values.model}
               onChange={(e) => onChange((prev) => ({ ...prev, model: e.target.value }))}
-              disabled={isSubmitting}
+              disabled={isSubmitting || modelsLoading || models.length === 0}
               className={clsx(
                 'w-full px-3 py-2 rounded-md',
                 'bg-bg-surface border border-border-default',
@@ -574,13 +607,27 @@ function AgentFormModal({
                 'transition-all duration-fast'
               )}
             >
-              <option value="gpt-4o">GPT-4o</option>
-              <option value="gpt-4-turbo">GPT-4 Turbo</option>
-              <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-              <option value="claude-3-opus">Claude 3 Opus</option>
-              <option value="claude-3-sonnet">Claude 3 Sonnet</option>
-              <option value="claude-3-haiku">Claude 3 Haiku</option>
+              {modelsLoading ? (
+                <option value="">加载中...</option>
+              ) : modelsError ? (
+                <option value="">模型列表加载失败，请检查后端接口</option>
+              ) : models.length === 0 ? (
+                <option value="">暂无可用模型，请检查 LLM Provider 配置</option>
+              ) : (
+                Object.entries(groupedModels).map(([providerName, providerModels]) => (
+                  <optgroup key={providerName} label={providerName}>
+                    {providerModels.map((model) => (
+                      <option key={model.modelId} value={model.modelId}>
+                        {model.displayName}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))
+              )}
             </select>
+            {errors.model && (
+              <p className="text-xs text-error-500 mt-1">{errors.model}</p>
+            )}
           </div>
 
           <div>

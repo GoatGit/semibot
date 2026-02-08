@@ -34,7 +34,6 @@ export default function ForgotPasswordPage() {
     setError(null)
 
     try {
-      // TODO: 实际实现时调用 API
       await apiClient.post('/auth/forgot-password', {
         email: email.trim(),
       })
