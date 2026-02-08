@@ -5,6 +5,8 @@ __version__ = "0.1.0"
 __all__ = [
     "create_agent_graph",
     "AgentState",
+    "RuntimeSessionContext",
+    "create_initial_state",
 ]
 
 
@@ -17,4 +19,12 @@ def __getattr__(name: str):
         from src.orchestrator.state import AgentState as state_type
 
         return state_type
+    if name == "RuntimeSessionContext":
+        from src.orchestrator.context import RuntimeSessionContext as context_type
+
+        return context_type
+    if name == "create_initial_state":
+        from src.orchestrator.state import create_initial_state as state_factory
+
+        return state_factory
     raise AttributeError(name)
