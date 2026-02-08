@@ -54,12 +54,14 @@ class RuntimeMonitorService {
   recordExecution(record: ExecutionRecord): void {
     this.records.push(record)
 
-    // 限制记录数量
+    // 限制记录数量，删除所有超出限制的记录
     if (this.records.length > this.maxRecords) {
+      const excess = this.records.length - this.maxRecords
       console.warn(
-        `[RuntimeMonitor] 记录数已达上限，删除最旧记录 (当前: ${this.records.length}, 限制: ${this.maxRecords})`
+        `[RuntimeMonitor] 记录数超出限制，删除最旧的 ${excess} 条记录 ` +
+        `(当前: ${this.records.length}, 限制: ${this.maxRecords})`
       )
-      this.records.shift()
+      this.records.splice(0, excess)
     }
 
     // 检查是否需要触发回退

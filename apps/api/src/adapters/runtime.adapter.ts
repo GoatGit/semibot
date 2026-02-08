@@ -124,9 +124,14 @@ export class RuntimeAdapter {
 
       // 处理 SSE 流
       const stream = response.data
+      let buffer = '' // 缓冲区用于处理跨 chunk 的数据
 
       stream.on('data', (chunk: Buffer) => {
-        const lines = chunk.toString().split('\n')
+        buffer += chunk.toString()
+        const lines = buffer.split('\n')
+
+        // 保留最后一个不完整的行
+        buffer = lines.pop() || ''
 
         for (const line of lines) {
           if (!line.trim() || !line.startsWith('data: ')) continue
@@ -150,6 +155,21 @@ export class RuntimeAdapter {
       })
 
       stream.on('end', () => {
+        // 处理缓冲区中剩余的数据
+        if (buffer.trim() && buffer.startsWith('data: ')) {
+          try {
+            const data = buffer.slice(6)
+            if (data !== '[DONE]') {
+              const event: RuntimeEvent = JSON.parse(data)
+              this.handleRuntimeEvent(event, connection, (text) => {
+                fullResponse += text
+              })
+            }
+          } catch (err) {
+            console.error('[RuntimeAdapter] 解析最后一行失败:', err, '原始数据:', buffer)
+          }
+        }
+
         const latencyMs = Date.now() - startTime
         console.log(`[RuntimeAdapter] 执行完成 - Session: ${input.session_id}, 耗时: ${latencyMs}ms`)
 

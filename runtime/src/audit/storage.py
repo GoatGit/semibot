@@ -114,11 +114,15 @@ class InMemoryAuditStorage(AuditStorage):
 
     async def query(self, query: AuditQuery) -> list[AuditEvent]:
         """Query audit events."""
+        # 强制要求 org_id 以确保多租户隔离
+        if not query.org_id:
+            logger.error("[Security] 审计查询缺少 org_id，拒绝执行")
+            raise ValueError("org_id is required for audit queries")
+
         results = self._events
 
         # Filter by org_id
-        if query.org_id:
-            results = [e for e in results if e.org_id == query.org_id]
+        results = [e for e in results if e.org_id == query.org_id]
 
         # Filter by user_id
         if query.user_id:
@@ -168,6 +172,11 @@ class InMemoryAuditStorage(AuditStorage):
 
     async def count(self, query: AuditQuery) -> int:
         """Count audit events matching query."""
+        # 强制要求 org_id 以确保多租户隔离
+        if not query.org_id:
+            logger.error("[Security] 审计查询缺少 org_id，拒绝执行")
+            raise ValueError("org_id is required for audit queries")
+
         # Use query method but without pagination
         query_copy = AuditQuery(
             org_id=query.org_id,

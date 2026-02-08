@@ -2,8 +2,13 @@
 
 This module provides the MCP client for connecting to and interacting with
 MCP servers. It supports multiple transport types (stdio, http, websocket).
+
+WARNING: MCP client is currently in MOCK mode. The actual connection and tool
+call logic is not yet implemented. All operations return mock data for testing.
+DO NOT use in production until the implementation is complete.
 """
 
+import os
 from typing import Any
 from src.mcp.models import (
     McpConnectionStatus,
@@ -21,6 +26,9 @@ from src.constants.config import (
 )
 
 logger = get_logger(__name__)
+
+# 功能开关：设置为 False 禁用 MCP 功能
+MCP_ENABLED = os.getenv("MCP_ENABLED", "false").lower() == "true"
 
 
 class McpClient:
@@ -69,8 +77,18 @@ class McpClient:
             server_id: Server ID to connect to
 
         Raises:
-            McpError: If connection fails
+            McpError: If connection fails or MCP is disabled
         """
+        if not MCP_ENABLED:
+            logger.warning(
+                "[MCP] MCP 功能已禁用，跳过连接",
+                extra={"server_id": server_id}
+            )
+            raise McpError(
+                code=McpErrorCode.CONNECTION_FAILED,
+                message="MCP functionality is disabled. Set MCP_ENABLED=true to enable."
+            )
+
         if server_id not in self._servers:
             raise McpError(
                 code=McpErrorCode.SERVER_ERROR,
@@ -88,6 +106,10 @@ class McpClient:
         try:
             # TODO: Implement actual connection logic based on transport type
             # For now, just mark as connected
+            logger.warning(
+                "[MCP] 使用 MOCK 模式连接 - 实际连接逻辑尚未实现",
+                extra={"server_id": server_id, "transport": config.transport_type}
+            )
             self._connection_status[server_id] = McpConnectionStatus.CONNECTED
             logger.info(
                 f"Connected to MCP server: {config.server_name}",
@@ -195,6 +217,10 @@ class McpClient:
         try:
             # TODO: Implement actual tool call logic
             # For now, return a mock result
+            logger.warning(
+                "[MCP] 使用 MOCK 模式调用工具 - 实际调用逻辑尚未实现，返回模拟数据",
+                extra={"server_id": server_id, "tool_name": tool_name, "arguments": arguments}
+            )
             result = {
                 "status": "success",
                 "message": f"Mock result for {tool_name}",

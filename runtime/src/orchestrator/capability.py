@@ -110,8 +110,41 @@ class SkillCapability(Capability):
         if not isinstance(params, dict):
             return False, "Parameters must be a dictionary"
 
-        # TODO: Add schema-based validation if skill_definition.schema exists
+        # 如果有 schema 定义，进行基本验证
+        if self.skill_definition and hasattr(self.skill_definition, 'schema') and self.skill_definition.schema:
+            schema = self.skill_definition.schema
+
+            # 检查必需参数
+            if 'required' in schema and isinstance(schema['required'], list):
+                for required_field in schema['required']:
+                    if required_field not in params:
+                        return False, f"Missing required parameter: {required_field}"
+
+            # 检查参数类型（基本类型检查）
+            if 'properties' in schema and isinstance(schema['properties'], dict):
+                for param_name, param_value in params.items():
+                    if param_name in schema['properties']:
+                        expected_type = schema['properties'][param_name].get('type')
+                        if expected_type:
+                            if not self._validate_type(param_value, expected_type):
+                                return False, f"Parameter '{param_name}' has invalid type (expected: {expected_type})"
+
         return True, None
+
+    def _validate_type(self, value: Any, expected_type: str) -> bool:
+        """验证值的类型是否匹配预期类型"""
+        type_mapping = {
+            'string': str,
+            'number': (int, float),
+            'integer': int,
+            'boolean': bool,
+            'array': list,
+            'object': dict,
+        }
+        expected_python_type = type_mapping.get(expected_type)
+        if expected_python_type:
+            return isinstance(value, expected_python_type)
+        return True  # 未知类型，跳过验证
 
 
 @dataclass
@@ -155,8 +188,41 @@ class ToolCapability(Capability):
         if not isinstance(params, dict):
             return False, "Parameters must be a dictionary"
 
-        # TODO: Add parameter schema validation
+        # 如果有参数定义，进行验证
+        if self.tool_definition and self.tool_definition.parameters:
+            parameters = self.tool_definition.parameters
+
+            # 检查必需参数
+            if 'required' in parameters and isinstance(parameters['required'], list):
+                for required_field in parameters['required']:
+                    if required_field not in params:
+                        return False, f"Missing required parameter: {required_field}"
+
+            # 检查参数类型
+            if 'properties' in parameters and isinstance(parameters['properties'], dict):
+                for param_name, param_value in params.items():
+                    if param_name in parameters['properties']:
+                        expected_type = parameters['properties'][param_name].get('type')
+                        if expected_type:
+                            if not self._validate_type(param_value, expected_type):
+                                return False, f"Parameter '{param_name}' has invalid type (expected: {expected_type})"
+
         return True, None
+
+    def _validate_type(self, value: Any, expected_type: str) -> bool:
+        """验证值的类型是否匹配预期类型"""
+        type_mapping = {
+            'string': str,
+            'number': (int, float),
+            'integer': int,
+            'boolean': bool,
+            'array': list,
+            'object': dict,
+        }
+        expected_python_type = type_mapping.get(expected_type)
+        if expected_python_type:
+            return isinstance(value, expected_python_type)
+        return True
 
 
 @dataclass
@@ -206,8 +272,47 @@ class McpCapability(Capability):
         if not isinstance(params, dict):
             return False, "Parameters must be a dictionary"
 
-        # TODO: Add MCP schema validation
+        # 从 tool_schema 中提取参数定义
+        parameters = None
+        if self.tool_schema:
+            if "inputSchema" in self.tool_schema:
+                parameters = self.tool_schema["inputSchema"]
+            elif "parameters" in self.tool_schema:
+                parameters = self.tool_schema["parameters"]
+
+        # 如果有参数定义，进行验证
+        if parameters:
+            # 检查必需参数
+            if 'required' in parameters and isinstance(parameters['required'], list):
+                for required_field in parameters['required']:
+                    if required_field not in params:
+                        return False, f"Missing required parameter: {required_field}"
+
+            # 检查参数类型
+            if 'properties' in parameters and isinstance(parameters['properties'], dict):
+                for param_name, param_value in params.items():
+                    if param_name in parameters['properties']:
+                        expected_type = parameters['properties'][param_name].get('type')
+                        if expected_type:
+                            if not self._validate_type(param_value, expected_type):
+                                return False, f"Parameter '{param_name}' has invalid type (expected: {expected_type})"
+
         return True, None
+
+    def _validate_type(self, value: Any, expected_type: str) -> bool:
+        """验证值的类型是否匹配预期类型"""
+        type_mapping = {
+            'string': str,
+            'number': (int, float),
+            'integer': int,
+            'boolean': bool,
+            'array': list,
+            'object': dict,
+        }
+        expected_python_type = type_mapping.get(expected_type)
+        if expected_python_type:
+            return isinstance(value, expected_python_type)
+        return True
 
 
 class CapabilityGraph:

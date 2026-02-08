@@ -53,6 +53,7 @@ class AuditLogger:
         self._pending_events: list[AuditEvent] = []
         self._flush_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self._flush_in_progress = False
 
     async def start(self) -> None:
         """Start the audit logger (starts background flush task)."""
@@ -116,10 +117,14 @@ class AuditLogger:
         async with self._lock:
             self._pending_events.append(event)
 
-            # Flush if batch size reached
+            # Flush if batch size reached (同步等待以避免竞态条件)
             if len(self._pending_events) >= self.batch_size:
-                # Trigger flush without waiting
-                asyncio.create_task(self.flush())
+                # 释放锁后再刷新，避免死锁
+                pass
+
+        # 在锁外检查是否需要刷新
+        if len(self._pending_events) >= self.batch_size:
+            await self.flush()
 
     async def log_action_started(
         self,

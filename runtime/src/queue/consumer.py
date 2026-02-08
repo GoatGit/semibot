@@ -4,8 +4,10 @@ Consumes tasks from Redis queue and executes agents.
 """
 
 import asyncio
+import functools
 import json
 import signal
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -187,10 +189,14 @@ class TaskConsumer:
         self._running = True
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
 
-        # Setup signal handlers
-        loop = asyncio.get_event_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
+        # Setup signal handlers (Windows 不支持 add_signal_handler)
+        if sys.platform != 'win32':
+            loop = asyncio.get_event_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(
+                    sig,
+                    functools.partial(asyncio.create_task, self.stop())
+                )
 
         logger.info(f"[Consumer] Starting task consumer on queue: {self.queue_name}")
 
