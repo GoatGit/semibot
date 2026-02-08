@@ -165,9 +165,28 @@ class PlannerAgent(BaseAgent):
             "available_skills": [],
         }
 
-        # Get available skills
-        if self.skill_registry:
+        # Get available skills from RuntimeSessionContext if available
+        runtime_context = state.get("context")
+        if runtime_context:
+            from src.orchestrator.capability import CapabilityGraph
+
+            capability_graph = CapabilityGraph(runtime_context)
+            context["available_skills"] = capability_graph.get_schemas_for_planner()
+
+            logger.info(
+                "Using CapabilityGraph for planning",
+                extra={
+                    "session_id": state["session_id"],
+                    "capability_count": len(context["available_skills"]),
+                },
+            )
+        elif self.skill_registry:
+            # Fallback to skill_registry for backward compatibility
             context["available_skills"] = self.skill_registry.get_all_schemas()
+            logger.warning(
+                "Using skill_registry fallback (no RuntimeSessionContext)",
+                extra={"session_id": state.get("session_id")},
+            )
 
         return context
 

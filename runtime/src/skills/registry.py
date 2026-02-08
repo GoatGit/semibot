@@ -5,11 +5,23 @@ Provides lookup, execution, and schema generation.
 """
 
 from typing import Any
+from dataclasses import dataclass, field
 
 from src.skills.base import BaseSkill, BaseTool, ToolResult
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class SkillMetadata:
+    """Metadata for a registered skill."""
+
+    version: str | None = None
+    source: str = "local"  # "local", "anthropic", "custom"
+    author: str | None = None
+    tags: list[str] = field(default_factory=list)
+    additional: dict[str, Any] = field(default_factory=dict)
 
 
 class SkillRegistry:
@@ -42,26 +54,56 @@ class SkillRegistry:
         """Initialize the registry."""
         self._tools: dict[str, BaseTool] = {}
         self._skills: dict[str, BaseSkill] = {}
+        self._skill_metadata: dict[str, SkillMetadata] = {}
+        self._tool_metadata: dict[str, SkillMetadata] = {}
 
-    def register_tool(self, tool: BaseTool) -> None:
+    def register_tool(
+        self,
+        tool: BaseTool,
+        metadata: SkillMetadata | None = None,
+    ) -> None:
         """
         Register a tool.
 
         Args:
             tool: Tool instance to register
+            metadata: Optional metadata for the tool
         """
         self._tools[tool.name] = tool
-        logger.info(f"Registered tool: {tool.name}")
+        if metadata:
+            self._tool_metadata[tool.name] = metadata
+        logger.info(
+            f"Registered tool: {tool.name}",
+            extra={
+                "tool_name": tool.name,
+                "version": metadata.version if metadata else None,
+                "source": metadata.source if metadata else "local",
+            },
+        )
 
-    def register_skill(self, skill: BaseSkill) -> None:
+    def register_skill(
+        self,
+        skill: BaseSkill,
+        metadata: SkillMetadata | None = None,
+    ) -> None:
         """
         Register a skill.
 
         Args:
             skill: Skill instance to register
+            metadata: Optional metadata for the skill
         """
         self._skills[skill.name] = skill
-        logger.info(f"Registered skill: {skill.name}")
+        if metadata:
+            self._skill_metadata[skill.name] = metadata
+        logger.info(
+            f"Registered skill: {skill.name}",
+            extra={
+                "skill_name": skill.name,
+                "version": metadata.version if metadata else None,
+                "source": metadata.source if metadata else "local",
+            },
+        )
 
     def get_tool(self, name: str) -> BaseTool | None:
         """
@@ -86,6 +128,30 @@ class SkillRegistry:
             Skill instance or None
         """
         return self._skills.get(name)
+
+    def get_skill_metadata(self, name: str) -> SkillMetadata | None:
+        """
+        Get metadata for a skill.
+
+        Args:
+            name: Skill name
+
+        Returns:
+            SkillMetadata or None
+        """
+        return self._skill_metadata.get(name)
+
+    def get_tool_metadata(self, name: str) -> SkillMetadata | None:
+        """
+        Get metadata for a tool.
+
+        Args:
+            name: Tool name
+
+        Returns:
+            SkillMetadata or None
+        """
+        return self._tool_metadata.get(name)
 
     def list_tools(self) -> list[str]:
         """Get list of registered tool names."""
@@ -118,27 +184,47 @@ class SkillRegistry:
         Get schemas for all tools and skills.
 
         Returns:
-            Combined list of all schemas
+            Combined list of all schemas with metadata
         """
         schemas = []
 
         # Add tool schemas
         for tool in self._tools.values():
-            schemas.append({
+            schema = {
                 "type": "tool",
                 "name": tool.name,
                 "description": tool.description,
                 "parameters": tool.parameters,
-            })
+            }
+            # Add metadata if available
+            metadata = self._tool_metadata.get(tool.name)
+            if metadata:
+                schema["metadata"] = {
+                    "version": metadata.version,
+                    "source": metadata.source,
+                    "author": metadata.author,
+                    "tags": metadata.tags,
+                }
+            schemas.append(schema)
 
         # Add skill schemas
         for skill in self._skills.values():
-            schemas.append({
+            schema = {
                 "type": "skill",
                 "name": skill.name,
                 "description": skill.description,
                 "trigger_keywords": skill.trigger_keywords,
-            })
+            }
+            # Add metadata if available
+            metadata = self._skill_metadata.get(skill.name)
+            if metadata:
+                schema["metadata"] = {
+                    "version": metadata.version,
+                    "source": metadata.source,
+                    "author": metadata.author,
+                    "tags": metadata.tags,
+                }
+            schemas.append(schema)
 
         return schemas
 

@@ -5,7 +5,7 @@ The graph defines the flow of execution through various nodes (states) and
 edges (transitions).
 """
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from langgraph.graph import END, StateGraph
 
@@ -24,8 +24,14 @@ from src.orchestrator.nodes import (
 )
 from src.orchestrator.state import AgentState
 
+if TYPE_CHECKING:
+    from src.orchestrator.context import RuntimeSessionContext
 
-def create_agent_graph(context: dict[str, Any] | None = None) -> StateGraph:
+
+def create_agent_graph(
+    context: dict[str, Any] | None = None,
+    runtime_context: "RuntimeSessionContext | None" = None,
+) -> StateGraph:
     """
     Create the Agent execution state graph.
 
@@ -38,6 +44,7 @@ def create_agent_graph(context: dict[str, Any] | None = None) -> StateGraph:
 
     Args:
         context: Injected dependencies for nodes (llm_provider, etc.)
+        runtime_context: Runtime session context with agent config and capabilities
 
     Returns:
         Compiled LangGraph StateGraph ready for execution
@@ -46,6 +53,17 @@ def create_agent_graph(context: dict[str, Any] | None = None) -> StateGraph:
         ```python
         from src.orchestrator import create_agent_graph
         from src.orchestrator.state import create_initial_state
+        from src.orchestrator.context import RuntimeSessionContext
+
+        # Create runtime context
+        runtime_context = RuntimeSessionContext(
+            org_id="org_123",
+            user_id="user_456",
+            agent_id="agent_789",
+            session_id="sess_abc",
+            agent_config=agent_config,
+            available_skills=skills,
+        )
 
         # Create graph with dependencies
         context = {
@@ -53,7 +71,7 @@ def create_agent_graph(context: dict[str, Any] | None = None) -> StateGraph:
             "skill_registry": my_skill_registry,
             "memory_system": my_memory_system,
         }
-        graph = create_agent_graph(context)
+        graph = create_agent_graph(context, runtime_context)
 
         # Create initial state
         state = create_initial_state(
@@ -61,6 +79,7 @@ def create_agent_graph(context: dict[str, Any] | None = None) -> StateGraph:
             agent_id="agent_456",
             org_id="org_789",
             user_message="Help me analyze this data",
+            context=runtime_context,
         )
 
         # Execute
@@ -72,7 +91,7 @@ def create_agent_graph(context: dict[str, Any] | None = None) -> StateGraph:
     # Create the state graph with AgentState as the state type
     graph = StateGraph(AgentState)
 
-    # Create node wrappers that inject context
+    # Create node wrappers that inject context and runtime_context
     async def _start(state: AgentState) -> dict[str, Any]:
         return await start_node(state, context)
 
@@ -150,6 +169,7 @@ def create_agent_graph(context: dict[str, Any] | None = None) -> StateGraph:
 
 def create_agent_graph_with_checkpointer(
     context: dict[str, Any] | None = None,
+    runtime_context: "RuntimeSessionContext | None" = None,
     checkpointer: Any = None,
 ) -> StateGraph:
     """
@@ -162,6 +182,7 @@ def create_agent_graph_with_checkpointer(
 
     Args:
         context: Injected dependencies for nodes
+        runtime_context: Runtime session context with agent config and capabilities
         checkpointer: LangGraph checkpointer for state persistence
 
     Returns:

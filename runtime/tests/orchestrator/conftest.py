@@ -19,7 +19,6 @@ def sample_plan_step():
     return PlanStep(
         id="step_1",
         title="Search for information",
-        description="Search the web for relevant information",
         tool="web_search",
         params={"query": "test query"},
         parallel=False,
@@ -31,7 +30,6 @@ def sample_execution_plan(sample_plan_step):
     """Sample execution plan."""
     return ExecutionPlan(
         goal="Find information about the topic",
-        analysis="User wants to search for information",
         steps=[sample_plan_step],
         current_step_index=0,
     )
@@ -42,6 +40,7 @@ def sample_tool_result():
     """Sample tool call result."""
     return ToolCallResult(
         tool_name="web_search",
+        params={"query": "test"},
         success=True,
         result={"data": "search results"},
         error=None,
@@ -63,14 +62,26 @@ def sample_reflection():
 @pytest.fixture
 def sample_agent_state(sample_execution_plan, sample_tool_result):
     """Sample agent state for testing."""
+    from src.orchestrator.context import RuntimeSessionContext, AgentConfig
+
+    runtime_context = RuntimeSessionContext(
+        org_id="test_org",
+        user_id="test_user",
+        agent_id="test_agent",
+        session_id="test_session",
+        agent_config=AgentConfig(id="test_agent", name="Test Agent"),
+    )
+
     return {
         "session_id": "test_session",
         "agent_id": "test_agent",
         "org_id": "test_org",
+        "context": runtime_context,
         "messages": [
-            {"role": "user", "content": "Search for test information"},
+            {"role": "user", "content": "Search for test information", "name": None, "tool_call_id": None},
         ],
         "plan": sample_execution_plan,
+        "pending_actions": [],
         "tool_results": [sample_tool_result],
         "reflection": None,
         "error": None,
