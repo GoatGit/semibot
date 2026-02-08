@@ -601,5 +601,7 @@ class EmbeddingService:
 
     async def close(self) -> None:
         """Close the service and release resources."""
+        if self.cache and hasattr(self.cache, "close"):
+            await self.cache.close()
         if hasattr(self.provider, "close"):
             await self.provider.close()

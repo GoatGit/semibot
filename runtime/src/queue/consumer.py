@@ -193,9 +193,10 @@ class TaskConsumer:
         if sys.platform != 'win32':
             loop = asyncio.get_event_loop()
             for sig in (signal.SIGTERM, signal.SIGINT):
+                # Use lambda with default argument to avoid closure issues
                 loop.add_signal_handler(
                     sig,
-                    functools.partial(asyncio.create_task, self.stop())
+                    lambda s=sig: asyncio.create_task(self._handle_signal(s))
                 )
 
         logger.info(f"[Consumer] Starting task consumer on queue: {self.queue_name}")
@@ -218,6 +219,11 @@ class TaskConsumer:
 
         await self.disconnect()
         logger.info("[Consumer] Task consumer stopped")
+
+    async def _handle_signal(self, sig: signal.Signals) -> None:
+        """Handle shutdown signals safely."""
+        logger.info(f"[Consumer] Received signal {sig.name}, initiating graceful shutdown...")
+        await self.stop()
 
     async def stop(self) -> None:
         """Stop the consumer gracefully."""

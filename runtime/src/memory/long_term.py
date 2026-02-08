@@ -394,6 +394,8 @@ class LongTermMemory(LongTermMemoryInterface):
                     )
 
         results = []
+        update_tasks = []
+
         for row in rows:
             entry = MemoryEntry(
                 id=str(row["id"]),
@@ -404,8 +406,8 @@ class LongTermMemory(LongTermMemoryInterface):
                 created_at=row["created_at"],
             )
 
-            # Update access count asynchronously
-            await self._update_access(str(row["id"]))
+            # Collect update tasks for parallel execution
+            update_tasks.append(self._update_access(str(row["id"])))
 
             results.append(
                 MemorySearchResult(
@@ -414,6 +416,10 @@ class LongTermMemory(LongTermMemoryInterface):
                     distance=1 - float(row["similarity"]),
                 )
             )
+
+        # Update access counts in parallel
+        if update_tasks:
+            await asyncio.gather(*update_tasks, return_exceptions=True)
 
         logger.debug(
             "long_term_memory_search",

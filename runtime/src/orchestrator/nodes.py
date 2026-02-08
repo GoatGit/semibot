@@ -496,7 +496,7 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
 
     # Check if there are more pending steps in the plan
     plan = state["plan"]
-    if plan and plan.current_step_index < len(plan.steps) - 1:
+    if plan and plan.steps and plan.current_step_index < len(plan.steps) - 1:
         # Get next batch of actions
         next_actions = plan.steps[plan.current_step_index + 1 :]
         updated_plan = ExecutionPlan(
