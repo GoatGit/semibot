@@ -2,6 +2,10 @@
 
 The ExecutorAgent is responsible for executing plans by invoking tools
 and skills. It handles the actual work of carrying out the planned steps.
+
+NOTE: This is a standalone Agent class implementation. The current runtime
+uses the act_node() function in orchestrator/nodes.py for LangGraph integration.
+This class is kept as an alternative implementation for non-graph execution modes.
 """
 
 from typing import Any

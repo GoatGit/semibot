@@ -146,11 +146,9 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             extra={"session_id": state["session_id"]},
         )
 
-    # Build planning prompt
+    # Extract state data
     messages = state["messages"]
     memory_context = state["memory_context"]
-
-    planning_prompt = _build_planning_prompt(messages, memory_context, available_skills)
 
     try:
         # Call LLM to generate plan
@@ -643,31 +641,5 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
 # Helper functions
 
 
-def _build_planning_prompt(
-    messages: list[Message],
-    memory_context: str,
-    available_skills: list[dict[str, Any]],
-) -> str:
-    """Build the planning prompt for the LLM."""
-    skills_text = "\n".join(
-        f"- {s['name']}: {s.get('description', 'No description')}" for s in available_skills
-    )
-
-    return f"""
-You are a planning agent. Analyze the user's request and create an execution plan.
-
-Available tools/skills:
-{skills_text}
-
-Context from memory:
-{memory_context}
-
-Create a plan with clear, executable steps. Each step should specify:
-- A tool/skill to use (if applicable)
-- The parameters for that tool
-- Whether it can run in parallel with other steps
-
-If the request is a simple question that doesn't require tools, respond with an empty plan.
-"""
 
 

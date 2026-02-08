@@ -2,6 +2,10 @@
 
 The PlannerAgent is responsible for analyzing user requests and generating
 execution plans. It breaks down complex tasks into actionable steps.
+
+NOTE: This is a standalone Agent class implementation. The current runtime
+uses the plan_node() function in orchestrator/nodes.py for LangGraph integration.
+This class is kept as an alternative implementation for non-graph execution modes.
 """
 
 from typing import Any
