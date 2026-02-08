@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import logging
 import os
 import tempfile
 import time
@@ -28,8 +27,9 @@ from src.sandbox.exceptions import (
     SandboxResourceError,
     SandboxTimeoutError,
 )
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Sandbox:

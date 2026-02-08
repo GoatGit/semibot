@@ -2,7 +2,6 @@
 
 import fnmatch
 import hashlib
-import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -11,8 +10,9 @@ import yaml
 
 from src.sandbox.models import RiskLevel, SandboxConfig, ToolPermission
 from src.sandbox.exceptions import SandboxPermissionError, SandboxPolicyViolationError
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PolicyEngine:

@@ -4,15 +4,15 @@ Provides safe code execution in isolated environments.
 """
 
 import asyncio
-import logging
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from src.skills.base import BaseTool, ToolResult
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CodeExecutorTool(BaseTool):

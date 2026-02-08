@@ -1,13 +1,13 @@
 """Web Search Tool implementation."""
 
-import logging
 from typing import Any
 
 import httpx
 
 from src.skills.base import BaseTool, ToolResult
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WebSearchTool(BaseTool):

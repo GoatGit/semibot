@@ -4,6 +4,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class ExecutionMetrics:
@@ -237,9 +241,7 @@ class MetricsCollector:
                     )
             except Exception as e:
                 # Log but don't fail on metrics write
-                import logging
-
-                logging.warning(f"Failed to write metrics to database: {e}")
+                logger.warning("failed_to_write_metrics_to_database", error=str(e))
 
         # Publish to Redis for real-time dashboard
         if redis_client:
@@ -251,6 +253,4 @@ class MetricsCollector:
                     json.dumps(metrics_dict),
                 )
             except Exception as e:
-                import logging
-
-                logging.warning(f"Failed to publish metrics to Redis: {e}")
+                logger.warning("failed_to_publish_metrics_to_redis", error=str(e))

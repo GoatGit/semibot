@@ -1,14 +1,14 @@
 """Audit Logger - Security audit logging for sandbox executions."""
 
 import json
-import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from src.sandbox.models import AuditLogEntry, ExecutionResult
+from src.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AuditLogger:
