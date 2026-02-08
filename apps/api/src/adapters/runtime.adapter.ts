@@ -8,11 +8,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios'
-import { v4 as uuidv4 } from 'uuid'
-import type { Response } from 'express'
-import type { Agent2UIMessage, Agent2UIType } from '@semibot/shared-types'
 import { RUNTIME_SERVICE_URL, RUNTIME_EXECUTION_TIMEOUT_MS, MCP_CONNECTION_TIMEOUT_MS } from '../constants/config'
-import { createError } from '../middleware/errorHandler'
 import { SSE_STREAM_ERROR } from '../constants/errorCodes'
 import type { SSEConnection } from '../services/chat.service'
 import { sendSSEEvent, sendAgent2UIMessage } from '../services/chat.service'
@@ -282,7 +278,7 @@ export class RuntimeAdapter {
   }
 
   private handlePlanCreated(event: RuntimeEvent, connection: SSEConnection): void {
-    const { goal, steps } = event.data
+    const { steps } = event.data
 
     sendAgent2UIMessage(connection, 'plan', {
       steps: (steps as Array<{ id: string; title: string }>).map((step) => ({

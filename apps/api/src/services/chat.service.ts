@@ -31,7 +31,7 @@ import {
   type RuntimeExecutionResult,
 } from '../adapters/runtime.adapter'
 import { getRuntimeMonitor } from './runtime-monitor.service'
-import type { Agent2UIMessage, Agent2UIType } from '@semibot/shared-types'
+import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/shared-types'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -64,7 +64,7 @@ export function createSSEConnection(
   res: Response,
   sessionId: string,
   userId: string,
-  orgId: string
+  _orgId: string
 ): SSEConnection {
   // 检查用户连接数限制
   const userConnections = Array.from(sseConnections.values()).filter(
@@ -161,7 +161,7 @@ export function sendSSEEvent(
 export function sendAgent2UIMessage(
   connection: SSEConnection,
   type: Agent2UIType,
-  data: unknown,
+  data: Agent2UIData,
   metadata?: Record<string, unknown>
 ): boolean {
   const message: Agent2UIMessage = {
@@ -407,7 +407,7 @@ async function handleChatDirect(
   input: ChatInput,
   res: Response,
   agent: any,
-  session: any
+  _session: any
 ): Promise<void> {
   const startTime = Date.now()
   const monitor = getRuntimeMonitor()

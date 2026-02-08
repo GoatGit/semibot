@@ -17,7 +17,7 @@ router.get(
   '/metrics',
   authenticate,
   requirePermission('admin:read'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (_req: AuthRequest, res) => {
     const monitor = getRuntimeMonitor()
     const summary = monitor.getSummary()
 
@@ -39,7 +39,7 @@ router.get(
     const { orgId } = req.params
 
     console.info(
-      `[Runtime] Metrics 访问 - 组织: ${orgId}, 用户: ${req.user?.id}, 角色: ${req.user?.role}`
+      `[Runtime] Metrics 访问 - 组织: ${orgId}, 用户: ${req.user?.userId}, 角色: ${req.user?.role}`
     )
 
     // 验��多租户隔离：管理员只能访问自己组织的数据，除非是超级管理员
@@ -70,7 +70,7 @@ router.post(
   '/fallback/reset',
   authenticate,
   requirePermission('admin:write'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (_req: AuthRequest, res) => {
     const monitor = getRuntimeMonitor()
     monitor.resetFallback()
 
@@ -88,7 +88,7 @@ router.get(
   '/fallback/status',
   authenticate,
   requirePermission('admin:read'),
-  asyncHandler(async (req: AuthRequest, res) => {
+  asyncHandler(async (_req: AuthRequest, res) => {
     const monitor = getRuntimeMonitor()
 
     res.json({
