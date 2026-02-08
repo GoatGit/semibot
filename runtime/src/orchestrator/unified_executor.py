@@ -49,6 +49,7 @@ class UnifiedActionExecutor:
         skill_registry: Any = None,
         mcp_client: Any = None,
         approval_hook: Callable[[str, dict[str, Any], ExecutionMetadata], Awaitable[bool]] | None = None,
+        audit_logger: Any = None,
     ):
         """
         Initialize the unified executor.
@@ -58,11 +59,13 @@ class UnifiedActionExecutor:
             skill_registry: Skill registry for skill execution
             mcp_client: MCP client for MCP tool execution
             approval_hook: Optional approval hook for high-risk operations
+            audit_logger: Optional audit logger for recording events
         """
         self.runtime_context = runtime_context
         self.skill_registry = skill_registry
         self.mcp_client = mcp_client
         self.approval_hook = approval_hook
+        self.audit_logger = audit_logger
 
         # Build capability graph
         self.capability_graph = CapabilityGraph(runtime_context)
@@ -143,6 +146,16 @@ class UnifiedActionExecutor:
         # Build execution metadata
         metadata = self._build_metadata(capability, tool_name)
 
+        # Log action started
+        if self.audit_logger:
+            await self.audit_logger.log_action_started(
+                context=self.runtime_context,
+                action_id=action.id,
+                action_name=tool_name,
+                action_params=params,
+                metadata=metadata,
+            )
+
         # Check if approval is needed
         if metadata.requires_approval and self.approval_hook:
             logger.info(
@@ -152,6 +165,16 @@ class UnifiedActionExecutor:
                     "tool_name": tool_name,
                 },
             )
+
+            # Log approval requested
+            if self.audit_logger:
+                await self.audit_logger.log_approval_requested(
+                    context=self.runtime_context,
+                    action_id=action.id,
+                    action_name=tool_name,
+                    action_params=params,
+                    metadata=metadata,
+                )
 
             try:
                 approved = await self.approval_hook(tool_name, params, metadata)
@@ -163,12 +186,40 @@ class UnifiedActionExecutor:
                             "tool_name": tool_name,
                         },
                     )
+
+                    # Log approval denied
+                    if self.audit_logger:
+                        await self.audit_logger.log_approval_denied(
+                            context=self.runtime_context,
+                            action_id=action.id,
+                            action_name=tool_name,
+                        )
+
+                    # Log action rejected
+                    if self.audit_logger:
+                        await self.audit_logger.log_action_rejected(
+                            context=self.runtime_context,
+                            action_id=action.id,
+                            action_name=tool_name,
+                            action_params=params,
+                            metadata=metadata,
+                            reason="Approval denied by user",
+                        )
+
                     return ToolCallResult(
                         tool_name=tool_name,
                         params=params,
                         error="Action rejected by approval hook",
                         success=False,
                     )
+                else:
+                    # Log approval granted
+                    if self.audit_logger:
+                        await self.audit_logger.log_approval_granted(
+                            context=self.runtime_context,
+                            action_id=action.id,
+                            action_name=tool_name,
+                        )
             except Exception as e:
                 logger.error(
                     f"Approval hook failed: {e}",
@@ -187,6 +238,30 @@ class UnifiedActionExecutor:
         # Route to appropriate executor
         try:
             result = await self._route_execution(capability, tool_name, params, metadata)
+
+            # Log action completed or failed
+            if self.audit_logger:
+                if result.success:
+                    await self.audit_logger.log_action_completed(
+                        context=self.runtime_context,
+                        action_id=action.id,
+                        action_name=tool_name,
+                        action_params=params,
+                        metadata=metadata,
+                        duration_ms=result.duration_ms,
+                        result=result.result,
+                    )
+                else:
+                    await self.audit_logger.log_action_failed(
+                        context=self.runtime_context,
+                        action_id=action.id,
+                        action_name=tool_name,
+                        action_params=params,
+                        metadata=metadata,
+                        duration_ms=result.duration_ms,
+                        error=result.error or "Unknown error",
+                    )
+
             return result
         except Exception as e:
             logger.error(
@@ -196,6 +271,19 @@ class UnifiedActionExecutor:
                     "tool_name": tool_name,
                 },
             )
+
+            # Log action failed
+            if self.audit_logger:
+                await self.audit_logger.log_action_failed(
+                    context=self.runtime_context,
+                    action_id=action.id,
+                    action_name=tool_name,
+                    action_params=params,
+                    metadata=metadata,
+                    duration_ms=0,
+                    error=str(e),
+                )
+
             return ToolCallResult(
                 tool_name=tool_name,
                 params=params,
