@@ -5,6 +5,12 @@
 import {
   CHAT_RUNTIME_ERROR_RATE_THRESHOLD,
   CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS,
+  RUNTIME_MONITOR_MAX_RECORDS,
+  RUNTIME_MONITOR_WINDOW_MS,
+  RUNTIME_MONITOR_MIN_SAMPLES,
+  RUNTIME_MONITOR_TIMEOUT_RATE_THRESHOLD,
+  RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER,
+  RUNTIME_MONITOR_LATENCY_THRESHOLD_MULTIPLIER,
 } from '../constants/config'
 
 // ═══════════════════════════════════════════════════════════════
@@ -37,8 +43,8 @@ export interface ExecutionRecord {
 
 class RuntimeMonitorService {
   private records: ExecutionRecord[] = []
-  private maxRecords = 1000 // 保留最近 1000 条记录
-  private windowMs = 300000 // 5 分钟滑动窗口
+  private maxRecords = RUNTIME_MONITOR_MAX_RECORDS
+  private windowMs = RUNTIME_MONITOR_WINDOW_MS
   private fallbackEnabled = false
   private fallbackReason = ''
 
@@ -50,6 +56,9 @@ class RuntimeMonitorService {
 
     // 限制记录数量
     if (this.records.length > this.maxRecords) {
+      console.warn(
+        `[RuntimeMonitor] 记录数已达上限，删除最旧记录 (当前: ${this.records.length}, 限制: ${this.maxRecords})`
+      )
       this.records.shift()
     }
 
@@ -110,7 +119,10 @@ class RuntimeMonitorService {
     const metrics = this.getMetrics('runtime_orchestrator')
 
     // 需要至少 10 个样本才能触发回退
-    if (metrics.total < 10) {
+    if (metrics.total < RUNTIME_MONITOR_MIN_SAMPLES) {
+      console.debug(
+        `[RuntimeMonitor] 样本数不足，跳过回退检查 (当前: ${metrics.total}, 最小: ${RUNTIME_MONITOR_MIN_SAMPLES})`
+      )
       return
     }
 
@@ -123,24 +135,25 @@ class RuntimeMonitorService {
     }
 
     // 检查超时率
-    if (metrics.timeoutRate > 0.3) {
-      // 30% 超时率
+    if (metrics.timeoutRate > RUNTIME_MONITOR_TIMEOUT_RATE_THRESHOLD) {
       this.enableFallback(
-        `超时率过高: ${(metrics.timeoutRate * 100).toFixed(2)}% (阈值: 30%)`
+        `超时率过高: ${(metrics.timeoutRate * 100).toFixed(2)}% (阈值: ${(RUNTIME_MONITOR_TIMEOUT_RATE_THRESHOLD * 100).toFixed(2)}%)`
       )
       return
     }
 
     // 检查平均延迟
-    if (metrics.avgLatencyMs > CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS * 0.8) {
+    const latencyThreshold = CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS * RUNTIME_MONITOR_LATENCY_THRESHOLD_MULTIPLIER
+    if (metrics.avgLatencyMs > latencyThreshold) {
       this.enableFallback(
-        `平均延迟过高: ${metrics.avgLatencyMs.toFixed(0)}ms (阈值: ${(CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS * 0.8).toFixed(0)}ms)`
+        `平均延迟过高: ${metrics.avgLatencyMs.toFixed(0)}ms (阈值: ${latencyThreshold.toFixed(0)}ms)`
       )
       return
     }
 
     // 如果指标恢复正常，禁用回退
-    if (this.fallbackEnabled && metrics.errorRate < CHAT_RUNTIME_ERROR_RATE_THRESHOLD * 0.5) {
+    const recoveryThreshold = CHAT_RUNTIME_ERROR_RATE_THRESHOLD * RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER
+    if (this.fallbackEnabled && metrics.errorRate < recoveryThreshold) {
       this.disableFallback()
     }
   }

@@ -4,8 +4,9 @@
 
 import { Router } from 'express'
 import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
-import { asyncHandler } from '../../middleware/errorHandler'
+import { asyncHandler, createError } from '../../middleware/errorHandler'
 import { getRuntimeMonitor } from '../../services/runtime-monitor.service'
+import { AUTH_ORG_ACCESS_DENIED } from '../../constants/errorCodes'
 
 const router: Router = Router()
 
@@ -36,6 +37,12 @@ router.get(
   requirePermission('admin:read'),
   asyncHandler(async (req: AuthRequest, res) => {
     const { orgId } = req.params
+
+    // 验证多租户隔离：管理员只能访问自己组织的数据，除非是超级管理员
+    if (req.user && req.user.orgId !== orgId && req.user.role !== 'owner') {
+      throw createError(AUTH_ORG_ACCESS_DENIED, '无权访问该组织的指标')
+    }
+
     const monitor = getRuntimeMonitor()
 
     const directMetrics = monitor.getMetricsByOrg(orgId, 'direct_llm')

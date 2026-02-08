@@ -141,6 +141,28 @@ export const CHAT_RUNTIME_ERROR_RATE_THRESHOLD = parseFloat(
 export const RUNTIME_SERVICE_URL = process.env.RUNTIME_SERVICE_URL ?? 'http://localhost:8000'
 
 // ═══════════════════════════════════════════════════════════════
+// Runtime 监控配置
+// ═══════════════════════════════════════════════════════════════
+
+/** Runtime 监控最大记录数 */
+export const RUNTIME_MONITOR_MAX_RECORDS = 1000
+
+/** Runtime 监控滑动窗口时间 (毫秒) */
+export const RUNTIME_MONITOR_WINDOW_MS = 300000 // 5 分钟
+
+/** Runtime 监控最小样本数 (触发回退前需要的最小样本数) */
+export const RUNTIME_MONITOR_MIN_SAMPLES = 10
+
+/** Runtime 监控超时率阈值 (0-1) */
+export const RUNTIME_MONITOR_TIMEOUT_RATE_THRESHOLD = 0.3 // 30%
+
+/** Runtime 监控错误率恢复倍数 */
+export const RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER = 0.5
+
+/** Runtime 监控延迟阈值倍数 */
+export const RUNTIME_MONITOR_LATENCY_THRESHOLD_MULTIPLIER = 0.8
+
+// ═══════════════════════════════════════════════════════════════
 // 缓存配置
 // ═══════════════════════════════════════════════════════════════
 

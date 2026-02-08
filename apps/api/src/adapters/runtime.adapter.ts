@@ -11,7 +11,7 @@ import axios, { AxiosInstance } from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import type { Response } from 'express'
 import type { Agent2UIMessage, Agent2UIType } from '@semibot/shared-types'
-import { RUNTIME_SERVICE_URL, RUNTIME_EXECUTION_TIMEOUT_MS } from '../constants/config'
+import { RUNTIME_SERVICE_URL, RUNTIME_EXECUTION_TIMEOUT_MS, MCP_CONNECTION_TIMEOUT_MS } from '../constants/config'
 import { createError } from '../middleware/errorHandler'
 import { SSE_STREAM_ERROR } from '../constants/errorCodes'
 import type { SSEConnection } from '../services/chat.service'
@@ -434,7 +434,7 @@ export class RuntimeAdapter {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.client.get('/health', { timeout: 5000 })
+      const response = await this.client.get('/health', { timeout: MCP_CONNECTION_TIMEOUT_MS })
       return response.status === 200
     } catch (error) {
       console.error('[RuntimeAdapter] 健康检查失败:', error)
