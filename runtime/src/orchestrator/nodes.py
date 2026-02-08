@@ -190,14 +190,14 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
     ACT node: Execute pending actions (tool/skill calls).
 
     This node:
-    1. Validates actions against capability graph
-    2. Executes pending actions from the plan
+    1. Uses UnifiedActionExecutor if available (with RuntimeSessionContext)
+    2. Falls back to legacy action_executor for backward compatibility
     3. Supports parallel execution for independent actions
     4. Collects results and errors
 
     Args:
         state: Current agent state
-        context: Injected dependencies (action_executor, etc.)
+        context: Injected dependencies (action_executor, unified_executor, etc.)
 
     Returns:
         State updates with tool execution results
@@ -210,10 +210,13 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         },
     )
 
+    # Check for UnifiedActionExecutor first (preferred)
+    unified_executor = context.get("unified_executor")
     action_executor = context.get("action_executor")
-    if not action_executor:
+
+    if not unified_executor and not action_executor:
         return {
-            "error": "Action executor not configured",
+            "error": "No executor configured",
             "current_step": "observe",
             "pending_actions": [],
         }
@@ -223,6 +226,68 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         return {
             "current_step": "observe",
         }
+
+    # If using UnifiedActionExecutor, validation is handled internally
+    if unified_executor:
+        logger.info(
+            "Using UnifiedActionExecutor",
+            extra={"session_id": state["session_id"]},
+        )
+
+        results: list[ToolCallResult] = []
+
+        # Separate parallel and sequential actions
+        parallel_actions = [a for a in pending_actions if a.parallel]
+        sequential_actions = [a for a in pending_actions if not a.parallel]
+
+        # Execute parallel actions
+        if parallel_actions:
+            import asyncio
+            parallel_results = await asyncio.gather(
+                *[unified_executor.execute(action) for action in parallel_actions],
+                return_exceptions=True,
+            )
+            # Convert exceptions to error results
+            for i, result in enumerate(parallel_results):
+                if isinstance(result, Exception):
+                    results.append(
+                        ToolCallResult(
+                            tool_name=parallel_actions[i].tool or "unknown",
+                            params=parallel_actions[i].params,
+                            error=str(result),
+                            success=False,
+                        )
+                    )
+                else:
+                    results.append(result)
+
+        # Execute sequential actions
+        for action in sequential_actions:
+            try:
+                result = await unified_executor.execute(action)
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Action execution failed: {e}")
+                results.append(
+                    ToolCallResult(
+                        tool_name=action.tool or "unknown",
+                        params=action.params,
+                        error=str(e),
+                        success=False,
+                    )
+                )
+
+        return {
+            "tool_results": results,
+            "pending_actions": [],
+            "current_step": "observe",
+        }
+
+    # Legacy path: use action_executor with manual validation
+    logger.warning(
+        "Using legacy action_executor (no UnifiedActionExecutor)",
+        extra={"session_id": state["session_id"]},
+    )
 
     # Build CapabilityGraph for validation
     capability_graph = None

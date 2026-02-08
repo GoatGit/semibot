@@ -9,6 +9,8 @@ __all__ = [
     "ActionExecutor",
     "execute_single",
     "execute_parallel",
+    "UnifiedActionExecutor",
+    "ExecutionMetadata",
 ]
 
 
@@ -44,6 +46,17 @@ def __getattr__(name: str):
             "ActionExecutor": ActionExecutor,
             "execute_single": execute_single,
             "execute_parallel": execute_parallel,
+        }
+        return mapping[name]
+    if name in {"UnifiedActionExecutor", "ExecutionMetadata"}:
+        from src.orchestrator.unified_executor import (
+            UnifiedActionExecutor,
+            ExecutionMetadata,
+        )
+
+        mapping = {
+            "UnifiedActionExecutor": UnifiedActionExecutor,
+            "ExecutionMetadata": ExecutionMetadata,
         }
         return mapping[name]
     raise AttributeError(name)

@@ -155,7 +155,7 @@ async def test_act_node_without_runtime_context():
     result = await act_node(state, context)
 
     # Should return error about missing executor
-    assert result["error"] == "Action executor not configured"
+    assert result["error"] == "No executor configured"
 
 
 def test_capability_graph_integration_with_context():

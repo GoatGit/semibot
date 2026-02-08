@@ -45,6 +45,7 @@ class ToolCallResult(BaseModel):
     error: str | None = None
     duration_ms: int = 0
     success: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReflectionResult(BaseModel):

@@ -168,6 +168,13 @@ class McpCapability(Capability):
     tool_schema: dict[str, Any] = field(default_factory=dict)
     capability_type: str = field(default="mcp", init=False)
 
+    def __post_init__(self):
+        """Initialize metadata with MCP server info."""
+        self.metadata = {
+            "mcp_server_id": self.mcp_server_id,
+            "mcp_server_name": self.mcp_server_name,
+        }
+
     def to_schema(self) -> dict[str, Any]:
         """Convert MCP tool to LLM schema."""
         schema = {
