@@ -1,0 +1,8 @@
+{
+  "skill_id": "text-editor",
+  "name": "Text Editor",
+  "description": "A minimal skill manifest example for installation",
+  "version": "1.0.0",
+  "keywords": ["text", "editor", "write"],
+  "homepage": "https://github.com/GoatGit/semibot"
+}

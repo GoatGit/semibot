@@ -154,6 +154,7 @@ export class AnthropicProvider implements LLMProvider {
         top_p: config.topP ?? 1,
         stop_sequences: config.stop,
         tools: config.tools ? this.convertTools(config.tools) : undefined,
+        container: config.container,
       }),
     })
 
@@ -221,6 +222,7 @@ export class AnthropicProvider implements LLMProvider {
         top_p: config.topP ?? 1,
         stop_sequences: config.stop,
         tools: config.tools ? this.convertTools(config.tools) : undefined,
+        container: config.container,
         stream: true,
       }),
     })

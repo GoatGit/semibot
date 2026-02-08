@@ -60,6 +60,25 @@ const listSkillsQuerySchema = z.object({
     .transform((val) => val !== 'false'),
 })
 
+const installAnthropicSkillSchema = z.object({
+  skillId: z.string().min(1).max(120),
+  version: z.string().min(1).max(50).optional(),
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().max(1000).optional(),
+  triggerKeywords: z.array(z.string().max(50)).max(20).optional(),
+  requiresApproval: z.boolean().optional(),
+})
+
+const installAnthropicSkillFromManifestSchema = z.object({
+  manifestUrl: z.string().url().max(2000),
+  skillId: z.string().min(1).max(120).optional(),
+  version: z.string().min(1).max(50).optional(),
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().max(1000).optional(),
+  triggerKeywords: z.array(z.string().max(50)).max(20).optional(),
+  requiresApproval: z.boolean().optional(),
+})
+
 // ═══════════════════════════════════════════════════════════════
 // 路由
 // ═══════════════════════════════════════════════════════════════
@@ -83,6 +102,70 @@ router.post(
     res.status(201).json({
       success: true,
       data: skill,
+    })
+  })
+)
+
+/**
+ * POST /skills/install/anthropic - 安装 Anthropic Skill
+ */
+router.post(
+  '/install/anthropic',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('skills:write'),
+  validate(installAnthropicSkillSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const orgId = req.user!.orgId
+    const userId = req.user!.userId
+    const input = req.body
+
+    const skill = await skillService.installAnthropicSkill(orgId, userId, input)
+
+    res.status(201).json({
+      success: true,
+      data: skill,
+    })
+  })
+)
+
+/**
+ * POST /skills/install/anthropic/manifest - 通过 manifest URL 安装 Anthropic Skill
+ */
+router.post(
+  '/install/anthropic/manifest',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('skills:write'),
+  validate(installAnthropicSkillFromManifestSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const orgId = req.user!.orgId
+    const userId = req.user!.userId
+    const input = req.body
+
+    const skill = await skillService.installAnthropicSkillFromManifest(orgId, userId, input)
+
+    res.status(201).json({
+      success: true,
+      data: skill,
+    })
+  })
+)
+
+/**
+ * GET /skills/catalog/anthropic - 获取 Anthropic Skills 可安装目录
+ */
+router.get(
+  '/catalog/anthropic',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('skills:read'),
+  asyncHandler(async (_req: AuthRequest, res: Response) => {
+    const items = await skillService.listAnthropicSkillCatalog()
+
+    res.json({
+      success: true,
+      data: items,
     })
   })
 )

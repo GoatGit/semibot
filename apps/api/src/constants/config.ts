@@ -91,6 +91,12 @@ export const TOOL_TIMEOUT_BROWSER_MS = 30000
 /** MCP 连接测试超时 (毫秒) */
 export const MCP_CONNECTION_TIMEOUT_MS = 10000
 
+/** Anthropic Skills manifest/catalog 请求超时 (毫秒) */
+export const SKILL_MANIFEST_FETCH_TIMEOUT_MS = 10000
+
+/** Anthropic Skills 目录 URL（可选，建议配置） */
+export const ANTHROPIC_SKILLS_CATALOG_URL = process.env.ANTHROPIC_SKILLS_CATALOG_URL ?? ''
+
 /** 单步骤总超时 (毫秒) */
 export const STEP_TIMEOUT_MS = 180000
 

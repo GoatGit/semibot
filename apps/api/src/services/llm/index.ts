@@ -43,6 +43,13 @@ export interface LLMConfig {
   stop?: string[]
   tools?: ToolDefinition[]
   toolChoice?: 'auto' | 'none' | { type: 'function'; function: { name: string } }
+  container?: {
+    skills?: Array<{
+      type: 'anthropic' | 'custom'
+      skill_id: string
+      version?: string
+    }>
+  }
 }
 
 export interface LLMStreamChunk {

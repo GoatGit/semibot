@@ -7,6 +7,7 @@ import type { Response } from 'express'
 import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
 import * as agentService from './agent.service'
+import * as skillService from './skill.service'
 import * as llmService from './llm.service'
 import type { LLMMessage, LLMStreamChunk } from './llm.service'
 import {
@@ -200,6 +201,20 @@ export async function handleChat(
   // 获取 Agent
   const agent = await agentService.getAgent(orgId, session.agentId)
 
+  const boundSkills = await skillService.getActiveSkillsByIds(orgId, agent.skills ?? [])
+  const anthropicContainerSkills = boundSkills.flatMap((skill) => {
+    const skills = skill.config?.container?.skills
+    if (!Array.isArray(skills)) return []
+    return skills.filter((entry): entry is skillService.AnthropicContainerSkillRef => {
+      return (
+        !!entry &&
+        (entry.type === 'anthropic' || entry.type === 'custom') &&
+        typeof entry.skill_id === 'string' &&
+        entry.skill_id.trim().length > 0
+      )
+    })
+  })
+
   // 创建 SSE 连接
   const connection = createSSEConnection(res, sessionId, userId)
 
@@ -261,6 +276,7 @@ export async function handleChat(
         model: agent.config?.model ?? undefined,
         temperature: agent.config?.temperature ?? 0.7,
         maxTokens: agent.config?.maxTokens ?? 4096,
+        container: anthropicContainerSkills.length > 0 ? { skills: anthropicContainerSkills } : undefined,
       },
       (chunk: LLMStreamChunk) => {
         if (!connection.isActive) return

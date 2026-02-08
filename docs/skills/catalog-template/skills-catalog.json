@@ -1,0 +1,12 @@
+{
+  "skills": [
+    {
+      "skill_id": "text-editor",
+      "name": "Text Editor",
+      "description": "Edit text content safely",
+      "version": "1.0.0",
+      "manifest_url": "https://raw.githubusercontent.com/GoatGit/semibot/main/docs/skills/catalog-template/text-editor-manifest.json",
+      "source_url": "https://github.com/GoatGit/semibot"
+    }
+  ]
+}

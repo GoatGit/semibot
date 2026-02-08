@@ -122,6 +122,139 @@ describe('Skill Service', () => {
     })
   })
 
+  describe('installAnthropicSkill', () => {
+    it('should create skill with anthropic-compatible config', async () => {
+      mockSkillRepository.findAll.mockResolvedValue({
+        data: [],
+        meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
+      })
+      mockSkillRepository.create.mockResolvedValue(mockSkillRow)
+
+      await skillService.installAnthropicSkill(mockOrgId, mockUserId, {
+        skillId: 'text-editor',
+        version: '1.0.0',
+      })
+
+      expect(mockSkillRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: mockOrgId,
+          createdBy: mockUserId,
+          config: expect.objectContaining({
+            source: 'anthropic',
+            container: {
+              skills: [{ type: 'anthropic', skill_id: 'text-editor', version: '1.0.0' }],
+            },
+          }),
+        })
+      )
+    })
+
+    it('should reject invalid anthropic skillId', async () => {
+      await expect(
+        skillService.installAnthropicSkill(mockOrgId, mockUserId, {
+          skillId: ' ',
+        })
+      ).rejects.toThrow()
+    })
+  })
+
+  describe('installAnthropicSkillFromManifest', () => {
+    it('should install skill from JSON manifest URL', async () => {
+      mockSkillRepository.findAll.mockResolvedValue({
+        data: [],
+        meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
+      })
+      mockSkillRepository.create.mockResolvedValue(mockSkillRow)
+
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        text: async () =>
+          JSON.stringify({
+            skill_id: 'anthropic-code-review',
+            version: '2.0.0',
+            name: 'Code Review',
+            description: 'Review code quality',
+            keywords: ['code-review', 'quality'],
+          }),
+      } as Response)
+
+      await skillService.installAnthropicSkillFromManifest(mockOrgId, mockUserId, {
+        manifestUrl: 'https://example.com/skills/code-review.json',
+      })
+
+      expect(fetchMock).toHaveBeenCalledOnce()
+      expect(mockSkillRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            source: 'anthropic',
+            container: {
+              skills: [
+                {
+                  type: 'anthropic',
+                  skill_id: 'anthropic-code-review',
+                  version: '2.0.0',
+                },
+              ],
+            },
+          }),
+          triggerKeywords: ['code-review', 'quality'],
+        })
+      )
+      fetchMock.mockRestore()
+    })
+
+    it('should reject invalid manifest url', async () => {
+      await expect(
+        skillService.installAnthropicSkillFromManifest(mockOrgId, mockUserId, {
+          manifestUrl: 'not-a-url',
+        })
+      ).rejects.toThrow()
+    })
+  })
+
+  describe('listAnthropicSkillCatalog', () => {
+    it('should parse and normalize catalog entries', async () => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            skills: [
+              {
+                skill_id: 'text-editor',
+                name: 'Text Editor',
+                description: 'Edit text content',
+                version: '1.0.0',
+                manifest_url: '/skills/text-editor/manifest.json',
+              },
+              {
+                id: 'browser',
+                title: 'Browser',
+                manifestUrl: 'https://cdn.example.com/skills/browser/manifest.json',
+              },
+            ],
+          }),
+      } as Response)
+
+      const items = await skillService.listAnthropicSkillCatalog(
+        'https://catalog.example.com/index.json'
+      )
+
+      expect(fetchMock).toHaveBeenCalledOnce()
+      expect(items).toHaveLength(2)
+      expect(items[0]).toHaveProperty('skillId')
+      expect(items.find((item) => item.skillId === 'text-editor')?.manifestUrl).toBe(
+        'https://catalog.example.com/skills/text-editor/manifest.json'
+      )
+      expect(items.find((item) => item.skillId === 'browser')?.manifestUrl).toBe(
+        'https://cdn.example.com/skills/browser/manifest.json'
+      )
+      fetchMock.mockRestore()
+    })
+  })
+
   describe('listSkills', () => {
     it('should return paginated skills list', async () => {
       mockSkillRepository.findAll.mockResolvedValue({

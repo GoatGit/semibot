@@ -24,6 +24,8 @@ export interface SkillRow {
   created_by: string | null
   created_at: string
   updated_at: string
+  deleted_at?: string | null
+  deleted_by?: string | null
 }
 
 export interface CreateSkillData {
@@ -64,6 +66,25 @@ export interface PaginatedResult<T> {
   }
 }
 
+let skillsDeletedAtColumnExists: boolean | null = null
+
+async function hasSkillsDeletedAtColumn(): Promise<boolean> {
+  if (skillsDeletedAtColumnExists !== null) {
+    return skillsDeletedAtColumnExists
+  }
+
+  const result = await sql`
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'skills'
+      AND column_name = 'deleted_at'
+    LIMIT 1
+  `
+
+  skillsDeletedAtColumnExists = result.length > 0
+  return skillsDeletedAtColumnExists
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Repository 方法
 // ═══════════════════════════════════════════════════════════════
@@ -97,9 +118,10 @@ export async function create(data: CreateSkillData): Promise<SkillRow> {
  * 根据 ID 获取 Skill
  */
 export async function findById(id: string): Promise<SkillRow | null> {
-  const result = await sql`
-    SELECT * FROM skills WHERE id = ${id}
-  `
+  const useDeletedAt = await hasSkillsDeletedAtColumn()
+  const result = useDeletedAt
+    ? await sql`SELECT * FROM skills WHERE id = ${id} AND deleted_at IS NULL`
+    : await sql`SELECT * FROM skills WHERE id = ${id}`
 
   if (result.length === 0) {
     return null
@@ -117,7 +139,8 @@ export async function findAll(params: ListSkillsParams): Promise<PaginatedResult
   const offset = (page - 1) * actualLimit
 
   // 构建 WHERE 条件
-  let whereClause = sql`is_active = true`
+  const useDeletedAt = await hasSkillsDeletedAtColumn()
+  let whereClause = useDeletedAt ? sql`deleted_at IS NULL` : sql`1 = 1`
 
   if (orgId !== undefined) {
     if (includeBuiltin) {
@@ -190,12 +213,19 @@ export async function update(id: string, data: UpdateSkillData): Promise<SkillRo
  * 软删除 Skill
  */
 export async function softDelete(id: string): Promise<boolean> {
-  const result = await sql`
-    UPDATE skills
-    SET is_active = false, updated_at = NOW()
-    WHERE id = ${id}
-    RETURNING id
-  `
+  const useDeletedAt = await hasSkillsDeletedAtColumn()
+  const result = useDeletedAt
+    ? await sql`
+      UPDATE skills
+      SET deleted_at = NOW(), is_active = false, updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING id
+    `
+    : await sql`
+      DELETE FROM skills
+      WHERE id = ${id}
+      RETURNING id
+    `
 
   return result.length > 0
 }
