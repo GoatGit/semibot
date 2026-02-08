@@ -144,7 +144,11 @@ export class RuntimeAdapter {
               fullResponse += text
             })
           } catch (err) {
-            console.error('[RuntimeAdapter] 解析事件失败:', err)
+            console.error('[RuntimeAdapter] 解析事件失败:', err, '原始数据:', line)
+            sendSSEEvent(connection, 'error', {
+              code: SSE_STREAM_ERROR,
+              message: 'SSE 流解析失败，请稍后重试',
+            })
           }
         }
       })
@@ -437,7 +441,14 @@ export class RuntimeAdapter {
       const response = await this.client.get('/health', { timeout: MCP_CONNECTION_TIMEOUT_MS })
       return response.status === 200
     } catch (error) {
-      console.error('[RuntimeAdapter] 健康检查失败:', error)
+      if (error instanceof Error && error.message.includes('timeout')) {
+        console.warn(
+          `[RuntimeAdapter] 健康检查超时 (超时时间: ${MCP_CONNECTION_TIMEOUT_MS}ms)`,
+          error
+        )
+      } else {
+        console.error('[RuntimeAdapter] 健康检查失败:', error)
+      }
       return false
     }
   }

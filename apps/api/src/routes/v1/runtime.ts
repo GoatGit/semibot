@@ -38,7 +38,11 @@ router.get(
   asyncHandler(async (req: AuthRequest, res) => {
     const { orgId } = req.params
 
-    // 验证多租户隔离：管理员只能访问自己组织的数据，除非是超级管理员
+    console.info(
+      `[Runtime] Metrics 访问 - 组织: ${orgId}, 用户: ${req.user?.id}, 角色: ${req.user?.role}`
+    )
+
+    // 验��多租户隔离：管理员只能访问自己组织的数据，除非是超级管理员
     if (req.user && req.user.orgId !== orgId && req.user.role !== 'owner') {
       throw createError(AUTH_ORG_ACCESS_DENIED, '无权访问该组织的指标')
     }

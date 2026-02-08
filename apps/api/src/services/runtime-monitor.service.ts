@@ -154,6 +154,9 @@ class RuntimeMonitorService {
     // 如果指标恢复正常，禁用回退
     const recoveryThreshold = CHAT_RUNTIME_ERROR_RATE_THRESHOLD * RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER
     if (this.fallbackEnabled && metrics.errorRate < recoveryThreshold) {
+      console.info(
+        `[RuntimeMonitor] 指标恢复正常，准备禁用自动回退 (错误率: ${(metrics.errorRate * 100).toFixed(2)}% < 恢复阈值: ${(recoveryThreshold * 100).toFixed(2)}%)`
+      )
       this.disableFallback()
     }
   }

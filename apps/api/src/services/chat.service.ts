@@ -285,6 +285,13 @@ async function handleChatWithRuntime(
     // 获取历史消息
     const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
 
+    // 截断历史消息（保留最近 20 条）
+    if (historyMessages.length > 20) {
+      console.debug(
+        `[Chat] 历史消息截断 (总数: ${historyMessages.length}, 保留: 20, 丢弃: ${historyMessages.length - 20})`
+      )
+    }
+
     // 构建 Runtime 输入
     const runtimeInput: RuntimeInputState = {
       session_id: sessionId,
@@ -437,6 +444,13 @@ async function handleChatDirect(
 
     // 获取历史消息
     const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
+
+    // 截断历史消息（保留最近 20 条）
+    if (historyMessages.length > 20) {
+      console.debug(
+        `[Chat] 历史消息截断 (总数: ${historyMessages.length}, 保留: 20, 丢弃: ${historyMessages.length - 20})`
+      )
+    }
 
     // 构建 LLM 消息
     const llmMessages: LLMMessage[] = [
