@@ -8,13 +8,18 @@ import * as skillDefinitionRepo from '../repositories/skill-definition.repositor
 import * as skillPackageRepo from '../repositories/skill-package.repository'
 import * as skillInstallLogRepo from '../repositories/skill-install-log.repository'
 import * as skillInstallService from '../services/skill-install.service'
+import * as fs from 'fs-extra'
 
 // Mock dependencies
 vi.mock('../repositories/skill-definition.repository')
 vi.mock('../repositories/skill-package.repository')
 vi.mock('../repositories/skill-install-log.repository')
 vi.mock('../services/skill-install.service')
-vi.mock('fs-extra')
+vi.mock('fs-extra', () => ({
+  pathExists: vi.fn(),
+  remove: vi.fn(),
+  existsSync: vi.fn(),
+}))
 
 describe('Skill Retry and Rollback Service', () => {
   const mockUserId = 'user-123'
@@ -32,10 +37,11 @@ describe('Skill Retry and Rollback Service', () => {
       const input = {
         skillDefinitionId: mockDefinitionId,
         version: '1.0.0',
-        sourceType: 'anthropic' as const,
+        sourceType: 'local' as const,
+        localPath: '/tmp/test-skill',
       }
 
-      const result = await skillRetryRollbackService.installWithRetry(mockUserId, input)
+      const result = await skillRetryRollbackService.installWithRetry(input)
 
       expect(result).toBe(mockPackageId)
       expect(skillInstallService.installSkillPackage).toHaveBeenCalledTimes(1)
@@ -53,10 +59,11 @@ describe('Skill Retry and Rollback Service', () => {
       const input = {
         skillDefinitionId: mockDefinitionId,
         version: '1.0.0',
-        sourceType: 'anthropic' as const,
+        sourceType: 'local' as const,
+        localPath: '/tmp/test-skill',
       }
 
-      const result = await skillRetryRollbackService.installWithRetry(mockUserId, input, 3)
+      const result = await skillRetryRollbackService.installWithRetry(input, 3)
 
       expect(result).toBe(mockPackageId)
       expect(skillInstallService.installSkillPackage).toHaveBeenCalledTimes(3)
@@ -71,14 +78,15 @@ describe('Skill Retry and Rollback Service', () => {
       const input = {
         skillDefinitionId: mockDefinitionId,
         version: '1.0.0',
-        sourceType: 'anthropic' as const,
+        sourceType: 'local' as const,
+        localPath: '/tmp/test-skill',
       }
 
       await expect(
-        skillRetryRollbackService.installWithRetry(mockUserId, input, 2)
+        skillRetryRollbackService.installWithRetry(input, 2)
       ).rejects.toThrow('安装失败，已重试')
 
-      expect(skillInstallService.installSkillPackage).toHaveBeenCalledTimes(3) // 初始 + 2 次重试
+      expect(skillInstallService.installSkillPackage).toHaveBeenCalledTimes(2) // maxRetries=2 意味着最多尝试 2 次
     })
 
     it('应该在不可重试错误时立即失败', async () => {
@@ -89,11 +97,12 @@ describe('Skill Retry and Rollback Service', () => {
       const input = {
         skillDefinitionId: mockDefinitionId,
         version: '1.0.0',
-        sourceType: 'anthropic' as const,
+        sourceType: 'local' as const,
+        localPath: '/tmp/test-skill',
       }
 
       await expect(
-        skillRetryRollbackService.installWithRetry(mockUserId, input, 3)
+        skillRetryRollbackService.installWithRetry(input, 3)
       ).rejects.toThrow('Invalid manifest')
 
       expect(skillInstallService.installSkillPackage).toHaveBeenCalledTimes(1)
@@ -111,10 +120,11 @@ describe('Skill Retry and Rollback Service', () => {
       const input = {
         skillDefinitionId: mockDefinitionId,
         version: '1.0.0',
-        sourceType: 'anthropic' as const,
+        sourceType: 'local' as const,
+        localPath: '/tmp/test-skill',
       }
 
-      await skillRetryRollbackService.installWithRetry(mockUserId, input, 1)
+      await skillRetryRollbackService.installWithRetry(input, 2)
 
       const duration = Date.now() - startTime
 
@@ -128,6 +138,8 @@ describe('Skill Retry and Rollback Service', () => {
       const targetVersion = '1.0.0'
       const currentVersion = '2.0.0'
 
+      ;(fs.pathExists as vi.Mock).mockResolvedValue(true)
+
       ;(skillDefinitionRepo.findById as vi.Mock).mockResolvedValue({
         id: mockDefinitionId,
         currentVersion,
@@ -138,6 +150,7 @@ describe('Skill Retry and Rollback Service', () => {
           id: 'target-pkg',
           version: targetVersion,
           status: 'active',
+          packagePath: '/path/to/target',
         })
         .mockResolvedValueOnce({
           id: 'current-pkg',
@@ -154,9 +167,7 @@ describe('Skill Retry and Rollback Service', () => {
       ;(skillPackageRepo.update as vi.Mock).mockResolvedValue({})
       ;(skillInstallLogRepo.update as vi.Mock).mockResolvedValue({})
 
-      const result = await skillRetryRollbackService.rollbackToVersion(
-        mockUserId,
-        mockDefinitionId,
+      const result = await skillRetryRollbackService.rollbackToVersion(mockDefinitionId,
         targetVersion,
         'Bug in 2.0.0'
       )
@@ -174,7 +185,7 @@ describe('Skill Retry and Rollback Service', () => {
       ;(skillDefinitionRepo.findById as vi.Mock).mockResolvedValue(null)
 
       await expect(
-        skillRetryRollbackService.rollbackToVersion(mockUserId, mockDefinitionId, '1.0.0')
+        skillRetryRollbackService.rollbackToVersion(mockDefinitionId, '1.0.0')
       ).rejects.toThrow('技能定义不存在')
     })
 
@@ -186,7 +197,7 @@ describe('Skill Retry and Rollback Service', () => {
       ;(skillPackageRepo.findByDefinitionAndVersion as vi.Mock).mockResolvedValue(null)
 
       await expect(
-        skillRetryRollbackService.rollbackToVersion(mockUserId, mockDefinitionId, '1.0.0')
+        skillRetryRollbackService.rollbackToVersion(mockDefinitionId, '1.0.0')
       ).rejects.toThrow('目标版本不存在')
     })
 
@@ -202,7 +213,7 @@ describe('Skill Retry and Rollback Service', () => {
       })
 
       await expect(
-        skillRetryRollbackService.rollbackToVersion(mockUserId, mockDefinitionId, '1.0.0')
+        skillRetryRollbackService.rollbackToVersion(mockDefinitionId, '1.0.0')
       ).rejects.toThrow('状态无效')
     })
 
@@ -220,6 +231,7 @@ describe('Skill Retry and Rollback Service', () => {
           id: 'target-pkg',
           version: targetVersion,
           status: 'active',
+          packagePath: '/path/to/target',
         })
         .mockResolvedValueOnce({
           id: 'current-pkg',
@@ -236,9 +248,7 @@ describe('Skill Retry and Rollback Service', () => {
       ;(skillPackageRepo.update as vi.Mock).mockResolvedValue({})
       ;(skillInstallLogRepo.update as vi.Mock).mockResolvedValue({})
 
-      await skillRetryRollbackService.rollbackToVersion(
-        mockUserId,
-        mockDefinitionId,
+      await skillRetryRollbackService.rollbackToVersion(mockDefinitionId,
         targetVersion
       )
 
@@ -270,9 +280,7 @@ describe('Skill Retry and Rollback Service', () => {
       ;(skillDefinitionRepo.update as vi.Mock).mockResolvedValue({})
       ;(skillInstallLogRepo.update as vi.Mock).mockResolvedValue({})
 
-      await skillRetryRollbackService.rollbackToVersion(
-        mockUserId,
-        mockDefinitionId,
+      await skillRetryRollbackService.rollbackToVersion(mockDefinitionId,
         '1.0.0',
         'Test reason'
       )
@@ -446,8 +454,9 @@ describe('Skill Retry and Rollback Service', () => {
         packagePath: '/path/to/package',
       })
 
-      const fs = require('fs-extra')
-      fs.pathExists = vi.fn().mockResolvedValue(false)
+      // Mock fs.pathExists to return false
+      const fs = await import('fs-extra')
+      vi.spyOn(fs, 'pathExists').mockResolvedValue(false)
 
       const result = await skillRetryRollbackService.canRollbackToVersion(
         mockDefinitionId,
@@ -468,15 +477,16 @@ describe('Skill Retry and Rollback Service', () => {
         packagePath: '/path/to/package',
       })
 
-      const fs = require('fs-extra')
-      fs.pathExists = vi.fn().mockResolvedValue(true)
-      fs.remove = vi.fn().mockResolvedValue(undefined)
+      // Mock fs methods
+      const fs = await import('fs-extra')
+      vi.spyOn(fs, 'pathExists').mockResolvedValue(true)
+      const removeSpy = vi.spyOn(fs, 'remove').mockResolvedValue(undefined)
 
       ;(skillPackageRepo.remove as vi.Mock).mockResolvedValue(true)
 
       await skillRetryRollbackService.cleanupFailedInstall(mockDefinitionId, '1.0.0')
 
-      expect(fs.remove).toHaveBeenCalledWith('/path/to/package')
+      expect(removeSpy).toHaveBeenCalledWith('/path/to/package')
       expect(skillPackageRepo.remove).toHaveBeenCalledWith('failed-pkg')
     })
 

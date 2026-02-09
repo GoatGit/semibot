@@ -168,7 +168,7 @@ SELECT
         CASE
             WHEN is_builtin THEN 'builtin-' || LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]+', '-', 'g'))
             ELSE 'custom-' || LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]+', '-', 'g'))
-        END
+        END || '-' || SUBSTRING(id::text FROM 1 FOR 8)  -- 添加 UUID 前 8 位确保唯一性
     ) as skill_id,
     name,
     description,
