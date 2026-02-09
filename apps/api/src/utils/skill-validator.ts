@@ -591,7 +591,8 @@ export async function main() {
   }
 }
 
-// 如果直接运行此脚本
-if (require.main === module) {
+// 如果直接运行此脚本 (ES module 兼容)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`
+if (isMainModule) {
   main()
 }
