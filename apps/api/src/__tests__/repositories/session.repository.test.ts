@@ -10,6 +10,17 @@ vi.mock('../../lib/db', () => ({
   sql: vi.fn(),
 }))
 
+// Mock logger
+vi.mock('../../lib/logger', () => ({
+  logPaginationLimit: vi.fn(),
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+}))
+
 import { sql } from '../../lib/db'
 import * as sessionRepository from '../../repositories/session.repository'
 
@@ -102,17 +113,20 @@ describe('SessionRepository', () => {
     })
   })
 
-  describe('findByUser', () => {
+  describe('findByUserAndOrg', () => {
     it('应该返回用户的所有 Session', async () => {
       const mockSessions = [
         { id: uuid(), org_id: testOrgId, user_id: testUserId, title: 'Session 1' },
         { id: uuid(), org_id: testOrgId, user_id: testUserId, title: 'Session 2' },
       ]
 
+      // sql 片段构建调用（whereClause）
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '2' }])
       mockSql.mockResolvedValueOnce(mockSessions)
 
-      const result = await sessionRepository.findByUser({
+      const result = await sessionRepository.findByUserAndOrg({
         orgId: testOrgId,
         userId: testUserId,
       })
@@ -129,10 +143,13 @@ describe('SessionRepository', () => {
         title: `Session ${i}`,
       }))
 
+      // sql 片段构建调用（whereClause）
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '25' }])
       mockSql.mockResolvedValueOnce(mockSessions)
 
-      const result = await sessionRepository.findByUser({
+      const result = await sessionRepository.findByUserAndOrg({
         orgId: testOrgId,
         userId: testUserId,
         page: 1,
@@ -144,7 +161,7 @@ describe('SessionRepository', () => {
     })
   })
 
-  describe('update', () => {
+  describe('updateTitle', () => {
     it('应该更新 Session', async () => {
       const sessionId = uuid()
       const mockSession = {
@@ -155,9 +172,9 @@ describe('SessionRepository', () => {
 
       mockSql.mockResolvedValueOnce([mockSession])
 
-      const result = await sessionRepository.update(sessionId, testOrgId, {
-        title: 'Updated Title',
-      })
+      const result = await sessionRepository.updateTitle(sessionId, testOrgId,
+        'Updated Title',
+      )
 
       expect(result?.title).toBe('Updated Title')
     })

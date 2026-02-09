@@ -12,6 +12,23 @@ vi.mock('../../lib/db', () => ({
   sql: vi.fn(),
 }))
 
+// Mock logger
+vi.mock('../../lib/logger', () => ({
+  logPaginationLimit: vi.fn(),
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+  repositoryLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}))
+
 import { sql } from '../../lib/db'
 import * as agentRepository from '../../repositories/agent.repository'
 import * as sessionRepository from '../../repositories/session.repository'
@@ -98,10 +115,13 @@ describe('多租户隔离测试', () => {
         { id: uuid(), org_id: orgA, user_id: userA, title: 'Session 1' },
       ]
 
+      // sql 片段构建调用（whereClause）
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '1' }])
       mockSql.mockResolvedValueOnce(mockSessions)
 
-      const result = await sessionRepository.findByUser({
+      const result = await sessionRepository.findByUserAndOrg({
         orgId: orgA,
         userId: userA,
       })
@@ -134,6 +154,8 @@ describe('多租户隔离测试', () => {
         is_builtin: true,
       }
 
+      // hasSkillsDeletedAtColumn 查询 + findByIdAndOrg 查询
+      mockSql.mockResolvedValueOnce([{ '1': 1 }])
       mockSql.mockResolvedValueOnce([mockSkill])
 
       const result = await skillRepository.findByIdAndOrg(skillId, orgA)
@@ -148,6 +170,10 @@ describe('多租户隔离测试', () => {
         { id: uuid(), org_id: null, name: 'Builtin Skill', is_builtin: true },
       ]
 
+      // sql 片段构建调用（whereClause 拼接：deleted_at + orgId）
+      mockSql.mockReturnValueOnce([])
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '2' }])
       mockSql.mockResolvedValueOnce(mockSkills)
 
@@ -164,6 +190,10 @@ describe('多租户隔离测试', () => {
         { id: uuid(), org_id: orgA, name: 'Custom Skill', is_builtin: false },
       ]
 
+      // sql 片段构建调用（whereClause 拼接：deleted_at + orgId）
+      mockSql.mockReturnValueOnce([])
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '1' }])
       mockSql.mockResolvedValueOnce(mockSkills)
 

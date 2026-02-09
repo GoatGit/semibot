@@ -10,23 +10,25 @@ import * as fs from 'fs-extra'
 import * as path from 'path'
 import * as os from 'os'
 
-// 检查是否有数据库连接
+// 检查是否有数据库���接
+// 集成测试需要显式启用，避免意外在生产数据库上运行
 const DATABASE_URL = process.env.DATABASE_URL
-const SKIP_INTEGRATION_TESTS = !DATABASE_URL || DATABASE_URL.includes('localhost:5432')
+const RUN_INTEGRATION = process.env.RUN_INTEGRATION_TESTS === 'true'
+const SKIP_INTEGRATION_TESTS = !DATABASE_URL || !RUN_INTEGRATION
 
 // 条件导入，避免在没有数据库时加载
 const getTestDependencies = async () => {
   if (SKIP_INTEGRATION_TESTS) {
     return null
   }
-  const { pool } = await import('../../lib/db')
+  const { sql, closeDatabaseConnection } = await import('../../lib/db')
   const skillInstallService = await import('../../services/skill-install.service')
   const skillRetryRollbackService = await import('../../services/skill-retry-rollback.service')
   const skillDefinitionRepo = await import('../../repositories/skill-definition.repository')
   const skillPackageRepo = await import('../../repositories/skill-package.repository')
   const skillInstallLogRepo = await import('../../repositories/skill-install-log.repository')
   return {
-    pool,
+    closeDatabaseConnection,
     skillInstallService,
     skillRetryRollbackService,
     skillDefinitionRepo,
@@ -40,14 +42,31 @@ describe.skipIf(SKIP_INTEGRATION_TESTS)('Skill Install Integration Tests', () =>
   let testDefinitionId: string
   let tempDir: string
 
+  // 延迟初始化的依赖
+  let closeDatabaseConnection: any
+  let skillInstallService: any
+  let skillRetryRollbackService: any
+  let skillDefinitionRepo: any
+  let skillPackageRepo: any
+  let skillInstallLogRepo: any
+
   beforeAll(async () => {
+    const deps = await getTestDependencies()
+    if (deps) {
+      closeDatabaseConnection = deps.closeDatabaseConnection
+      skillInstallService = deps.skillInstallService
+      skillRetryRollbackService = deps.skillRetryRollbackService
+      skillDefinitionRepo = deps.skillDefinitionRepo
+      skillPackageRepo = deps.skillPackageRepo
+      skillInstallLogRepo = deps.skillInstallLogRepo
+    }
     // 创建测试用户（假设已有用户表）
     testUserId = 'test-user-' + Date.now()
   })
 
   afterAll(async () => {
     // 清理测试数据
-    await pool.end()
+    await closeDatabaseConnection()
   })
 
   beforeEach(async () => {

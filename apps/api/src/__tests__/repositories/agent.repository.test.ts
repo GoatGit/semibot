@@ -10,6 +10,17 @@ vi.mock('../../lib/db', () => ({
   sql: vi.fn(),
 }))
 
+// Mock logger
+vi.mock('../../lib/logger', () => ({
+  logPaginationLimit: vi.fn(),
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+}))
+
 import { sql } from '../../lib/db'
 import * as agentRepository from '../../repositories/agent.repository'
 
@@ -185,14 +196,31 @@ describe('AgentRepository', () => {
   describe('update', () => {
     it('应该更新 Agent', async () => {
       const agentId = uuid()
-      const mockAgent = {
+      const existingAgent = {
         id: agentId,
         org_id: testOrgId,
+        name: 'Old Name',
+        description: null,
+        system_prompt: 'prompt',
+        config: {},
+        skills: [],
+        sub_agents: [],
+        version: 1,
+        is_active: true,
+        is_public: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+      const updatedAgent = {
+        ...existingAgent,
         name: 'Updated Name',
         version: 2,
       }
 
-      mockSql.mockResolvedValueOnce([mockAgent])
+      // findByIdAndOrg 查询
+      mockSql.mockResolvedValueOnce([existingAgent])
+      // UPDATE 查询
+      mockSql.mockResolvedValueOnce([updatedAgent])
 
       const result = await agentRepository.update(agentId, testOrgId, {
         name: 'Updated Name',
@@ -203,6 +231,7 @@ describe('AgentRepository', () => {
     })
 
     it('应该返回 null 如果不存在', async () => {
+      // findByIdAndOrg 返回空
       mockSql.mockResolvedValueOnce([])
 
       const result = await agentRepository.update(uuid(), testOrgId, {

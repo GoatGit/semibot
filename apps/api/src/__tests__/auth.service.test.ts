@@ -4,6 +4,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+// 使用 vi.hoisted 确保变量在 vi.mock 工厂函数中可用
+const { mockRedisClient } = vi.hoisted(() => ({
+  mockRedisClient: {
+    set: vi.fn().mockResolvedValue('OK'),
+  },
+}))
+
 // Mock 数据库
 vi.mock('../lib/db', () => ({
   sql: vi.fn(),
@@ -15,10 +22,27 @@ vi.mock('../lib/redis', () => ({
   exists: vi.fn().mockResolvedValue(false),
   get: vi.fn().mockResolvedValue(null),
   del: vi.fn().mockResolvedValue(1),
+  getRedisClient: vi.fn().mockReturnValue(mockRedisClient),
 }))
 
 vi.mock('../services/email.service', () => ({
   sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
+}))
+
+// Mock logger
+vi.mock('../lib/logger', () => ({
+  authLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
 }))
 
 // Mock bcryptjs
@@ -49,6 +73,7 @@ import * as redis from '../lib/redis'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { sendPasswordResetEmail } from '../services/email.service'
+import { authLogger } from '../lib/logger'
 
 // 需要在 mock 之后导入
 const mockSql = sql as unknown as ReturnType<typeof vi.fn>
@@ -266,19 +291,14 @@ describe('Auth Service', () => {
 
   describe('logout', () => {
     it('should log logout event', async () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-
       const { logout } = await import('../services/auth.service')
 
       await logout('user-123')
 
-      expect(consoleSpy).toHaveBeenCalledWith('[Auth] 用户 user-123 已登出')
-      consoleSpy.mockRestore()
+      expect(authLogger.info).toHaveBeenCalledWith('用户已登出', { userId: 'user-123' })
     })
 
     it('should add access token to blacklist on logout', async () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-
       // 创建一个有效的 mock token，过期时间在未来
       const futureExp = Math.floor(Date.now() / 1000) + 3600 // 1小时后过期
       vi.mocked(jwt.decode).mockReturnValueOnce({ exp: futureExp })
@@ -288,13 +308,10 @@ describe('Auth Service', () => {
       await logout('user-123', 'mock_access_token')
 
       expect(mockRedis.setWithExpiry).toHaveBeenCalled()
-      expect(consoleSpy).toHaveBeenCalledWith('[Auth] 用户 user-123 已登出')
-      consoleSpy.mockRestore()
+      expect(authLogger.info).toHaveBeenCalledWith('用户已登出', { userId: 'user-123' })
     })
 
     it('should add both access and refresh tokens to blacklist', async () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-
       const futureExp = Math.floor(Date.now() / 1000) + 3600
       vi.mocked(jwt.decode)
         .mockReturnValueOnce({ exp: futureExp }) // access token
@@ -306,13 +323,9 @@ describe('Auth Service', () => {
 
       // 应该调用两次 setWithExpiry
       expect(mockRedis.setWithExpiry).toHaveBeenCalledTimes(2)
-      consoleSpy.mockRestore()
     })
 
     it('should skip blacklist for expired tokens', async () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
       // Token 已过期
       const pastExp = Math.floor(Date.now() / 1000) - 100
       vi.mocked(jwt.decode).mockReturnValueOnce({ exp: pastExp })
@@ -323,15 +336,11 @@ describe('Auth Service', () => {
 
       // 不应调用 setWithExpiry，因为 token 已过期
       expect(mockRedis.setWithExpiry).not.toHaveBeenCalled()
-      consoleSpy.mockRestore()
-      warnSpy.mockRestore()
     })
   })
 
   describe('Token Blacklist', () => {
     it('addToBlacklist should store token in Redis with TTL', async () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-
       const { addToBlacklist } = await import('../services/auth.service')
 
       await addToBlacklist('test_token', 3600)
@@ -341,19 +350,15 @@ describe('Auth Service', () => {
         '1',
         3600
       )
-      consoleSpy.mockRestore()
     })
 
     it('addToBlacklist should skip if TTL <= 0', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
       const { addToBlacklist } = await import('../services/auth.service')
 
       await addToBlacklist('test_token', 0)
 
       expect(mockRedis.setWithExpiry).not.toHaveBeenCalled()
-      expect(warnSpy).toHaveBeenCalled()
-      warnSpy.mockRestore()
+      expect(authLogger.warn).toHaveBeenCalled()
     })
 
     it('isBlacklisted should check Redis for token', async () => {
@@ -380,31 +385,34 @@ describe('Auth Service', () => {
 
   describe('Password Reset', () => {
     it('requestPasswordReset should return silently for unknown email', async () => {
-      mockRedis.exists.mockResolvedValueOnce(false)
+      mockRedisClient.set.mockResolvedValueOnce('OK')
       mockSql.mockResolvedValueOnce([])
 
       const { requestPasswordReset } = await import('../services/auth.service')
       await expect(requestPasswordReset('unknown@example.com')).resolves.not.toThrow()
 
-      expect(mockRedis.setWithExpiry).toHaveBeenCalledTimes(1)
+      // 用户不存在，不应发送邮件，也不应存储 reset token
+      expect(mockRedis.setWithExpiry).not.toHaveBeenCalled()
       expect(sendPasswordResetEmail).not.toHaveBeenCalled()
     })
 
     it('requestPasswordReset should generate token and send email for existing user', async () => {
-      mockRedis.exists.mockResolvedValueOnce(false)
+      mockRedisClient.set.mockResolvedValueOnce('OK')
       mockSql.mockResolvedValueOnce([{ id: 'user-123' }])
 
       const { requestPasswordReset } = await import('../services/auth.service')
       await requestPasswordReset('user@example.com')
 
-      expect(mockRedis.setWithExpiry).toHaveBeenCalledTimes(2)
+      // 应该存储 reset token
+      expect(mockRedis.setWithExpiry).toHaveBeenCalledTimes(1)
       expect(sendPasswordResetEmail).toHaveBeenCalledWith(
         expect.objectContaining({ email: 'user@example.com' })
       )
     })
 
     it('requestPasswordReset should skip when throttled', async () => {
-      mockRedis.exists.mockResolvedValueOnce(true)
+      // NX 返回 null 表示 key 已存在（被限流）
+      mockRedisClient.set.mockResolvedValueOnce(null)
 
       const { requestPasswordReset } = await import('../services/auth.service')
       await expect(requestPasswordReset('user@example.com')).resolves.not.toThrow()

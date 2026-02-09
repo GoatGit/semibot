@@ -334,21 +334,21 @@ export const ENABLE_REQUEST_LOGGING = process.env.ENABLE_REQUEST_LOGGING !== 'fa
 
 /** OpenAI 配置 */
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
-export const OPENAI_API_BASE_URL = process.env.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1'
+export const OPENAI_API_BASE_URL = process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1'
 export const OPENAI_ORG_ID = process.env.OPENAI_ORG_ID ?? ''
 
 /** Anthropic 配置 */
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? ''
-export const ANTHROPIC_API_BASE_URL = process.env.ANTHROPIC_API_BASE_URL ?? 'https://api.anthropic.com'
+export const ANTHROPIC_API_BASE_URL = process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com'
 
 /** Google AI 配置 */
 export const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY ?? ''
-export const GOOGLE_AI_API_BASE_URL = process.env.GOOGLE_AI_API_BASE_URL ?? 'https://generativelanguage.googleapis.com'
+export const GOOGLE_AI_API_BASE_URL = process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com'
 
 /** Azure OpenAI 配置 */
 export const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY ?? ''
 export const AZURE_OPENAI_API_BASE_URL = process.env.AZURE_OPENAI_API_BASE_URL ?? ''
-export const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION ?? '2024-02-15-preview'
+export const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview'
 export const AZURE_OPENAI_DEPLOYMENT_NAME = process.env.AZURE_OPENAI_DEPLOYMENT_NAME ?? ''
 
 /** 自定义 LLM 配置 (兼容 OpenAI API 的第三方服务) */

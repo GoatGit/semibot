@@ -112,7 +112,7 @@ export class RuntimeAdapter {
   ): Promise<void> {
     const startTime = Date.now()
     let fullResponse = ''
-    let totalTokens = 0
+    const totalTokens = 0
     let hasError = false
     let errorMessage = ''
 

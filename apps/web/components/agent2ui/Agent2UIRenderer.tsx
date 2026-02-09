@@ -1,5 +1,6 @@
 'use client'
 
+import React from 'react'
 import clsx from 'clsx'
 import type { Agent2UIMessage } from '@/types'
 import { ComponentRegistry } from './ComponentRegistry'
@@ -19,6 +20,60 @@ export interface Agent2UIRendererProps {
   className?: string
   /** 错误时的回调 */
   onError?: (error: Error, message: Agent2UIMessage) => void
+}
+
+interface ErrorBoundaryProps {
+  message: Agent2UIMessage
+  className?: string
+  onError?: (error: Error, message: Agent2UIMessage) => void
+  children: React.ReactNode
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+}
+
+class RenderErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error): void {
+    const { onError, message } = this.props
+    if (onError) {
+      onError(error, message)
+    }
+  }
+
+  render(): React.ReactNode {
+    if (this.state.hasError) {
+      const { message, className } = this.props
+      return (
+        <div
+          className={clsx(
+            'agent2ui-message agent2ui-error',
+            'p-4 rounded-lg border border-error-500/50 bg-error-500/5',
+            className
+          )}
+        >
+          <div className="text-sm text-error-500">
+            渲染失败: {message.type}
+          </div>
+          <pre className="mt-2 text-xs text-text-secondary font-mono overflow-auto">
+            {this.state.error?.message ?? '未知错误'}
+          </pre>
+        </div>
+      )
+    }
+
+    return this.props.children
+  }
 }
 
 export function Agent2UIRenderer({
@@ -45,8 +100,8 @@ export function Agent2UIRenderer({
     )
   }
 
-  try {
-    return (
+  return (
+    <RenderErrorBoundary message={message} className={className} onError={onError}>
       <div
         className={clsx(
           'agent2ui-message',
@@ -58,32 +113,8 @@ export function Agent2UIRenderer({
       >
         <Component data={message.data} metadata={message.metadata} />
       </div>
-    )
-  } catch (error) {
-    console.error(`[Agent2UIRenderer] Error rendering ${message.type}:`, error)
-
-    if (onError && error instanceof Error) {
-      onError(error, message)
-    }
-
-    // 渲染错误时显示错误信息
-    return (
-      <div
-        className={clsx(
-          'agent2ui-message agent2ui-error',
-          'p-4 rounded-lg border border-error-500/50 bg-error-500/5',
-          className
-        )}
-      >
-        <div className="text-sm text-error-500">
-          渲染失败: {message.type}
-        </div>
-        <pre className="mt-2 text-xs text-text-secondary font-mono overflow-auto">
-          {error instanceof Error ? error.message : String(error)}
-        </pre>
-      </div>
-    )
-  }
+    </RenderErrorBoundary>
+  )
 }
 
 Agent2UIRenderer.displayName = 'Agent2UIRenderer'

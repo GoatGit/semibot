@@ -18,7 +18,8 @@ export interface ErrorViewProps {
 
 export function ErrorView({ data, className, onRetry }: ErrorViewProps) {
   // 根据错误码判断严重程度
-  const isWarning = data.code.startsWith('WARN_') || data.code.includes('TIMEOUT')
+  const code = data.code ?? ''
+  const isWarning = code.startsWith('WARN_') || code.includes('TIMEOUT')
   const Icon = isWarning ? AlertTriangle : XCircle
 
   return (

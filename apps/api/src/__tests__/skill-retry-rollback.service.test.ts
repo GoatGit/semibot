@@ -15,6 +15,14 @@ vi.mock('../repositories/skill-definition.repository')
 vi.mock('../repositories/skill-package.repository')
 vi.mock('../repositories/skill-install-log.repository')
 vi.mock('../services/skill-install.service')
+vi.mock('../lib/logger', () => ({
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+}))
 vi.mock('fs-extra', () => ({
   pathExists: vi.fn(),
   remove: vi.fn(),
@@ -270,7 +278,10 @@ describe('Skill Retry and Rollback Service', () => {
         id: 'target-pkg',
         version: '1.0.0',
         status: 'active',
+        packagePath: '/path/to/target',
       })
+
+      ;(fs.pathExists as unknown as vi.Mock).mockResolvedValue(true)
 
       ;(skillInstallLogRepo.create as vi.Mock).mockResolvedValue({
         id: 'log-123',
@@ -288,7 +299,6 @@ describe('Skill Retry and Rollback Service', () => {
       expect(skillInstallLogRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           operation: 'rollback',
-          message: expect.stringContaining('Test reason'),
         })
       )
 
@@ -296,6 +306,7 @@ describe('Skill Retry and Rollback Service', () => {
         'log-123',
         expect.objectContaining({
           status: 'success',
+          errorMessage: 'Test reason',
         })
       )
     })
@@ -331,7 +342,6 @@ describe('Skill Retry and Rollback Service', () => {
       ;(skillInstallLogRepo.update as vi.Mock).mockResolvedValue({})
 
       const result = await skillRetryRollbackService.rollbackToPreviousVersion(
-        mockUserId,
         mockDefinitionId
       )
 
@@ -345,7 +355,7 @@ describe('Skill Retry and Rollback Service', () => {
       })
 
       await expect(
-        skillRetryRollbackService.rollbackToPreviousVersion(mockUserId, mockDefinitionId)
+        skillRetryRollbackService.rollbackToPreviousVersion(mockDefinitionId)
       ).rejects.toThrow('当前没有激活的版本')
     })
 
@@ -360,7 +370,7 @@ describe('Skill Retry and Rollback Service', () => {
       ])
 
       await expect(
-        skillRetryRollbackService.rollbackToPreviousVersion(mockUserId, mockDefinitionId)
+        skillRetryRollbackService.rollbackToPreviousVersion(mockDefinitionId)
       ).rejects.toThrow('没有可回滚的历史版本')
     })
   })
@@ -407,8 +417,8 @@ describe('Skill Retry and Rollback Service', () => {
       })
 
       // Mock fs.pathExists
-      const fs = require('fs-extra')
-      fs.pathExists = vi.fn().mockResolvedValue(true)
+      const fs = await import('fs-extra')
+      vi.spyOn(fs, 'pathExists').mockResolvedValue(true)
 
       const result = await skillRetryRollbackService.canRollbackToVersion(
         mockDefinitionId,
@@ -505,12 +515,12 @@ describe('Skill Retry and Rollback Service', () => {
         status: 'active',
       })
 
-      const fs = require('fs-extra')
-      fs.remove = vi.fn()
+      const fs = await import('fs-extra')
+      const removeSpy = vi.spyOn(fs, 'remove').mockResolvedValue(undefined)
 
       await skillRetryRollbackService.cleanupFailedInstall(mockDefinitionId, '1.0.0')
 
-      expect(fs.remove).not.toHaveBeenCalled()
+      expect(removeSpy).not.toHaveBeenCalled()
     })
   })
 })

@@ -271,7 +271,7 @@ export class OpenAIProvider implements LLMProvider {
     const toolCallsInProgress: Map<number, ToolCall> = new Map()
 
     try {
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read()
         if (done) break
 

@@ -221,7 +221,7 @@ export class GoogleAIProvider implements LLMProvider {
     let buffer = ''
 
     try {
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read()
         if (done) break
 

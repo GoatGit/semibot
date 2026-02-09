@@ -116,8 +116,8 @@ describe.skipIf(SKIP_INTEGRATION_TESTS)('Chat Runtime Integration', () => {
 
       expect(monitor.shouldFallback()).toBe(true)
 
-      // 记录成功执行
-      for (let i = 0; i < 20; i++) {
+      // 记录成功执行（需要足够多使错误率低于恢复阈值 25%）
+      for (let i = 0; i < 40; i++) {
         monitor.recordExecution({
           sessionId: `test-session-success-${i}`,
           orgId: 'test-org',

@@ -9,6 +9,7 @@ import type { ErrorData } from '@/types'
 
 describe('ErrorView', () => {
   const baseData: ErrorData = {
+    code: 'ERR_UNKNOWN',
     message: '发生了一个错误',
   }
 
@@ -41,6 +42,7 @@ describe('ErrorView', () => {
   describe('详情显示', () => {
     it('应该显示错误详情', () => {
       const data: ErrorData = {
+        code: 'ERR_TIMEOUT',
         message: '错误消息',
         details: '详细错误信息：连接超时',
       }
@@ -50,10 +52,11 @@ describe('ErrorView', () => {
       expect(screen.getByText(/详细错误信息/)).toBeInTheDocument()
     })
 
-    it('应该显示堆栈信息', () => {
+    it('应该显示详细的错误信息对象', () => {
       const data: ErrorData = {
+        code: 'ERR_INTERNAL',
         message: '错误消息',
-        stack: 'Error: Something went wrong\n  at function1\n  at function2',
+        details: 'Error: Something went wrong\n  at function1\n  at function2',
       }
 
       render(<ErrorView data={data} />)

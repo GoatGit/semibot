@@ -10,6 +10,23 @@ vi.mock('../../lib/db', () => ({
   sql: vi.fn(),
 }))
 
+// Mock logger
+vi.mock('../../lib/logger', () => ({
+  logPaginationLimit: vi.fn(),
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+  repositoryLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}))
+
 import { sql } from '../../lib/db'
 import * as skillRepository from '../../repositories/skill.repository'
 
@@ -85,6 +102,8 @@ describe('SkillRepository', () => {
         name: 'Test Skill',
       }
 
+      // hasSkillsDeletedAtColumn 查询 + findById 查询
+      mockSql.mockResolvedValueOnce([{ '1': 1 }])
       mockSql.mockResolvedValueOnce([mockSkill])
 
       const result = await skillRepository.findById(skillId)
@@ -154,6 +173,10 @@ describe('SkillRepository', () => {
         name: `Skill ${i}`,
       }))
 
+      // sql 片段构建调用（whereClause 拼接）
+      mockSql.mockReturnValueOnce([])
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '15' }])
       mockSql.mockResolvedValueOnce(mockSkills)
 
@@ -173,6 +196,11 @@ describe('SkillRepository', () => {
         { id: uuid(), org_id: testOrgId, name: 'Search Skill' },
       ]
 
+      // sql 片段构建调用（whereClause 拼接：deleted_at + orgId + search）
+      mockSql.mockReturnValueOnce([])
+      mockSql.mockReturnValueOnce([])
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '1' }])
       mockSql.mockResolvedValueOnce(mockSkills)
 
@@ -191,6 +219,10 @@ describe('SkillRepository', () => {
         { id: uuid(), org_id: null, name: 'Builtin', is_builtin: true },
       ]
 
+      // sql 片段构建调用（whereClause 拼接：deleted_at + orgId）
+      mockSql.mockReturnValueOnce([])
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '2' }])
       mockSql.mockResolvedValueOnce(mockSkills)
 

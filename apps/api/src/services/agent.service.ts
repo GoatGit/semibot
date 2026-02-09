@@ -106,7 +106,8 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
  * 将数据库行转换为 Agent 对象
  */
 function rowToAgent(row: agentRepository.AgentRow): Agent {
-  const config = row.config as Record<string, unknown>
+  // 防御性检查：config 可能为 undefined 或 null
+  const config = (row.config ?? {}) as Record<string, unknown>
 
   return {
     id: row.id,

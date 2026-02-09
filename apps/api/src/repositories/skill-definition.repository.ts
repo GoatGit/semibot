@@ -20,7 +20,6 @@ export interface SkillDefinitionRow {
   current_version: string | null
   is_active: boolean
   is_public: boolean
-  metadata: Record<string, unknown>
   created_by: string
   created_at: string
   updated_at: string
@@ -37,7 +36,6 @@ export interface CreateSkillDefinitionData {
   isActive?: boolean
   isPublic?: boolean
   status?: string
-  metadata?: Record<string, unknown>
   createdBy?: string
 }
 
@@ -48,7 +46,6 @@ export interface UpdateSkillDefinitionData {
   currentVersion?: string
   isActive?: boolean
   isPublic?: boolean
-  metadata?: Record<string, unknown>
 }
 
 export interface SkillDefinition {
@@ -60,7 +57,6 @@ export interface SkillDefinition {
   currentVersion?: string
   isActive: boolean
   isPublic: boolean
-  metadata: Record<string, unknown>
   createdBy: string
   createdAt: string
   updatedAt: string
@@ -80,7 +76,6 @@ function rowToSkillDefinition(row: SkillDefinitionRow): SkillDefinition {
     currentVersion: row.current_version || undefined,
     isActive: row.is_active,
     isPublic: row.is_public,
-    metadata: row.metadata,
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -103,7 +98,6 @@ export async function create(data: CreateSkillDefinitionData): Promise<SkillDefi
       trigger_keywords,
       is_active,
       is_public,
-      metadata,
       created_by
     ) VALUES (
       ${data.skillId},
@@ -112,7 +106,6 @@ export async function create(data: CreateSkillDefinitionData): Promise<SkillDefi
       ${data.triggerKeywords || []},
       ${data.isActive ?? true},
       ${data.isPublic ?? false},
-      ${JSON.stringify(data.metadata || {})},
       ${data.createdBy || 'system'}
     )
     RETURNING *
@@ -243,11 +236,6 @@ export async function update(id: string, data: UpdateSkillDefinitionData): Promi
   if (data.isPublic !== undefined) {
     updates.push(`is_public = $${paramIndex++}`)
     params.push(data.isPublic)
-  }
-
-  if (data.metadata !== undefined) {
-    updates.push(`metadata = $${paramIndex++}`)
-    params.push(JSON.stringify(data.metadata))
   }
 
   updates.push(`updated_at = NOW()`)

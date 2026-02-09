@@ -8,6 +8,9 @@ import * as agentRepository from '../../repositories/agent.repository'
 
 // Mock dependencies
 vi.mock('../../repositories/agent.repository')
+vi.mock('../../services/llm.service', () => ({
+  getAvailableModels: vi.fn().mockResolvedValue(['gpt-4o', 'gpt-4o-mini']),
+}))
 vi.mock('../../lib/logger', () => ({
   createLogger: vi.fn().mockReturnValue({
     info: vi.fn(),
@@ -41,19 +44,21 @@ describe('Agent Service', () => {
         name: 'Test Agent',
         description: 'A test agent',
         system_prompt: 'You are a helpful assistant',
-        model_config: { model: 'gpt-4o' },
-        skill_ids: [],
-        mcp_server_ids: [],
+        config: { model: 'gpt-4o' },
+        skills: [],
+        sub_agents: [],
         is_active: true,
+        is_public: false,
         created_by: userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         version: 1,
       }
 
+      mockAgentRepository.countByOrg.mockResolvedValue(0)
       mockAgentRepository.create.mockResolvedValue(mockRow as any)
 
-      const result = await agentService.createAgent(orgId, userId, input as any)
+      const result = await agentService.createAgent(orgId, input as any)
 
       expect(result.id).toBe('agent-123')
       expect(result.name).toBe('Test Agent')
@@ -68,10 +73,11 @@ describe('Agent Service', () => {
         name: 'Test Agent',
         description: null,
         system_prompt: 'System prompt',
-        model_config: { model: 'gpt-4o' },
-        skill_ids: [],
-        mcp_server_ids: [],
+        config: { model: 'gpt-4o' },
+        skills: [],
+        sub_agents: [],
         is_active: true,
+        is_public: false,
         created_by: userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -102,10 +108,11 @@ describe('Agent Service', () => {
           name: 'Agent 1',
           description: null,
           system_prompt: 'Prompt 1',
-          model_config: { model: 'gpt-4o' },
-          skill_ids: [],
-          mcp_server_ids: [],
+          config: { model: 'gpt-4o' },
+          skills: [],
+          sub_agents: [],
           is_active: true,
+          is_public: false,
           created_by: userId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -117,10 +124,11 @@ describe('Agent Service', () => {
           name: 'Agent 2',
           description: null,
           system_prompt: 'Prompt 2',
-          model_config: { model: 'gpt-4o' },
-          skill_ids: [],
-          mcp_server_ids: [],
+          config: { model: 'gpt-4o' },
+          skills: [],
+          sub_agents: [],
           is_active: true,
+          is_public: false,
           created_by: userId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -148,10 +156,11 @@ describe('Agent Service', () => {
         name: 'Old Name',
         description: null,
         system_prompt: 'Old prompt',
-        model_config: { model: 'gpt-4o' },
-        skill_ids: [],
-        mcp_server_ids: [],
+        config: { model: 'gpt-4o' },
+        skills: [],
+        sub_agents: [],
         is_active: true,
+        is_public: false,
         created_by: userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -191,10 +200,11 @@ describe('Agent Service', () => {
         name: 'Test Agent',
         description: null,
         system_prompt: 'Prompt',
-        model_config: { model: 'gpt-4o' },
-        skill_ids: [],
-        mcp_server_ids: [],
+        config: { model: 'gpt-4o' },
+        skills: [],
+        sub_agents: [],
         is_active: true,
+        is_public: false,
         created_by: userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

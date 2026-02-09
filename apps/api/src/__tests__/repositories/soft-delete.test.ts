@@ -12,6 +12,23 @@ vi.mock('../../lib/db', () => ({
   sql: vi.fn(),
 }))
 
+// Mock logger
+vi.mock('../../lib/logger', () => ({
+  logPaginationLimit: vi.fn(),
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+  repositoryLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}))
+
 import { sql } from '../../lib/db'
 import * as agentRepository from '../../repositories/agent.repository'
 import * as sessionRepository from '../../repositories/session.repository'
@@ -98,6 +115,8 @@ describe('软删除测试', () => {
     it('softDelete 应该成功', async () => {
       const skillId = uuid()
 
+      // hasSkillsDeletedAtColumn 查询 + softDelete 查询
+      mockSql.mockResolvedValueOnce([{ '1': 1 }])
       mockSql.mockResolvedValueOnce([{ id: skillId }])
 
       const result = await skillRepository.softDelete(skillId)
@@ -118,6 +137,9 @@ describe('软删除测试', () => {
         { id: uuid(), name: 'Active Skill', deleted_at: null },
       ]
 
+      // sql 片段构建调用（whereClause：deleted_at）
+      mockSql.mockReturnValueOnce([])
+      // 实际查询：COUNT + SELECT
       mockSql.mockResolvedValueOnce([{ total: '1' }])
       mockSql.mockResolvedValueOnce(mockSkills)
 
