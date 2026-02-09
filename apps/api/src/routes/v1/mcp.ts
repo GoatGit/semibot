@@ -19,7 +19,7 @@ const createMcpServerSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(1000).optional(),
   endpoint: z.string().min(1).max(500),
-  transport: z.enum(['stdio', 'http', 'websocket']),
+  transport: z.enum(['stdio', 'sse', 'streamable_http']),
   authType: z.enum(['none', 'api_key', 'oauth']).optional(),
   authConfig: z
     .object({
@@ -34,7 +34,7 @@ const updateMcpServerSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(1000).optional(),
   endpoint: z.string().min(1).max(500).optional(),
-  transport: z.enum(['stdio', 'http', 'websocket']).optional(),
+  transport: z.enum(['stdio', 'sse', 'streamable_http']).optional(),
   authType: z.enum(['none', 'api_key', 'oauth']).optional(),
   authConfig: z
     .object({

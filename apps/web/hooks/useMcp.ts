@@ -18,7 +18,7 @@ export interface McpServer {
   name: string
   description?: string
   endpoint: string
-  transport: 'stdio' | 'http' | 'websocket'
+  transport: 'stdio' | 'sse' | 'streamable_http'
   authType: 'none' | 'api_key' | 'oauth'
   status: 'disconnected' | 'connecting' | 'connected' | 'error'
   tools: Array<{

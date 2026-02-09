@@ -17,7 +17,7 @@ export interface McpServer {
   name: string
   description?: string
   endpoint: string
-  transport: 'stdio' | 'http' | 'websocket'
+  transport: 'stdio' | 'sse' | 'streamable_http'
   authType?: 'none' | 'api_key' | 'oauth'
   authConfig?: McpAuthConfig
   tools: McpTool[]
@@ -53,7 +53,7 @@ export interface CreateMcpServerInput {
   name: string
   description?: string
   endpoint: string
-  transport: 'stdio' | 'http' | 'websocket'
+  transport: 'stdio' | 'sse' | 'streamable_http'
   authType?: 'none' | 'api_key' | 'oauth'
   authConfig?: McpAuthConfig
 }
@@ -62,7 +62,7 @@ export interface UpdateMcpServerInput {
   name?: string
   description?: string
   endpoint?: string
-  transport?: 'stdio' | 'http' | 'websocket'
+  transport?: 'stdio' | 'sse' | 'streamable_http'
   authType?: 'none' | 'api_key' | 'oauth'
   authConfig?: McpAuthConfig
   isActive?: boolean

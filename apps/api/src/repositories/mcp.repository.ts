@@ -96,9 +96,9 @@ export async function create(data: CreateMcpServerData): Promise<McpServerRow> {
       ${data.endpoint},
       ${data.transport},
       ${data.authType ?? null},
-      ${data.authConfig ? JSON.stringify(data.authConfig) : null},
-      ${JSON.stringify(data.tools ?? [])},
-      ${JSON.stringify(data.resources ?? [])},
+      ${data.authConfig ? sql.json(data.authConfig as any) : null},
+      ${sql.json((data.tools ?? []) as any)},
+      ${sql.json((data.resources ?? []) as any)},
       ${data.createdBy ?? null}
     )
     RETURNING *
@@ -204,9 +204,12 @@ export async function update(id: string, orgId: string, data: UpdateMcpServerDat
   const server = await findByIdAndOrg(id, orgId)
   if (!server) return null
 
-  const authConfig = data.authConfig ? JSON.stringify(data.authConfig) : (server.auth_config ? JSON.stringify(server.auth_config) : null)
-  const tools = data.tools ? JSON.stringify(data.tools) : JSON.stringify(server.tools)
-  const resources = data.resources ? JSON.stringify(data.resources) : JSON.stringify(server.resources)
+  const authConfigRaw = data.authConfig ?? (typeof server.auth_config === 'string' ? JSON.parse(server.auth_config) : server.auth_config) ?? null
+  const authConfig = authConfigRaw ? sql.json(authConfigRaw) : null
+  const toolsRaw = data.tools ?? (Array.isArray(server.tools) ? server.tools : typeof server.tools === 'string' ? JSON.parse(server.tools) : [])
+  const tools = sql.json(toolsRaw)
+  const resourcesRaw = data.resources ?? (Array.isArray(server.resources) ? server.resources : typeof server.resources === 'string' ? JSON.parse(server.resources) : [])
+  const resources = sql.json(resourcesRaw)
 
   const result = await sql`
     UPDATE mcp_servers

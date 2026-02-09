@@ -78,7 +78,7 @@ describe('MCP Service', () => {
         mcpService.createMcpServer(mockOrgId, mockUserId, {
           name: 'New Server',
           endpoint: 'http://localhost:3000',
-          transport: 'http',
+          transport: 'streamable_http',
         })
       ).rejects.toThrow()
     })
@@ -215,7 +215,7 @@ describe('MCP Service', () => {
     it('should update status to error on connection failure', async () => {
       const httpServerRow = {
         ...mockServerRow,
-        transport: 'http' as const,
+        transport: 'streamable_http' as const,
         endpoint: 'http://invalid-server-12345.example.com/mcp',
       }
 

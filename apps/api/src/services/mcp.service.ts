@@ -5,6 +5,10 @@
  */
 
 import { spawn } from 'child_process'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { createError } from '../middleware/errorHandler'
 import {
   MCP_SERVER_NOT_FOUND,
@@ -25,7 +29,7 @@ export interface McpServer {
   name: string
   description?: string
   endpoint: string
-  transport: 'stdio' | 'http' | 'websocket'
+  transport: 'stdio' | 'sse' | 'streamable_http'
   authType?: 'none' | 'api_key' | 'oauth'
   authConfig?: McpAuthConfig
   tools: McpTool[]
@@ -62,7 +66,7 @@ export interface CreateMcpServerInput {
   name: string
   description?: string
   endpoint: string
-  transport: 'stdio' | 'http' | 'websocket'
+  transport: 'stdio' | 'sse' | 'streamable_http'
   authType?: 'none' | 'api_key' | 'oauth'
   authConfig?: McpAuthConfig
 }
@@ -71,7 +75,7 @@ export interface UpdateMcpServerInput {
   name?: string
   description?: string
   endpoint?: string
-  transport?: 'stdio' | 'http' | 'websocket'
+  transport?: 'stdio' | 'sse' | 'streamable_http'
   authType?: 'none' | 'api_key' | 'oauth'
   authConfig?: McpAuthConfig
   isActive?: boolean
@@ -110,9 +114,9 @@ function rowToMcpServer(row: mcpRepository.McpServerRow): McpServer {
     endpoint: row.endpoint,
     transport: row.transport as McpServer['transport'],
     authType: row.auth_type as McpServer['authType'],
-    authConfig: row.auth_config as McpAuthConfig | undefined,
-    tools: row.tools as McpTool[],
-    resources: row.resources as McpResource[],
+    authConfig: (typeof row.auth_config === 'string' ? JSON.parse(row.auth_config) : row.auth_config) as McpAuthConfig | undefined,
+    tools: (typeof row.tools === 'string' ? JSON.parse(row.tools) : row.tools) as McpTool[],
+    resources: (typeof row.resources === 'string' ? JSON.parse(row.resources) : row.resources) as McpResource[],
     status: row.status as McpServer['status'],
     lastConnectedAt: row.last_connected_at ?? undefined,
     isActive: row.is_active,
@@ -272,6 +276,97 @@ const MCP_LIST_RESOURCES_REQUEST = JSON.stringify({
 })
 
 /**
+ * 设置 stdio 子进程的事件处理器并发送初始化请求
+ */
+function setupStdioHandlers(
+  child: ReturnType<typeof spawn>,
+  resolve: (value: { tools: McpTool[]; resources: McpResource[] }) => void,
+  reject: (reason: Error) => void
+): void {
+  let stdout = ''
+  let stderr = ''
+  let initializeDone = false
+  let toolsReceived = false
+  let resourcesReceived = false
+  const tools: McpTool[] = []
+  const resources: McpResource[] = []
+
+  const timeout = setTimeout(() => {
+    child.kill()
+    mcpLogger.warn('stdio 连接超时', { timeoutMs: MCP_CONNECTION_TIMEOUT_MS })
+    reject(new Error('连接超时'))
+  }, MCP_CONNECTION_TIMEOUT_MS)
+
+  child.stdout!.on('data', (data: Buffer) => {
+    stdout += data.toString()
+
+    const lines = stdout.split('\n')
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const response = JSON.parse(line)
+
+        if (response.id === 1 && response.result) {
+          initializeDone = true
+          child.stdin!.write(MCP_LIST_TOOLS_REQUEST + '\n')
+          child.stdin!.write(MCP_LIST_RESOURCES_REQUEST + '\n')
+        } else if (response.id === 2 && response.result?.tools) {
+          toolsReceived = true
+          for (const tool of response.result.tools) {
+            tools.push({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+            })
+          }
+        } else if (response.id === 3) {
+          resourcesReceived = true
+          if (response.result?.resources) {
+            for (const resource of response.result.resources) {
+              resources.push({
+                uri: resource.uri,
+                name: resource.name,
+                description: resource.description,
+                mimeType: resource.mimeType,
+              })
+            }
+          }
+        }
+
+        if (initializeDone && toolsReceived && resourcesReceived) {
+          clearTimeout(timeout)
+          child.kill()
+          resolve({ tools, resources })
+        }
+      } catch {
+        // 不是有效的 JSON，忽略
+      }
+    }
+    stdout = lines[lines.length - 1]
+  })
+
+  child.stderr!.on('data', (data: Buffer) => {
+    stderr += data.toString()
+  })
+
+  child.on('error', (error) => {
+    clearTimeout(timeout)
+    mcpLogger.error('stdio 进程错误', error)
+    reject(new Error(`进程启动失败: ${error.message}`))
+  })
+
+  child.on('close', (code) => {
+    clearTimeout(timeout)
+    if (!initializeDone) {
+      mcpLogger.error('stdio 进程退出，未完成初始化', undefined, { stderr, code })
+      reject(new Error(`进程异常退出 (code: ${code})`))
+    }
+  })
+
+  child.stdin!.write(MCP_INITIALIZE_REQUEST + '\n')
+}
+
+/**
  * 测试 stdio 类型的 MCP Server 连接
  *
  * @param endpoint - 可执行文件路径 (如: npx -y @modelcontextprotocol/server-filesystem)
@@ -283,7 +378,44 @@ async function testStdioConnection(
   authConfig?: McpAuthConfig
 ): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
   return new Promise((resolve, reject) => {
-    const parts = endpoint.split(' ')
+    const trimmed = endpoint.trim()
+
+    // 防御：用户误将 URL 填入 stdio 类型
+    if (/^https?:\/\//i.test(trimmed)) {
+      reject(new Error('endpoint 是一个 URL，请将传输类型改为 http'))
+      return
+    }
+
+    // 防御：用户误将 JSON 配置粘贴到 endpoint
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        // 尝试从 JSON 中提取 command/args
+        const mcpConfig = parsed.mcpServers
+          ? Object.values(parsed.mcpServers)[0] as { command?: string; args?: string[] }
+          : parsed as { command?: string; args?: string[] }
+        if (mcpConfig?.command) {
+          const command = mcpConfig.command
+          const args = mcpConfig.args || []
+          // 继续使用提取出的 command 和 args（跳过下面的 split 逻辑）
+          const env = { ...process.env }
+          if (authConfig?.apiKey) {
+            env.MCP_API_KEY = authConfig.apiKey
+          }
+          const child = spawn(command, args, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env,
+          })
+          return setupStdioHandlers(child, resolve, reject)
+        }
+      } catch {
+        // JSON 解析失败，给出明确提示
+      }
+      reject(new Error('endpoint 格式错误：检测到 JSON 内容。stdio 类型的 endpoint 应为可执行命令，如 "npx -y @modelcontextprotocol/server-filesystem"'))
+      return
+    }
+
+    const parts = trimmed.split(' ')
     const command = parts[0]
     const args = parts.slice(1)
 
@@ -298,198 +430,119 @@ async function testStdioConnection(
       env,
     })
 
-    let stdout = ''
-    let stderr = ''
-    let initializeDone = false
-    let toolsReceived = false
-    let resourcesReceived = false
-    const tools: McpTool[] = []
-    const resources: McpResource[] = []
-
-    const timeout = setTimeout(() => {
-      child.kill()
-      mcpLogger.warn('stdio 连接超时', { timeoutMs: MCP_CONNECTION_TIMEOUT_MS })
-      reject(new Error('连接超时'))
-    }, MCP_CONNECTION_TIMEOUT_MS)
-
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString()
-
-      // 解析 JSON-RPC 响应
-      const lines = stdout.split('\n')
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try {
-          const response = JSON.parse(line)
-
-          if (response.id === 1 && response.result) {
-            // 初始化成功
-            initializeDone = true
-            // 发送列出工具请求
-            child.stdin.write(MCP_LIST_TOOLS_REQUEST + '\n')
-            // 发送列出资源请求
-            child.stdin.write(MCP_LIST_RESOURCES_REQUEST + '\n')
-          } else if (response.id === 2 && response.result?.tools) {
-            // 工具列表
-            toolsReceived = true
-            for (const tool of response.result.tools) {
-              tools.push({
-                name: tool.name,
-                description: tool.description,
-                inputSchema: tool.inputSchema,
-              })
-            }
-          } else if (response.id === 3) {
-            // 资源列表 (可能为空)
-            resourcesReceived = true
-            if (response.result?.resources) {
-              for (const resource of response.result.resources) {
-                resources.push({
-                  uri: resource.uri,
-                  name: resource.name,
-                  description: resource.description,
-                  mimeType: resource.mimeType,
-                })
-              }
-            }
-          }
-
-          // 所有请求都完成后关闭
-          if (initializeDone && toolsReceived && resourcesReceived) {
-            clearTimeout(timeout)
-            child.kill()
-            resolve({ tools, resources })
-          }
-        } catch {
-          // 不是有效的 JSON，忽略
-        }
-      }
-      // 保留未完成的行
-      stdout = lines[lines.length - 1]
-    })
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString()
-    })
-
-    child.on('error', (error) => {
-      clearTimeout(timeout)
-      mcpLogger.error('stdio 进程错误', error)
-      reject(new Error(`进程启动失败: ${error.message}`))
-    })
-
-    child.on('close', (code) => {
-      clearTimeout(timeout)
-      if (!initializeDone) {
-        mcpLogger.error('stdio 进程退出，未完成初始化', undefined, { stderr, code })
-        reject(new Error(`进程异常退出 (code: ${code})`))
-      }
-    })
-
-    // 发送初始化请求
-    child.stdin.write(MCP_INITIALIZE_REQUEST + '\n')
+    setupStdioHandlers(child, resolve, reject)
   })
 }
 
 /**
- * 测试 HTTP/SSE 类型的 MCP Server 连接
- *
- * @param endpoint - HTTP 端点 URL
- * @param authConfig - 认证配置
- * @returns 连接测试结果
+ * 使用 MCP SDK 连接服务器并获取工具和资源列表
+ */
+async function connectWithSdk(
+  transport: Transport,
+  label: string
+): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
+  const client = new Client({ name: 'semibot', version: '1.0.0' })
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`${label}连接超时`)), MCP_CONNECTION_TIMEOUT_MS)
+  })
+
+  try {
+    await Promise.race([client.connect(transport), timeoutPromise])
+    mcpLogger.info(`${label}连接成功`)
+
+    const [toolsResult, resourcesResult] = await Promise.race([
+      Promise.all([
+        client.listTools().catch(() => ({ tools: [] })),
+        client.listResources().catch(() => ({ resources: [] })),
+      ]),
+      timeoutPromise,
+    ])
+
+    const tools: McpTool[] = (toolsResult.tools || []).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+    }))
+
+    const resources: McpResource[] = (resourcesResult.resources || []).map((resource) => ({
+      uri: resource.uri,
+      name: resource.name,
+      description: resource.description,
+      mimeType: resource.mimeType,
+    }))
+
+    return { tools, resources }
+  } finally {
+    await client.close().catch(() => {})
+  }
+}
+
+/**
+ * 构建认证请求头
+ */
+function buildAuthHeaders(authConfig?: McpAuthConfig): Record<string, string> {
+  const headers: Record<string, string> = {}
+  if (authConfig?.apiKey) {
+    headers['Authorization'] = `Bearer ${authConfig.apiKey}`
+  }
+  return headers
+}
+
+/**
+ * 测试 SSE 类型的 MCP Server 连接（使用 MCP SDK）
+ */
+async function testSseConnection(
+  endpoint: string,
+  authConfig?: McpAuthConfig
+): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
+  mcpLogger.info('使用 SSE 传输连接', { endpoint })
+  const headers = buildAuthHeaders(authConfig)
+  const transport = new SSEClientTransport(new URL(endpoint), {
+    eventSourceInit: {
+      fetch: (url: string | URL | Request, init?: RequestInit) =>
+        fetch(url, { ...init, headers: { ...init?.headers, ...headers } }),
+    },
+    requestInit: { headers },
+  })
+  return connectWithSdk(transport, 'SSE')
+}
+
+/**
+ * 测试 HTTP (Streamable HTTP) 类型的 MCP Server 连接（使用 MCP SDK）
  */
 async function testHttpConnection(
   endpoint: string,
   authConfig?: McpAuthConfig
 ): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+  // 检测 SSE 端点，自动切换到 SSE 模式
+  if (endpoint.endsWith('/sse') || endpoint.endsWith('/sse/')) {
+    mcpLogger.info('检测到 SSE 端点，切换到 SSE 模式', { endpoint })
+    return testSseConnection(endpoint, authConfig)
   }
 
-  if (authConfig?.apiKey) {
-    headers['Authorization'] = `Bearer ${authConfig.apiKey}`
-  }
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), MCP_CONNECTION_TIMEOUT_MS)
+  mcpLogger.info('使用 Streamable HTTP 传输连接', { endpoint })
+  const headers = buildAuthHeaders(authConfig)
+  const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+    requestInit: { headers },
+  })
 
   try {
-    // 发送初始化请求
-    const initResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: MCP_INITIALIZE_REQUEST,
-      signal: controller.signal,
-    })
-
-    if (!initResponse.ok) {
-      throw new Error(`HTTP ${initResponse.status}: ${initResponse.statusText}`)
-    }
-
-    const initResult = await initResponse.json() as { error?: { message: string }; result?: unknown }
-    if (initResult.error) {
-      throw new Error(`MCP 初始化失败: ${initResult.error.message}`)
-    }
-
-    // 获取工具列表
-    const toolsResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: MCP_LIST_TOOLS_REQUEST,
-      signal: controller.signal,
-    })
-
-    const toolsResult = await toolsResponse.json() as { result?: { tools?: Record<string, unknown>[] } }
-    const tools: McpTool[] = (toolsResult.result?.tools || []).map((tool: Record<string, unknown>) => ({
-      name: tool.name as string,
-      description: tool.description as string | undefined,
-      inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
-    }))
-
-    // 获取资源列表
-    const resourcesResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: MCP_LIST_RESOURCES_REQUEST,
-      signal: controller.signal,
-    })
-
-    const resourcesResult = await resourcesResponse.json() as { result?: { resources?: Record<string, unknown>[] } }
-    const resources: McpResource[] = (resourcesResult.result?.resources || []).map((resource: Record<string, unknown>) => ({
-      uri: resource.uri as string,
-      name: resource.name as string,
-      description: resource.description as string | undefined,
-      mimeType: resource.mimeType as string | undefined,
-    }))
-
-    clearTimeout(timeout)
-    return { tools, resources }
+    return await connectWithSdk(transport, 'HTTP')
   } catch (error) {
-    clearTimeout(timeout)
-    if (error instanceof Error && error.name === 'AbortError') {
-      mcpLogger.warn('HTTP 连接超时', { timeoutMs: MCP_CONNECTION_TIMEOUT_MS })
-      throw new Error('连接超时')
-    }
-    throw error
-  }
-}
+    // Streamable HTTP 失败时，尝试回退到 SSE（某些旧服务器只支持 SSE）
+    const errMsg = error instanceof Error ? error.message : String(error)
+    mcpLogger.info('Streamable HTTP 连接失败，尝试回退到 SSE', { error: errMsg })
 
-/**
- * 测试 WebSocket 类型的 MCP Server 连接
- *
- * @param endpoint - WebSocket 端点 URL
- * @param authConfig - 认证配置
- * @returns 连接测试结果
- */
-async function testWebSocketConnection(
-  endpoint: string,
-  authConfig?: McpAuthConfig
-): Promise<{ tools: McpTool[]; resources: McpResource[] }> {
-  // WebSocket 实现需要 ws 库，这里使用简化的 HTTP 回退
-  // 大多数 MCP Server 同时支持 HTTP 和 WebSocket
-  const httpEndpoint = endpoint.replace(/^ws/, 'http')
-  mcpLogger.info('WebSocket 端点回退到 HTTP', { httpEndpoint })
-  return testHttpConnection(httpEndpoint, authConfig)
+    // 尝试将 endpoint 转换为 SSE 端点
+    const sseEndpoint = endpoint.endsWith('/') ? `${endpoint}sse` : `${endpoint}/sse`
+    try {
+      return await testSseConnection(sseEndpoint, authConfig)
+    } catch {
+      // SSE 回退也失败，抛出原始错误
+      throw error
+    }
+  }
 }
 
 /**
@@ -513,11 +566,11 @@ export async function testConnection(
       case 'stdio':
         result = await testStdioConnection(server.endpoint, server.authConfig)
         break
-      case 'http':
-        result = await testHttpConnection(server.endpoint, server.authConfig)
+      case 'sse':
+        result = await testSseConnection(server.endpoint, server.authConfig)
         break
-      case 'websocket':
-        result = await testWebSocketConnection(server.endpoint, server.authConfig)
+      case 'streamable_http':
+        result = await testHttpConnection(server.endpoint, server.authConfig)
         break
       default:
         throw new Error(`不支持的传输类型: ${server.transport}`)
