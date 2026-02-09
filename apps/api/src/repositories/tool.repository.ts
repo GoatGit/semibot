@@ -6,6 +6,7 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -135,6 +136,9 @@ export async function findAll(params: ListToolsParams): Promise<PaginatedResult<
   const { orgId, includeBuiltin = true, page = 1, limit = DEFAULT_PAGE_SIZE, search, type } = params
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
+
+  // 记录分页限制日志
+  logPaginationLimit('ToolRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
   // 构建 WHERE 条件
   let whereClause = sql`is_active = true`

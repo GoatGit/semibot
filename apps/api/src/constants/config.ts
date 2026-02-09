@@ -31,6 +31,7 @@ export {
   MAX_MESSAGE_LENGTH,
   MAX_SESSION_MESSAGES,
   MAX_SSE_CONNECTIONS_PER_USER,
+  MAX_SSE_CONNECTIONS_PER_ORG,
 } from '@semibot/shared-config'
 
 // ═══════════════════════════════════════════════════════════════

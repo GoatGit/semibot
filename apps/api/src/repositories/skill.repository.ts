@@ -6,6 +6,7 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -164,6 +165,9 @@ export async function findAll(params: ListSkillsParams): Promise<PaginatedResult
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
+  // 记录分页限制日志
+  logPaginationLimit('SkillRepository', limit, actualLimit, MAX_PAGE_SIZE)
+
   // 构建 WHERE 条件
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   let whereClause = useDeletedAt ? sql`deleted_at IS NULL` : sql`1 = 1`
@@ -254,4 +258,62 @@ export async function softDelete(id: string): Promise<boolean> {
     `
 
   return result.length > 0
+}
+
+/**
+ * 批量查询 Skill（避免 N+1 问题）
+ * @param ids Skill ID 数组
+ * @returns Skill 数组
+ */
+export async function findByIds(ids: string[]): Promise<SkillRow[]> {
+  if (ids.length === 0) {
+    return []
+  }
+
+  const useDeletedAt = await hasSkillsDeletedAtColumn()
+  const result = useDeletedAt
+    ? await sql`
+        SELECT * FROM skills
+        WHERE id = ANY(${ids})
+        AND deleted_at IS NULL
+      `
+    : await sql`
+        SELECT * FROM skills
+        WHERE id = ANY(${ids})
+      `
+
+  return result as unknown as SkillRow[]
+}
+
+/**
+ * 批量查询指定组织的活跃 Skill（包括内置）
+ * @param ids Skill ID 数组
+ * @param orgId 组织 ID
+ * @returns 活跃的 Skill 数组
+ */
+export async function findActiveByIdsAndOrg(
+  ids: string[],
+  orgId: string
+): Promise<SkillRow[]> {
+  if (ids.length === 0) {
+    return []
+  }
+
+  const useDeletedAt = await hasSkillsDeletedAtColumn()
+  const result = useDeletedAt
+    ? await sql`
+        SELECT * FROM skills
+        WHERE id = ANY(${ids})
+        AND is_active = true
+        AND (org_id = ${orgId} OR is_builtin = true)
+        AND deleted_at IS NULL
+      `
+    : await sql`
+        SELECT * FROM skills
+        WHERE id = ANY(${ids})
+        AND is_active = true
+        AND (org_id = ${orgId} OR is_builtin = true)
+      `
+
+  return result as unknown as SkillRow[]
 }

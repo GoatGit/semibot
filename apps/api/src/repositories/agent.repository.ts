@@ -6,6 +6,7 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -134,6 +135,9 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
   const { orgId, page = 1, limit = DEFAULT_PAGE_SIZE, isActive, search } = params
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
+
+  // 记录分页限制日志
+  logPaginationLimit('AgentRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
   // 根据条件选择不同的查询
   let countResult

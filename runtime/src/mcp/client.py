@@ -285,10 +285,13 @@ class McpClient:
             )
 
     async def close_all(self) -> None:
-        """Close all MCP connections."""
+        """Close all MCP connections and clean up resources."""
         logger.info("Closing all MCP connections")
 
-        for server_id in list(self._servers.keys()):
+        # 获取所有服务器 ID 的副本（避免在迭代时修改）
+        server_ids = list(self._servers.keys())
+
+        for server_id in server_ids:
             try:
                 await self.disconnect(server_id)
             except Exception as e:
@@ -296,3 +299,13 @@ class McpClient:
                     f"Error disconnecting from server {server_id}: {e}",
                     extra={"server_id": server_id},
                 )
+
+        # 清理所有字典，防止内存泄漏
+        self._servers.clear()
+        self._connections.clear()
+        self._connection_status.clear()
+
+        logger.info(
+            "All MCP connections closed and resources cleaned up",
+            extra={"closed_count": len(server_ids)}
+        )

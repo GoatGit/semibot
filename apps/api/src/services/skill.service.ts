@@ -587,15 +587,10 @@ export async function getActiveSkillsByIds(orgId: string, skillIds: string[]): P
     return []
   }
 
-  const rows = await Promise.all(uniqueSkillIds.map((skillId) => skillRepository.findById(skillId)))
+  // 使用批量查询（单次 SQL 查询，避免 N+1 问题）
+  const rows = await skillRepository.findActiveByIdsAndOrg(uniqueSkillIds, orgId)
 
-  return rows
-    .filter((row): row is skillRepository.SkillRow => {
-      if (!row) return false
-      if (!row.is_active) return false
-      return row.org_id === orgId || row.is_builtin
-    })
-    .map(rowToSkill)
+  return rows.map(rowToSkill)
 }
 
 /**
