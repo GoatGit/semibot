@@ -1,13 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Search, Plus, History, RefreshCw, AlertCircle, CheckCircle, Clock, Package } from 'lucide-react'
+import { Search, Plus, History, RefreshCw, AlertCircle, Package } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { apiClient } from '@/lib/api'
-import type { SkillDefinition, SkillPackage } from '@semibot/shared-types'
+import type { SkillDefinition } from '@semibot/shared-types'
 
 interface ApiResponse<T> {
   success: boolean
@@ -103,7 +103,7 @@ export default function SkillDefinitionsPage() {
       setActionLoading(true)
       setError(null)
 
-      const payload: any = {
+      const payload: Record<string, string | boolean> = {
         version: installVersion,
         sourceType: installSourceType,
         enableRetry: true,
@@ -125,9 +125,10 @@ export default function SkillDefinitionsPage() {
       setInstallManifestUrl('')
       await loadVersions(selectedDefinition.id)
       await loadDefinitions()
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
       console.error('[SkillDefinitions] 安装失败:', err)
-      setError(err.response?.data?.error?.message || '安装失败')
+      setError(error.response?.data?.error?.message || '安装失败')
     } finally {
       setActionLoading(false)
     }
@@ -150,9 +151,10 @@ export default function SkillDefinitionsPage() {
       setRollbackReason('')
       await loadVersions(selectedDefinition.id)
       await loadDefinitions()
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
       console.error('[SkillDefinitions] 回滚失败:', err)
-      setError(err.response?.data?.error?.message || '回滚失败')
+      setError(error.response?.data?.error?.message || '回滚失败')
     } finally {
       setActionLoading(false)
     }
@@ -434,7 +436,7 @@ export default function SkillDefinitionsPage() {
                 <select
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   value={installSourceType}
-                  onChange={(e) => setInstallSourceType(e.target.value as any)}
+                  onChange={(e) => setInstallSourceType(e.target.value as 'anthropic' | 'git' | 'url')}
                 >
                   <option value="anthropic">Anthropic</option>
                   <option value="git">Git</option>

@@ -22,6 +22,7 @@ export const sql = postgres(DATABASE_URL, {
   idle_timeout: 20,
   connect_timeout: 10,
   max_lifetime: 60 * 30, // 30 分钟
+  prepare: false, // 禁用预处理语句缓存，避免 schema 变更后的 "cached plan must not change result type" 错误
 })
 
 /**

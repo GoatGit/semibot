@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import Link from 'next/link'
 import clsx from 'clsx'
 import { Bot, Plus, Search, Settings, Trash2, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
