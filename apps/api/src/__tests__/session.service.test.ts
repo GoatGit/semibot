@@ -76,9 +76,7 @@ describe('Session Service', () => {
 
       const { getSession } = await import('../services/session.service')
 
-      await expect(getSession('org-123', 'nonexistent')).rejects.toEqual({
-        code: 'SESSION_NOT_FOUND',
-      })
+      await expect(getSession('org-123', 'nonexistent')).rejects.toThrow('会话不存在')
     })
   })
 
@@ -98,9 +96,11 @@ describe('Session Service', () => {
         },
       ]
 
-      // Mock count query
-      mockSql.mockResolvedValueOnce([{ count: '1' }])
-      // Mock list query
+      // Mock whereClause construction
+      mockSql.mockReturnValueOnce('org_id = $1 AND user_id = $2')
+      // Mock count query - returns total count
+      mockSql.mockResolvedValueOnce([{ total: '1' }])
+      // Mock list query - returns sessions
       mockSql.mockResolvedValueOnce(mockSessions)
 
       const { listSessions } = await import('../services/session.service')
@@ -138,18 +138,29 @@ describe('Session Service', () => {
 
   describe('updateSessionStatus', () => {
     it('should update session status', async () => {
-      const updatedSession = {
+      const activeSession = {
         id: 'session-123',
         org_id: 'org-123',
         user_id: 'user-123',
         agent_id: 'agent-123',
         title: 'Test Session',
-        status: 'completed',
+        status: 'active',
         metadata: {},
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
 
+      const updatedSession = {
+        ...activeSession,
+        status: 'completed',
+        ended_at: new Date().toISOString(),
+      }
+
+      // Mock getSession call (to check current status)
+      mockSql.mockResolvedValueOnce([activeSession])
+      // Mock nested sql`NOW()` call in UPDATE query
+      mockSql.mockReturnValueOnce('NOW()')
+      // Mock updateStatus call - UPDATE query returns array with updated row
       mockSql.mockResolvedValueOnce([updatedSession])
 
       const { updateSessionStatus } = await import('../services/session.service')
@@ -162,12 +173,24 @@ describe('Session Service', () => {
 
   describe('deleteSession', () => {
     it('should delete session when found', async () => {
-      // Mock get session
-      mockSql.mockResolvedValueOnce([{ id: 'session-123' }])
-      // Mock delete messages
+      const mockSession = {
+        id: 'session-123',
+        org_id: 'org-123',
+        user_id: 'user-123',
+        agent_id: 'agent-123',
+        title: 'Test Session',
+        status: 'active',
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+
+      // Mock getSession call (to verify session exists)
+      mockSql.mockResolvedValueOnce([mockSession])
+      // Mock deleteBySessionId (delete messages)
       mockSql.mockResolvedValueOnce([])
-      // Mock delete session
-      mockSql.mockResolvedValueOnce([])
+      // Mock remove (delete session) - should return the deleted row
+      mockSql.mockResolvedValueOnce([mockSession])
 
       const { deleteSession } = await import('../services/session.service')
 
@@ -177,6 +200,18 @@ describe('Session Service', () => {
 
   describe('addMessage', () => {
     it('should add a message to session', async () => {
+      const mockSession = {
+        id: 'session-123',
+        org_id: 'org-123',
+        user_id: 'user-123',
+        agent_id: 'agent-123',
+        title: 'Test Session',
+        status: 'active',
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+
       const mockMessage = {
         id: 'msg-123',
         session_id: 'session-123',
@@ -191,9 +226,11 @@ describe('Session Service', () => {
         created_at: new Date().toISOString(),
       }
 
-      // Mock get session
-      mockSql.mockResolvedValueOnce([{ id: 'session-123', org_id: 'org-123' }])
-      // Mock insert message
+      // Mock getSession call (to verify session exists and check status)
+      mockSql.mockResolvedValueOnce([mockSession])
+      // Mock countBySessionId call (to check message limit)
+      mockSql.mockResolvedValueOnce([{ count: '5' }])
+      // Mock create message
       mockSql.mockResolvedValueOnce([mockMessage])
 
       const { addMessage } = await import('../services/session.service')
