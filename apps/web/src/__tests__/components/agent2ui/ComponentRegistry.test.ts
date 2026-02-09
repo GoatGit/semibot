@@ -62,7 +62,7 @@ describe('ComponentRegistry', () => {
       const originalTextComponent = ComponentRegistry.get('text')
 
       ComponentRegistry.registerAll({
-        text: undefined as any,
+        text: undefined as unknown as undefined,
       })
 
       expect(ComponentRegistry.get('text')).toBe(originalTextComponent)

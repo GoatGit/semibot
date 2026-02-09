@@ -13,13 +13,17 @@ vi.mock('@/components/agent2ui/ComponentRegistry', () => ({
     get: vi.fn((type: string) => {
       if (type === 'unknown_type') return undefined
       if (type === 'error_component') {
-        return () => {
+        const ErrorComponent = (): JSX.Element => {
           throw new Error('Component error')
         }
+        ErrorComponent.displayName = 'ErrorComponent'
+        return ErrorComponent
       }
-      return ({ data }: { data: { content: string } }) => (
+      const MockComponent = ({ data }: { data: { content: string } }): JSX.Element => (
         <div data-testid="mock-component">{data.content}</div>
       )
+      MockComponent.displayName = 'MockComponent'
+      return MockComponent
     }),
   },
 }))
@@ -79,7 +83,7 @@ describe('Agent2UIRenderer', () => {
     it('应该对未知类型显示回退内容', () => {
       const message: Agent2UIMessage = {
         id: 'msg-1',
-        type: 'unknown_type' as any,
+        type: 'unknown_type' as Agent2UIMessage['type'],
         data: { content: 'Fallback content' },
       }
 
@@ -91,7 +95,7 @@ describe('Agent2UIRenderer', () => {
     it('应该将对象数据序列化为 JSON', () => {
       const message: Agent2UIMessage = {
         id: 'msg-1',
-        type: 'unknown_type' as any,
+        type: 'unknown_type' as Agent2UIMessage['type'],
         data: { key: 'value', nested: { a: 1 } },
       }
 
@@ -105,7 +109,7 @@ describe('Agent2UIRenderer', () => {
     it('应该捕获组件渲染错误并显示错误信息', () => {
       const message: Agent2UIMessage = {
         id: 'msg-1',
-        type: 'error_component' as any,
+        type: 'error_component' as Agent2UIMessage['type'],
         data: { content: 'Test' },
       }
 
@@ -118,7 +122,7 @@ describe('Agent2UIRenderer', () => {
       const onError = vi.fn()
       const message: Agent2UIMessage = {
         id: 'msg-1',
-        type: 'error_component' as any,
+        type: 'error_component' as Agent2UIMessage['type'],
         data: { content: 'Test' },
       }
 

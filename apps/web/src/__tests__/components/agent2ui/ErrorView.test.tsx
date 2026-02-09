@@ -2,8 +2,8 @@
  * ErrorView 组件测试
  */
 
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
 import { ErrorView } from '@/components/agent2ui/feedback/ErrorView'
 import type { ErrorData } from '@/types'
 
