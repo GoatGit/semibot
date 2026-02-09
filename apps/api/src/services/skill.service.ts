@@ -14,8 +14,13 @@ import {
 import {
   ANTHROPIC_SKILLS_CATALOG_URL,
   SKILL_MANIFEST_FETCH_TIMEOUT_MS,
+  MAX_SKILL_KEYWORDS,
+  MAX_SKILL_NAME_LENGTH,
 } from '../constants/config'
 import * as skillRepository from '../repositories/skill.repository'
+import { createLogger } from '../lib/logger'
+
+const skillLogger = createLogger('skill')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -229,7 +234,7 @@ function normalizeKeywords(rawKeywords: unknown): string[] | undefined {
     .filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim())
     .filter(Boolean)
-    .slice(0, 20)
+    .slice(0, MAX_SKILL_KEYWORDS)
   return keywords.length > 0 ? keywords : undefined
 }
 
@@ -423,9 +428,7 @@ export async function createSkill(
   const existingSkills = await skillRepository.findAll({ orgId, includeBuiltin: false })
 
   if (existingSkills.meta.total >= MAX_SKILLS_PER_ORG) {
-    console.warn(
-      `[SkillService] Skill 数量已达上限 - 组织: ${orgId}, 当前: ${existingSkills.meta.total}, 限制: ${MAX_SKILLS_PER_ORG}`
-    )
+    skillLogger.warn('Skill 数量已达上限', { orgId, current: existingSkills.meta.total, limit: MAX_SKILLS_PER_ORG })
     throw createError(SKILL_LIMIT_EXCEEDED)
   }
 
@@ -453,10 +456,10 @@ export async function installAnthropicSkill(
 ): Promise<Skill> {
   const normalizedSkillId = input.skillId.trim()
 
-  const skillName = (input.name?.trim() || `anthropic-${normalizedSkillId}`).slice(0, 100)
+  const skillName = (input.name?.trim() || `anthropic-${normalizedSkillId}`).slice(0, MAX_SKILL_NAME_LENGTH)
   const description =
     input.description?.trim() || `Installed from Anthropic Skills: ${normalizedSkillId}`
-  const triggerKeywords = (input.triggerKeywords ?? [normalizedSkillId]).slice(0, 20)
+  const triggerKeywords = (input.triggerKeywords ?? [normalizedSkillId]).slice(0, MAX_SKILL_KEYWORDS)
 
   return createSkill(orgId, userId, {
     name: skillName,
@@ -493,12 +496,12 @@ export async function listAnthropicSkillCatalog(
   try {
     parsedCatalogUrl = new URL(catalogUrl)
   } catch {
-    console.warn('[SkillService] ANTHROPIC_SKILLS_CATALOG_URL 非法，已忽略')
+    skillLogger.warn('ANTHROPIC_SKILLS_CATALOG_URL 非法，已忽略')
     return []
   }
 
   if (!['http:', 'https:'].includes(parsedCatalogUrl.protocol)) {
-    console.warn('[SkillService] ANTHROPIC_SKILLS_CATALOG_URL 协议不支持，已忽略')
+    skillLogger.warn('ANTHROPIC_SKILLS_CATALOG_URL 协议不支持，已忽略')
     return []
   }
 
@@ -513,9 +516,7 @@ export async function listAnthropicSkillCatalog(
     })
 
     if (!response.ok) {
-      console.warn(
-        `[SkillService] 拉取 Anthropic Skills 目录失败: ${response.status}`
-      )
+      skillLogger.warn('拉取 Anthropic Skills 目录失败', { status: response.status })
       return []
     }
 
@@ -527,11 +528,11 @@ export async function listAnthropicSkillCatalog(
       error instanceof Error &&
       (error.name === 'AbortError' || error.message.includes('aborted'))
     ) {
-      console.warn('[SkillService] 拉取 Anthropic Skills 目录超时')
+      skillLogger.warn('拉取 Anthropic Skills 目录超时')
       return []
     }
 
-    console.warn('[SkillService] 拉取 Anthropic Skills 目录异常:', error)
+    skillLogger.warn('拉取 Anthropic Skills 目录异常', { error })
     return []
   } finally {
     clearTimeout(timeout)

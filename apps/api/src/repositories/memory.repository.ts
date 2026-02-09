@@ -200,6 +200,7 @@ export async function updateAccessStats(id: string): Promise<void> {
 
 /**
  * 删除 Memory
+ * 注：memories 表使用 expires_at 过期机制，物理删除用于清理
  */
 export async function deleteById(id: string): Promise<boolean> {
   const result = await sql`
@@ -211,6 +212,7 @@ export async function deleteById(id: string): Promise<boolean> {
 
 /**
  * 批量删除过期记忆
+ * 注：清理已过期的记忆记录（expires_at < NOW()）
  */
 export async function deleteExpired(orgId: string): Promise<number> {
   const result = await sql`

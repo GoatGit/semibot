@@ -111,7 +111,7 @@ export async function create(data: CreateMcpServerData): Promise<McpServerRow> {
  */
 export async function findById(id: string): Promise<McpServerRow | null> {
   const result = await sql`
-    SELECT * FROM mcp_servers WHERE id = ${id}
+    SELECT * FROM mcp_servers WHERE id = ${id} AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -126,7 +126,7 @@ export async function findById(id: string): Promise<McpServerRow | null> {
  */
 export async function findByIdAndOrg(id: string, orgId: string): Promise<McpServerRow | null> {
   const result = await sql`
-    SELECT * FROM mcp_servers WHERE id = ${id} AND org_id = ${orgId}
+    SELECT * FROM mcp_servers WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -232,11 +232,14 @@ export async function update(id: string, orgId: string, data: UpdateMcpServerDat
 /**
  * 软删除 MCP Server
  */
-export async function softDelete(id: string, orgId: string): Promise<boolean> {
+export async function softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
   const result = await sql`
     UPDATE mcp_servers
-    SET is_active = false, updated_at = NOW()
-    WHERE id = ${id} AND org_id = ${orgId}
+    SET deleted_at = NOW(),
+        deleted_by = ${deletedBy ?? null},
+        is_active = false,
+        updated_at = NOW()
+    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
     RETURNING id
   `
 

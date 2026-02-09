@@ -303,7 +303,26 @@ export async function update(id: string, data: UpdateSkillPackageData): Promise<
 }
 
 /**
+ * 软删除技能包（设置 status = 'deprecated'）
+ * 注：skill_packages 表使用 status 标记而非 deleted_at
+ */
+export async function softDelete(id: string, reason?: string): Promise<boolean> {
+  const result = await sql`
+    UPDATE skill_packages
+    SET status = 'deprecated',
+        deprecated_at = NOW(),
+        deprecated_reason = ${reason ?? null},
+        updated_at = NOW()
+    WHERE id = ${id} AND status != 'deprecated'
+    RETURNING id
+  `
+
+  return result.length > 0
+}
+
+/**
  * 删除技能包
+ * @deprecated 使用 softDelete 代替，以保留数据审计
  */
 export async function remove(id: string): Promise<boolean> {
   const result = await sql`

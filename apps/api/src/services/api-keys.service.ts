@@ -9,7 +9,7 @@ import bcrypt from 'bcryptjs'
 import { sql } from '../lib/db'
 import { createError } from '../middleware/errorHandler'
 import { apiKeysLogger as logger } from '../lib/logger'
-import { API_KEY_PREFIX, API_KEY_LENGTH_BYTES, BCRYPT_ROUNDS } from '../constants/config'
+import { API_KEY_PREFIX, API_KEY_LENGTH_BYTES, BCRYPT_ROUNDS, API_KEY_PREFIX_DISPLAY_LENGTH } from '../constants/config'
 import { RESOURCE_NOT_FOUND, AUTH_PERMISSION_DENIED } from '../constants/errorCodes'
 
 // ═══════════════════════════════════════════════════════════════
@@ -61,7 +61,7 @@ export async function createApiKey(
   // 生成随机 Key
   const keyBytes = crypto.randomBytes(API_KEY_LENGTH_BYTES)
   const key = `${API_KEY_PREFIX}${keyBytes.toString('base64url')}`
-  const keyPrefix = key.slice(0, 10) // 保留前10字符作为前缀
+  const keyPrefix = key.slice(0, API_KEY_PREFIX_DISPLAY_LENGTH) // 保留前N字符作为前缀
   const keyHash = await bcrypt.hash(key, BCRYPT_ROUNDS)
 
   const permissions = input.permissions ?? ['*']
@@ -185,7 +185,7 @@ export async function validateApiKey(key: string): Promise<ValidatedApiKey | nul
   }
 
   // 提取前缀用于查询
-  const searchPrefix = key.slice(0, 10)
+  const searchPrefix = key.slice(0, API_KEY_PREFIX_DISPLAY_LENGTH)
 
   // 查询可能匹配的 API Keys
   const result = await sql`

@@ -81,7 +81,7 @@ export async function create(data: CreateSessionData): Promise<SessionRow> {
  */
 export async function findById(id: string): Promise<SessionRow | null> {
   const result = await sql`
-    SELECT * FROM sessions WHERE id = ${id}
+    SELECT * FROM sessions WHERE id = ${id} AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -96,7 +96,7 @@ export async function findById(id: string): Promise<SessionRow | null> {
  */
 export async function findByIdAndOrg(id: string, orgId: string): Promise<SessionRow | null> {
   const result = await sql`
-    SELECT * FROM sessions WHERE id = ${id} AND org_id = ${orgId}
+    SELECT * FROM sessions WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -200,12 +200,16 @@ export async function updateTitle(
 }
 
 /**
- * 删除 Session
+ * 软删除 Session
  */
-export async function remove(id: string, orgId: string): Promise<boolean> {
+export async function softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
   const result = await sql`
-    DELETE FROM sessions
-    WHERE id = ${id} AND org_id = ${orgId}
+    UPDATE sessions
+    SET deleted_at = NOW(),
+        deleted_by = ${deletedBy ?? null},
+        status = 'completed',
+        ended_at = COALESCE(ended_at, NOW())
+    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
     RETURNING id
   `
 

@@ -9,6 +9,9 @@ import { z } from 'zod'
 import * as apiKeysService from '../../services/api-keys.service'
 import { authenticate, type AuthRequest } from '../../middleware/auth'
 import { ERROR_HTTP_STATUS, ERROR_MESSAGES, VALIDATION_FAILED } from '../../constants/errorCodes'
+import { createLogger } from '../../lib/logger'
+
+const apiKeysLogger = createLogger('api-keys')
 
 const router: Router = Router()
 
@@ -39,7 +42,7 @@ function handleError(res: Response, error: unknown): void {
     return
   }
 
-  console.error('[ApiKeys] 未预期的错误:', error)
+  apiKeysLogger.error('未预期的错误', error as Error)
   res.status(500).json({
     success: false,
     error: { code: 'INTERNAL_ERROR', message: '服务内部错误' },

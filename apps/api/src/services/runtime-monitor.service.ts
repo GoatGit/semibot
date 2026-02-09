@@ -12,6 +12,9 @@ import {
   RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER,
   RUNTIME_MONITOR_LATENCY_THRESHOLD_MULTIPLIER,
 } from '../constants/config'
+import { createLogger } from '../lib/logger'
+
+const runtimeMonitorLogger = createLogger('runtime-monitor')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型���义
@@ -57,10 +60,11 @@ class RuntimeMonitorService {
     // 限制记录数量，删除所有超出限制的记录
     if (this.records.length > this.maxRecords) {
       const excess = this.records.length - this.maxRecords
-      console.warn(
-        `[RuntimeMonitor] 记录数超出限制，删除最旧的 ${excess} 条记录 ` +
-        `(当前: ${this.records.length}, 限制: ${this.maxRecords})`
-      )
+      runtimeMonitorLogger.warn('记录数超出限制，删除最旧的记录', {
+        excess,
+        current: this.records.length,
+        limit: this.maxRecords,
+      })
       this.records.splice(0, excess)
     }
 
@@ -122,9 +126,10 @@ class RuntimeMonitorService {
 
     // 需要至少 10 个样本才能触发回退
     if (metrics.total < RUNTIME_MONITOR_MIN_SAMPLES) {
-      console.debug(
-        `[RuntimeMonitor] 样本数不足，跳过回退检查 (当前: ${metrics.total}, 最小: ${RUNTIME_MONITOR_MIN_SAMPLES})`
-      )
+      runtimeMonitorLogger.debug('样本数不足，跳过回退检查', {
+        current: metrics.total,
+        minSamples: RUNTIME_MONITOR_MIN_SAMPLES,
+      })
       return
     }
 
@@ -156,9 +161,10 @@ class RuntimeMonitorService {
     // 如果指标恢复正常，禁用回退
     const recoveryThreshold = CHAT_RUNTIME_ERROR_RATE_THRESHOLD * RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER
     if (this.fallbackEnabled && metrics.errorRate < recoveryThreshold) {
-      console.info(
-        `[RuntimeMonitor] 指标恢复正常，准备禁用自动回退 (错误率: ${(metrics.errorRate * 100).toFixed(2)}% < 恢复阈值: ${(recoveryThreshold * 100).toFixed(2)}%)`
-      )
+      runtimeMonitorLogger.info('指标恢复正常，准备禁用自动回退', {
+        errorRate: (metrics.errorRate * 100).toFixed(2) + '%',
+        recoveryThreshold: (recoveryThreshold * 100).toFixed(2) + '%',
+      })
       this.disableFallback()
     }
   }
@@ -170,7 +176,7 @@ class RuntimeMonitorService {
     if (!this.fallbackEnabled) {
       this.fallbackEnabled = true
       this.fallbackReason = reason
-      console.warn(`[RuntimeMonitor] 触发自动回退 - 原因: ${reason}`)
+      runtimeMonitorLogger.warn('触发自动回退', { reason })
     }
   }
 
@@ -181,7 +187,7 @@ class RuntimeMonitorService {
     if (this.fallbackEnabled) {
       this.fallbackEnabled = false
       this.fallbackReason = ''
-      console.info('[RuntimeMonitor] 指标恢复正常，禁用自动回退')
+      runtimeMonitorLogger.info('指标恢复正常，禁用自动回退')
     }
   }
 
@@ -205,7 +211,7 @@ class RuntimeMonitorService {
   resetFallback(): void {
     this.fallbackEnabled = false
     this.fallbackReason = ''
-    console.info('[RuntimeMonitor] 手动重置回退状态')
+    runtimeMonitorLogger.info('手动重置回退状态')
   }
 
   /**

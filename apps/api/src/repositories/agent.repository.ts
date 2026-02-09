@@ -98,10 +98,11 @@ export async function create(data: CreateAgentData): Promise<AgentRow> {
 
 /**
  * 根据 ID 获取 Agent
+ * @deprecated 使用 findByIdAndOrg 代替，以确保多租户隔离
  */
 export async function findById(id: string): Promise<AgentRow | null> {
   const result = await sql`
-    SELECT * FROM agents WHERE id = ${id}
+    SELECT * FROM agents WHERE id = ${id} AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -115,29 +116,15 @@ export async function findById(id: string): Promise<AgentRow | null> {
  * 根据 ID 和组织 ID 获取 Agent
  */
 export async function findByIdAndOrg(id: string, orgId: string): Promise<AgentRow | null> {
-  console.log('[AgentRepo] findByIdAndOrg - id:', id, 'orgId:', orgId)
   const result = await sql`
-    SELECT * FROM agents WHERE id = ${id} AND org_id = ${orgId}
+    SELECT * FROM agents WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
   `
-  console.log('[AgentRepo] findByIdAndOrg result length:', result.length)
 
   if (result.length === 0) {
     return null
   }
 
   return result[0] as unknown as AgentRow
-}
-
-/**
- * 调试：仅按 org_id 查询
- */
-export async function debugFindByOrgId(orgId: string): Promise<AgentRow[]> {
-  console.log('[AgentRepo] debugFindByOrgId - orgId:', orgId)
-  const result = await sql`
-    SELECT * FROM agents WHERE org_id = ${orgId}
-  `
-  console.log('[AgentRepo] debugFindByOrgId result length:', result.length)
-  return result as unknown as AgentRow[]
 }
 
 /**
@@ -148,8 +135,6 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
-  console.log('[AgentRepo] findByOrg called with orgId:', orgId, 'isActive:', isActive, 'search:', search)
-
   // 根据条件选择不同的查询
   let countResult
   let dataResult
@@ -158,12 +143,12 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
     const searchPattern = `%${search}%`
     countResult = await sql`
       SELECT COUNT(*) as total FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive}
+      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
     `
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive}
+      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
       ORDER BY updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
@@ -172,12 +157,12 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
     const searchPattern = `%${search}%`
     countResult = await sql`
       SELECT COUNT(*) as total FROM agents
-      WHERE org_id = ${orgId}
+      WHERE org_id = ${orgId} AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
     `
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId}
+      WHERE org_id = ${orgId} AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
       ORDER BY updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
@@ -185,33 +170,28 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
   } else if (isActive !== undefined) {
     countResult = await sql`
       SELECT COUNT(*) as total FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive}
+      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
     `
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive}
+      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
       ORDER BY updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
     `
   } else {
-    console.log('[AgentRepo] Executing basic query for orgId:', orgId)
     countResult = await sql`
-      SELECT COUNT(*) as total FROM agents WHERE org_id = ${orgId}
+      SELECT COUNT(*) as total FROM agents WHERE org_id = ${orgId} AND deleted_at IS NULL
     `
-    console.log('[AgentRepo] Count result:', countResult)
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId}
+      WHERE org_id = ${orgId} AND deleted_at IS NULL
       ORDER BY updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
     `
-    console.log('[AgentRepo] Data result length:', dataResult.length)
   }
 
   const total = parseInt((countResult[0] as { total: string }).total, 10)
   const data = dataResult as unknown as AgentRow[]
-
-  console.log('[AgentRepo] findByOrg result - total:', total, 'data length:', data.length)
 
   return {
     data,
@@ -229,7 +209,7 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
  */
 export async function countByOrg(orgId: string): Promise<number> {
   const result = await sql`
-    SELECT COUNT(*) as count FROM agents WHERE org_id = ${orgId}
+    SELECT COUNT(*) as count FROM agents WHERE org_id = ${orgId} AND deleted_at IS NULL
   `
 
   return parseInt((result[0] as { count: string }).count, 10)
@@ -344,11 +324,14 @@ export async function update(id: string, orgId: string, data: UpdateAgentData): 
 /**
  * 软删除 Agent
  */
-export async function softDelete(id: string, orgId: string): Promise<boolean> {
+export async function softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
   const result = await sql`
     UPDATE agents
-    SET is_active = false, updated_at = NOW()
-    WHERE id = ${id} AND org_id = ${orgId}
+    SET deleted_at = NOW(),
+        deleted_by = ${deletedBy ?? null},
+        is_active = false,
+        updated_at = NOW()
+    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
     RETURNING id
   `
 

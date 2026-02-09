@@ -8,7 +8,13 @@ import Redis from 'ioredis'
 import {
   REDIS_URL,
   REDIS_COMMAND_TIMEOUT_MS,
+  REDIS_MAX_RETRIES,
+  REDIS_RETRY_DELAY_BASE_MS,
+  REDIS_RETRY_DELAY_MAX_MS,
 } from '../constants/config'
+import { createLogger } from './logger'
+
+const redisLogger = createLogger('redis')
 
 // ═══════════════════════════════════════════════════════════════
 // Redis 客户端实例
@@ -23,14 +29,14 @@ let isConnected = false
 export function getRedisClient(): Redis {
   if (!redisClient) {
     redisClient = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: REDIS_MAX_RETRIES,
       retryStrategy: (times) => {
-        if (times > 3) {
-          console.error('[Redis] 重试次数超限，停止重试')
+        if (times > REDIS_MAX_RETRIES) {
+          redisLogger.error('重试次数超限，停止重试', undefined, { maxRetries: REDIS_MAX_RETRIES, attempt: times })
           return null
         }
-        const delay = Math.min(times * 200, 2000)
-        console.warn(`[Redis] 连接失败，${delay}ms 后重试 (第 ${times} 次)`)
+        const delay = Math.min(times * REDIS_RETRY_DELAY_BASE_MS, REDIS_RETRY_DELAY_MAX_MS)
+        redisLogger.warn('连接失败，即将重试', { delay, attempt: times })
         return delay
       },
       commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
@@ -39,16 +45,16 @@ export function getRedisClient(): Redis {
 
     redisClient.on('connect', () => {
       isConnected = true
-      console.log('[Redis] 连接成功')
+      redisLogger.info('连接成功')
     })
 
     redisClient.on('error', (error) => {
-      console.error('[Redis] 连接错误:', error.message)
+      redisLogger.error('连接错误', error)
       isConnected = false
     })
 
     redisClient.on('close', () => {
-      console.log('[Redis] 连接已关闭')
+      redisLogger.info('连接已关闭')
       isConnected = false
     })
   }
@@ -72,7 +78,7 @@ export async function connectRedis(): Promise<boolean> {
     await client.connect()
     return true
   } catch (error) {
-    console.error('[Redis] 连接失败:', error)
+    redisLogger.error('连接失败', error as Error)
     return false
   }
 }
@@ -85,7 +91,7 @@ export async function disconnectRedis(): Promise<void> {
     await redisClient.quit()
     redisClient = null
     isConnected = false
-    console.log('[Redis] 已断开连接')
+    redisLogger.info('已断开连接')
   }
 }
 
@@ -98,7 +104,7 @@ export async function pingRedis(): Promise<boolean> {
     const result = await client.ping()
     return result === 'PONG'
   } catch (error) {
-    console.error('[Redis] Ping 失败:', error)
+    redisLogger.error('Ping 失败', error as Error)
     return false
   }
 }
@@ -182,11 +188,11 @@ export async function createConsumerGroup(
   const client = getRedisClient()
   try {
     await client.xgroup('CREATE', stream, group, '0', 'MKSTREAM')
-    console.log(`[Redis] 消费者组已创建: ${group}`)
+    redisLogger.info('消费者组已创建', { group })
   } catch (error) {
     // 如果组已存在，忽略错误
     if ((error as Error).message?.includes('BUSYGROUP')) {
-      console.log(`[Redis] 消费者组已存在: ${group}`)
+      redisLogger.debug('消费者组已存在', { group })
     } else {
       throw error
     }

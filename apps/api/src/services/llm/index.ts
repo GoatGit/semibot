@@ -128,12 +128,15 @@ export interface LLMProvider {
 
 const providers = new Map<string, LLMProvider>()
 
+import { createLogger } from '../../lib/logger'
+const llmLogger = createLogger('llm')
+
 /**
  * 注册 Provider
  */
 export function registerProvider(provider: LLMProvider): void {
   providers.set(provider.name, provider)
-  console.log(`[LLM] Provider 已注册: ${provider.name}`)
+  llmLogger.debug('Provider 已注册', { name: provider.name })
 }
 
 /**

@@ -10,6 +10,9 @@ import * as skillDefinitionRepo from '../repositories/skill-definition.repositor
 import * as skillPackageRepo from '../repositories/skill-package.repository'
 import * as skillInstallLogRepo from '../repositories/skill-install-log.repository'
 import * as skillInstallService from './skill-install.service'
+import { createLogger } from '../lib/logger'
+
+const skillRetryLogger = createLogger('skill-retry')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -142,7 +145,6 @@ export async function rollbackToVersion(
     operation: 'rollback',
     status: 'in_progress',
     startedAt: new Date(),
-    message: reason || `回滚到版本 ${targetVersion}`,
   })
 
   try {
@@ -309,7 +311,7 @@ export async function cleanupAllFailedInstalls(skillDefinitionId: string): Promi
       await cleanupFailedInstall(skillDefinitionId, pkg.version)
       cleanedCount++
     } catch (error) {
-      console.error(`清理失败的包 ${pkg.version} 时出错:`, error)
+      skillRetryLogger.error('清理失败的包时出错', error as Error, { version: pkg.version })
     }
   }
 
@@ -365,7 +367,7 @@ export async function cleanupOldVersions(
         await skillPackageRepo.remove(pkg.id)
         deletedCount++
       } catch (error) {
-        console.error(`删除旧版本 ${pkg.version} 时出错:`, error)
+        skillRetryLogger.error('删除旧版本时出错', error as Error, { version: pkg.version })
       }
     }
   }

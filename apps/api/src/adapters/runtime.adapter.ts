@@ -12,6 +12,9 @@ import { RUNTIME_SERVICE_URL, RUNTIME_EXECUTION_TIMEOUT_MS, MCP_CONNECTION_TIMEO
 import { SSE_STREAM_ERROR } from '../constants/errorCodes'
 import type { SSEConnection } from '../services/chat.service'
 import { sendSSEEvent, sendAgent2UIMessage } from '../services/chat.service'
+import { createLogger } from '../lib/logger'
+
+const runtimeLogger = createLogger('runtime-adapter')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -114,7 +117,7 @@ export class RuntimeAdapter {
     let errorMessage = ''
 
     try {
-      console.log(`[RuntimeAdapter] 开始执行 - Session: ${input.session_id}, Agent: ${input.agent_id}`)
+      runtimeLogger.info('开始执行', { sessionId: input.session_id, agentId: input.agent_id })
 
       // 调用 Runtime API (SSE 流式)
       const response = await this.client.post('/api/v1/execute/stream', input, {
@@ -145,7 +148,7 @@ export class RuntimeAdapter {
               fullResponse += text
             })
           } catch (err) {
-            console.error('[RuntimeAdapter] 解析事件失败:', err, '原始数据:', line)
+            runtimeLogger.error('解析事件失败', err as Error, { rawData: line })
             sendSSEEvent(connection, 'error', {
               code: SSE_STREAM_ERROR,
               message: 'SSE 流解析失败，请稍后重试',
@@ -166,12 +169,12 @@ export class RuntimeAdapter {
               })
             }
           } catch (err) {
-            console.error('[RuntimeAdapter] 解析最后一行失败:', err, '原始数据:', buffer)
+            runtimeLogger.error('解析最后一行失败', err as Error, { rawData: buffer })
           }
         }
 
         const latencyMs = Date.now() - startTime
-        console.log(`[RuntimeAdapter] 执行完成 - Session: ${input.session_id}, 耗时: ${latencyMs}ms`)
+        runtimeLogger.info('执行完成', { sessionId: input.session_id, latencyMs })
 
         if (onComplete) {
           onComplete({
@@ -189,7 +192,7 @@ export class RuntimeAdapter {
       stream.on('error', (err: Error) => {
         hasError = true
         errorMessage = err.message
-        console.error('[RuntimeAdapter] 流错误:', err)
+        runtimeLogger.error('流错误', err)
 
         sendSSEEvent(connection, 'error', {
           code: SSE_STREAM_ERROR,
@@ -205,7 +208,7 @@ export class RuntimeAdapter {
       })
     } catch (error) {
       const latencyMs = Date.now() - startTime
-      console.error('[RuntimeAdapter] 执行失败:', error)
+      runtimeLogger.error('执行失败', error as Error, { latencyMs })
 
       const errorMsg = error instanceof Error ? error.message : '未知错误'
 
@@ -293,7 +296,7 @@ export class RuntimeAdapter {
         break
 
       default:
-        console.warn(`[RuntimeAdapter] 未知事件类型: ${event.event}`)
+        runtimeLogger.warn('未知事件类型', { eventType: event.event })
     }
   }
 
@@ -458,12 +461,9 @@ export class RuntimeAdapter {
       return response.status === 200
     } catch (error) {
       if (error instanceof Error && error.message.includes('timeout')) {
-        console.warn(
-          `[RuntimeAdapter] 健康检查超时 (超时时间: ${MCP_CONNECTION_TIMEOUT_MS}ms)`,
-          error
-        )
+        runtimeLogger.warn('健康检查超时', { timeoutMs: MCP_CONNECTION_TIMEOUT_MS })
       } else {
-        console.error('[RuntimeAdapter] 健康检查失败:', error)
+        runtimeLogger.error('健康检查失败', error as Error)
       }
       return false
     }
@@ -494,7 +494,7 @@ export async function isRuntimeAvailable(): Promise<boolean> {
     const adapter = getRuntimeAdapter()
     return await adapter.healthCheck()
   } catch (error) {
-    console.error('[RuntimeAdapter] 可用性检查失败:', error)
+    runtimeLogger.error('可用性检查失败', error as Error)
     return false
   }
 }

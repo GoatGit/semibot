@@ -86,10 +86,28 @@ export async function create(data: CreateMessageData): Promise<MessageRow> {
 
 /**
  * 根据 ID 获取 Message
+ * @deprecated 使用 findByIdAndOrg 代替，以确保多租户隔离
  */
 export async function findById(id: string): Promise<MessageRow | null> {
   const result = await sql`
-    SELECT * FROM messages WHERE id = ${id}
+    SELECT * FROM messages WHERE id = ${id} AND deleted_at IS NULL
+  `
+
+  if (result.length === 0) {
+    return null
+  }
+
+  return result[0] as unknown as MessageRow
+}
+
+/**
+ * 根据 ID 和组织 ID 获取 Message（通过 session 关联验证多租户）
+ */
+export async function findByIdAndOrg(id: string, orgId: string): Promise<MessageRow | null> {
+  const result = await sql`
+    SELECT m.* FROM messages m
+    JOIN sessions s ON m.session_id = s.id
+    WHERE m.id = ${id} AND s.org_id = ${orgId} AND m.deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -105,7 +123,7 @@ export async function findById(id: string): Promise<MessageRow | null> {
 export async function findBySessionId(sessionId: string): Promise<MessageRow[]> {
   const result = await sql`
     SELECT * FROM messages
-    WHERE session_id = ${sessionId}
+    WHERE session_id = ${sessionId} AND deleted_at IS NULL
     ORDER BY created_at ASC
   `
 
@@ -117,7 +135,7 @@ export async function findBySessionId(sessionId: string): Promise<MessageRow[]> 
  */
 export async function countBySessionId(sessionId: string): Promise<number> {
   const result = await sql`
-    SELECT COUNT(*) as count FROM messages WHERE session_id = ${sessionId}
+    SELECT COUNT(*) as count FROM messages WHERE session_id = ${sessionId} AND deleted_at IS NULL
   `
 
   return parseInt((result[0] as { count: string }).count, 10)
@@ -153,12 +171,14 @@ export async function update(id: string, data: UpdateMessageData): Promise<Messa
 }
 
 /**
- * 删除 Session 的所有 Messages
+ * 软删除 Session 的所有 Messages
  */
-export async function deleteBySessionId(sessionId: string): Promise<number> {
+export async function softDeleteBySessionId(sessionId: string, deletedBy?: string): Promise<number> {
   const result = await sql`
-    DELETE FROM messages
-    WHERE session_id = ${sessionId}
+    UPDATE messages
+    SET deleted_at = NOW(),
+        deleted_by = ${deletedBy ?? null}
+    WHERE session_id = ${sessionId} AND deleted_at IS NULL
     RETURNING id
   `
 

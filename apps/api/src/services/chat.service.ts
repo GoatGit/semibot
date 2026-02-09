@@ -22,6 +22,8 @@ import {
   MAX_SSE_CONNECTIONS_PER_USER,
   CHAT_EXECUTION_MODE,
   CHAT_RUNTIME_ENABLED_ORGS,
+  MAX_HISTORY_MESSAGES,
+  MAX_SESSION_TITLE_LENGTH,
   type ChatExecutionMode,
 } from '../constants/config'
 import {
@@ -32,6 +34,7 @@ import {
 } from '../adapters/runtime.adapter'
 import { getRuntimeMonitor } from './runtime-monitor.service'
 import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/shared-types'
+import { chatLogger } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -72,9 +75,11 @@ export function createSSEConnection(
   ).length
 
   if (userConnections >= MAX_SSE_CONNECTIONS_PER_USER) {
-    console.warn(
-      `[Chat] 用户连接数已达上限 (用户: ${userId}, 当前: ${userConnections}, 限制: ${MAX_SSE_CONNECTIONS_PER_USER})`
-    )
+    chatLogger.warn('用户连接数已达上限', {
+      userId,
+      current: userConnections,
+      limit: MAX_SSE_CONNECTIONS_PER_USER,
+    })
     throw createError(SSE_CONNECTION_LIMIT, 'SSE 连接数已达上限，请关闭其他连接后重试')
   }
 
@@ -106,7 +111,12 @@ export function createSSEConnection(
 
   sseConnections.set(connection.id, connection)
 
-  console.log(`[Chat] SSE 连接已创建 - ID: ${connection.id}, Session: ${sessionId}, 用户连接数: ${userConnections + 1}/${MAX_SSE_CONNECTIONS_PER_USER}`)
+  chatLogger.info('SSE 连接已创建', {
+    connectionId: connection.id,
+    sessionId,
+    userConnections: userConnections + 1,
+    limit: MAX_SSE_CONNECTIONS_PER_USER,
+  })
 
   return connection
 }
@@ -129,7 +139,7 @@ export function closeSSEConnection(connectionId: string): void {
 
   sseConnections.delete(connectionId)
 
-  console.log(`[Chat] SSE 连接已关闭 - ID: ${connectionId}`)
+  chatLogger.info('SSE 连接已关闭', { connectionId })
 }
 
 /**
@@ -149,7 +159,7 @@ export function sendSSEEvent(
     connection.res.write(`data: ${JSON.stringify(data)}\n\n`)
     return true
   } catch (error) {
-    console.error(`[Chat] SSE 发送失败 - ID: ${connection.id}`, error)
+    chatLogger.error('SSE 发送失败', error as Error, { connectionId: connection.id })
     closeSSEConnection(connection.id)
     return false
   }
@@ -187,7 +197,7 @@ function determineExecutionMode(orgId: string): ChatExecutionMode {
 
   // 检查是否触发自动回退
   if (monitor.shouldFallback()) {
-    console.warn(`[Chat] 自动回退到 direct 模式 - 原因: ${monitor.getFallbackReason()}`)
+    chatLogger.warn('自动回退到 direct 模式', { reason: monitor.getFallbackReason() })
     return 'direct_llm'
   }
 
@@ -212,9 +222,10 @@ export async function handleChat(
 ): Promise<void> {
   // 验证消息长度
   if (input.message.length > MAX_MESSAGE_LENGTH) {
-    console.warn(
-      `[Chat] 消息长度超出限制 - 长度: ${input.message.length}, 限制: ${MAX_MESSAGE_LENGTH}`
-    )
+    chatLogger.warn('消息长度超出限制', {
+      length: input.message.length,
+      limit: MAX_MESSAGE_LENGTH,
+    })
     throw createError(VALIDATION_MESSAGE_TOO_LONG)
   }
 
@@ -227,7 +238,7 @@ export async function handleChat(
   // 决定执行模式
   const executionMode = determineExecutionMode(orgId)
 
-  console.log(`[Chat] 执行模式: ${executionMode} - Session: ${sessionId}, Org: ${orgId}`)
+  chatLogger.info('执行模式已确定', { executionMode, sessionId, orgId })
 
   // 根据模式选择执行路径
   if (executionMode === 'runtime_orchestrator') {
@@ -258,7 +269,7 @@ async function handleChatWithRuntime(
     // 检查 Runtime 是否可用
     const runtimeReady = await isRuntimeAvailable()
     if (!runtimeReady) {
-      console.warn('[Chat] Runtime 不可用，回退到 direct 模式')
+      chatLogger.warn('Runtime 不可用，回退到 direct 模式')
 
       // 记录失败
       monitor.recordExecution({
@@ -286,10 +297,12 @@ async function handleChatWithRuntime(
     const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
 
     // 截断历史消息（保留最近 20 条）
-    if (historyMessages.length > 20) {
-      console.debug(
-        `[Chat] 历史消息截断 (总数: ${historyMessages.length}, 保留: 20, 丢弃: ${historyMessages.length - 20})`
-      )
+    if (historyMessages.length > MAX_HISTORY_MESSAGES) {
+      chatLogger.debug('历史消息截断', {
+        total: historyMessages.length,
+        kept: MAX_HISTORY_MESSAGES,
+        dropped: historyMessages.length - MAX_HISTORY_MESSAGES,
+      })
     }
 
     // 构建 Runtime 输入
@@ -298,7 +311,7 @@ async function handleChatWithRuntime(
       agent_id: agent.id,
       org_id: orgId,
       user_message: input.message,
-      history_messages: historyMessages.slice(-20).map((msg) => ({
+      history_messages: historyMessages.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.role as 'user' | 'assistant' | 'system',
         content: msg.content,
       })),
@@ -352,7 +365,7 @@ async function handleChatWithRuntime(
           executionMode: 'runtime_orchestrator',
         })
       } else {
-        console.error('[Chat] Runtime 执行失败，错误:', result.error)
+        chatLogger.error('Runtime 执行失败', undefined, { error: result.error })
 
         // 记录失败
         monitor.recordExecution({
@@ -373,7 +386,7 @@ async function handleChatWithRuntime(
     })
   } catch (error) {
     const latencyMs = Date.now() - startTime
-    console.error(`[Chat] Runtime 模式处理失败 - Session: ${sessionId}`, error)
+    chatLogger.error('Runtime 模式处理失败', error as Error, { sessionId, latencyMs })
 
     // 记录失败
     monitor.recordExecution({
@@ -446,10 +459,12 @@ async function handleChatDirect(
     const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
 
     // 截断历史消息（保留最近 20 条）
-    if (historyMessages.length > 20) {
-      console.debug(
-        `[Chat] 历史消息截断 (总数: ${historyMessages.length}, 保留: 20, 丢弃: ${historyMessages.length - 20})`
-      )
+    if (historyMessages.length > MAX_HISTORY_MESSAGES) {
+      chatLogger.debug('历史消息截断', {
+        total: historyMessages.length,
+        kept: MAX_HISTORY_MESSAGES,
+        dropped: historyMessages.length - MAX_HISTORY_MESSAGES,
+      })
     }
 
     // 构建 LLM 消息
@@ -458,7 +473,7 @@ async function handleChatDirect(
         role: 'system',
         content: agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`,
       },
-      ...historyMessages.slice(-20).map((msg) => ({
+      ...historyMessages.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.role as 'user' | 'assistant',
         content: msg.content,
       })),
@@ -475,7 +490,7 @@ async function handleChatDirect(
 
     // 检查 LLM 服务是否可用
     if (!llmService.isLLMAvailable()) {
-      console.warn('[Chat] LLM 服务不可用，终止本次请求')
+      chatLogger.warn('LLM 服务不可用，终止本次请求')
 
       // 记录失败
       monitor.recordExecution({
@@ -582,7 +597,7 @@ async function handleChatDirect(
     })
   } catch (error) {
     const latencyMs = Date.now() - startTime
-    console.error(`[Chat] 处理失败 - Session: ${sessionId}, User: ${userId}, Agent: ${agent.id}`, error)
+    chatLogger.error('处理失败', error as Error, { sessionId, userId, agentId: agent.id, latencyMs })
 
     // 记录失败
     monitor.recordExecution({
@@ -622,7 +637,7 @@ export async function startNewChat(
   // 创建会话
   const session = await sessionService.createSession(orgId, userId, {
     agentId,
-    title: input.message.slice(0, 50), // 使用消息前 50 字符作为标题
+    title: input.message.slice(0, MAX_SESSION_TITLE_LENGTH), // 使用消息前 N 字符作为标题
   })
 
   // 处理对话

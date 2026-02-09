@@ -14,6 +14,9 @@ import type {
   LLMStreamChunk,
   ToolCall,
 } from './index'
+import { createLogger } from '../../lib/logger'
+
+const openaiLogger = createLogger('openai')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -135,7 +138,7 @@ export class OpenAIProvider implements LLMProvider {
       })
 
       if (!response.ok) {
-        console.error('[OpenAI] 获取模型列表失败:', response.statusText)
+        openaiLogger.error('获取模型列表失败', undefined, { status: response.statusText })
         return (this.modelsCache ?? []).map((model) => ({ id: model }))
       }
 
@@ -154,10 +157,10 @@ export class OpenAIProvider implements LLMProvider {
       this.modelsCacheTime = Date.now()
       this.models = this.modelsCache
 
-      console.log(`[OpenAI] 获取到 ${chatModels.length} 个模型`)
+      openaiLogger.info('获取模型列表成功', { count: chatModels.length })
       return chatModels
     } catch (error) {
-      console.error('[OpenAI] 获取模型列表出错:', error)
+      openaiLogger.error('获取模型列表出错', error as Error)
       return (this.modelsCache ?? []).map((model) => ({ id: model }))
     }
   }

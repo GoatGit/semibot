@@ -13,6 +13,7 @@ import {
 } from '../constants/errorCodes'
 import { MCP_CONNECTION_TIMEOUT_MS } from '../constants/config'
 import * as mcpRepository from '../repositories/mcp.repository'
+import { mcpLogger } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -143,9 +144,11 @@ export async function createMcpServer(
   const count = await mcpRepository.countByOrg(orgId)
 
   if (count >= MAX_MCP_SERVERS_PER_ORG) {
-    console.warn(
-      `[McpService] MCP Server 数量已达上限 - 组织: ${orgId}, 当前: ${count}, 限制: ${MAX_MCP_SERVERS_PER_ORG}`
-    )
+    mcpLogger.warn('MCP Server 数量已达上限', {
+      orgId,
+      current: count,
+      limit: MAX_MCP_SERVERS_PER_ORG,
+    })
     throw createError(MCP_SERVER_LIMIT_EXCEEDED)
   }
 
@@ -311,7 +314,7 @@ async function testStdioConnection(
 
     const timeout = setTimeout(() => {
       child.kill()
-      console.warn(`[McpService] stdio 连接超时 (限制: ${MCP_CONNECTION_TIMEOUT_MS}ms)`)
+      mcpLogger.warn('stdio 连接超时', { timeoutMs: MCP_CONNECTION_TIMEOUT_MS })
       reject(new Error('连接超时'))
     }, MCP_CONNECTION_TIMEOUT_MS)
 
@@ -377,14 +380,14 @@ async function testStdioConnection(
 
     child.on('error', (error) => {
       clearTimeout(timeout)
-      console.error('[McpService] stdio 进程错误:', error.message)
+      mcpLogger.error('stdio 进程错误', error)
       reject(new Error(`进程启动失败: ${error.message}`))
     })
 
     child.on('close', (code) => {
       clearTimeout(timeout)
       if (!initializeDone) {
-        console.error('[McpService] stdio 进程退出，未完成初始化:', stderr)
+        mcpLogger.error('stdio 进程退出，未完成初始化', undefined, { stderr, code })
         reject(new Error(`进程异常退出 (code: ${code})`))
       }
     })
@@ -470,7 +473,7 @@ async function testHttpConnection(
   } catch (error) {
     clearTimeout(timeout)
     if (error instanceof Error && error.name === 'AbortError') {
-      console.warn(`[McpService] HTTP 连接超时 (限制: ${MCP_CONNECTION_TIMEOUT_MS}ms)`)
+      mcpLogger.warn('HTTP 连接超时', { timeoutMs: MCP_CONNECTION_TIMEOUT_MS })
       throw new Error('连接超时')
     }
     throw error
@@ -491,7 +494,7 @@ async function testWebSocketConnection(
   // WebSocket 实现需要 ws 库，这里使用简化的 HTTP 回退
   // 大多数 MCP Server 同时支持 HTTP 和 WebSocket
   const httpEndpoint = endpoint.replace(/^ws/, 'http')
-  console.log(`[McpService] WebSocket 端点回退到 HTTP: ${httpEndpoint}`)
+  mcpLogger.info('WebSocket 端点回退到 HTTP', { httpEndpoint })
   return testHttpConnection(httpEndpoint, authConfig)
 }
 
@@ -534,9 +537,11 @@ export async function testConnection(
       resources: result.resources,
     })
 
-    console.log(
-      `[McpService] MCP Server 连接成功 - Server: ${serverId}, Tools: ${result.tools.length}, Resources: ${result.resources.length}`
-    )
+    mcpLogger.info('MCP Server 连接成功', {
+      serverId,
+      toolsCount: result.tools.length,
+      resourcesCount: result.resources.length,
+    })
 
     return {
       success: true,
@@ -551,7 +556,7 @@ export async function testConnection(
     })
 
     const errorMessage = error instanceof Error ? error.message : '未知错误'
-    console.error(`[McpService] MCP Server 连接失败 - Server: ${serverId}, Error: ${errorMessage}`)
+    mcpLogger.error('MCP Server 连接失败', error as Error, { serverId })
 
     throw createError(MCP_CONNECTION_FAILED, errorMessage)
   }

@@ -11,6 +11,9 @@ import * as skillDefinitionRepo from '../repositories/skill-definition.repositor
 import * as skillPackageRepo from '../repositories/skill-package.repository'
 import * as skillInstallLogRepo from '../repositories/skill-install-log.repository'
 import { validateSkillPackage, calculateDirectorySHA256 } from '../utils/skill-validator'
+import { createLogger } from '../lib/logger'
+
+const skillInstallLogger = createLogger('skill-install')
 
 // ════════════════════════════════════════════════════════���══════
 // 类型定义
@@ -165,7 +168,7 @@ export async function installSkillPackage(
         }
       }
     } catch (cleanupError) {
-      console.error('清理失败的包时出错:', cleanupError)
+      skillInstallLogger.error('清理失败的包时出错', cleanupError as Error)
     }
 
     throw error

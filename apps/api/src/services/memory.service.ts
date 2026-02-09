@@ -7,6 +7,9 @@
 import { createError } from '../middleware/errorHandler'
 import { RESOURCE_NOT_FOUND } from '../constants/errorCodes'
 import * as memoryRepository from '../repositories/memory.repository'
+import { createLogger } from '../lib/logger'
+
+const memoryLogger = createLogger('memory')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -209,7 +212,7 @@ export async function cleanupExpiredMemories(orgId: string): Promise<number> {
   const count = await memoryRepository.deleteExpired(orgId)
 
   if (count > 0) {
-    console.info(`[MemoryService] 已清理过期记忆 - 组织: ${orgId}, 数量: ${count}`)
+    memoryLogger.info('已清理过期记忆', { orgId, count })
   }
 
   return count

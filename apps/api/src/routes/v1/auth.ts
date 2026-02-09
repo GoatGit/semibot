@@ -10,6 +10,7 @@ import * as authService from '../../services/auth.service'
 import { authenticate, type AuthRequest } from '../../middleware/auth'
 import { authRateLimit } from '../../middleware/rateLimit'
 import { ERROR_HTTP_STATUS, ERROR_MESSAGES, VALIDATION_FAILED } from '../../constants/errorCodes'
+import { authLogger } from '../../lib/logger'
 
 const router: Router = Router()
 
@@ -59,7 +60,7 @@ function handleError(res: Response, error: unknown): void {
     return
   }
 
-  console.error('[Auth] 未预期的错误:', error)
+  authLogger.error('未预期的错误', error as Error)
   res.status(500).json({
     success: false,
     error: { code: 'INTERNAL_ERROR', message: '服务内部错误' },

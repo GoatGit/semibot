@@ -14,6 +14,9 @@ import type {
   ToolCall,
   ToolDefinition,
 } from './index'
+import { createLogger } from '../../lib/logger'
+
+const anthropicLogger = createLogger('anthropic')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -106,7 +109,7 @@ export class AnthropicProvider implements LLMProvider {
       })
 
       if (!response.ok) {
-        console.error('[Anthropic] 获取模型列表失败:', response.statusText)
+        anthropicLogger.error('获取模型列表失败', undefined, { status: response.statusText })
         return (this.modelsCache ?? []).map((model) => ({ id: model }))
       }
 
@@ -123,10 +126,10 @@ export class AnthropicProvider implements LLMProvider {
       this.modelsCacheTime = Date.now()
       this.models = this.modelsCache
 
-      console.log(`[Anthropic] 获取到 ${models.length} 个模型`)
+      anthropicLogger.info('获取模型列表成功', { count: models.length })
       return models
     } catch (error) {
-      console.error('[Anthropic] 获取模型列表出错:', error)
+      anthropicLogger.error('获取模型列表出错', error as Error)
       return (this.modelsCache ?? []).map((model) => ({ id: model }))
     }
   }
