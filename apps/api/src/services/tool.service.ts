@@ -6,6 +6,7 @@
 
 import { createError } from '../middleware/errorHandler'
 import { TOOL_NOT_FOUND, TOOL_LIMIT_EXCEEDED } from '../constants/errorCodes'
+import { MAX_TOOLS_PER_ORG } from '../constants/config'
 import * as toolRepository from '../repositories/tool.repository'
 import { createLogger } from '../lib/logger'
 
@@ -78,12 +79,6 @@ export interface PaginatedResult<T> {
     totalPages: number
   }
 }
-
-// ═══════════════════════════════════════════════════════════════
-// 常量配置
-// ═══════════════════════════════════════════════════════════════
-
-const MAX_TOOLS_PER_ORG = 100
 
 // ═══════════════════════════════════════════════════════════════
 // 辅助函数

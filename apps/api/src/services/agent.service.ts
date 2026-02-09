@@ -11,6 +11,7 @@ import {
   AGENT_LIMIT_EXCEEDED,
   LLM_UNAVAILABLE,
 } from '../constants/errorCodes'
+import { MAX_AGENTS_PER_ORG } from '../constants/config'
 import * as agentRepository from '../repositories/agent.repository'
 import { getAvailableModels } from './llm.service'
 import { createLogger } from '../lib/logger'
@@ -96,8 +97,6 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   retryAttempts: 3,
   fallbackModel: process.env.FALLBACK_LLM_MODEL ?? 'gpt-4o-mini',
 }
-
-const MAX_AGENTS_PER_ORG = 100
 
 // ═══════════════════════════════════════════════════════════════
 // 辅助函数

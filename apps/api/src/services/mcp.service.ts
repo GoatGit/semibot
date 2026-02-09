@@ -11,7 +11,7 @@ import {
   MCP_SERVER_LIMIT_EXCEEDED,
   MCP_CONNECTION_FAILED,
 } from '../constants/errorCodes'
-import { MCP_CONNECTION_TIMEOUT_MS } from '../constants/config'
+import { MCP_CONNECTION_TIMEOUT_MS, MAX_MCP_SERVERS_PER_ORG } from '../constants/config'
 import * as mcpRepository from '../repositories/mcp.repository'
 import { mcpLogger } from '../lib/logger'
 
@@ -93,12 +93,6 @@ export interface PaginatedResult<T> {
     totalPages: number
   }
 }
-
-// ═══════════════════════════════════════════════════════════════
-// 常量配置
-// ═══════════════════════════════════════════════════════════════
-
-const MAX_MCP_SERVERS_PER_ORG = 20
 
 // ═══════════════════════════════════════════════════════════════
 // 辅助函数

@@ -16,6 +16,7 @@ import {
   SKILL_MANIFEST_FETCH_TIMEOUT_MS,
   MAX_SKILL_KEYWORDS,
   MAX_SKILL_NAME_LENGTH,
+  MAX_SKILLS_PER_ORG,
 } from '../constants/config'
 import * as skillRepository from '../repositories/skill.repository'
 import { createLogger } from '../lib/logger'
@@ -139,7 +140,6 @@ export interface PaginatedResult<T> {
 // 常量配置
 // ═══════════════════════════════════════════════════════════════
 
-const MAX_SKILLS_PER_ORG = 50
 const ANTHROPIC_SKILL_ID_PATTERN = /^[a-zA-Z0-9._:/-]{1,120}$/
 
 // ═══════════════════════════════════════════════════════════════

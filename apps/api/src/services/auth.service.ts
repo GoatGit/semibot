@@ -15,6 +15,10 @@ import {
   BCRYPT_ROUNDS,
   JWT_EXPIRES_IN_SECONDS,
   JWT_REFRESH_EXPIRES_IN_SECONDS,
+  PASSWORD_RESET_TTL_SECONDS,
+  PASSWORD_RESET_TOKEN_PREFIX,
+  PASSWORD_RESET_REQUEST_PREFIX,
+  PASSWORD_RESET_REQUEST_TTL_SECONDS,
 } from '../constants/config'
 import {
   AUTH_EMAIL_EXISTS,
@@ -83,10 +87,6 @@ function getJWTSecret(): string {
 }
 
 const JWT_SECRET = getJWTSecret()
-const PASSWORD_RESET_TTL_SECONDS = 15 * 60
-const PASSWORD_RESET_TOKEN_PREFIX = 'auth:password_reset:'
-const PASSWORD_RESET_REQUEST_PREFIX = 'auth:password_reset_request:'
-const PASSWORD_RESET_REQUEST_TTL_SECONDS = 60
 
 /**
  * 生成 URL 友好的 slug

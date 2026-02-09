@@ -9,6 +9,16 @@ import {
   VALIDATION_FAILED,
   ERROR_HTTP_STATUS,
   ERROR_MESSAGES,
+  AUTH_TOKEN_MISSING,
+  AUTH_PERMISSION_DENIED,
+  RESOURCE_NOT_FOUND,
+  AGENT_NOT_FOUND,
+  SESSION_NOT_FOUND,
+  SKILL_NOT_FOUND,
+  TOOL_NOT_FOUND,
+  MCP_SERVER_NOT_FOUND,
+  RESOURCE_CONFLICT,
+  RATE_LIMIT_EXCEEDED,
 } from '../constants/errorCodes'
 import { createLogger } from '../lib/logger'
 
@@ -40,6 +50,46 @@ export class AppError extends Error {
  */
 export function createError(code: string, message?: string, details?: unknown): AppError {
   return new AppError(code, message, details)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 便捷错误创建函数
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 错误便捷函数集合
+ */
+export const errors = {
+  /** 未认证错误 */
+  unauthorized: (message?: string) => createError(AUTH_TOKEN_MISSING, message),
+
+  /** 权限不足错误 */
+  forbidden: (message?: string) => createError(AUTH_PERMISSION_DENIED, message),
+
+  /** 资源未找到错误 */
+  notFound: (resource: 'Agent' | 'Session' | 'Skill' | 'Tool' | 'McpServer' | 'Resource') => {
+    const codeMap: Record<string, string> = {
+      Agent: AGENT_NOT_FOUND,
+      Session: SESSION_NOT_FOUND,
+      Skill: SKILL_NOT_FOUND,
+      Tool: TOOL_NOT_FOUND,
+      McpServer: MCP_SERVER_NOT_FOUND,
+      Resource: RESOURCE_NOT_FOUND,
+    }
+    return createError(codeMap[resource] ?? RESOURCE_NOT_FOUND)
+  },
+
+  /** 验证错误 */
+  validation: (details?: unknown) => createError(VALIDATION_FAILED, undefined, details),
+
+  /** 版本冲突错误 */
+  conflict: (message?: string) => createError(RESOURCE_CONFLICT, message ?? '数据已被其他用户修改，请刷新后重试'),
+
+  /** 限流错误 */
+  rateLimit: (message?: string) => createError(RATE_LIMIT_EXCEEDED, message),
+
+  /** 内部错误 */
+  internal: (message?: string) => createError(INTERNAL_ERROR, message),
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,217 +1,100 @@
 /**
  * Semibot Frontend Type Definitions
  *
- * 基于 DATA_MODEL.md 和 ARCHITECTURE.md 设计
+ * 从 @semibot/shared-types 重新导出类型，确保前后端类型一致
  */
 
 // ═══════════════════════════════════════════════════════════════
-// Agent2UI 消息类型
+// 从 shared-types 导入核心类型
 // ═══════════════════════════════════════════════════════════════
 
-export type Agent2UIType =
-  | 'text'
-  | 'markdown'
-  | 'code'
-  | 'table'
-  | 'chart'
-  | 'image'
-  | 'file'
-  | 'plan'
-  | 'progress'
-  | 'tool_call'
-  | 'tool_result'
-  | 'error'
-  | 'thinking'
-  | 'report'
-  | 'sandbox_log'
-  | 'sandbox_output'
-
-export interface Agent2UIMessage {
-  id: string
-  type: Agent2UIType
-  data: Agent2UIData
-  timestamp: string
-  metadata?: Record<string, unknown>
-}
-
-export type Agent2UIData =
-  | TextData
-  | MarkdownData
-  | CodeData
-  | TableData
-  | ChartData
-  | ImageData
-  | FileData
-  | PlanData
-  | ProgressData
-  | ToolCallData
-  | ToolResultData
-  | ErrorData
-  | ThinkingData
-  | ReportData
-  | SandboxLogData
-  | SandboxOutputData
-
-// ═══════════════════════════════════════════════════════════════
-// 各类型数据结构
-// ═══════════════════════════════════════════════════════════════
-
-export interface TextData {
-  content: string
-}
-
-export interface MarkdownData {
-  content: string
-}
-
-export interface CodeData {
-  language: string
-  code: string
-  filename?: string
-}
-
-export interface TableData {
-  columns: TableColumn[]
-  rows: Record<string, unknown>[]
-  pagination?: {
-    page: number
-    pageSize: number
-    total: number
-  }
-}
-
-export interface TableColumn {
-  key: string
-  title: string
-  type?: 'string' | 'number' | 'date'
-}
-
-export interface ChartData {
-  chartType: 'line' | 'bar' | 'pie' | 'scatter' | 'area'
-  title?: string
-  xAxis?: { data: string[]; name?: string }
-  yAxis?: { name: string }
-  series: ChartSeries[]
-}
-
-export interface ChartSeries {
-  name: string
-  data: number[]
-}
-
-export interface ImageData {
-  url: string
-  alt?: string
-  caption?: string
-  width?: number
-  height?: number
-}
-
-export interface FileData {
-  filename: string
-  url: string
-  size?: number
-  mimeType?: string
-}
-
-export interface PlanData {
-  steps: PlanStep[]
-  currentStep: string
-}
-
-export interface PlanStep {
-  id: string
-  title: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
-  substeps?: PlanStep[]
-}
-
-export interface ProgressData {
-  current: number
-  total: number
-  percentage?: number
-  label?: string
-  message?: string
-}
-
-export interface ToolCallData {
-  toolName: string
-  arguments: Record<string, unknown>
-  status: 'calling' | 'success' | 'error'
-  result?: unknown
-  duration?: number
-}
-
-export interface ToolResultData {
-  toolName: string
-  result: unknown
-  success: boolean
-  error?: string
-}
-
-export interface ErrorData {
-  code: string
-  message: string
-  details?: unknown
-}
-
-export interface ThinkingData {
-  content: string
-}
-
-export interface ReportData {
-  title: string
-  sections: ReportSection[]
-  summary?: string
-}
-
-export interface ReportSection {
-  heading: string
-  content: Agent2UIMessage[]
-}
+export type {
+  // Agent 相关
+  Agent,
+  AgentModelConfig,
+  AgentState,
+  AgentActionType,
+  AgentPlan,
+  AgentStatus,
+  AgentVersion,
+  // Skill 相关
+  Skill,
+  Tool,
+  ToolType,
+  ToolSchema,
+  ToolParameterSchema,
+  // Session 相关
+  Session,
+  SessionStatus,
+  // Message 相关
+  Message,
+  MessageRole,
+  ToolCall,
+  // Agent2UI 相关
+  Agent2UIType,
+  Agent2UIMessage,
+  Agent2UIData,
+  TextData,
+  MarkdownData,
+  CodeData,
+  TableData,
+  ChartData,
+  ImageData,
+  FileData,
+  PlanData,
+  ProgressData,
+  ToolCallData,
+  ToolResultData,
+  ErrorData,
+  ThinkingData,
+  ReportData,
+  // Table 相关
+  TableColumn,
+  // Sandbox 相关
+  SandboxLogLevel,
+  SandboxLogData,
+  SandboxOutputStream,
+  SandboxOutputData,
+  SandboxStatus,
+  SandboxStatusData,
+  // DTO 相关
+  CreateAgentInput,
+  UpdateAgentInput,
+  AgentModelConfigInput,
+  CreateSessionInput,
+  UpdateSessionInput,
+  AddMessageInput,
+  ChatMessageInput,
+  StartChatInput,
+  CreateSkillInput,
+  UpdateSkillInput,
+  SkillToolInput,
+  CreateToolInput,
+  UpdateToolInput,
+  CreateMcpServerInput,
+  UpdateMcpServerInput,
+  McpTransport,
+  McpAuthType,
+  CreateMemoryInput,
+  SearchMemoriesInput,
+  CreateApiKeyInput,
+  UpdateOrganizationInput,
+  RegisterInput,
+  LoginInput,
+  RefreshTokenInput,
+  // API 响应
+  ApiResponse,
+  PaginationMeta,
+  CursorPaginationMeta,
+} from '@semibot/shared-types'
 
 // ═══════════════════════════════════════════════════════════════
-// 沙箱日志类型
+// 前端专用类型（不在 shared-types 中）
 // ═══════════════════════════════════════════════════════════════
 
-export type SandboxLogLevel = 'debug' | 'info' | 'warn' | 'error'
-
-export interface SandboxLogData {
-  sandboxId: string
-  level: SandboxLogLevel
-  message: string
-  timestamp: string
-  source?: string
-}
-
-export type SandboxOutputStream = 'stdout' | 'stderr'
-
-export interface SandboxOutputData {
-  sandboxId: string
-  stream: SandboxOutputStream
-  content: string
-  timestamp: string
-  exitCode?: number
-}
-
-export type SandboxStatus = 'starting' | 'running' | 'success' | 'error' | 'timeout'
-
-export interface SandboxStatusData {
-  sandboxId: string
-  status: SandboxStatus
-  startedAt?: string
-  endedAt?: string
-  durationMs?: number
-  resourceUsage?: {
-    cpuPercent?: number
-    memoryMb?: number
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 用户和组织
-// ═══════════════════════════════════════════════════════════════
-
+/**
+ * 用户信息
+ */
 export interface User {
   id: string
   email: string
@@ -221,6 +104,9 @@ export interface User {
   role: 'owner' | 'admin' | 'member'
 }
 
+/**
+ * 组织信息
+ */
 export interface Organization {
   id: string
   name: string
@@ -228,26 +114,9 @@ export interface Organization {
   plan: 'free' | 'pro' | 'enterprise'
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Agent 相关
-// ═══════════════════════════════════════════════════════════════
-
-export interface Agent {
-  id: string
-  orgId: string
-  name: string
-  description?: string
-  systemPrompt: string
-  config: AgentConfig
-  skills: string[]
-  subAgents: string[]
-  version: number
-  isActive: boolean
-  isPublic: boolean
-  createdAt: string
-  updatedAt: string
-}
-
+/**
+ * 前端使用的 Agent 配置（兼容旧代码）
+ */
 export interface AgentConfig {
   model: string
   temperature: number
@@ -257,49 +126,18 @@ export interface AgentConfig {
   fallbackModel?: string
 }
 
-// ═══════════════════════════════════════════════════════════════
-// 技能和工具
-// ═══════════════════════════════════════════════════════════════
-
-export interface Skill {
-  id: string
-  orgId?: string
-  name: string
-  description?: string
-  triggerKeywords: string[]
-  tools: ToolConfig[]
-  isBuiltin: boolean
-  isActive: boolean
-}
-
+/**
+ * 前端使用的 Tool 配置
+ */
 export interface ToolConfig {
   toolId: string
   required: boolean
   defaultParams?: Record<string, unknown>
 }
 
-export interface Tool {
-  id: string
-  orgId?: string
-  name: string
-  type: 'api' | 'code' | 'query' | 'mcp' | 'browser'
-  description?: string
-  schema: ToolSchema
-  implementation: Record<string, unknown>
-  isBuiltin: boolean
-  isActive: boolean
-}
-
-export interface ToolSchema {
-  name: string
-  description: string
-  parameters: {
-    type: 'object'
-    properties: Record<string, ToolParameter>
-    required?: string[]
-  }
-}
-
+/**
+ * Tool 参数定义
+ */
 export interface ToolParameter {
   type: string
   description?: string
@@ -307,68 +145,40 @@ export interface ToolParameter {
   enum?: unknown[]
 }
 
-// ═══════════════════════════════════════════════════════════════
-// 会话和消息
-// ═══════════════════════════════════════════════════════════════
+/**
+ * 图表系列数据
+ */
+export interface ChartSeries {
+  name: string
+  data: number[]
+}
 
-export interface Session {
+/**
+ * 计划步骤
+ */
+export interface PlanStep {
   id: string
-  orgId: string
-  agentId: string
-  userId: string
-  status: 'active' | 'paused' | 'completed' | 'failed'
-  title?: string
-  metadata?: Record<string, unknown>
-  startedAt: string
-  endedAt?: string
-  createdAt: string
+  title: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  substeps?: PlanStep[]
 }
 
-export interface Message {
-  id: string
-  sessionId: string
-  parentId?: string
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
-  toolCalls?: ToolCall[]
-  toolCallId?: string
-  tokensUsed?: number
-  latencyMs?: number
-  metadata?: Record<string, unknown>
-  createdAt: string
-}
-
-export interface ToolCall {
-  id: string
-  type: 'function'
-  function: {
-    name: string
-    arguments: string
-  }
+/**
+ * 报告章节
+ */
+export interface ReportSection {
+  heading: string
+  content: import('@semibot/shared-types').Agent2UIMessage[]
 }
 
 // ═══════════════════════════════════════════════════════════════
-// API 响应
+// API 响应类型（前端专用扩展）
 // ═══════════════════════════════════════════════════════════════
-
-export interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: ApiError
-  meta?: PaginationMeta
-}
 
 export interface ApiError {
   code: string
   message: string
   details?: unknown
-}
-
-export interface PaginationMeta {
-  total: number
-  page: number
-  limit: number
-  totalPages: number
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -377,7 +187,7 @@ export interface PaginationMeta {
 
 export interface SSEEvent {
   event: 'message' | 'done' | 'error' | 'heartbeat'
-  data: Agent2UIMessage | SSEDoneData | SSEErrorData | null
+  data: import('@semibot/shared-types').Agent2UIMessage | SSEDoneData | SSEErrorData | null
 }
 
 export interface SSEDoneData {
@@ -435,162 +245,4 @@ export interface ExecutionLog {
   model?: string
   metadata: Record<string, unknown>
   createdAt: string
-}
-
-// ═══════════════════════════════════════════════════════════════
-// DTO 类型 (用于 API 请求)
-// ═══════════════════════════════════════════════════════════════
-
-export interface AgentModelConfigInput {
-  model?: string
-  temperature?: number
-  maxTokens?: number
-  timeoutSeconds?: number
-  retryAttempts?: number
-  fallbackModel?: string
-}
-
-export interface CreateAgentInput {
-  name: string
-  description?: string
-  systemPrompt: string
-  config?: AgentModelConfigInput
-  skills?: string[]
-  subAgents?: string[]
-  isPublic?: boolean
-}
-
-export interface UpdateAgentInput {
-  name?: string
-  description?: string
-  systemPrompt?: string
-  config?: AgentModelConfigInput
-  skills?: string[]
-  subAgents?: string[]
-  isActive?: boolean
-  isPublic?: boolean
-}
-
-export interface SkillToolInput {
-  name: string
-  type: 'function' | 'mcp'
-  config?: Record<string, unknown>
-}
-
-export interface CreateSkillInput {
-  name: string
-  description?: string
-  triggerKeywords?: string[]
-  tools?: SkillToolInput[]
-  config?: {
-    maxExecutionTime?: number
-    retryAttempts?: number
-    requiresApproval?: boolean
-  }
-}
-
-export interface UpdateSkillInput {
-  name?: string
-  description?: string
-  triggerKeywords?: string[]
-  tools?: SkillToolInput[]
-  config?: {
-    maxExecutionTime?: number
-    retryAttempts?: number
-    requiresApproval?: boolean
-  }
-  isActive?: boolean
-}
-
-export interface CreateToolInput {
-  name: string
-  description?: string
-  type: string
-  schema?: {
-    parameters?: Record<string, unknown>
-    returns?: Record<string, unknown>
-  }
-  config?: {
-    timeout?: number
-    retryAttempts?: number
-    requiresApproval?: boolean
-    rateLimit?: number
-  }
-}
-
-export interface UpdateToolInput {
-  name?: string
-  description?: string
-  type?: string
-  schema?: {
-    parameters?: Record<string, unknown>
-    returns?: Record<string, unknown>
-  }
-  config?: {
-    timeout?: number
-    retryAttempts?: number
-    requiresApproval?: boolean
-    rateLimit?: number
-  }
-  isActive?: boolean
-}
-
-export type McpTransport = 'stdio' | 'http' | 'websocket'
-export type McpAuthType = 'none' | 'api_key' | 'oauth'
-
-export interface CreateMcpServerInput {
-  name: string
-  description?: string
-  endpoint: string
-  transport: McpTransport
-  authType?: McpAuthType
-  authConfig?: {
-    apiKey?: string
-    oauthClientId?: string
-    oauthClientSecret?: string
-  }
-}
-
-export interface UpdateMcpServerInput {
-  name?: string
-  description?: string
-  endpoint?: string
-  transport?: McpTransport
-  authType?: McpAuthType
-  authConfig?: {
-    apiKey?: string
-    oauthClientId?: string
-    oauthClientSecret?: string
-  }
-  isActive?: boolean
-}
-
-export interface CreateMemoryInput {
-  agentId: string
-  sessionId?: string
-  userId?: string
-  content: string
-  embedding?: number[]
-  memoryType?: MemoryType
-  importance?: number
-  metadata?: Record<string, unknown>
-  expiresAt?: string
-}
-
-export interface SearchMemoriesInput {
-  agentId: string
-  embedding: number[]
-  limit?: number
-  minSimilarity?: number
-}
-
-export interface CreateApiKeyInput {
-  name: string
-  permissions?: string[]
-  expiresAt?: string
-}
-
-export interface UpdateOrganizationInput {
-  name?: string
-  settings?: Record<string, unknown>
 }

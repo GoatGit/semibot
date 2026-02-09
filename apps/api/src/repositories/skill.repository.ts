@@ -6,7 +6,9 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
-import { logPaginationLimit } from '../lib/logger'
+import { logPaginationLimit, createLogger } from '../lib/logger'
+
+const skillLogger = createLogger('skill-repository')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -118,8 +120,11 @@ export async function create(data: CreateSkillData): Promise<SkillRow> {
 /**
  * 根据 ID 获取 Skill
  * @deprecated 使用 findByIdAndOrg 代替，以确保多租户隔离
+ * @internal 仅供内部使用
  */
 export async function findById(id: string): Promise<SkillRow | null> {
+  skillLogger.warn('[Security] findById 被调用，请确认是否需要租户隔离', { id })
+
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   const result = useDeletedAt
     ? await sql`SELECT * FROM skills WHERE id = ${id} AND deleted_at IS NULL`
@@ -213,12 +218,58 @@ export async function findAll(params: ListSkillsParams): Promise<PaginatedResult
 }
 
 /**
+ * 更新 Skill（带审计字段和租户隔离）
+ * @param id Skill ID
+ * @param orgId 组织 ID
+ * @param data 更新数据
+ * @param updatedBy 更新者用户 ID
+ */
+export async function updateByOrg(
+  id: string,
+  orgId: string,
+  data: UpdateSkillData,
+  updatedBy?: string
+): Promise<SkillRow | null> {
+  const skill = await findByIdAndOrg(id, orgId)
+  if (!skill) return null
+
+  // 内置 Skill 不允许修改
+  if (skill.is_builtin) {
+    skillLogger.warn('[Security] 尝试修改内置 Skill', { id, orgId })
+    return null
+  }
+
+  const result = await sql`
+    UPDATE skills
+    SET name = ${data.name ?? skill.name},
+        description = ${data.description ?? skill.description},
+        trigger_keywords = ${data.triggerKeywords ?? skill.trigger_keywords},
+        tools = ${JSON.stringify(data.tools ?? skill.tools)},
+        config = ${JSON.stringify(data.config ?? skill.config)},
+        is_active = ${data.isActive ?? skill.is_active},
+        updated_at = NOW(),
+        updated_by = ${updatedBy ?? null}
+    WHERE id = ${id} AND org_id = ${orgId}
+    RETURNING *
+  `
+
+  if (result.length === 0) {
+    return null
+  }
+
+  return result[0] as unknown as SkillRow
+}
+
+/**
  * 更新 Skill（带审计字段）
+ * @deprecated 使用 updateByOrg 代替，以确保多租户隔离
  * @param id Skill ID
  * @param data 更新数据
  * @param updatedBy 更新者用户 ID
  */
 export async function update(id: string, data: UpdateSkillData, updatedBy?: string): Promise<SkillRow | null> {
+  skillLogger.warn('[Security] update 被调用，请使用 updateByOrg 确保租户隔离', { id })
+
   const skill = await findById(id)
   if (!skill) return null
 
@@ -244,11 +295,51 @@ export async function update(id: string, data: UpdateSkillData, updatedBy?: stri
 }
 
 /**
+ * 软删除 Skill（带审计字段和租户隔离）
+ * @param id Skill ID
+ * @param orgId 组织 ID
+ * @param deletedBy 删除者用户 ID
+ */
+export async function softDeleteByOrg(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
+  const skill = await findByIdAndOrg(id, orgId)
+  if (!skill) return false
+
+  // 内置 Skill 不允许删除
+  if (skill.is_builtin) {
+    skillLogger.warn('[Security] 尝试删除内置 Skill', { id, orgId })
+    return false
+  }
+
+  const useDeletedAt = await hasSkillsDeletedAtColumn()
+  const result = useDeletedAt
+    ? await sql`
+      UPDATE skills
+      SET deleted_at = NOW(),
+          deleted_by = ${deletedBy ?? null},
+          is_active = false,
+          updated_at = NOW(),
+          updated_by = ${deletedBy ?? null}
+      WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+      RETURNING id
+    `
+    : await sql`
+      DELETE FROM skills
+      WHERE id = ${id} AND org_id = ${orgId}
+      RETURNING id
+    `
+
+  return result.length > 0
+}
+
+/**
  * 软删除 Skill（带审计字段）
+ * @deprecated 使用 softDeleteByOrg 代替，以确保多租户隔离
  * @param id Skill ID
  * @param deletedBy 删除者用户 ID
  */
 export async function softDelete(id: string, deletedBy?: string): Promise<boolean> {
+  skillLogger.warn('[Security] softDelete 被调用，请使用 softDeleteByOrg 确保租户隔离', { id })
+
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   const result = useDeletedAt
     ? await sql`
