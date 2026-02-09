@@ -33,7 +33,10 @@ export type Agent2UIType =
   | 'plan_step'   // Plan step update
   | 'error'       // Error message
   | 'thinking'    // Thinking process
-  | 'report';     // Structured report
+  | 'report'      // Structured report
+  | 'sandbox_log'    // Sandbox execution log
+  | 'sandbox_output' // Sandbox execution output
+  | 'sandbox_status'; // Sandbox status update
 
 // =============================================================================
 // Data Structures for Each Type
@@ -303,6 +306,58 @@ export interface ReportData {
   generatedAt?: string;
 }
 
+/**
+ * Sandbox log level
+ */
+export type SandboxLogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+/**
+ * Sandbox log data
+ */
+export interface SandboxLogData {
+  sandboxId: string;
+  level: SandboxLogLevel;
+  message: string;
+  timestamp: string;
+  source?: string;
+}
+
+/**
+ * Sandbox output stream type
+ */
+export type SandboxOutputStream = 'stdout' | 'stderr';
+
+/**
+ * Sandbox output data
+ */
+export interface SandboxOutputData {
+  sandboxId: string;
+  stream: SandboxOutputStream;
+  content: string;
+  timestamp: string;
+  exitCode?: number;
+}
+
+/**
+ * Sandbox status type
+ */
+export type SandboxStatus = 'starting' | 'running' | 'success' | 'error' | 'timeout';
+
+/**
+ * Sandbox status data
+ */
+export interface SandboxStatusData {
+  sandboxId: string;
+  status: SandboxStatus;
+  startedAt?: string;
+  endedAt?: string;
+  durationMs?: number;
+  resourceUsage?: {
+    cpuPercent?: number;
+    memoryMb?: number;
+  };
+}
+
 // =============================================================================
 // Union Type for All Data
 // =============================================================================
@@ -329,7 +384,10 @@ export type Agent2UIData =
   | PlanStepData
   | ErrorData
   | ThinkingData
-  | ReportData;
+  | ReportData
+  | SandboxLogData
+  | SandboxOutputData
+  | SandboxStatusData;
 
 // =============================================================================
 // Agent2UI Message

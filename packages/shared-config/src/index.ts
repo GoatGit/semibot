@@ -82,6 +82,9 @@ export const MAX_SESSION_MESSAGES = 1000
 /** 最大并发 SSE 连接数 (用户级) */
 export const MAX_SSE_CONNECTIONS_PER_USER = 5
 
+/** 最大并发 SSE 连接数 (组织级) */
+export const MAX_SSE_CONNECTIONS_PER_ORG = 50
+
 // ═══════════════════════════════════════════════════════════════
 // API 配置
 // ═══════════════════════════════════════════════════════════════

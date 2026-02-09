@@ -31,6 +31,7 @@ export {
   MAX_MESSAGE_LENGTH,
   MAX_SESSION_MESSAGES,
   MAX_SSE_CONNECTIONS_PER_USER,
+  MAX_SSE_CONNECTIONS_PER_ORG,
 } from '@semibot/shared-config'
 
 // ═══════════════════════════════════════════════════════════════
@@ -212,6 +213,48 @@ export const MAX_CONCURRENT_AGENTS_PER_ORG = 20
 
 /** 最大文件上传大小 (字节) */
 export const MAX_FILE_UPLOAD_SIZE_BYTES = 10485760 // 10MB
+
+// ═══════════════════════════════════════════════════════════════
+// 资源配额限制 (组织级)
+// ═══════════════════════════════════════════════════════════════
+
+/** 每个组织最大 Agent 数量 */
+export const MAX_AGENTS_PER_ORG = 100
+
+/** 每个组织最大 Skill 数量 */
+export const MAX_SKILLS_PER_ORG = 50
+
+/** 每个组织最大 Tool 数量 */
+export const MAX_TOOLS_PER_ORG = 100
+
+/** 每个组织最大 MCP Server 数量 */
+export const MAX_MCP_SERVERS_PER_ORG = 20
+
+// ═══════════════════════════════════════════════════════════════
+// 密码重置配置
+// ═══════════════════════════════════════════════════════════════
+
+/** 密码重置 Token 有效期 (秒) */
+export const PASSWORD_RESET_TTL_SECONDS = 15 * 60 // 15 分钟
+
+/** 密码重置请求限制间隔 (秒) */
+export const PASSWORD_RESET_REQUEST_TTL_SECONDS = 60 // 1 分钟
+
+/** 密码重置 Token Redis 前缀 */
+export const PASSWORD_RESET_TOKEN_PREFIX = 'auth:password_reset:'
+
+/** 密码重置请求 Redis 前缀 */
+export const PASSWORD_RESET_REQUEST_PREFIX = 'auth:password_reset_request:'
+
+// ═══════════════════════════════════════════════════════════════
+// Skill 重试配置
+// ═══════════════════════════════════════════════════════════════
+
+/** Skill 重试默认最大次数 */
+export const SKILL_DEFAULT_MAX_RETRIES = 3
+
+/** Skill 重试默认延迟 (毫秒) */
+export const SKILL_DEFAULT_RETRY_DELAY_MS = 1000
 
 // ═══════════════════════════════════════════════════════════════
 // Redis 配置

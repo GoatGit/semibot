@@ -123,5 +123,68 @@ export const chatLogger = createLogger('chat')
 export const mcpLogger = createLogger('mcp')
 export const queueLogger = createLogger('queue')
 export const rateLimitLogger = createLogger('rate-limit')
+export const repositoryLogger = createLogger('repository')
+
+// ═══════════════════════════════════════════════════════════════
+// 边界日志辅助函数
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 记录分页限制日志
+ */
+export function logPaginationLimit(
+  repository: string,
+  requested: number,
+  actual: number,
+  max: number
+): void {
+  if (requested > max) {
+    repositoryLogger.warn('[Repository] 分页大小超出限制，已截断', {
+      repository,
+      requested,
+      actual,
+      max,
+    })
+  }
+}
+
+/**
+ * 记录数组截断日志
+ */
+export function logArrayTruncation(
+  module: string,
+  field: string,
+  originalLength: number,
+  limit: number,
+  context?: Record<string, unknown>
+): void {
+  if (originalLength > limit) {
+    repositoryLogger.warn(`[${module}] ${field}数量超出限制，已截断`, {
+      originalLength,
+      limit,
+      dropped: originalLength - limit,
+      ...context,
+    })
+  }
+}
+
+/**
+ * 记录字符串截断日志
+ */
+export function logStringTruncation(
+  module: string,
+  field: string,
+  originalLength: number,
+  maxLength: number,
+  context?: Record<string, unknown>
+): void {
+  if (originalLength > maxLength) {
+    repositoryLogger.warn(`[${module}] ${field}超出限制，已截断`, {
+      originalLength,
+      maxLength,
+      ...context,
+    })
+  }
+}
 
 export default logger

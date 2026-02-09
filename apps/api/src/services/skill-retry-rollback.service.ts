@@ -6,6 +6,10 @@
 
 import * as fs from 'fs-extra'
 import { createError } from '../middleware/errorHandler'
+import {
+  SKILL_DEFAULT_MAX_RETRIES,
+  SKILL_DEFAULT_RETRY_DELAY_MS,
+} from '../constants/config'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import * as skillPackageRepo from '../repositories/skill-package.repository'
 import * as skillInstallLogRepo from '../repositories/skill-install-log.repository'
@@ -29,13 +33,6 @@ export interface VersionHistoryItem {
   installedAt?: string
   isCurrent: boolean
 }
-
-// ═══════════════════════════════════════════════════════════════
-// 配置
-// ═══════════════════════════════════════════════════════════════
-
-const DEFAULT_MAX_RETRIES = 3
-const DEFAULT_RETRY_DELAY = 1000 // 1 秒
 
 // ═══════════════════════════════════════════════════════════════
 // 重试逻辑
@@ -68,7 +65,7 @@ function calculateBackoffDelay(attempt: number, baseDelay: number): number {
  */
 export async function installWithRetry(
   input: skillInstallService.InstallSkillPackageInput,
-  maxRetries: number = DEFAULT_MAX_RETRIES
+  maxRetries: number = SKILL_DEFAULT_MAX_RETRIES
 ): Promise<string> {
   let lastError: any
 
@@ -92,7 +89,7 @@ export async function installWithRetry(
       }
 
       // 计算延迟并等待
-      const delay = calculateBackoffDelay(attempt, DEFAULT_RETRY_DELAY)
+      const delay = calculateBackoffDelay(attempt, SKILL_DEFAULT_RETRY_DELAY_MS)
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }

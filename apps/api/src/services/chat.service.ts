@@ -20,6 +20,7 @@ import {
   SSE_HEARTBEAT_INTERVAL_MS,
   MAX_MESSAGE_LENGTH,
   MAX_SSE_CONNECTIONS_PER_USER,
+  MAX_SSE_CONNECTIONS_PER_ORG,
   CHAT_EXECUTION_MODE,
   CHAT_RUNTIME_ENABLED_ORGS,
   MAX_HISTORY_MESSAGES,
@@ -50,6 +51,7 @@ export interface SSEConnection {
   res: Response
   sessionId: string
   userId: string
+  orgId: string
   heartbeatTimer?: NodeJS.Timeout
   isActive: boolean
 }
@@ -67,7 +69,7 @@ export function createSSEConnection(
   res: Response,
   sessionId: string,
   userId: string,
-  _orgId: string
+  orgId: string
 ): SSEConnection {
   // 检查用户连接数限制
   const userConnections = Array.from(sseConnections.values()).filter(
@@ -83,11 +85,26 @@ export function createSSEConnection(
     throw createError(SSE_CONNECTION_LIMIT, 'SSE 连接数已达上限，请关闭其他连接后重试')
   }
 
+  // 检查组织连接数限制
+  const orgConnections = Array.from(sseConnections.values()).filter(
+    (conn) => conn.orgId === orgId
+  ).length
+
+  if (orgConnections >= MAX_SSE_CONNECTIONS_PER_ORG) {
+    chatLogger.warn('组织连接数已达上限', {
+      orgId,
+      current: orgConnections,
+      limit: MAX_SSE_CONNECTIONS_PER_ORG,
+    })
+    throw createError(SSE_CONNECTION_LIMIT, '组织连接数已达上限，请稍后重试')
+  }
+
   const connection: SSEConnection = {
     id: uuidv4(),
     res,
     sessionId,
     userId,
+    orgId,
     isActive: true,
   }
 

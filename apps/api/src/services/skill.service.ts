@@ -16,6 +16,7 @@ import {
   SKILL_MANIFEST_FETCH_TIMEOUT_MS,
   MAX_SKILL_KEYWORDS,
   MAX_SKILL_NAME_LENGTH,
+  MAX_SKILLS_PER_ORG,
 } from '../constants/config'
 import * as skillRepository from '../repositories/skill.repository'
 import { createLogger } from '../lib/logger'
@@ -139,7 +140,6 @@ export interface PaginatedResult<T> {
 // 常量配置
 // ═══════════════════════════════════════════════════════════════
 
-const MAX_SKILLS_PER_ORG = 50
 const ANTHROPIC_SKILL_ID_PATTERN = /^[a-zA-Z0-9._:/-]{1,120}$/
 
 // ═══════════════════════════════════════════════════════════════
@@ -587,15 +587,10 @@ export async function getActiveSkillsByIds(orgId: string, skillIds: string[]): P
     return []
   }
 
-  const rows = await Promise.all(uniqueSkillIds.map((skillId) => skillRepository.findById(skillId)))
+  // 使用批量查询（单次 SQL 查询，避免 N+1 问题）
+  const rows = await skillRepository.findActiveByIdsAndOrg(uniqueSkillIds, orgId)
 
-  return rows
-    .filter((row): row is skillRepository.SkillRow => {
-      if (!row) return false
-      if (!row.is_active) return false
-      return row.org_id === orgId || row.is_builtin
-    })
-    .map(rowToSkill)
+  return rows.map(rowToSkill)
 }
 
 /**

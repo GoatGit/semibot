@@ -6,6 +6,7 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -143,6 +144,9 @@ export async function findAll(params: ListMcpServersParams): Promise<PaginatedRe
   const { orgId, page = 1, limit = DEFAULT_PAGE_SIZE, search, status } = params
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
+
+  // 记录分页限制日志
+  logPaginationLimit('McpRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
   // 构建 WHERE 条件
   let whereClause = sql`org_id = ${orgId} AND is_active = true`

@@ -6,6 +6,9 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit, createLogger } from '../lib/logger'
+
+const toolLogger = createLogger('tool-repository')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -97,8 +100,11 @@ export async function create(data: CreateToolData): Promise<ToolRow> {
 /**
  * 根据 ID 获取 Tool
  * @deprecated 使用 findByIdAndOrg 代替，以确保多租户隔离
+ * @internal 仅供内部使用
  */
 export async function findById(id: string): Promise<ToolRow | null> {
+  toolLogger.warn('[Security] findById 被调用，请确认是否需要租户隔离', { id })
+
   const result = await sql`
     SELECT * FROM tools WHERE id = ${id} AND deleted_at IS NULL
   `
@@ -135,6 +141,9 @@ export async function findAll(params: ListToolsParams): Promise<PaginatedResult<
   const { orgId, includeBuiltin = true, page = 1, limit = DEFAULT_PAGE_SIZE, search, type } = params
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
+
+  // 记录分页限制日志
+  logPaginationLimit('ToolRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
   // 构建 WHERE 条件
   let whereClause = sql`is_active = true`
@@ -184,9 +193,58 @@ export async function findAll(params: ListToolsParams): Promise<PaginatedResult<
 }
 
 /**
- * 更新 Tool
+ * 更新 Tool（带审计字段和租户隔离）
+ * @param id Tool ID
+ * @param orgId 组织 ID
+ * @param data 更新数据
+ * @param updatedBy 更新者用户 ID
  */
-export async function update(id: string, data: UpdateToolData): Promise<ToolRow | null> {
+export async function updateByOrg(
+  id: string,
+  orgId: string,
+  data: UpdateToolData,
+  updatedBy?: string
+): Promise<ToolRow | null> {
+  const tool = await findByIdAndOrg(id, orgId)
+  if (!tool) return null
+
+  // 内置工具不允许修改
+  if (tool.is_builtin) {
+    toolLogger.warn('[Security] 尝试修改内置 Tool', { id, orgId })
+    return null
+  }
+
+  const result = await sql`
+    UPDATE tools
+    SET name = ${data.name ?? tool.name},
+        description = ${data.description ?? tool.description},
+        type = ${data.type ?? tool.type},
+        schema = ${JSON.stringify(data.schema ?? tool.schema)},
+        config = ${JSON.stringify(data.config ?? tool.config)},
+        is_active = ${data.isActive ?? tool.is_active},
+        updated_at = NOW(),
+        updated_by = ${updatedBy ?? null}
+    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+    RETURNING *
+  `
+
+  if (result.length === 0) {
+    return null
+  }
+
+  return result[0] as unknown as ToolRow
+}
+
+/**
+ * 更新 Tool（带审计字段）
+ * @deprecated 使用 updateByOrg 代替，以确保多租户隔离
+ * @param id Tool ID
+ * @param data 更新数据
+ * @param updatedBy 更新者用户 ID
+ */
+export async function update(id: string, data: UpdateToolData, updatedBy?: string): Promise<ToolRow | null> {
+  toolLogger.warn('[Security] update 被调用，请使用 updateByOrg 确保租户隔离', { id })
+
   const tool = await findById(id)
   if (!tool) return null
 
@@ -198,7 +256,8 @@ export async function update(id: string, data: UpdateToolData): Promise<ToolRow 
         schema = ${JSON.stringify(data.schema ?? tool.schema)},
         config = ${JSON.stringify(data.config ?? tool.config)},
         is_active = ${data.isActive ?? tool.is_active},
-        updated_at = NOW()
+        updated_at = NOW(),
+        updated_by = ${updatedBy ?? null}
     WHERE id = ${id}
     RETURNING *
   `
@@ -211,7 +270,40 @@ export async function update(id: string, data: UpdateToolData): Promise<ToolRow 
 }
 
 /**
- * 软删除 Tool
+ * 软删除 Tool（带审计字段和租户隔离）
+ * @param id Tool ID
+ * @param orgId 组织 ID
+ * @param deletedBy 删除者用户 ID
+ */
+export async function softDeleteByOrg(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
+  const tool = await findByIdAndOrg(id, orgId)
+  if (!tool) return false
+
+  // 内置工具不允许删除
+  if (tool.is_builtin) {
+    toolLogger.warn('[Security] 尝试删除内置 Tool', { id, orgId })
+    return false
+  }
+
+  const result = await sql`
+    UPDATE tools
+    SET deleted_at = NOW(),
+        deleted_by = ${deletedBy ?? null},
+        is_active = false,
+        updated_at = NOW(),
+        updated_by = ${deletedBy ?? null}
+    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+    RETURNING id
+  `
+
+  return result.length > 0
+}
+
+/**
+ * 软删除 Tool（带审计字段）
+ * @deprecated 使用 softDeleteByOrg 代替，以确保多租户隔离
+ * @param id Tool ID
+ * @param deletedBy 删除者用户 ID
  */
 export async function softDelete(id: string, deletedBy?: string): Promise<boolean> {
   const result = await sql`
@@ -219,7 +311,8 @@ export async function softDelete(id: string, deletedBy?: string): Promise<boolea
     SET deleted_at = NOW(),
         deleted_by = ${deletedBy ?? null},
         is_active = false,
-        updated_at = NOW()
+        updated_at = NOW(),
+        updated_by = ${deletedBy ?? null}
     WHERE id = ${id} AND deleted_at IS NULL
     RETURNING id
   `

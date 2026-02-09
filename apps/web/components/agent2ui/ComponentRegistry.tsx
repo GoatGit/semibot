@@ -57,11 +57,17 @@ const defaultComponentMap: Record<Agent2UIType, Agent2UIComponent> = {
   progress: ProgressView,
   tool_call: ToolCallView,
   tool_result: ToolCallView, // 复用 ToolCallView
+  skill_call: ToolCallView, // 复用 ToolCallView
+  skill_result: ToolCallView, // 复用 ToolCallView
+  mcp_call: ToolCallView, // 复用 ToolCallView
+  mcp_result: ToolCallView, // 复用 ToolCallView
+  plan_step: PlanView, // 复用 PlanView
   error: ErrorView,
   thinking: ThinkingView,
   report: ReportView,
   sandbox_log: SandboxLogView,
   sandbox_output: SandboxOutputView,
+  sandbox_status: SandboxOutputView, // 复用 SandboxOutputView
 }
 
 /**

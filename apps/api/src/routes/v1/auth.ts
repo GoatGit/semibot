@@ -22,7 +22,7 @@ const registerSchema = z.object({
   email: z.string().email('邮箱格式无效'),
   password: z.string().min(8, '密码至少8位').max(100, '密码最长100位'),
   name: z.string().min(1, '姓名不能为空').max(100, '姓名最长100字符'),
-  org_name: z.string().min(1, '组织名称不能为空').max(100, '组织名称最长100字符'),
+  orgName: z.string().min(1, '组织名称不能为空').max(100, '组织名称最长100字符'),
 })
 
 const loginSchema = z.object({
@@ -94,13 +94,13 @@ router.post('/register', async (req: Request, res: Response) => {
       return
     }
 
-    const { email, password, name, org_name } = validation.data
+    const { email, password, name, orgName } = validation.data
 
     const result = await authService.register({
       email,
       password,
       name,
-      orgName: org_name,
+      orgName,
     })
 
     res.status(201).json({

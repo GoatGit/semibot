@@ -6,6 +6,7 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -135,6 +136,9 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
+  // 记录分页限制日志
+  logPaginationLimit('AgentRepository', limit, actualLimit, MAX_PAGE_SIZE)
+
   // 根据条件选择不同的查询
   let countResult
   let dataResult
@@ -216,103 +220,45 @@ export async function countByOrg(orgId: string): Promise<number> {
 }
 
 /**
- * 更新 Agent
+ * 更新 Agent（带审计字段和乐观锁）
+ * @param id Agent ID
+ * @param orgId 组织 ID
+ * @param data 更新数据
+ * @param updatedBy 更新者用户 ID
+ * @param expectedVersion 期望的版本号（用于乐观锁检查，可选）
  */
-export async function update(id: string, orgId: string, data: UpdateAgentData): Promise<AgentRow | null> {
-  // 构建动态更新字段
-  const updates: string[] = []
-  const values: unknown[] = []
+export async function update(
+  id: string,
+  orgId: string,
+  data: UpdateAgentData,
+  updatedBy?: string,
+  expectedVersion?: number
+): Promise<AgentRow | null> {
+  // 获取当前 Agent
+  const agent = await findByIdAndOrg(id, orgId)
+  if (!agent) return null
 
-  if (data.name !== undefined) {
-    updates.push('name')
-    values.push(data.name)
-  }
-  if (data.description !== undefined) {
-    updates.push('description')
-    values.push(data.description)
-  }
-  if (data.systemPrompt !== undefined) {
-    updates.push('system_prompt')
-    values.push(data.systemPrompt)
-  }
-  if (data.config !== undefined) {
-    updates.push('config')
-    values.push(JSON.stringify(data.config))
-  }
-  if (data.skills !== undefined) {
-    updates.push('skills')
-    values.push(data.skills)
-  }
-  if (data.subAgents !== undefined) {
-    updates.push('sub_agents')
-    values.push(data.subAgents)
-  }
-  if (data.isActive !== undefined) {
-    updates.push('is_active')
-    values.push(data.isActive)
-  }
-  if (data.isPublic !== undefined) {
-    updates.push('is_public')
-    values.push(data.isPublic)
+  // 如果提供了期望版本，检查版本冲突
+  if (expectedVersion !== undefined && agent.version !== expectedVersion) {
+    return null // 版本冲突
   }
 
-  if (updates.length === 0) {
-    return findByIdAndOrg(id, orgId)
-  }
-
-  // 使用单独的 UPDATE 语句处理各字段
-  let result
-
-  if (data.name !== undefined && data.description !== undefined && data.systemPrompt !== undefined) {
-    result = await sql`
-      UPDATE agents
-      SET name = ${data.name},
-          description = ${data.description},
-          system_prompt = ${data.systemPrompt},
-          version = version + 1,
-          updated_at = NOW()
-      WHERE id = ${id} AND org_id = ${orgId}
-      RETURNING *
-    `
-  } else if (data.name !== undefined) {
-    result = await sql`
-      UPDATE agents
-      SET name = ${data.name},
-          version = version + 1,
-          updated_at = NOW()
-      WHERE id = ${id} AND org_id = ${orgId}
-      RETURNING *
-    `
-  } else if (data.isActive !== undefined) {
-    result = await sql`
-      UPDATE agents
-      SET is_active = ${data.isActive},
-          version = version + 1,
-          updated_at = NOW()
-      WHERE id = ${id} AND org_id = ${orgId}
-      RETURNING *
-    `
-  } else {
-    // 通用更新：使用完整的字段更新
-    const agent = await findByIdAndOrg(id, orgId)
-    if (!agent) return null
-
-    result = await sql`
-      UPDATE agents
-      SET name = ${data.name ?? agent.name},
-          description = ${data.description ?? agent.description},
-          system_prompt = ${data.systemPrompt ?? agent.system_prompt},
-          config = ${JSON.stringify(data.config ?? agent.config)},
-          skills = ${data.skills ?? agent.skills},
-          sub_agents = ${data.subAgents ?? agent.sub_agents},
-          is_active = ${data.isActive ?? agent.is_active},
-          is_public = ${data.isPublic ?? agent.is_public},
-          version = version + 1,
-          updated_at = NOW()
-      WHERE id = ${id} AND org_id = ${orgId}
-      RETURNING *
-    `
-  }
+  const result = await sql`
+    UPDATE agents
+    SET name = ${data.name ?? agent.name},
+        description = ${data.description ?? agent.description},
+        system_prompt = ${data.systemPrompt ?? agent.system_prompt},
+        config = ${JSON.stringify(data.config ?? agent.config)},
+        skills = ${data.skills ?? agent.skills},
+        sub_agents = ${data.subAgents ?? agent.sub_agents},
+        is_active = ${data.isActive ?? agent.is_active},
+        is_public = ${data.isPublic ?? agent.is_public},
+        version = version + 1,
+        updated_at = NOW(),
+        updated_by = ${updatedBy ?? null}
+    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+    RETURNING *
+  `
 
   if (result.length === 0) {
     return null

@@ -6,6 +6,7 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -113,6 +114,9 @@ export async function findByUserAndOrg(params: ListSessionsParams): Promise<Pagi
   const { orgId, userId, page = 1, limit = DEFAULT_PAGE_SIZE, agentId, status } = params
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
+
+  // 记录分页限制日志
+  logPaginationLimit('SessionRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
   // 构建基础条件
   let whereClause = sql`org_id = ${orgId} AND user_id = ${userId}`
