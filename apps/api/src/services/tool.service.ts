@@ -7,6 +7,9 @@
 import { createError } from '../middleware/errorHandler'
 import { TOOL_NOT_FOUND, TOOL_LIMIT_EXCEEDED } from '../constants/errorCodes'
 import * as toolRepository from '../repositories/tool.repository'
+import { createLogger } from '../lib/logger'
+
+const toolLogger = createLogger('tool')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -122,9 +125,7 @@ export async function createTool(
   const existingTools = await toolRepository.findAll({ orgId, includeBuiltin: false })
 
   if (existingTools.meta.total >= MAX_TOOLS_PER_ORG) {
-    console.warn(
-      `[ToolService] Tool 数量已达上限 - 组织: ${orgId}, 当前: ${existingTools.meta.total}, 限制: ${MAX_TOOLS_PER_ORG}`
-    )
+    toolLogger.warn('Tool 数量已达上限', { orgId, current: existingTools.meta.total, limit: MAX_TOOLS_PER_ORG })
     throw createError(TOOL_LIMIT_EXCEEDED)
   }
 

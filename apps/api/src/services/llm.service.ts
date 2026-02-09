@@ -23,6 +23,9 @@ import { OpenAIProvider } from './llm/openai.provider'
 import { AnthropicProvider } from './llm/anthropic.provider'
 import { CustomProvider } from './llm/custom.provider'
 import { GoogleAIProvider } from './llm/google.provider'
+import { createLogger } from '../lib/logger'
+
+const llmLogger = createLogger('llm')
 
 // ═══════════════════════════════════════════════════════════════
 // 初始化 Providers
@@ -50,7 +53,7 @@ function initializeProviders(): void {
   registerProvider(custom)
 
   isInitialized = true
-  console.log('[LLM] Providers 初始化完成')
+  llmLogger.info('Providers 初始化完成')
 }
 
 // 立即初始化
@@ -108,9 +111,10 @@ export async function generate(
     // 尝试 Fallback
     const fallbackProvider = await resolveProviderForModel(FALLBACK_MODEL)
     if (fallbackProvider?.isAvailable()) {
-      console.warn(
-        `[LLM] Provider 不可用，使用 Fallback: ${fullConfig.model} -> ${FALLBACK_MODEL}`
-      )
+      llmLogger.warn('Provider 不可用，使用 Fallback', {
+        original: fullConfig.model,
+        fallback: FALLBACK_MODEL,
+      })
       fullConfig.model = FALLBACK_MODEL
       return fallbackProvider.generate(messages, fullConfig)
     }
@@ -141,9 +145,10 @@ export async function generateStream(
     // 尝试 Fallback
     const fallbackProvider = await resolveProviderForModel(FALLBACK_MODEL)
     if (fallbackProvider?.isAvailable()) {
-      console.warn(
-        `[LLM] Provider 不可用，使用 Fallback: ${fullConfig.model} -> ${FALLBACK_MODEL}`
-      )
+      llmLogger.warn('Provider 不可用，使用 Fallback', {
+        original: fullConfig.model,
+        fallback: FALLBACK_MODEL,
+      })
       fullConfig.model = FALLBACK_MODEL
       return fallbackProvider.generateStream(messages, fullConfig, onChunk)
     }

@@ -264,7 +264,23 @@ export async function update(id: string, data: UpdateSkillDefinitionData): Promi
 }
 
 /**
+ * 软删除技能定义（设置 is_active = false）
+ * 注：skill_definitions 表使用 is_active 标记而非 deleted_at
+ */
+export async function softDelete(id: string): Promise<boolean> {
+  const result = await sql`
+    UPDATE skill_definitions
+    SET is_active = false, updated_at = NOW()
+    WHERE id = ${id} AND is_active = true
+    RETURNING id
+  `
+
+  return result.length > 0
+}
+
+/**
  * 删除技能定义
+ * @deprecated 使用 softDelete 代替，以保留数据审计
  */
 export async function remove(id: string): Promise<boolean> {
   const result = await sql`

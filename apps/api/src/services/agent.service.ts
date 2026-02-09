@@ -13,6 +13,9 @@ import {
 } from '../constants/errorCodes'
 import * as agentRepository from '../repositories/agent.repository'
 import { getAvailableModels } from './llm.service'
+import { createLogger } from '../lib/logger'
+
+const agentLogger = createLogger('agent')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -142,15 +145,13 @@ export async function createAgent(orgId: string, input: CreateAgentInput): Promi
   const count = await agentRepository.countByOrg(orgId)
 
   if (count >= MAX_AGENTS_PER_ORG) {
-    console.warn(
-      `[AgentService] Agent 数量已达上限 - 组织: ${orgId}, 当前: ${count}, 限制: ${MAX_AGENTS_PER_ORG}`
-    )
+    agentLogger.warn('Agent 数量已达上限', { orgId, current: count, limit: MAX_AGENTS_PER_ORG })
     throw createError(AGENT_LIMIT_EXCEEDED)
   }
 
   const availableModels = await getAvailableModels().catch(() => [] as string[])
   if (availableModels.length === 0) {
-    console.error(`[AgentService] 创建 Agent 失败：组织 ${orgId} 当前无可用模型`)
+    agentLogger.error('创建 Agent 失败：当前无可用模型', undefined, { orgId })
     throw createError(LLM_UNAVAILABLE, '当前没有可用模型，无法创建 Agent')
   }
 

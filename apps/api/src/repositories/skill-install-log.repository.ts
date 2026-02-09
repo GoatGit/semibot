@@ -249,6 +249,7 @@ export async function update(id: string, data: UpdateSkillInstallLogData): Promi
 
 /**
  * 删除安装日志
+ * 注：审计日志表保留物理删除，仅用于清理过期日志
  */
 export async function remove(id: string): Promise<boolean> {
   const result = await sql`

@@ -116,12 +116,38 @@ export async function create(data: CreateSkillData): Promise<SkillRow> {
 
 /**
  * 根据 ID 获取 Skill
+ * @deprecated 使用 findByIdAndOrg 代替，以确保多租户隔离
  */
 export async function findById(id: string): Promise<SkillRow | null> {
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   const result = useDeletedAt
     ? await sql`SELECT * FROM skills WHERE id = ${id} AND deleted_at IS NULL`
     : await sql`SELECT * FROM skills WHERE id = ${id}`
+
+  if (result.length === 0) {
+    return null
+  }
+
+  return result[0] as unknown as SkillRow
+}
+
+/**
+ * 根据 ID 和组织 ID 获取 Skill（支持内置 Skill 跨组织访问）
+ */
+export async function findByIdAndOrg(id: string, orgId: string): Promise<SkillRow | null> {
+  const useDeletedAt = await hasSkillsDeletedAtColumn()
+  const result = useDeletedAt
+    ? await sql`
+        SELECT * FROM skills
+        WHERE id = ${id}
+        AND (org_id = ${orgId} OR is_builtin = true)
+        AND deleted_at IS NULL
+      `
+    : await sql`
+        SELECT * FROM skills
+        WHERE id = ${id}
+        AND (org_id = ${orgId} OR is_builtin = true)
+      `
 
   if (result.length === 0) {
     return null

@@ -20,6 +20,7 @@ import {
   RATE_LIMIT_ORG,
   ERROR_MESSAGES,
 } from '../constants/errorCodes.js'
+import { rateLimitLogger } from '../lib/logger.js'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -120,14 +121,12 @@ async function checkRateLimitRedis(
     }
 
     if (!allowed) {
-      console.warn(
-        `[RateLimit] Redis 限流触发 - Key: ${key}, 当前: ${current}, 限制: ${limit}`
-      )
+      rateLimitLogger.warn('Redis 限流触发', { key, current, limit })
     }
 
     return { allowed, info }
   } catch (error) {
-    console.error('[RateLimit] Redis 操作失败，使用内存回退:', error)
+    rateLimitLogger.error('Redis 操作失败，使用内存回退', error as Error)
     throw error
   }
 }
@@ -158,9 +157,7 @@ function checkRateLimitMemory(
 
   // 检查是否超限
   if (info.current >= limit) {
-    console.warn(
-      `[RateLimit] 内存限流触发 - Key: ${key}, 当前: ${info.current}, 限制: ${limit}`
-    )
+    rateLimitLogger.warn('内存限流触发', { key, current: info.current, limit })
     return {
       allowed: false,
       info: { ...info, remaining: 0 },
@@ -237,7 +234,7 @@ export async function userRateLimit(
 
     next()
   } catch (error) {
-    console.error('[RateLimit] 用户限流检查失败:', error)
+    rateLimitLogger.error('用户限流检查失败', error as Error)
     // 限流检查失败时，允许请求通过 (fail-open)
     next()
   }
@@ -275,7 +272,7 @@ export async function orgRateLimit(
 
     next()
   } catch (error) {
-    console.error('[RateLimit] 组织限流检查失败:', error)
+    rateLimitLogger.error('组织限流检查失败', error as Error)
     next()
   }
 }
@@ -328,14 +325,14 @@ export async function authRateLimit(
     setRateLimitHeaders(res, info)
 
     if (!allowed) {
-      console.warn(`[RateLimit] 认证接口限流触发 - IP: ${ip}`)
+      rateLimitLogger.warn('认证接口限流触发', { ip })
       sendRateLimitError(res, RATE_LIMIT_USER, info)
       return
     }
 
     next()
   } catch (error) {
-    console.error('[RateLimit] 认证限流检查失败:', error)
+    rateLimitLogger.error('认证限流检查失败', error as Error)
     next()
   }
 }
@@ -404,7 +401,7 @@ export function createRateLimit(options: {
 
       next()
     } catch (error) {
-      console.error('[RateLimit] 自定义限流检查失败:', error)
+      rateLimitLogger.error('自定义限流检查失败', error as Error)
       next()
     }
   }

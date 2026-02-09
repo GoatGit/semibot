@@ -4,6 +4,10 @@
  * 当前先提供统一抽象，后续可替换为 SMTP/第三方邮件服务。
  */
 
+import { createLogger } from '../lib/logger'
+
+const emailLogger = createLogger('email')
+
 export interface PasswordResetEmailInput {
   email: string
   resetToken: string
@@ -14,6 +18,6 @@ export async function sendPasswordResetEmail(input: PasswordResetEmailInput): Pr
   const resetUrl = `${appBaseUrl}/reset-password?token=${encodeURIComponent(input.resetToken)}`
 
   // TODO: 接入真实邮件发送服务（SMTP/SES/SendGrid 等）
-  console.info(`[Email] Password reset email queued for ${input.email}: ${resetUrl}`)
+  emailLogger.info('Password reset email queued', { email: input.email, resetUrl })
 }
 

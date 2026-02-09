@@ -10,6 +10,9 @@ import {
   ERROR_HTTP_STATUS,
   ERROR_MESSAGES,
 } from '../constants/errorCodes'
+import { createLogger } from '../lib/logger'
+
+const errorLogger = createLogger('error')
 
 // ═══════════════════════════════════════════════════════════════
 // 自定义错误类
@@ -116,9 +119,9 @@ export function errorHandler(
   _next: NextFunction
 ): void {
   // 记录错误日志
-  console.error(`[Error] ${req.method} ${req.path}`, {
-    error: error.message,
-    stack: error.stack,
+  errorLogger.error('请求处理错误', error, {
+    method: req.method,
+    path: req.path,
     body: req.body,
     query: req.query,
   })

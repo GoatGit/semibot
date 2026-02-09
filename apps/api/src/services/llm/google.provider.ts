@@ -12,6 +12,9 @@ import type {
   LLMResponse,
   LLMStreamChunk,
 } from './index'
+import { createLogger } from '../../lib/logger'
+
+const googleLogger = createLogger('google-ai')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -89,7 +92,7 @@ export class GoogleAIProvider implements LLMProvider {
       })
 
       if (!response.ok) {
-        console.error('[Google AI] 获取模型列表失败:', response.statusText)
+        googleLogger.error('获取模型列表失败', undefined, { status: response.statusText })
         return (this.modelsCache ?? []).map((model) => ({ id: model }))
       }
 
@@ -106,10 +109,10 @@ export class GoogleAIProvider implements LLMProvider {
       this.modelsCacheTime = Date.now()
       this.models = this.modelsCache
 
-      console.log(`[Google AI] 获取到 ${models.length} 个模型`)
+      googleLogger.info('获取模型列表成功', { count: models.length })
       return models
     } catch (error) {
-      console.error('[Google AI] 获取模型列表出错:', error)
+      googleLogger.error('获取模型列表出错', error as Error)
       return (this.modelsCache ?? []).map((model) => ({ id: model }))
     }
   }

@@ -226,6 +226,42 @@ export const REDIS_POOL_SIZE = 10
 /** Redis 命令超时 (毫秒) */
 export const REDIS_COMMAND_TIMEOUT_MS = 5000
 
+/** Redis 最大重试次数 */
+export const REDIS_MAX_RETRIES = 3
+
+/** Redis 重试基础延迟 (毫秒) */
+export const REDIS_RETRY_DELAY_BASE_MS = 200
+
+/** Redis 重试最大延迟 (毫秒) */
+export const REDIS_RETRY_DELAY_MAX_MS = 2000
+
+// ═══════════════════════════════════════════════════════════════
+// 消息和会话配置
+// ═══════════════════════════════════════════════════════════════
+
+/** 历史消息最大数量 (用于 LLM 上下文) */
+export const MAX_HISTORY_MESSAGES = 20
+
+/** 会话标题最大长度 */
+export const MAX_SESSION_TITLE_LENGTH = 50
+
+// ═══════════════════════════════════════════════════════════════
+// Skill 配置
+// ═══════════════════════════════════════════════════════════════
+
+/** Skill 关键词最大数量 */
+export const MAX_SKILL_KEYWORDS = 20
+
+/** Skill 名称最大长度 */
+export const MAX_SKILL_NAME_LENGTH = 100
+
+// ═══════════════════════════════════════════════════════════════
+// API Key 配置
+// ═══════════════════════════════════════════════════════════════
+
+/** API Key 前缀显示长度 (用于展示时截断) */
+export const API_KEY_PREFIX_DISPLAY_LENGTH = 10
+
 // ═══════════════════════════════════════════════════════════════
 // 数据库配置
 // ═══════════════════════════════════════════════════════════════

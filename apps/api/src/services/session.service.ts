@@ -14,6 +14,9 @@ import {
 import { MAX_SESSION_MESSAGES } from '../constants/config'
 import * as sessionRepository from '../repositories/session.repository'
 import * as messageRepository from '../repositories/message.repository'
+import { createLogger } from '../lib/logger'
+
+const sessionLogger = createLogger('session')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -240,11 +243,11 @@ export async function deleteSession(orgId: string, sessionId: string): Promise<v
   // 先验证会话存在
   await getSession(orgId, sessionId)
 
-  // 删除所有消息
-  await messageRepository.deleteBySessionId(sessionId)
+  // 软删除所有消息
+  await messageRepository.softDeleteBySessionId(sessionId)
 
-  // 删除会话
-  const deleted = await sessionRepository.remove(sessionId, orgId)
+  // 软删除会话
+  const deleted = await sessionRepository.softDelete(sessionId, orgId)
 
   if (!deleted) {
     throw createError(SESSION_NOT_FOUND)
@@ -286,9 +289,7 @@ export async function addMessage(
   const messageCount = await messageRepository.countBySessionId(sessionId)
 
   if (messageCount >= MAX_SESSION_MESSAGES) {
-    console.warn(
-      `[SessionService] 会话消息数已达上限 - 会话: ${sessionId}, 当前: ${messageCount}, 限制: ${MAX_SESSION_MESSAGES}`
-    )
+    sessionLogger.warn('会话消息数已达上限', { sessionId, current: messageCount, limit: MAX_SESSION_MESSAGES })
     throw createError(MESSAGE_LIMIT_EXCEEDED)
   }
 

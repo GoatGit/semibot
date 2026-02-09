@@ -96,10 +96,29 @@ export async function create(data: CreateToolData): Promise<ToolRow> {
 
 /**
  * 根据 ID 获取 Tool
+ * @deprecated 使用 findByIdAndOrg 代替，以确保多租户隔离
  */
 export async function findById(id: string): Promise<ToolRow | null> {
   const result = await sql`
-    SELECT * FROM tools WHERE id = ${id}
+    SELECT * FROM tools WHERE id = ${id} AND deleted_at IS NULL
+  `
+
+  if (result.length === 0) {
+    return null
+  }
+
+  return result[0] as unknown as ToolRow
+}
+
+/**
+ * 根据 ID 和组织 ID 获取 Tool（支持内置工具跨组织访问）
+ */
+export async function findByIdAndOrg(id: string, orgId: string): Promise<ToolRow | null> {
+  const result = await sql`
+    SELECT * FROM tools
+    WHERE id = ${id}
+    AND (org_id = ${orgId} OR is_builtin = true)
+    AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -194,11 +213,14 @@ export async function update(id: string, data: UpdateToolData): Promise<ToolRow 
 /**
  * 软删除 Tool
  */
-export async function softDelete(id: string): Promise<boolean> {
+export async function softDelete(id: string, deletedBy?: string): Promise<boolean> {
   const result = await sql`
     UPDATE tools
-    SET is_active = false, updated_at = NOW()
-    WHERE id = ${id}
+    SET deleted_at = NOW(),
+        deleted_by = ${deletedBy ?? null},
+        is_active = false,
+        updated_at = NOW()
+    WHERE id = ${id} AND deleted_at IS NULL
     RETURNING id
   `
 

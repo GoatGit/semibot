@@ -15,6 +15,9 @@ import {
   ENABLE_REQUEST_LOGGING,
   LOG_LEVEL,
 } from './constants/config'
+import { createLogger } from './lib/logger'
+
+const serverLogger = createLogger('server')
 
 // ═══════════════════════════════════════════════════════════════
 // 创建 Express 应用
@@ -54,9 +57,12 @@ if (ENABLE_REQUEST_LOGGING) {
 
     res.on('finish', () => {
       const duration = Date.now() - start
-      console.log(
-        `[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} ${duration}ms`
-      )
+      serverLogger.debug('请求完成', {
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        duration,
+      })
     })
 
     next()
@@ -100,32 +106,27 @@ app.use(errorHandler)
 // ═══════════════════════════════════════════════════════════════
 
 const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
-  console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║                    Semibot API Server                      ║
-╠═══════════════════════════════════════════════════════════╣
-║  Status:    Running                                        ║
-║  Host:      ${SERVER_HOST.padEnd(46)}║
-║  Port:      ${String(SERVER_PORT).padEnd(46)}║
-║  Log Level: ${LOG_LEVEL.padEnd(46)}║
-║  API:       http://${SERVER_HOST}:${SERVER_PORT}/api/v1${' '.repeat(24)}║
-╚═══════════════════════════════════════════════════════════╝
-  `)
+  serverLogger.info('服务器已启动', {
+    host: SERVER_HOST,
+    port: SERVER_PORT,
+    logLevel: LOG_LEVEL,
+    api: `http://${SERVER_HOST}:${SERVER_PORT}/api/v1`,
+  })
 })
 
 // 优雅关闭
 process.on('SIGTERM', () => {
-  console.log('[Server] 收到 SIGTERM 信号，正在优雅关闭...')
+  serverLogger.info('收到 SIGTERM 信号，正在优雅关闭...')
   server.close(() => {
-    console.log('[Server] 服务器已关闭')
+    serverLogger.info('服务器已关闭')
     process.exit(0)
   })
 })
 
 process.on('SIGINT', () => {
-  console.log('[Server] 收到 SIGINT 信号，正在优雅关闭...')
+  serverLogger.info('收到 SIGINT 信号，正在优雅关闭...')
   server.close(() => {
-    console.log('[Server] 服务器已关闭')
+    serverLogger.info('服务器已关闭')
     process.exit(0)
   })
 })

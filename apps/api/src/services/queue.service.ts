@@ -5,6 +5,9 @@
  */
 
 import * as redis from '../lib/redis'
+import { createLogger } from '../lib/logger'
+
+const queueLogger = createLogger('queue')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -53,9 +56,9 @@ export async function initializeQueue(): Promise<void> {
   try {
     await redis.createConsumerGroup(CHAT_QUEUE_NAME, CONSUMER_GROUP)
     isInitialized = true
-    console.log('[Queue] 队列初始化完成')
+    queueLogger.info('队列初始化完成')
   } catch (error) {
-    console.error('[Queue] 队列初始化失败:', error)
+    queueLogger.error('队列初始化失败', error as Error)
   }
 }
 
@@ -67,17 +70,17 @@ export async function initializeQueue(): Promise<void> {
  * 将任务推入队列
  */
 export async function enqueueTask(task: ChatTask): Promise<string> {
-  console.log(`[Queue] 任务入队 - ID: ${task.id}, Session: ${task.sessionId}`)
+  queueLogger.debug('任务入队', { taskId: task.id, sessionId: task.sessionId })
 
   try {
     const messageId = await redis.xadd(CHAT_QUEUE_NAME, {
       task: JSON.stringify(task),
     })
 
-    console.log(`[Queue] 任务已入队 - MessageID: ${messageId}`)
+    queueLogger.info('任务已入队', { messageId })
     return messageId
   } catch (error) {
-    console.error('[Queue] 任务入队失败:', error)
+    queueLogger.error('任务入队失败', error as Error)
     throw error
   }
 }
@@ -88,7 +91,7 @@ export async function enqueueTask(task: ChatTask): Promise<string> {
 export async function dequeueTask(
   blockMs: number = 5000
 ): Promise<{ messageId: string; task: ChatTask } | null> {
-  console.log('[Queue] 尝试获取任务...')
+  queueLogger.debug('尝试获取任务...')
 
   try {
     // 确保队列已初始化
@@ -109,10 +112,10 @@ export async function dequeueTask(
     const { id, fields } = messages[0]
     const task = JSON.parse(fields.task) as ChatTask
 
-    console.log(`[Queue] 获取到任务 - MessageID: ${id}, TaskID: ${task.id}`)
+    queueLogger.info('获取到任务', { messageId: id, taskId: task.id })
     return { messageId: id, task }
   } catch (error) {
-    console.error('[Queue] 获取任务失败:', error)
+    queueLogger.error('获取任务失败', error as Error)
     return null
   }
 }
@@ -121,13 +124,13 @@ export async function dequeueTask(
  * 确认任务完成
  */
 export async function acknowledgeTask(messageId: string): Promise<void> {
-  console.log(`[Queue] 确认任务 - MessageID: ${messageId}`)
+  queueLogger.debug('确认任务', { messageId })
 
   try {
     const ackCount = await redis.xack(CHAT_QUEUE_NAME, CONSUMER_GROUP, messageId)
-    console.log(`[Queue] 任务已确认 - MessageID: ${messageId}, AckCount: ${ackCount}`)
+    queueLogger.info('任务已确认', { messageId, ackCount })
   } catch (error) {
-    console.error('[Queue] 确认任务失败:', error)
+    queueLogger.error('确认任务失败', error as Error)
     throw error
   }
 }
@@ -136,7 +139,7 @@ export async function acknowledgeTask(messageId: string): Promise<void> {
  * 发布任务结果
  */
 export async function publishResult(taskId: string, result: TaskResult): Promise<void> {
-  console.log(`[Queue] 发布结果 - Task: ${taskId}, Status: ${result.status}`)
+  queueLogger.debug('发布结果', { taskId, status: result.status })
 
   try {
     const resultKey = `${CHAT_RESULT_PREFIX}${taskId}`
@@ -145,9 +148,9 @@ export async function publishResult(taskId: string, result: TaskResult): Promise
     // 同时发布到 Pub/Sub 频道，以便实时通知
     await redis.publish(`semibot:chat:result`, JSON.stringify(result))
 
-    console.log(`[Queue] 结果已发布 - Key: ${resultKey}`)
+    queueLogger.info('结果已发布', { resultKey })
   } catch (error) {
-    console.error('[Queue] 发布结果失败:', error)
+    queueLogger.error('发布结果失败', error as Error)
     throw error
   }
 }
@@ -166,7 +169,7 @@ export async function getResult(taskId: string): Promise<TaskResult | null> {
 
     return JSON.parse(resultStr) as TaskResult
   } catch (error) {
-    console.error('[Queue] 获取结果失败:', error)
+    queueLogger.error('获取结果失败', error as Error)
     return null
   }
 }
@@ -177,10 +180,10 @@ export async function getResult(taskId: string): Promise<TaskResult | null> {
 export async function getQueueLength(): Promise<number> {
   try {
     const length = await redis.xlen(CHAT_QUEUE_NAME)
-    console.log(`[Queue] 队列长度: ${length}`)
+    queueLogger.debug('队列长度', { length })
     return length
   } catch (error) {
-    console.error('[Queue] 获取队列长度失败:', error)
+    queueLogger.error('获取队列长度失败', error as Error)
     return 0
   }
 }
@@ -191,10 +194,10 @@ export async function getQueueLength(): Promise<number> {
 export async function checkQueueHealth(): Promise<boolean> {
   try {
     const isHealthy = await redis.pingRedis()
-    console.log(`[Queue] 健康检查 - 状态: ${isHealthy ? '正常' : '异常'}`)
+    queueLogger.debug('健康检查', { isHealthy })
     return isHealthy
   } catch (error) {
-    console.error('[Queue] 健康检查失败:', error)
+    queueLogger.error('健康检查失败', error as Error)
     return false
   }
 }

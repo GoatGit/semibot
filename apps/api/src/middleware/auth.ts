@@ -16,7 +16,8 @@ import {
   ERROR_HTTP_STATUS,
   ERROR_MESSAGES,
 } from '../constants/errorCodes'
-import { API_KEY_PREFIX } from '../constants/config'
+import { API_KEY_PREFIX, API_KEY_PREFIX_DISPLAY_LENGTH } from '../constants/config'
+import { authLogger } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -58,7 +59,7 @@ function getJWTSecret(): string {
   }
 
   if (!secret) {
-    console.warn('[Auth] 未设置 JWT_SECRET，使用开发环境默认值（请勿用于生产）')
+    authLogger.warn('未设置 JWT_SECRET，使用开发环境默认值（请勿用于生产）')
   }
 
   return secret ?? 'development-secret-change-in-production'
@@ -140,7 +141,7 @@ async function validateApiKey(
       },
     }
   } catch (error) {
-    console.error('[Auth] API Key 验证失败:', error)
+    authLogger.error('API Key 验证失败', error as Error)
     return { valid: false, error: AUTH_API_KEY_INVALID }
   }
 }
@@ -177,7 +178,7 @@ async function checkTokenBlacklist(token: string): Promise<boolean> {
     const { isBlacklisted } = await import('../services/auth.service')
     return isBlacklisted(token)
   } catch (error) {
-    console.error('[Auth] 黑名单检查失败:', error)
+    authLogger.error('黑名单检查失败', error as Error)
     return false
   }
 }
@@ -222,7 +223,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
     checkTokenBlacklist(token)
       .then((isBlacklisted) => {
         if (isBlacklisted) {
-          console.warn('[Auth] Token 已被加入黑名单')
+          authLogger.warn('Token 已被加入黑名单')
           sendAuthError(res, AUTH_TOKEN_INVALID)
           return
         }
@@ -301,9 +302,11 @@ export function requirePermission(...requiredPermissions: string[]) {
     })
 
     if (!hasPermission) {
-      console.warn(
-        `[Auth] 权限不足 - 用户: ${user.userId}, 需要: ${requiredPermissions.join('|')}, 拥有: ${user.permissions.join(',')}`
-      )
+      authLogger.warn('权限不足', {
+        userId: user.userId,
+        required: requiredPermissions,
+        owned: user.permissions,
+      })
       sendAuthError(res, AUTH_PERMISSION_DENIED)
       return
     }
@@ -327,9 +330,11 @@ export function requireRole(...allowedRoles: AuthUser['role'][]) {
     }
 
     if (!allowedRoles.includes(user.role)) {
-      console.warn(
-        `[Auth] 角色不足 - 用户: ${user.userId}, 需要: ${allowedRoles.join('|')}, 拥有: ${user.role}`
-      )
+      authLogger.warn('角色不足', {
+        userId: user.userId,
+        required: allowedRoles,
+        owned: user.role,
+      })
       sendAuthError(res, AUTH_PERMISSION_DENIED)
       return
     }
@@ -359,7 +364,7 @@ export async function generateApiKey(): Promise<{ key: string; hash: string; pre
   const { randomBytes } = await import('crypto')
   const keyBytes = randomBytes(32)
   const key = `${API_KEY_PREFIX}${keyBytes.toString('base64url')}`
-  const prefix = key.slice(0, 10)
+  const prefix = key.slice(0, API_KEY_PREFIX_DISPLAY_LENGTH)
   const hash = await bcrypt.hash(key, 12)
 
   return { key, hash, prefix }

@@ -9,6 +9,9 @@ import {
   DATABASE_URL,
   DB_POOL_MAX,
 } from '../constants/config'
+import { createLogger } from './logger'
+
+const dbLogger = createLogger('database')
 
 // ═══════════════════════════════════════════════════════════════
 // 数据库连接实例
@@ -29,7 +32,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
     await sql`SELECT 1`
     return true
   } catch (error) {
-    console.error('[Database] 连接检查失败:', error)
+    dbLogger.error('连接检查失败', error as Error)
     return false
   }
 }
@@ -39,7 +42,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
  */
 export async function closeDatabaseConnection(): Promise<void> {
   await sql.end()
-  console.log('[Database] 连接已关闭')
+  dbLogger.info('连接已关闭')
 }
 
 export default sql

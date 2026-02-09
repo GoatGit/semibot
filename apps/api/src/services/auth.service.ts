@@ -10,6 +10,7 @@ import crypto from 'crypto'
 import { sql } from '../lib/db'
 import * as redis from '../lib/redis'
 import { sendPasswordResetEmail } from './email.service'
+import { authLogger } from '../lib/logger'
 import {
   BCRYPT_ROUNDS,
   JWT_EXPIRES_IN_SECONDS,
@@ -365,11 +366,21 @@ export async function refreshToken(token: string): Promise<Omit<AuthResult, 'org
 export async function requestPasswordReset(email: string): Promise<void> {
   const normalizedEmail = email.trim().toLowerCase()
   const requestThrottleKey = `${PASSWORD_RESET_REQUEST_PREFIX}${normalizedEmail}`
-  const hasRecentRequest = await redis.exists(requestThrottleKey)
-  if (hasRecentRequest) {
+
+  // 使用 Redis SET NX EX 原子操作，修复竞态条件
+  const client = redis.getRedisClient()
+  const canProceed = await client.set(
+    requestThrottleKey,
+    '1',
+    'EX',
+    PASSWORD_RESET_REQUEST_TTL_SECONDS,
+    'NX'
+  )
+
+  if (!canProceed) {
+    // Key 已存在，说明最近有请求，直接返回
     return
   }
-  await redis.setWithExpiry(requestThrottleKey, '1', PASSWORD_RESET_REQUEST_TTL_SECONDS)
 
   const result = await sql`
     SELECT id FROM users
@@ -439,13 +450,13 @@ const TOKEN_BLACKLIST_PREFIX = 'token:blacklist:'
  */
 export async function addToBlacklist(token: string, ttlSeconds: number): Promise<void> {
   if (ttlSeconds <= 0) {
-    console.warn(`[Auth] Token 黑名单 TTL <= 0，跳过添加 (TTL: ${ttlSeconds}s)`)
+    authLogger.warn('Token 黑名单 TTL <= 0，跳过添加', { ttlSeconds })
     return
   }
 
   const key = `${TOKEN_BLACKLIST_PREFIX}${token}`
   await redis.setWithExpiry(key, '1', ttlSeconds)
-  console.log(`[Auth] Token 已加入黑名单 (TTL: ${ttlSeconds}s)`)
+  authLogger.info('Token 已加入黑名单', { ttlSeconds })
 }
 
 /**
@@ -507,5 +518,5 @@ export async function logout(
     }
   }
 
-  console.log(`[Auth] 用户 ${userId} 已登出`)
+  authLogger.info('用户已登出', { userId })
 }

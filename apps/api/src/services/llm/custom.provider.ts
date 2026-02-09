@@ -14,6 +14,9 @@ import type {
   LLMStreamChunk,
   ToolCall,
 } from './index'
+import { createLogger } from '../../lib/logger'
+
+const customLogger = createLogger('custom-llm')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -135,7 +138,7 @@ export class CustomProvider implements LLMProvider {
       })
 
       if (!response.ok) {
-        console.error('[Custom] 获取模型列表失败:', response.statusText)
+        customLogger.error('获取模型列表失败', undefined, { status: response.statusText })
         return (this.modelsCache ?? []).map((model) => ({ id: model }))
       }
 
@@ -153,10 +156,10 @@ export class CustomProvider implements LLMProvider {
       this.modelsCacheTime = Date.now()
       this.models = this.modelsCache
 
-      console.log(`[Custom] 获取到 ${models.length} 个模型`)
+      customLogger.info('获取模型列表成功', { count: models.length })
       return models
     } catch (error) {
-      console.error('[Custom] 获取模型列表出错:', error)
+      customLogger.error('获取模型列表出错', error as Error)
       return (this.modelsCache ?? []).map((model) => ({ id: model }))
     }
   }

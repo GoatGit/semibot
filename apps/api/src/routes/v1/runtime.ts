@@ -7,6 +7,9 @@ import { authenticate, requirePermission, type AuthRequest } from '../../middlew
 import { asyncHandler, createError } from '../../middleware/errorHandler'
 import { getRuntimeMonitor } from '../../services/runtime-monitor.service'
 import { AUTH_ORG_ACCESS_DENIED } from '../../constants/errorCodes'
+import { createLogger } from '../../lib/logger'
+
+const runtimeLogger = createLogger('runtime')
 
 const router: Router = Router()
 
@@ -38,9 +41,7 @@ router.get(
   asyncHandler(async (req: AuthRequest, res) => {
     const { orgId } = req.params
 
-    console.info(
-      `[Runtime] Metrics 访问 - 组织: ${orgId}, 用户: ${req.user?.userId}, 角色: ${req.user?.role}`
-    )
+    runtimeLogger.info('Metrics 访问', { orgId, userId: req.user?.userId, role: req.user?.role })
 
     // 验��多租户隔离：管理员只能访问自己组织的数据，除非是超级管理员
     if (req.user && req.user.orgId !== orgId && req.user.role !== 'owner') {
