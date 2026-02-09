@@ -13,8 +13,11 @@
     "test:coverage": "vitest --coverage"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^1.0.19",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@semibot/shared-config": "workspace:*",
     "@semibot/shared-types": "workspace:^",
+    "@smithery/api": "^0.40.0",
     "axios": "^1.13.5",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",

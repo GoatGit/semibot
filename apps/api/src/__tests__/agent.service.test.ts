@@ -9,33 +9,60 @@ vi.mock('../lib/db', () => ({
   sql: vi.fn(),
 }))
 
-import { sql } from '../lib/db'
+// Mock LLM 服务
+vi.mock('../services/llm.service', () => ({
+  getAvailableModels: vi.fn().mockResolvedValue(['gpt-4o', 'gpt-4o-mini']),
+}))
 
-const mockSql = sql as unknown as ReturnType<typeof vi.fn>
+// Mock repository
+vi.mock('../repositories/agent.repository', () => ({
+  countByOrg: vi.fn(),
+  create: vi.fn(),
+  findByIdAndOrg: vi.fn(),
+  findById: vi.fn(),
+  findByOrg: vi.fn(),
+  update: vi.fn(),
+  softDelete: vi.fn(),
+}))
+
+import * as agentRepository from '../repositories/agent.repository'
+
+const mockAgentRepo = agentRepository as {
+  countByOrg: ReturnType<typeof vi.fn>
+  create: ReturnType<typeof vi.fn>
+  findByIdAndOrg: ReturnType<typeof vi.fn>
+  findById: ReturnType<typeof vi.fn>
+  findByOrg: ReturnType<typeof vi.fn>
+  update: ReturnType<typeof vi.fn>
+  softDelete: ReturnType<typeof vi.fn>
+}
 
 describe('Agent Service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.resetModules()
   })
 
   describe('createAgent', () => {
     it('should create an agent with valid input', async () => {
-      const mockAgent = {
+      const mockAgentRow = {
         id: 'agent-123',
         org_id: 'org-123',
         name: 'Test Agent',
         description: 'A test agent',
         system_prompt: 'You are a helpful assistant',
-        config: {},
+        config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096, timeoutSeconds: 120 },
         skills: [],
         sub_agents: [],
+        version: 1,
         is_active: true,
         is_public: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
 
-      mockSql.mockResolvedValueOnce([mockAgent])
+      mockAgentRepo.countByOrg.mockResolvedValue(0)
+      mockAgentRepo.create.mockResolvedValue(mockAgentRow)
 
       const { createAgent } = await import('../services/agent.service')
 
@@ -47,27 +74,29 @@ describe('Agent Service', () => {
 
       expect(result).toBeDefined()
       expect(result.name).toBe('Test Agent')
+      expect(mockAgentRepo.create).toHaveBeenCalled()
     })
   })
 
   describe('getAgent', () => {
     it('should return agent when found', async () => {
-      const mockAgent = {
+      const mockAgentRow = {
         id: 'agent-123',
         org_id: 'org-123',
         name: 'Test Agent',
         description: 'A test agent',
         system_prompt: 'You are a helpful assistant',
-        config: {},
+        config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096, timeoutSeconds: 120 },
         skills: [],
         sub_agents: [],
+        version: 1,
         is_active: true,
         is_public: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
 
-      mockSql.mockResolvedValueOnce([mockAgent])
+      mockAgentRepo.findByIdAndOrg.mockResolvedValue(mockAgentRow)
 
       const { getAgent } = await import('../services/agent.service')
 
@@ -78,11 +107,11 @@ describe('Agent Service', () => {
     })
 
     it('should throw error when agent not found', async () => {
-      mockSql.mockResolvedValueOnce([])
+      mockAgentRepo.findByIdAndOrg.mockResolvedValue(null)
 
       const { getAgent } = await import('../services/agent.service')
 
-      await expect(getAgent('org-123', 'nonexistent')).rejects.toEqual({
+      await expect(getAgent('org-123', 'nonexistent')).rejects.toMatchObject({
         code: 'AGENT_NOT_FOUND',
       })
     })
@@ -90,16 +119,17 @@ describe('Agent Service', () => {
 
   describe('listAgents', () => {
     it('should return paginated list of agents', async () => {
-      const mockAgents = [
+      const mockAgentRows = [
         {
           id: 'agent-1',
           org_id: 'org-123',
           name: 'Agent 1',
           description: 'First agent',
           system_prompt: 'Prompt 1',
-          config: {},
+          config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096, timeoutSeconds: 120 },
           skills: [],
           sub_agents: [],
+          version: 1,
           is_active: true,
           is_public: false,
           created_at: new Date().toISOString(),
@@ -111,9 +141,10 @@ describe('Agent Service', () => {
           name: 'Agent 2',
           description: 'Second agent',
           system_prompt: 'Prompt 2',
-          config: {},
+          config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096, timeoutSeconds: 120 },
           skills: [],
           sub_agents: [],
+          version: 1,
           is_active: true,
           is_public: false,
           created_at: new Date().toISOString(),
@@ -121,10 +152,10 @@ describe('Agent Service', () => {
         },
       ]
 
-      // Mock count query
-      mockSql.mockResolvedValueOnce([{ count: '2' }])
-      // Mock list query
-      mockSql.mockResolvedValueOnce(mockAgents)
+      mockAgentRepo.findByOrg.mockResolvedValue({
+        data: mockAgentRows,
+        meta: { total: 2, page: 1, limit: 10, totalPages: 1 },
+      })
 
       const { listAgents } = await import('../services/agent.service')
 
@@ -137,31 +168,31 @@ describe('Agent Service', () => {
 
   describe('updateAgent', () => {
     it('should update agent with valid input', async () => {
-      const existingAgent = {
+      const existingAgentRow = {
         id: 'agent-123',
         org_id: 'org-123',
         name: 'Original Name',
         description: 'Original description',
         system_prompt: 'Original prompt',
-        config: {},
+        config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096, timeoutSeconds: 120 },
         skills: [],
         sub_agents: [],
+        version: 1,
         is_active: true,
         is_public: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
 
-      const updatedAgent = {
-        ...existingAgent,
+      const updatedAgentRow = {
+        ...existingAgentRow,
         name: 'Updated Name',
+        version: 2,
         updated_at: new Date().toISOString(),
       }
 
-      // Mock get agent
-      mockSql.mockResolvedValueOnce([existingAgent])
-      // Mock update
-      mockSql.mockResolvedValueOnce([updatedAgent])
+      mockAgentRepo.findByIdAndOrg.mockResolvedValue(existingAgentRow)
+      mockAgentRepo.update.mockResolvedValue(updatedAgentRow)
 
       const { updateAgent } = await import('../services/agent.service')
 
@@ -175,17 +206,7 @@ describe('Agent Service', () => {
 
   describe('deleteAgent', () => {
     it('should delete agent when found', async () => {
-      const mockAgent = {
-        id: 'agent-123',
-        org_id: 'org-123',
-        name: 'Test Agent',
-        is_active: true,
-      }
-
-      // Mock get agent
-      mockSql.mockResolvedValueOnce([mockAgent])
-      // Mock delete
-      mockSql.mockResolvedValueOnce([])
+      mockAgentRepo.softDelete.mockResolvedValue(true)
 
       const { deleteAgent } = await import('../services/agent.service')
 
@@ -195,14 +216,23 @@ describe('Agent Service', () => {
 
   describe('validateAgentForSession', () => {
     it('should pass validation for active agent', async () => {
-      const mockAgent = {
+      const mockAgentRow = {
         id: 'agent-123',
         org_id: 'org-123',
         name: 'Test Agent',
+        description: null,
+        system_prompt: 'You are helpful',
+        config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096, timeoutSeconds: 120 },
+        skills: [],
+        sub_agents: [],
+        version: 1,
         is_active: true,
+        is_public: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }
 
-      mockSql.mockResolvedValueOnce([mockAgent])
+      mockAgentRepo.findByIdAndOrg.mockResolvedValue(mockAgentRow)
 
       const { validateAgentForSession } = await import('../services/agent.service')
 
@@ -212,20 +242,29 @@ describe('Agent Service', () => {
     })
 
     it('should throw error for inactive agent', async () => {
-      const mockAgent = {
+      const mockAgentRow = {
         id: 'agent-123',
         org_id: 'org-123',
         name: 'Test Agent',
+        description: null,
+        system_prompt: 'You are helpful',
+        config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096, timeoutSeconds: 120 },
+        skills: [],
+        sub_agents: [],
+        version: 1,
         is_active: false,
+        is_public: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }
 
-      mockSql.mockResolvedValueOnce([mockAgent])
+      mockAgentRepo.findByIdAndOrg.mockResolvedValue(mockAgentRow)
 
       const { validateAgentForSession } = await import('../services/agent.service')
 
       await expect(
         validateAgentForSession('org-123', 'agent-123')
-      ).rejects.toEqual({ code: 'AGENT_INACTIVE' })
+      ).rejects.toMatchObject({ code: 'AGENT_INACTIVE' })
     })
   })
 })

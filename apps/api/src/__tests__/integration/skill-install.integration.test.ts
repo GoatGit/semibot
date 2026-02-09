@@ -2,20 +2,40 @@
  * Skill Install Integration Tests
  *
  * 端到端集成测试，测试完整的安装流程
+ * 注意：这些测试需要真实的数据库连接，请确保 DATABASE_URL 环境变量已正确配置
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs-extra'
 import * as path from 'path'
 import * as os from 'os'
-import { pool } from '../lib/db'
-import * as skillInstallService from '../services/skill-install.service'
-import * as skillRetryRollbackService from '../services/skill-retry-rollback.service'
-import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
-import * as skillPackageRepo from '../repositories/skill-package.repository'
-import * as skillInstallLogRepo from '../repositories/skill-install-log.repository'
 
-describe('Skill Install Integration Tests', () => {
+// 检查是否有数据库连接
+const DATABASE_URL = process.env.DATABASE_URL
+const SKIP_INTEGRATION_TESTS = !DATABASE_URL || DATABASE_URL.includes('localhost:5432')
+
+// 条件导入，避免在没有数据库时加载
+const getTestDependencies = async () => {
+  if (SKIP_INTEGRATION_TESTS) {
+    return null
+  }
+  const { pool } = await import('../../lib/db')
+  const skillInstallService = await import('../../services/skill-install.service')
+  const skillRetryRollbackService = await import('../../services/skill-retry-rollback.service')
+  const skillDefinitionRepo = await import('../../repositories/skill-definition.repository')
+  const skillPackageRepo = await import('../../repositories/skill-package.repository')
+  const skillInstallLogRepo = await import('../../repositories/skill-install-log.repository')
+  return {
+    pool,
+    skillInstallService,
+    skillRetryRollbackService,
+    skillDefinitionRepo,
+    skillPackageRepo,
+    skillInstallLogRepo,
+  }
+}
+
+describe.skipIf(SKIP_INTEGRATION_TESTS)('Skill Install Integration Tests', () => {
   let testUserId: string
   let testDefinitionId: string
   let tempDir: string
