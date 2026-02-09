@@ -142,7 +142,6 @@ export async function rollbackToVersion(
     operation: 'rollback',
     status: 'in_progress',
     startedAt: new Date(),
-    message: reason || `回滚到版本 ${targetVersion}`,
   })
 
   try {
