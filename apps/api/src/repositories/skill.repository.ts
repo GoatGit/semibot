@@ -213,9 +213,12 @@ export async function findAll(params: ListSkillsParams): Promise<PaginatedResult
 }
 
 /**
- * 更新 Skill
+ * 更新 Skill（带审计字段）
+ * @param id Skill ID
+ * @param data 更新数据
+ * @param updatedBy 更新者用户 ID
  */
-export async function update(id: string, data: UpdateSkillData): Promise<SkillRow | null> {
+export async function update(id: string, data: UpdateSkillData, updatedBy?: string): Promise<SkillRow | null> {
   const skill = await findById(id)
   if (!skill) return null
 
@@ -227,7 +230,8 @@ export async function update(id: string, data: UpdateSkillData): Promise<SkillRo
         tools = ${JSON.stringify(data.tools ?? skill.tools)},
         config = ${JSON.stringify(data.config ?? skill.config)},
         is_active = ${data.isActive ?? skill.is_active},
-        updated_at = NOW()
+        updated_at = NOW(),
+        updated_by = ${updatedBy ?? null}
     WHERE id = ${id}
     RETURNING *
   `
@@ -240,15 +244,21 @@ export async function update(id: string, data: UpdateSkillData): Promise<SkillRo
 }
 
 /**
- * 软删除 Skill
+ * 软删除 Skill（带审计字段）
+ * @param id Skill ID
+ * @param deletedBy 删除者用户 ID
  */
-export async function softDelete(id: string): Promise<boolean> {
+export async function softDelete(id: string, deletedBy?: string): Promise<boolean> {
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   const result = useDeletedAt
     ? await sql`
       UPDATE skills
-      SET deleted_at = NOW(), is_active = false, updated_at = NOW()
-      WHERE id = ${id}
+      SET deleted_at = NOW(),
+          deleted_by = ${deletedBy ?? null},
+          is_active = false,
+          updated_at = NOW(),
+          updated_by = ${deletedBy ?? null}
+      WHERE id = ${id} AND deleted_at IS NULL
       RETURNING id
     `
     : await sql`

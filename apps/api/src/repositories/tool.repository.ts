@@ -188,9 +188,12 @@ export async function findAll(params: ListToolsParams): Promise<PaginatedResult<
 }
 
 /**
- * 更新 Tool
+ * 更新 Tool（带审计字段）
+ * @param id Tool ID
+ * @param data 更新数据
+ * @param updatedBy 更新者用户 ID
  */
-export async function update(id: string, data: UpdateToolData): Promise<ToolRow | null> {
+export async function update(id: string, data: UpdateToolData, updatedBy?: string): Promise<ToolRow | null> {
   const tool = await findById(id)
   if (!tool) return null
 
@@ -202,7 +205,8 @@ export async function update(id: string, data: UpdateToolData): Promise<ToolRow 
         schema = ${JSON.stringify(data.schema ?? tool.schema)},
         config = ${JSON.stringify(data.config ?? tool.config)},
         is_active = ${data.isActive ?? tool.is_active},
-        updated_at = NOW()
+        updated_at = NOW(),
+        updated_by = ${updatedBy ?? null}
     WHERE id = ${id}
     RETURNING *
   `
@@ -215,7 +219,9 @@ export async function update(id: string, data: UpdateToolData): Promise<ToolRow 
 }
 
 /**
- * 软删除 Tool
+ * 软删除 Tool（带审计字段）
+ * @param id Tool ID
+ * @param deletedBy 删除者用户 ID
  */
 export async function softDelete(id: string, deletedBy?: string): Promise<boolean> {
   const result = await sql`
@@ -223,7 +229,8 @@ export async function softDelete(id: string, deletedBy?: string): Promise<boolea
     SET deleted_at = NOW(),
         deleted_by = ${deletedBy ?? null},
         is_active = false,
-        updated_at = NOW()
+        updated_at = NOW(),
+        updated_by = ${deletedBy ?? null}
     WHERE id = ${id} AND deleted_at IS NULL
     RETURNING id
   `
