@@ -21,6 +21,11 @@ const updatePreferencesSchema = z.object({
   language: z.enum(['zh-CN', 'en-US']).optional(),
 })
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8).max(128),
+})
+
 /**
  * GET /users/me - 获取当前用户资料
  */
@@ -83,6 +88,27 @@ router.patch(
     res.json({
       success: true,
       data: preferences,
+    })
+  })
+)
+
+/**
+ * PUT /users/me/password - 修改密码
+ */
+router.put(
+  '/me/password',
+  authenticate,
+  combinedRateLimit,
+  validate(changePasswordSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    await userService.changePassword(
+      req.user!.userId,
+      req.body.currentPassword,
+      req.body.newPassword
+    )
+    res.json({
+      success: true,
+      data: null,
     })
   })
 )

@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { User, Key, Palette, ChevronRight, Plus, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { User, Palette, ChevronRight, Loader2, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { apiClient } from '@/lib/api'
+import { STORAGE_KEYS } from '@/constants/config'
 
-type SettingsSection = 'profile' | 'api-keys' | 'preferences'
+type SettingsSection = 'profile' | 'password' | 'preferences'
 type Theme = 'dark' | 'light' | 'system'
 type Language = 'zh-CN' | 'en-US'
 
@@ -24,27 +25,12 @@ interface UserProfile {
   avatarUrl?: string
 }
 
-interface ApiKey {
-  id: string
-  name: string
-  keyPrefix: string
-  lastUsedAt: string | null
-  createdAt?: string
-}
-
-interface CreatedApiKey {
-  id: string
-  name: string
-  key: string
-  keyPrefix: string
-}
-
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
 
   const sections = [
     { id: 'profile' as const, label: '个人资料', icon: <User size={18} /> },
-    { id: 'api-keys' as const, label: 'API 密钥', icon: <Key size={18} /> },
+    { id: 'password' as const, label: '修改密码', icon: <Lock size={18} /> },
     { id: 'preferences' as const, label: '偏好设置', icon: <Palette size={18} /> },
   ]
 
@@ -74,7 +60,7 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto p-6">
         {activeSection === 'profile' && <ProfileSection />}
-        {activeSection === 'api-keys' && <ApiKeysSection />}
+        {activeSection === 'password' && <PasswordSection />}
         {activeSection === 'preferences' && <PreferencesSection />}
       </div>
     </div>
@@ -171,59 +157,44 @@ function ProfileSection() {
   )
 }
 
-function ApiKeysSection() {
-  const [keys, setKeys] = useState<ApiKey[]>([])
-  const [loading, setLoading] = useState(true)
+function PasswordSection() {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [saving, setSaving] = useState(false)
-  const [newKeyName, setNewKeyName] = useState('')
-  const [newlyCreatedKey, setNewlyCreatedKey] = useState<CreatedApiKey | null>(null)
-  const [showRawKey, setShowRawKey] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  const loadKeys = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = await apiClient.get<ApiResponse<ApiKey[]>>('/api-keys')
-      if (response.success) {
-        setKeys(response.data || [])
-      }
-    } catch (error) {
-      console.error('[Settings] 获取 API Keys 失败:', error)
-    } finally {
-      setLoading(false)
+  const handleChangePassword = async () => {
+    setMessage(null)
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setMessage({ type: 'error', text: '请填写所有字段' })
+      return
     }
-  }, [])
 
-  useEffect(() => {
-    loadKeys()
-  }, [loadKeys])
+    if (newPassword.length < 8) {
+      setMessage({ type: 'error', text: '新密码至少 8 个字符' })
+      return
+    }
 
-  const createKey = async () => {
-    if (!newKeyName.trim()) return
+    if (newPassword !== confirmPassword) {
+      setMessage({ type: 'error', text: '两次输入的新密码不一致' })
+      return
+    }
+
     try {
       setSaving(true)
-      const response = await apiClient.post<ApiResponse<CreatedApiKey>>('/api-keys', {
-        name: newKeyName.trim(),
+      await apiClient.put('/users/me/password', {
+        currentPassword,
+        newPassword,
       })
-      if (response.success && response.data) {
-        setNewlyCreatedKey(response.data)
-        setShowRawKey(true)
-        setNewKeyName('')
-        await loadKeys()
-      }
+      setMessage({ type: 'success', text: '密码修改成功' })
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
     } catch (error) {
-      console.error('[Settings] 创建 API Key 失败:', error)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const deleteKey = async (keyId: string) => {
-    try {
-      setSaving(true)
-      await apiClient.delete(`/api-keys/${keyId}`)
-      await loadKeys()
-    } catch (error) {
-      console.error('[Settings] 删除 API Key 失败:', error)
+      const errMsg = error instanceof Error ? error.message : '密码修改失败'
+      setMessage({ type: 'error', text: errMsg })
     } finally {
       setSaving(false)
     }
@@ -231,84 +202,60 @@ function ApiKeysSection() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-text-primary">API 密钥</h2>
-          <p className="text-sm text-text-secondary mt-1">来自真实 `/api-keys` 接口</p>
-        </div>
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">修改密码</h2>
+        <p className="text-sm text-text-secondary mt-1">更新您的登录密码</p>
       </div>
-
       <Card>
         <CardContent>
-          <div className="flex gap-2">
-            <Input
-              placeholder="输入新密钥名称"
-              value={newKeyName}
-              onChange={(e) => setNewKeyName(e.target.value)}
-              disabled={saving}
-            />
-            <Button leftIcon={<Plus size={16} />} onClick={createKey} loading={saving}>
-              创建
-            </Button>
+          <div className="space-y-4">
+            {message && (
+              <div
+                className={clsx(
+                  'text-sm',
+                  message.type === 'success' ? 'text-success-500' : 'text-error-500'
+                )}
+              >
+                {message.text}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">当前密码</label>
+              <Input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                disabled={saving}
+                placeholder="请输入当前密码"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">新密码</label>
+              <Input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                disabled={saving}
+                placeholder="至少 8 个字符"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">确认新密码</label>
+              <Input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={saving}
+                placeholder="再次输入新密码"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
-
-      {newlyCreatedKey && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">新密钥（仅展示一次）</CardTitle>
-            <CardDescription>请立即复制保存</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <code className="text-xs font-mono text-text-secondary bg-bg-elevated px-2 py-1 rounded flex-1 break-all">
-                {showRawKey ? newlyCreatedKey.key : newlyCreatedKey.keyPrefix}
-              </code>
-              <button
-                onClick={() => setShowRawKey((prev) => !prev)}
-                className="p-1 text-text-tertiary hover:text-text-primary"
-              >
-                {showRawKey ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="space-y-3">
-        {loading ? (
-          <div className="h-24 flex items-center justify-center text-text-secondary">
-            <Loader2 size={18} className="animate-spin mr-2" />
-            加载中...
-          </div>
-        ) : keys.length === 0 ? (
-          <div className="text-sm text-text-secondary">暂无 API 密钥</div>
-        ) : (
-          keys.map((key) => (
-            <Card key={key.id}>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium text-text-primary">{key.name}</div>
-                    <div className="text-xs text-text-tertiary mt-1">
-                      前缀: {key.keyPrefix} · 最后使用: {key.lastUsedAt || '从未使用'}
-                    </div>
-                  </div>
-                  <Button
-                    variant="tertiary"
-                    size="sm"
-                    leftIcon={<Trash2 size={14} />}
-                    onClick={() => deleteKey(key.id)}
-                    disabled={saving}
-                  >
-                    删除
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
+      <div className="flex justify-end">
+        <Button onClick={handleChangePassword} loading={saving}>
+          修改密码
+        </Button>
       </div>
     </div>
   )
@@ -356,6 +303,13 @@ function PreferencesSection() {
       if (response.success && response.data) {
         setTheme(response.data.theme)
         setLanguage(response.data.language)
+        // 同步主题到 DOM 和 localStorage
+        const savedTheme = response.data.theme
+        const resolved = savedTheme === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : savedTheme
+        document.documentElement.dataset.theme = resolved
+        localStorage.setItem(STORAGE_KEYS.THEME, savedTheme)
       }
       setSaved(true)
       setTimeout(() => setSaved(false), 1200)
@@ -423,6 +377,7 @@ function PreferencesSection() {
               </button>
             ))}
           </div>
+          <p className="text-xs text-text-tertiary mt-3">语言切换功能开发中，当前仅支持中文界面</p>
         </CardContent>
       </Card>
 

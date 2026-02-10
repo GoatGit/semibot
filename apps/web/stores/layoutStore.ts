@@ -96,8 +96,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
         currentPath: path,
         // 首页展开导航栏，其他页面收起
         navBarExpanded: isHome,
-        // 不需要详情的页面自动收起
-        detailCanvasMode: needsDetail ? 'normal' : 'collapsed',
+        // 路由切换时始终折叠，由页面组件主动调用 setHasDetailContent(true) 展开
+        detailCanvasMode: 'collapsed',
         hasDetailContent: false,
       }
     }),

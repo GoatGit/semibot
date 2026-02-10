@@ -53,7 +53,7 @@ export const MESSAGE_BUBBLE_MAX_WIDTH_PERCENT = 80
 // ═══════════════════════════════════════════════════════════════
 
 /** 不需要显示详情画布的路径 */
-export const PATHS_WITHOUT_DETAIL = ['/settings', '/agents'] as const
+export const PATHS_WITHOUT_DETAIL = ['/settings', '/agents', '/', '/skills', '/mcp', '/chat/new'] as const
 
 /** 首页路径 */
 export const HOME_PATH = '/'

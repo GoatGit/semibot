@@ -6,7 +6,9 @@
 
 import { sql } from '../lib/db'
 import { createError } from '../middleware/errorHandler'
-import { AUTH_USER_NOT_FOUND } from '../constants/errorCodes'
+import { AUTH_USER_NOT_FOUND, AUTH_INVALID_PASSWORD } from '../constants/errorCodes'
+import bcrypt from 'bcryptjs'
+import { BCRYPT_ROUNDS } from '../constants/config'
 
 export interface UserProfile {
   id: string
@@ -166,4 +168,38 @@ export async function updateUserPreferences(
     theme: (settings.theme as UserPreferences['theme']) ?? 'dark',
     language: (settings.language as UserPreferences['language']) ?? 'zh-CN',
   }
+}
+
+/**
+ * 修改密码
+ */
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const result = await sql`
+    SELECT id, password_hash
+    FROM users
+    WHERE id = ${userId} AND is_active = true
+    LIMIT 1
+  `
+
+  if (result.length === 0) {
+    throw createError(AUTH_USER_NOT_FOUND)
+  }
+
+  const user = result[0] as { id: string; password_hash: string }
+
+  const isPasswordValid = await bcrypt.compare(currentPassword, user.password_hash)
+  if (!isPasswordValid) {
+    throw createError(AUTH_INVALID_PASSWORD)
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS)
+  await sql`
+    UPDATE users
+    SET password_hash = ${passwordHash}, updated_at = NOW()
+    WHERE id = ${userId}
+  `
 }

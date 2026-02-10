@@ -1,7 +1,7 @@
 'use client'
 
 import { useLayoutStore } from '@/stores/layoutStore'
-import { DETAIL_CANVAS_WIDTH_PX } from '@/constants/config'
+import { DETAIL_CANVAS_WIDTH_PX, PATHS_WITHOUT_DETAIL } from '@/constants/config'
 import clsx from 'clsx'
 import {
   ChevronLeft,
@@ -23,11 +23,19 @@ import {
 export function DetailCanvas() {
   const {
     detailCanvasMode,
+    currentPath,
     collapseDetail,
     expandDetail,
     maximizeDetail,
     exitMaximize
   } = useLayoutStore()
+
+  const isPathWithoutDetail = PATHS_WITHOUT_DETAIL.some((p) => currentPath === p || (p !== '/' && currentPath.startsWith(p)))
+
+  // 折叠状态下，若当前路径不需要详情画布，完全不渲染
+  if (detailCanvasMode === 'collapsed' && isPathWithoutDetail) {
+    return null
+  }
 
   // 折叠状态时只显示展开按钮
   if (detailCanvasMode === 'collapsed') {

@@ -33,7 +33,6 @@ const navItems: NavItem[] = [
   { icon: <Bot size={20} />, label: 'Agents', href: '/agents' },
   { icon: <Sparkles size={20} />, label: 'Skills', href: '/skills' },
   { icon: <Puzzle size={20} />, label: 'MCP', href: '/mcp' },
-  { icon: <Settings size={20} />, label: '设置', href: '/settings' },
 ]
 
 /**
@@ -58,6 +57,10 @@ export function NavBar() {
   const userMenuRef = useRef<HTMLDivElement>(null)
   const [sessions, setSessions] = useState<Session[]>([])
   const [isLoadingSessions, setIsLoadingSessions] = useState(false)
+  const [sessionPage, setSessionPage] = useState(1)
+  const [hasMoreSessions, setHasMoreSessions] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
 
   // 点击外部关闭用户菜单
   useEffect(() => {
@@ -78,10 +81,12 @@ export function NavBar() {
       try {
         setIsLoadingSessions(true)
         const response = await apiClient.get<ApiResponse<Session[]>>('/sessions', {
-          params: { limit: NAVBAR_SESSION_LIMIT },
+          params: { limit: NAVBAR_SESSION_LIMIT, page: 1 },
         })
         if (!cancelled && response.success && response.data) {
           setSessions(response.data)
+          setSessionPage(1)
+          setHasMoreSessions(response.data.length >= NAVBAR_SESSION_LIMIT)
         }
       } catch {
         // 静默处理，不影响导航栏其他功能
@@ -94,6 +99,44 @@ export function NavBar() {
     loadSessions()
     return () => { cancelled = true }
   }, [])
+
+  // 加载更多会话
+  const loadMoreSessions = useCallback(async () => {
+    if (isLoadingMore || !hasMoreSessions) return
+    const nextPage = sessionPage + 1
+    try {
+      setIsLoadingMore(true)
+      const response = await apiClient.get<ApiResponse<Session[]>>('/sessions', {
+        params: { limit: NAVBAR_SESSION_LIMIT, page: nextPage },
+      })
+      if (response.success && response.data) {
+        const newSessions = response.data
+        setSessions((prev) => [...prev, ...newSessions])
+        setSessionPage(nextPage)
+        setHasMoreSessions(newSessions.length >= NAVBAR_SESSION_LIMIT)
+      }
+    } catch {
+      // 静默处理
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [isLoadingMore, hasMoreSessions, sessionPage])
+
+  // IntersectionObserver 监听哨兵元素
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMoreSessions && !isLoadingMore) {
+          loadMoreSessions()
+        }
+      },
+      { threshold: 0.1 }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreSessions, isLoadingMore, loadMoreSessions])
 
   // 实际显示的展开状态：固定展开 或 悬停展开
   const isExpanded = navBarExpanded || isHovered
@@ -182,13 +225,21 @@ export function NavBar() {
             ) : sessions.length === 0 ? (
               <p className="px-3 py-2 text-xs text-text-tertiary">暂无会话</p>
             ) : (
-              sessions.map((session) => (
-                <SessionItem
-                  key={session.id}
-                  session={session}
-                  active={pathname === `/chat/${session.id}`}
-                />
-              ))
+              <>
+                {sessions.map((session) => (
+                  <SessionItem
+                    key={session.id}
+                    session={session}
+                    active={pathname === `/chat/${session.id}`}
+                  />
+                ))}
+                {isLoadingMore && (
+                  <div className="flex items-center justify-center py-2">
+                    <div className="w-4 h-4 border-2 border-text-tertiary border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+                {hasMoreSessions && <div ref={sentinelRef} className="h-1" />}
+              </>
             )}
           </div>
         )}
@@ -226,6 +277,18 @@ export function NavBar() {
                 'z-20'
               )}
             >
+              <Link
+                href="/settings"
+                className={clsx(
+                  'flex items-center gap-2 w-full px-3 py-2 text-sm',
+                  'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
+                )}
+                onClick={() => setShowUserMenu(false)}
+              >
+                <Settings size={14} />
+                设置
+              </Link>
+              <div className="border-t border-border-subtle" />
               <button
                 type="button"
                 className={clsx(
