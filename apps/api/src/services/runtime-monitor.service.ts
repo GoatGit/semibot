@@ -30,12 +30,15 @@ export interface ExecutionMetrics {
   timeoutRate: number
 }
 
+export type RuntimeErrorType = 'transient' | 'permanent' | 'timeout'
+
 export interface ExecutionRecord {
   sessionId: string
   orgId: string
   mode: 'direct_llm' | 'runtime_orchestrator'
   success: boolean
   error?: string
+  errorType?: RuntimeErrorType
   latencyMs: number
   timestamp: number
 }
@@ -133,10 +136,13 @@ class RuntimeMonitorService {
       return
     }
 
-    // 检查错误率
-    if (metrics.errorRate > CHAT_RUNTIME_ERROR_RATE_THRESHOLD) {
+    // 计算加权错误率（区分错误类型）
+    const weightedErrorRate = this.getWeightedErrorRate()
+
+    // 检查加权错误率
+    if (weightedErrorRate > CHAT_RUNTIME_ERROR_RATE_THRESHOLD) {
       this.enableFallback(
-        `错误率过高: ${(metrics.errorRate * 100).toFixed(2)}% (阈值: ${(CHAT_RUNTIME_ERROR_RATE_THRESHOLD * 100).toFixed(2)}%)`
+        `加权错误率过高: ${(weightedErrorRate * 100).toFixed(2)}% (阈值: ${(CHAT_RUNTIME_ERROR_RATE_THRESHOLD * 100).toFixed(2)}%)`
       )
       return
     }
@@ -160,13 +166,44 @@ class RuntimeMonitorService {
 
     // 如果指标恢复正常，禁用回退
     const recoveryThreshold = CHAT_RUNTIME_ERROR_RATE_THRESHOLD * RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER
-    if (this.fallbackEnabled && metrics.errorRate < recoveryThreshold) {
+    if (this.fallbackEnabled && weightedErrorRate < recoveryThreshold) {
       runtimeMonitorLogger.info('指标恢复正常，准备禁用自动回退', {
-        errorRate: (metrics.errorRate * 100).toFixed(2) + '%',
+        weightedErrorRate: (weightedErrorRate * 100).toFixed(2) + '%',
         recoveryThreshold: (recoveryThreshold * 100).toFixed(2) + '%',
       })
       this.disableFallback()
     }
+  }
+
+  /**
+   * 计算加权错误率（按错误类型区分权重）
+   * transient: 0.5, timeout: 0.8, permanent: 1.0
+   */
+  private getWeightedErrorRate(): number {
+    const now = Date.now()
+    const cutoff = now - this.windowMs
+
+    const windowRecords = this.records.filter(
+      (r) => r.mode === 'runtime_orchestrator' && r.timestamp >= cutoff
+    )
+
+    if (windowRecords.length === 0) return 0
+
+    const ERROR_TYPE_WEIGHTS: Record<string, number> = {
+      transient: 0.5,
+      timeout: 0.8,
+      permanent: 1.0,
+    }
+
+    let weightedErrors = 0
+    for (const record of windowRecords) {
+      if (!record.success) {
+        const weight = ERROR_TYPE_WEIGHTS[record.errorType ?? 'permanent'] ?? 1.0
+        weightedErrors += weight
+      }
+    }
+
+    return weightedErrors / windowRecords.length
   }
 
   /**

@@ -36,6 +36,7 @@ import {
   type RuntimeExecutionResult,
 } from '../adapters/runtime.adapter'
 import { getRuntimeMonitor } from './runtime-monitor.service'
+import type { RuntimeErrorType } from './runtime-monitor.service'
 import type { Agent2UIMessage, Agent2UIType, Agent2UIData, McpCallData } from '@semibot/shared-types'
 import { chatLogger } from '../lib/logger'
 
@@ -209,6 +210,26 @@ export function sendAgent2UIMessage(
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * 根据错误信息分类错误类型
+ */
+function classifyRuntimeError(error: string | undefined): RuntimeErrorType {
+  if (!error) return 'permanent'
+  const lower = error.toLowerCase()
+  if (lower.includes('timeout') || lower.includes('timed out')) return 'timeout'
+  if (
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('socket hang up') ||
+    lower.includes('network') ||
+    lower.includes('unavailable') ||
+    lower.includes('stall')
+  ) {
+    return 'transient'
+  }
+  return 'permanent'
+}
+
+/**
  * 决定使用哪种执行模式
  */
 function determineExecutionMode(orgId: string): ChatExecutionMode {
@@ -297,6 +318,7 @@ async function handleChatWithRuntime(
         mode: 'runtime_orchestrator',
         success: false,
         error: 'Runtime service unavailable',
+        errorType: 'transient',
         latencyMs: Date.now() - startTime,
         timestamp: Date.now(),
       })
@@ -317,7 +339,7 @@ async function handleChatWithRuntime(
 
     // 截断历史消息（保留最近 20 条）
     if (historyMessages.length > MAX_HISTORY_MESSAGES) {
-      chatLogger.debug('历史消息截断', {
+      chatLogger.warn('历史消息截断', {
         total: historyMessages.length,
         kept: MAX_HISTORY_MESSAGES,
         dropped: historyMessages.length - MAX_HISTORY_MESSAGES,
@@ -393,6 +415,7 @@ async function handleChatWithRuntime(
           mode: 'runtime_orchestrator',
           success: false,
           error: result.error,
+          errorType: classifyRuntimeError(result.error),
           latencyMs,
           timestamp: Date.now(),
         })
@@ -407,20 +430,23 @@ async function handleChatWithRuntime(
     const latencyMs = Date.now() - startTime
     chatLogger.error('Runtime 模式处理失败', error as Error, { sessionId, latencyMs })
 
+    const runtimeError = error instanceof Error ? error.message : '未知错误'
+
     // 记录失败
     monitor.recordExecution({
       sessionId,
       orgId,
       mode: 'runtime_orchestrator',
       success: false,
-      error: error instanceof Error ? error.message : '未知错误',
+      error: runtimeError,
+      errorType: classifyRuntimeError(runtimeError),
       latencyMs,
       timestamp: Date.now(),
     })
 
     sendSSEEvent(connection, 'error', {
       code: SSE_STREAM_ERROR,
-      message: error instanceof Error ? error.message : '处理失败',
+      message: runtimeError,
     })
   } finally {
     // 关闭连接
@@ -494,7 +520,7 @@ async function handleChatDirect(
 
     // 截断历史消息（保留最近 N 条）
     if (historyMessages.length > MAX_HISTORY_MESSAGES) {
-      chatLogger.debug('历史消息截断', {
+      chatLogger.warn('历史消息截断', {
         total: historyMessages.length,
         kept: MAX_HISTORY_MESSAGES,
         dropped: historyMessages.length - MAX_HISTORY_MESSAGES,

@@ -36,3 +36,11 @@ typing-extensions>=4.12.0
 # Sandbox (Docker)
 docker>=7.0.0
 pyyaml>=6.0.0
+
+# HTTP Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+sse-starlette>=2.1.0
+
+# MCP Protocol
+mcp>=1.0.0

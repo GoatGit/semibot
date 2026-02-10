@@ -135,6 +135,15 @@ export const DB_QUERY_TIMEOUT_MS = 30000
 /** Runtime 执行超时 (毫秒) */
 export const RUNTIME_EXECUTION_TIMEOUT_MS = 300000
 
+/** Runtime 健康检查超时 (毫秒) */
+export const RUNTIME_HEALTH_CHECK_TIMEOUT_MS = 5000
+
+/** Runtime SSE 流 stall 超时 (毫秒) */
+export const RUNTIME_STALL_TIMEOUT_MS = 30000
+
+/** Runtime SSE 连续解析失败最大次数 */
+export const RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES = 5
+
 // ═══════════════════════════════════════════════════════════════
 // Chat 执行模式配置
 // ═══════════════════════════════════════════════════════════════
