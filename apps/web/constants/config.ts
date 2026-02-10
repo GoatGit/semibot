@@ -29,9 +29,6 @@ export {
 // UI 配置
 // ═══════════════════════════════════════════════════════════════
 
-/** 模拟响应延迟 (毫秒) - 开发环境模拟 Agent 响应 */
-export const MOCK_RESPONSE_DELAY_MS = 1500
-
 /** 打字指示器动画延迟 (秒) */
 export const TYPING_INDICATOR_DELAYS = {
   DOT_1: 0,

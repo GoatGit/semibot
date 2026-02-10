@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { Search, Plus, History, RefreshCw, AlertCircle, Package, Loader2, Power, Trash2 } from 'lucide-react'
+import { Search, Plus, History, RefreshCw, AlertCircle, Package, Loader2, Power, Trash2, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -64,6 +64,13 @@ export default function SkillDefinitionsPage() {
   const [createName, setCreateName] = useState('')
   const [createDescription, setCreateDescription] = useState('')
   const [createTriggerKeywords, setCreateTriggerKeywords] = useState('')
+
+  // 编辑表单状态
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [editingDefinition, setEditingDefinition] = useState<SkillDefinition | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editTriggerKeywords, setEditTriggerKeywords] = useState('')
 
   const loadDefinitions = useCallback(async () => {
     try {
@@ -213,6 +220,42 @@ export default function SkillDefinitionsPage() {
       const error = err as { response?: { data?: { error?: { message?: string } } } }
       console.error('[SkillDefinitions] 创建失败:', err)
       setError(error.response?.data?.error?.message || '创建技能失败')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleEdit = (definition: SkillDefinition) => {
+    setEditingDefinition(definition)
+    setEditName(definition.name)
+    setEditDescription(definition.description || '')
+    setEditTriggerKeywords(definition.triggerKeywords?.join(', ') || '')
+    setShowEditDialog(true)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editingDefinition || !editName) return
+
+    try {
+      setActionLoading(true)
+      setError(null)
+
+      await apiClient.put(`/skill-definitions/${editingDefinition.id}`, {
+        name: editName,
+        description: editDescription || undefined,
+        triggerKeywords: editTriggerKeywords
+          .split(',')
+          .map(k => k.trim())
+          .filter(Boolean),
+      })
+
+      setShowEditDialog(false)
+      setEditingDefinition(null)
+      await loadDefinitions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
+      console.error('[SkillDefinitions] 编辑失败:', err)
+      setError(error.response?.data?.error?.message || '编辑失败')
     } finally {
       setActionLoading(false)
     }
@@ -411,6 +454,15 @@ export default function SkillDefinitionsPage() {
                   <Package className="w-3.5 h-3.5 mr-1" />
                   安装
                 </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleEdit(definition)}
+                  title="编辑"
+                >
+                  <Pencil className="w-3.5 h-3.5 mr-1" />
+                  编辑
+                </Button>
                 <div className="flex-1" />
                 <Button
                   variant="secondary"
@@ -588,6 +640,60 @@ export default function SkillDefinitionsPage() {
               </Button>
               <Button onClick={handleCreate} loading={actionLoading} disabled={!createSkillId || !createName}>
                 创建
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑技能对话框 */}
+      {showEditDialog && editingDefinition && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-bg-surface border border-border-default rounded-lg max-w-lg w-full">
+            <div className="p-6 border-b border-border-subtle">
+              <h2 className="text-lg font-semibold text-text-primary">编辑技能</h2>
+              <p className="text-sm text-text-secondary mt-1">{editingDefinition.skillId}</p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">名称 *</label>
+                <Input
+                  type="text"
+                  placeholder="技能显示名称"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">描述</label>
+                <Input
+                  type="text"
+                  placeholder="技能功能描述（可选）"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">触发词</label>
+                <Input
+                  type="text"
+                  placeholder="用逗号分隔多个关键词，如: 翻译,translate"
+                  value={editTriggerKeywords}
+                  onChange={(e) => setEditTriggerKeywords(e.target.value)}
+                />
+                <p className="text-xs text-text-tertiary mt-1">用于匹配用户消息自动触发技能</p>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-border-subtle flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShowEditDialog(false)} disabled={actionLoading}>
+                取消
+              </Button>
+              <Button onClick={handleSaveEdit} loading={actionLoading} disabled={!editName}>
+                保存
               </Button>
             </div>
           </div>

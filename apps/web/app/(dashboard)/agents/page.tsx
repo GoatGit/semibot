@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Plus, Search, Settings, Trash2, Loader2 } from 'lucide-react'
+import { Bot, Plus, Search, Settings, Trash2, Loader2, Power } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -29,6 +29,7 @@ export default function AgentsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<Agent | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isToggling, setIsToggling] = useState(false)
   const [pageIndex, setPageIndex] = useState(1)
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
@@ -139,6 +140,19 @@ export default function AgentsPage() {
   const handleCancel = () => {
     setShowForm(false)
     setFormErrors({})
+  }
+
+  const handleToggleActive = async (agent: Agent) => {
+    setIsToggling(true)
+    try {
+      await apiClient.put(`/agents/${agent.id}`, { isActive: !agent.isActive })
+      setAgents((prev) => prev.map((a) => a.id === agent.id ? { ...a, isActive: !a.isActive } : a))
+    } catch (err) {
+      console.error('[Agents] 切换状态失败:', err)
+      setStatusMessage({ type: 'error', text: '切换状态失败' })
+    } finally {
+      setIsToggling(false)
+    }
   }
 
   const handleDelete = (agent: Agent) => {
@@ -253,6 +267,8 @@ export default function AgentsPage() {
                 agent={agent}
                 onEdit={() => openEditForm(agent)}
                 onDelete={() => handleDelete(agent)}
+                onToggleActive={() => handleToggleActive(agent)}
+                isToggling={isToggling}
               />
             ))}
           </div>
@@ -319,9 +335,11 @@ interface AgentCardProps {
   agent: Agent
   onEdit: () => void
   onDelete: () => void
+  onToggleActive: () => void
+  isToggling: boolean
 }
 
-function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
+function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: AgentCardProps) {
   const isActive = agent.isActive
 
   return (
@@ -352,6 +370,26 @@ function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                data-testid="toggle-agent-btn"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onToggleActive()
+                }}
+                disabled={isToggling}
+                className={clsx(
+                  'p-1.5 rounded-md',
+                  'transition-colors duration-fast',
+                  isToggling
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-interactive-hover',
+                  isActive ? 'text-success-500' : 'text-text-tertiary hover:text-text-primary'
+                )}
+              >
+                <Power size={16} />
+              </button>
               <button
                 type="button"
                 data-testid="edit-agent-btn"

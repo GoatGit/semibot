@@ -9,7 +9,6 @@ import chatRouter from './chat'
 import authRouter from './auth'
 import organizationsRouter from './organizations'
 import apiKeysRouter from './api-keys'
-import skillsRouter from './skills'
 import toolsRouter from './tools'
 import mcpRouter from './mcp'
 import memoryRouter from './memory'
@@ -42,7 +41,6 @@ router.use('/sessions', sessionsRouter)
 router.use('/chat', chatRouter)
 router.use('/organizations', organizationsRouter)
 router.use('/api-keys', apiKeysRouter)
-router.use('/skills', skillsRouter)
 router.use('/tools', toolsRouter)
 router.use('/mcp', mcpRouter)
 router.use('/memory', memoryRouter)
