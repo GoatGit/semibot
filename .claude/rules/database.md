@@ -89,6 +89,22 @@ if (result.rowCount === 0) {
 
 ---
 
+## 查询优化
+
+### N+1 查询
+
+用 `WHERE id = ANY($1::uuid[])` 批量替代循环单查。
+
+### 复合索引
+
+按常见查询模式建索引（如 `org_id + status + created_at DESC`），用 `EXPLAIN ANALYZE` 验证命中。
+
+### 表分区
+
+高增长表（messages、execution_logs）按日期做 Range 分区。
+
+---
+
 ## JSONB 列写入规范（postgres.js）
 
 **禁止使用 `JSON.stringify()` 写入 JSONB 列，必须使用 `sql.json()`。**
