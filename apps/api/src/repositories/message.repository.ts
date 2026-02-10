@@ -72,11 +72,11 @@ export async function create(data: CreateMessageData): Promise<MessageRow> {
       ${data.parentId ?? null},
       ${data.role},
       ${data.content},
-      ${data.toolCalls ? JSON.stringify(data.toolCalls) : null},
+      ${data.toolCalls ? sql.json(data.toolCalls as unknown as Parameters<typeof sql.json>[0]) : null},
       ${data.toolCallId ?? null},
       ${data.tokensUsed ?? null},
       ${data.latencyMs ?? null},
-      ${data.metadata ? JSON.stringify(data.metadata) : null}
+      ${data.metadata ? sql.json(data.metadata as Parameters<typeof sql.json>[0]) : null}
     )
     RETURNING *
   `
@@ -151,14 +151,14 @@ export async function update(id: string, data: UpdateMessageData): Promise<Messa
   const newContent = data.content ?? message.content
   const newTokensUsed = data.tokensUsed ?? message.tokens_used
   const newLatencyMs = data.latencyMs ?? message.latency_ms
-  const newMetadata = data.metadata ? JSON.stringify(data.metadata) : null
+  const newMetadata = data.metadata ? sql.json(data.metadata as Parameters<typeof sql.json>[0]) : null
 
   const result = await sql`
     UPDATE messages
     SET content = ${newContent},
         tokens_used = ${newTokensUsed},
         latency_ms = ${newLatencyMs},
-        metadata = COALESCE(${newMetadata}::jsonb, metadata)
+        metadata = COALESCE(${newMetadata}, metadata)
     WHERE id = ${id}
     RETURNING *
   `

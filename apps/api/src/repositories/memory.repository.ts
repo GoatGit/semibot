@@ -84,7 +84,7 @@ export async function create(data: CreateMemoryData): Promise<MemoryRow> {
       ${data.embedding ? JSON.stringify(data.embedding) : null}::vector,
       ${data.memoryType ?? 'episodic'},
       ${data.importance ?? 0.5},
-      ${JSON.stringify(data.metadata ?? {})},
+      ${sql.json((data.metadata ?? {}) as Parameters<typeof sql.json>[0])},
       ${data.expiresAt ?? null}
     )
     RETURNING *

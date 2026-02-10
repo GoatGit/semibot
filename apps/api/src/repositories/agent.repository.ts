@@ -86,7 +86,7 @@ export async function create(data: CreateAgentData): Promise<AgentRow> {
       ${data.name},
       ${data.description ?? null},
       ${data.systemPrompt},
-      ${JSON.stringify(data.config)},
+      ${sql.json(data.config as Parameters<typeof sql.json>[0])},
       ${data.skills ?? []},
       ${data.subAgents ?? []},
       ${data.isPublic ?? false}
@@ -248,7 +248,7 @@ export async function update(
     SET name = ${data.name ?? agent.name},
         description = ${data.description ?? agent.description},
         system_prompt = ${data.systemPrompt ?? agent.system_prompt},
-        config = ${JSON.stringify(data.config ?? agent.config)},
+        config = ${sql.json((data.config ?? agent.config) as Parameters<typeof sql.json>[0])},
         skills = ${data.skills ?? agent.skills},
         sub_agents = ${data.subAgents ?? agent.sub_agents},
         is_active = ${data.isActive ?? agent.is_active},

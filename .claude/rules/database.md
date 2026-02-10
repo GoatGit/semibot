@@ -86,3 +86,47 @@ if (result.rowCount === 0) {
   throw createError(409, 'CONFLICT', '数据已被其他用户修改');
 }
 ```
+
+---
+
+## JSONB 列写入规范（postgres.js）
+
+**禁止使用 `JSON.stringify()` 写入 JSONB 列，必须使用 `sql.json()`。**
+
+### 背景
+
+本项目使用 [postgres.js](https://github.com/porsager/postgres) 作为 PostgreSQL 驱动。在 tagged template 中传入字符串参数时，postgres.js 会将其作为 text 类型发送给 PostgreSQL。虽然 PostgreSQL 能将 text 隐式转换为 JSONB 存入，但在某些情况下（如 `prepare: false` 模式）会导致**双重序列化**：数据库中存储的是 JSON 字符串值 `"\"{ ... }\""` 而非 JSON 对象。读取时 postgres.js 解析 JSONB 得到的是字符串而非对象，导致字段访问返回 `undefined`。
+
+### 规则
+
+```typescript
+// ❌ 错误：JSON.stringify 导致双重序列化风险
+config = ${JSON.stringify(data.config ?? {})}
+metadata = ${JSON.stringify(data.metadata)}
+
+// ✅ 正确：sql.json() 显式标记 JSONB 类型（OID 3802）
+config = ${sql.json((data.config ?? {}) as Parameters<typeof sql.json>[0])}
+metadata = ${sql.json(data.metadata as Parameters<typeof sql.json>[0])}
+
+// ✅ 正确：可选字段为 null 时的处理
+metadata = ${data.metadata ? sql.json(data.metadata as Parameters<typeof sql.json>[0]) : null}
+
+// ✅ 例外：vector 类型仍使用 JSON.stringify + ::vector 转换
+embedding = ${JSON.stringify(data.embedding)}::vector
+```
+
+### 读取侧防御
+
+对于已有数据可能存在双重序列化的情况，在 row → entity 转换函数中添加防御性解析：
+
+```typescript
+// 防御性解析：兼容历史脏数据
+const rawConfig = typeof row.config === 'string' ? JSON.parse(row.config) : row.config
+const config = (rawConfig ?? {}) as Record<string, unknown>
+```
+
+### 类型断言说明
+
+postgres.js 的 `sql.json()` 接受 `JSONValue` 类型参数。当 TypeScript 类型不兼容时：
+- 普通对象：使用 `as Parameters<typeof sql.json>[0]>`
+- 数组类型（如 `ToolCall[]`）：使用 `as unknown as Parameters<typeof sql.json>[0]>`

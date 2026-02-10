@@ -137,8 +137,8 @@ export async function createExecutionLog(data: CreateExecutionLogData): Promise<
       ${data.state},
       ${data.actionType ?? null},
       ${data.actionName ?? null},
-      ${data.actionInput ? JSON.stringify(data.actionInput) : null},
-      ${data.actionOutput ? JSON.stringify(data.actionOutput) : null},
+      ${data.actionInput ? sql.json(data.actionInput as Parameters<typeof sql.json>[0]) : null},
+      ${data.actionOutput ? sql.json(data.actionOutput as Parameters<typeof sql.json>[0]) : null},
       ${data.errorCode ?? null},
       ${data.errorMessage ?? null},
       ${data.retryCount ?? 0},
@@ -146,7 +146,7 @@ export async function createExecutionLog(data: CreateExecutionLogData): Promise<
       ${data.tokensInput ?? 0},
       ${data.tokensOutput ?? 0},
       ${data.model ?? null},
-      ${JSON.stringify(data.metadata ?? {})}
+      ${sql.json((data.metadata ?? {}) as Parameters<typeof sql.json>[0])}
     )
     RETURNING *
   `

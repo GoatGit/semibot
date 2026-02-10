@@ -128,9 +128,9 @@ export async function create(data: CreateSkillPackageData): Promise<SkillPackage
       ${data.packageSizeBytes || 0},
       ${data.checksumSha256},
       ${data.status || 'pending'},
-      ${JSON.stringify(data.validationResult || {})},
-      ${JSON.stringify(data.tools || [])},
-      ${JSON.stringify(data.config || {})}
+      ${sql.json((data.validationResult || {}) as Parameters<typeof sql.json>[0])},
+      ${sql.json((data.tools || []) as Parameters<typeof sql.json>[0])},
+      ${sql.json((data.config || {}) as Parameters<typeof sql.json>[0])}
     )
     RETURNING *
   `
@@ -250,52 +250,22 @@ export async function findAll(options: {
  * 更新技能包
  */
 export async function update(id: string, data: UpdateSkillPackageData): Promise<SkillPackage> {
-  const updates: string[] = []
-  const params: any[] = []
-  let paramIndex = 1
-
-  if (data.status !== undefined) {
-    updates.push(`status = $${paramIndex++}`)
-    params.push(data.status)
+  const existing = await findById(id)
+  if (!existing) {
+    throw new Error(`SkillPackage not found: ${id}`)
   }
-
-  if (data.packageSizeBytes !== undefined) {
-    updates.push(`package_size_bytes = $${paramIndex++}`)
-    params.push(data.packageSizeBytes)
-  }
-
-  if (data.checksumSha256 !== undefined) {
-    updates.push(`checksum_sha256 = $${paramIndex++}`)
-    params.push(data.checksumSha256)
-  }
-
-  if (data.validationResult !== undefined) {
-    updates.push(`validation_result = $${paramIndex++}`)
-    params.push(JSON.stringify(data.validationResult))
-  }
-
-  if (data.tools !== undefined) {
-    updates.push(`tools = $${paramIndex++}`)
-    params.push(JSON.stringify(data.tools))
-  }
-
-  if (data.config !== undefined) {
-    updates.push(`config = $${paramIndex++}`)
-    params.push(JSON.stringify(data.config))
-  }
-
-  if (data.installedAt !== undefined) {
-    updates.push(`installed_at = $${paramIndex++}`)
-    params.push(data.installedAt)
-  }
-
-  updates.push(`updated_at = NOW()`)
-  params.push(id)
 
   const rows = await sql<SkillPackageRow[]>`
     UPDATE skill_packages
-    SET ${sql.unsafe(updates.join(', '))}
-    WHERE id = $${paramIndex}
+    SET status = ${data.status ?? existing.status},
+        package_size_bytes = ${data.packageSizeBytes ?? existing.packageSizeBytes},
+        checksum_sha256 = ${data.checksumSha256 ?? existing.checksumSha256},
+        validation_result = ${sql.json((data.validationResult ?? existing.validationResult) as Parameters<typeof sql.json>[0])},
+        tools = ${sql.json((data.tools ?? existing.tools) as Parameters<typeof sql.json>[0])},
+        config = ${sql.json((data.config ?? existing.config) as Parameters<typeof sql.json>[0])},
+        installed_at = ${data.installedAt ?? existing.installedAt ?? null},
+        updated_at = NOW()
+    WHERE id = ${id}
     RETURNING *
   `
 

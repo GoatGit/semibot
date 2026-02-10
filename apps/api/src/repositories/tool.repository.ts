@@ -86,8 +86,8 @@ export async function create(data: CreateToolData): Promise<ToolRow> {
       ${data.name},
       ${data.description ?? null},
       ${data.type},
-      ${JSON.stringify(data.schema ?? {})},
-      ${JSON.stringify(data.config ?? {})},
+      ${sql.json((data.schema ?? {}) as Parameters<typeof sql.json>[0])},
+      ${sql.json((data.config ?? {}) as Parameters<typeof sql.json>[0])},
       ${data.isBuiltin ?? false},
       ${data.createdBy ?? null}
     )
@@ -219,8 +219,8 @@ export async function updateByOrg(
     SET name = ${data.name ?? tool.name},
         description = ${data.description ?? tool.description},
         type = ${data.type ?? tool.type},
-        schema = ${JSON.stringify(data.schema ?? tool.schema)},
-        config = ${JSON.stringify(data.config ?? tool.config)},
+        schema = ${sql.json((data.schema ?? tool.schema) as Parameters<typeof sql.json>[0])},
+        config = ${sql.json((data.config ?? tool.config) as Parameters<typeof sql.json>[0])},
         is_active = ${data.isActive ?? tool.is_active},
         updated_at = NOW(),
         updated_by = ${updatedBy ?? null}
@@ -253,8 +253,8 @@ export async function update(id: string, data: UpdateToolData, updatedBy?: strin
     SET name = ${data.name ?? tool.name},
         description = ${data.description ?? tool.description},
         type = ${data.type ?? tool.type},
-        schema = ${JSON.stringify(data.schema ?? tool.schema)},
-        config = ${JSON.stringify(data.config ?? tool.config)},
+        schema = ${sql.json((data.schema ?? tool.schema) as Parameters<typeof sql.json>[0])},
+        config = ${sql.json((data.config ?? tool.config) as Parameters<typeof sql.json>[0])},
         is_active = ${data.isActive ?? tool.is_active},
         updated_at = NOW(),
         updated_by = ${updatedBy ?? null}

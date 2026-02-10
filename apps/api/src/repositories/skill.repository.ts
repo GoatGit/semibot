@@ -106,8 +106,8 @@ export async function create(data: CreateSkillData): Promise<SkillRow> {
       ${data.name},
       ${data.description ?? null},
       ${data.triggerKeywords ?? []},
-      ${JSON.stringify(data.tools ?? [])},
-      ${JSON.stringify(data.config ?? {})},
+      ${sql.json((data.tools ?? []) as Parameters<typeof sql.json>[0])},
+      ${sql.json((data.config ?? {}) as Parameters<typeof sql.json>[0])},
       ${data.isBuiltin ?? false},
       ${data.createdBy ?? null}
     )
@@ -244,8 +244,8 @@ export async function updateByOrg(
     SET name = ${data.name ?? skill.name},
         description = ${data.description ?? skill.description},
         trigger_keywords = ${data.triggerKeywords ?? skill.trigger_keywords},
-        tools = ${JSON.stringify(data.tools ?? skill.tools)},
-        config = ${JSON.stringify(data.config ?? skill.config)},
+        tools = ${sql.json((data.tools ?? skill.tools) as Parameters<typeof sql.json>[0])},
+        config = ${sql.json((data.config ?? skill.config) as Parameters<typeof sql.json>[0])},
         is_active = ${data.isActive ?? skill.is_active},
         updated_at = NOW(),
         updated_by = ${updatedBy ?? null}
@@ -278,8 +278,8 @@ export async function update(id: string, data: UpdateSkillData, updatedBy?: stri
     SET name = ${data.name ?? skill.name},
         description = ${data.description ?? skill.description},
         trigger_keywords = ${data.triggerKeywords ?? skill.trigger_keywords},
-        tools = ${JSON.stringify(data.tools ?? skill.tools)},
-        config = ${JSON.stringify(data.config ?? skill.config)},
+        tools = ${sql.json((data.tools ?? skill.tools) as Parameters<typeof sql.json>[0])},
+        config = ${sql.json((data.config ?? skill.config) as Parameters<typeof sql.json>[0])},
         is_active = ${data.isActive ?? skill.is_active},
         updated_at = NOW(),
         updated_by = ${updatedBy ?? null}

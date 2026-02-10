@@ -69,7 +69,7 @@ export async function create(data: CreateSessionData): Promise<SessionRow> {
       ${data.agentId},
       ${data.userId},
       ${data.title ?? null},
-      ${data.metadata ? JSON.stringify(data.metadata) : null}
+      ${data.metadata ? sql.json(data.metadata as Parameters<typeof sql.json>[0]) : null}
     )
     RETURNING *
   `
