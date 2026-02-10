@@ -132,7 +132,7 @@ export default function AgentDetailPage() {
           throw new Error('创建失败')
         }
       } else {
-        const response = await apiClient.patch<ApiResponse<Agent>>(`/agents/${agentId}`, payload)
+        const response = await apiClient.put<ApiResponse<Agent>>(`/agents/${agentId}`, payload)
         if (!response.success || !response.data) {
           throw new Error('更新失败')
         }

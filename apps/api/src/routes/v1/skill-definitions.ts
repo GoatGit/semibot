@@ -36,7 +36,7 @@ const createSkillDefinitionSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(1000).optional(),
   protocol: z.enum(['anthropic', 'codex', 'semibot']).optional(),
-  sourceType: z.enum(['anthropic', 'codex', 'url', 'local']).optional(),
+  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry']).optional(),
   sourceUrl: z.string().url().optional(),
 })
 
@@ -48,10 +48,19 @@ const updateSkillDefinitionSchema = z.object({
 
 const installSkillPackageSchema = z.object({
   version: z.string().min(1).max(50),
-  sourceType: z.enum(['anthropic', 'codex', 'url', 'local']),
+  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry']),
   sourceUrl: z.string().url().optional(),
   localPath: z.string().optional(),
   enableRetry: z.boolean().optional(),
+})
+
+const publishVersionSchema = z.object({
+  version: z.string().min(1).max(50),
+  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry']),
+  sourceUrl: z.string().url().optional(),
+  sourceRef: z.string().max(200).optional(),
+  manifestUrl: z.string().url().optional(),
+  releaseNotes: z.string().max(2000).optional(),
 })
 
 const rollbackVersionSchema = z.object({
@@ -68,6 +77,58 @@ const installFromManifestSchema = z.object({
   manifestUrl: z.string().url(),
   skillId: z.string().min(1).max(120).optional(),
 })
+
+// ═════════════════════════════════════════════════���═════════════
+// 快捷安装 API（必须在 /:id 路由之前定义，避免路径冲突）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/v1/skill-definitions/install/anthropic
+ * 从 Anthropic Skill ID 安装
+ */
+router.post(
+  '/install/anthropic',
+  authenticate,
+  requirePermission('admin'),
+  combinedRateLimit,
+  validate(installFromAnthropicSchema),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { skillId, version } = req.body
+
+    const packageId = await installFromAnthropicSkillId(skillId, version)
+    const pkg = await skillPackageRepo.findById(packageId)
+
+    res.status(201).json({
+      success: true,
+      data: pkg,
+      message: `已从 Anthropic 安装技能 ${skillId}`,
+    })
+  })
+)
+
+/**
+ * POST /api/v1/skill-definitions/install/manifest
+ * 从 Manifest URL 安装
+ */
+router.post(
+  '/install/manifest',
+  authenticate,
+  requirePermission('admin'),
+  combinedRateLimit,
+  validate(installFromManifestSchema),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { manifestUrl, skillId } = req.body
+
+    const packageId = await installFromManifestUrl(manifestUrl, skillId)
+    const pkg = await skillPackageRepo.findById(packageId)
+
+    res.status(201).json({
+      success: true,
+      data: pkg,
+      message: `已从 Manifest URL 安装技能`,
+    })
+  })
+)
 
 // ═══════════════════════════════════════════════════════════════
 // Skill Definition CRUD
@@ -108,13 +169,13 @@ router.get(
   combinedRateLimit,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const page = parseInt(req.query.page as string) || 1
-    const pageSize = parseInt(req.query.pageSize as string) || 20
+    const limit = parseInt(req.query.limit as string) || parseInt(req.query.pageSize as string) || 20
     const search = req.query.search as string
     const isActive = req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined
 
     const result = await skillDefinitionRepo.findAll({
       page,
-      pageSize,
+      pageSize: limit,
       search,
       isActive,
     })
@@ -122,11 +183,11 @@ router.get(
     res.json({
       success: true,
       data: result.data,
-      pagination: {
+      meta: {
         total: result.total,
         page: result.page,
-        pageSize: result.pageSize,
-        totalPages: Math.ceil(result.total / result.pageSize),
+        limit,
+        totalPages: Math.ceil(result.total / limit),
       },
     })
   })
@@ -259,6 +320,38 @@ router.post(
 )
 
 /**
+ * POST /api/v1/skill-definitions/:id/publish
+ * 发布新版本（仅管理员）
+ */
+router.post(
+  '/:id/publish',
+  authenticate,
+  requirePermission('admin'),
+  combinedRateLimit,
+  validate(publishVersionSchema),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { id } = req.params
+    const input = req.body
+
+    const installInput = {
+      skillDefinitionId: id,
+      version: input.version,
+      sourceType: input.sourceType,
+      sourceUrl: input.sourceUrl,
+    }
+
+    const packageId = await installSkillPackage(installInput)
+    const pkg = await skillPackageRepo.findById(packageId)
+
+    res.status(201).json({
+      success: true,
+      data: pkg,
+      message: `已发布版本 ${input.version}`,
+    })
+  })
+)
+
+/**
  * GET /api/v1/skill-definitions/:id/versions
  * 查询可用版本列表
  */
@@ -386,58 +479,6 @@ router.get(
     res.json({
       success: true,
       data: logs,
-    })
-  })
-)
-
-// ═══════════════════════════════════════════════════════════════
-// 快捷安装 API
-// ══════════════════════════════════════════════════════��════════
-
-/**
- * POST /api/v1/skill-definitions/install-from-anthropic
- * 从 Anthropic Skill ID 安装
- */
-router.post(
-  '/install-from-anthropic',
-  authenticate,
-  requirePermission('admin'),
-  combinedRateLimit,
-  validate(installFromAnthropicSchema),
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { skillId, version } = req.body
-
-    const packageId = await installFromAnthropicSkillId(skillId, version)
-    const pkg = await skillPackageRepo.findById(packageId)
-
-    res.status(201).json({
-      success: true,
-      data: pkg,
-      message: `已从 Anthropic 安装技能 ${skillId}`,
-    })
-  })
-)
-
-/**
- * POST /api/v1/skill-definitions/install-from-manifest
- * 从 Manifest URL 安装
- */
-router.post(
-  '/install-from-manifest',
-  authenticate,
-  requirePermission('admin'),
-  combinedRateLimit,
-  validate(installFromManifestSchema),
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { manifestUrl, skillId } = req.body
-
-    const packageId = await installFromManifestUrl(manifestUrl, skillId)
-    const pkg = await skillPackageRepo.findById(packageId)
-
-    res.status(201).json({
-      success: true,
-      data: pkg,
-      message: `已从 Manifest URL 安装技能`,
     })
   })
 )

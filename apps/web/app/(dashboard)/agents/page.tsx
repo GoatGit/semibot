@@ -147,7 +147,7 @@ export default function AgentsPage() {
           setShowForm(false)
         }
       } else if (editingAgentId) {
-        const response = await apiClient.patch<ApiResponse<Agent>>(`/agents/${editingAgentId}`, {
+        const response = await apiClient.put<ApiResponse<Agent>>(`/agents/${editingAgentId}`, {
           name: formValues.name.trim(),
           description: formValues.description.trim(),
           systemPrompt: formValues.systemPrompt,
