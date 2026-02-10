@@ -7,6 +7,8 @@ import { render, screen } from '@testing-library/react'
 import { Agent2UIRenderer, Agent2UIMessageList } from '@/components/agent2ui/Agent2UIRenderer'
 import type { Agent2UIMessage } from '@/types'
 
+const TEST_TIMESTAMP = '2024-01-01T00:00:00.000Z'
+
 // Mock ComponentRegistry
 vi.mock('@/components/agent2ui/ComponentRegistry', () => ({
   ComponentRegistry: {
@@ -42,6 +44,7 @@ describe('Agent2UIRenderer', () => {
         id: 'msg-1',
         type: 'text',
         data: { content: 'Hello World' },
+        timestamp: TEST_TIMESTAMP,
       }
 
       render(<Agent2UIRenderer message={message} />)
@@ -54,6 +57,7 @@ describe('Agent2UIRenderer', () => {
         id: 'msg-1',
         type: 'text',
         data: { content: 'Test' },
+        timestamp: TEST_TIMESTAMP,
       }
 
       const { container } = render(<Agent2UIRenderer message={message} className="custom-class" />)
@@ -69,6 +73,7 @@ describe('Agent2UIRenderer', () => {
         id: 'msg-123',
         type: 'markdown',
         data: { content: '# Title' },
+        timestamp: TEST_TIMESTAMP,
       }
 
       const { container } = render(<Agent2UIRenderer message={message} />)
@@ -85,6 +90,7 @@ describe('Agent2UIRenderer', () => {
         id: 'msg-1',
         type: 'unknown_type' as Agent2UIMessage['type'],
         data: { content: 'Fallback content' },
+        timestamp: TEST_TIMESTAMP,
       }
 
       render(<Agent2UIRenderer message={message} />)
@@ -96,7 +102,8 @@ describe('Agent2UIRenderer', () => {
       const message: Agent2UIMessage = {
         id: 'msg-1',
         type: 'unknown_type' as Agent2UIMessage['type'],
-        data: { key: 'value', nested: { a: 1 } },
+        data: { key: 'value', nested: { a: 1 } } as unknown as Agent2UIMessage['data'],
+        timestamp: TEST_TIMESTAMP,
       }
 
       render(<Agent2UIRenderer message={message} />)
@@ -111,6 +118,7 @@ describe('Agent2UIRenderer', () => {
         id: 'msg-1',
         type: 'error_component' as Agent2UIMessage['type'],
         data: { content: 'Test' },
+        timestamp: TEST_TIMESTAMP,
       }
 
       const { container } = render(<Agent2UIRenderer message={message} />)
@@ -124,6 +132,7 @@ describe('Agent2UIRenderer', () => {
         id: 'msg-1',
         type: 'error_component' as Agent2UIMessage['type'],
         data: { content: 'Test' },
+        timestamp: TEST_TIMESTAMP,
       }
 
       render(<Agent2UIRenderer message={message} onError={onError} />)
@@ -136,9 +145,9 @@ describe('Agent2UIRenderer', () => {
 describe('Agent2UIMessageList', () => {
   it('应该渲染多条消息', () => {
     const messages: Agent2UIMessage[] = [
-      { id: 'msg-1', type: 'text', data: { content: 'Message 1' } },
-      { id: 'msg-2', type: 'text', data: { content: 'Message 2' } },
-      { id: 'msg-3', type: 'text', data: { content: 'Message 3' } },
+      { id: 'msg-1', type: 'text', data: { content: 'Message 1' }, timestamp: TEST_TIMESTAMP },
+      { id: 'msg-2', type: 'text', data: { content: 'Message 2' }, timestamp: TEST_TIMESTAMP },
+      { id: 'msg-3', type: 'text', data: { content: 'Message 3' }, timestamp: TEST_TIMESTAMP },
     ]
 
     render(<Agent2UIMessageList messages={messages} />)
@@ -148,7 +157,7 @@ describe('Agent2UIMessageList', () => {
 
   it('应该使用不同的 gap 样式', () => {
     const messages: Agent2UIMessage[] = [
-      { id: 'msg-1', type: 'text', data: { content: 'Test' } },
+      { id: 'msg-1', type: 'text', data: { content: 'Test' }, timestamp: TEST_TIMESTAMP },
     ]
 
     const { container, rerender } = render(
@@ -165,7 +174,7 @@ describe('Agent2UIMessageList', () => {
 
   it('应该传递 messageClassName 到每条消息', () => {
     const messages: Agent2UIMessage[] = [
-      { id: 'msg-1', type: 'text', data: { content: 'Test' } },
+      { id: 'msg-1', type: 'text', data: { content: 'Test' }, timestamp: TEST_TIMESTAMP },
     ]
 
     const { container } = render(

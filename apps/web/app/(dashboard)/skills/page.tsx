@@ -370,7 +370,7 @@ export default function SkillDefinitionsPage() {
                 {definition.triggerKeywords && definition.triggerKeywords.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     <span className="text-xs text-text-tertiary mr-1">触发词:</span>
-                    {definition.triggerKeywords.map((keyword, idx) => (
+                    {definition.triggerKeywords.map((keyword: string, idx: number) => (
                       <Badge key={idx} variant="outline" className="text-xs">
                         {keyword}
                       </Badge>
@@ -394,7 +394,7 @@ export default function SkillDefinitionsPage() {
 
                 {definition.tags && definition.tags.length > 0 && (
                   <div className="flex flex-wrap gap-2">
-                    {definition.tags.map((tag, idx) => (
+                    {definition.tags.map((tag: string, idx: number) => (
                       <Badge key={idx} variant="outline" className="text-xs">
                         {tag}
                       </Badge>
