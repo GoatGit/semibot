@@ -345,107 +345,92 @@ export default function SkillDefinitionsPage() {
 
       {/* 技能列表 */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {filteredDefinitions.map((definition) => (
-            <Card key={definition.id} interactive>
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg">{definition.name}</CardTitle>
-                    <p className="text-sm text-text-tertiary mt-1">{definition.skillId}</p>
-                  </div>
+            <Card key={definition.id} interactive padding="sm">
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-text-primary truncate">{definition.name}</h3>
+                  <p className="text-xs text-text-tertiary truncate">{definition.skillId}</p>
+                </div>
+                <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
                   {definition.isActive ? (
-                    <Badge variant="success">已启用</Badge>
+                    <Badge variant="success">启用</Badge>
                   ) : (
-                    <Badge variant="default">已禁用</Badge>
+                    <Badge variant="default">禁用</Badge>
+                  )}
+                  {definition.currentVersion && (
+                    <span className="text-xs text-text-tertiary font-mono">v{definition.currentVersion}</span>
                   )}
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-sm text-text-secondary line-clamp-2">
-                  {definition.description || '暂无描述'}
-                </p>
+              </div>
 
-                {/* 触发词 */}
-                {definition.triggerKeywords && definition.triggerKeywords.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className="text-xs text-text-tertiary mr-1">触发词:</span>
-                    {definition.triggerKeywords.map((keyword, idx) => (
-                      <Badge key={idx} variant="outline" className="text-xs">
-                        {keyword}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
+              <p className="text-xs text-text-secondary line-clamp-2 mb-2">
+                {definition.description || '暂无描述'}
+              </p>
 
-                {/* 版本信息 */}
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-tertiary">当前版本:</span>
-                  <span className="font-medium text-text-primary">{definition.currentVersion || 'N/A'}</span>
+              {/* 触发词 + 分类 + 标签 */}
+              {((definition.triggerKeywords && definition.triggerKeywords.length > 0) ||
+                definition.category ||
+                (definition.tags && definition.tags.length > 0)) && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {definition.category && (
+                    <Badge variant="default" className="text-xs">{definition.category}</Badge>
+                  )}
+                  {definition.triggerKeywords?.map((keyword, idx) => (
+                    <Badge key={`kw-${idx}`} variant="outline" className="text-xs">
+                      {keyword}
+                    </Badge>
+                  ))}
+                  {definition.tags?.map((tag, idx) => (
+                    <Badge key={`tag-${idx}`} variant="outline" className="text-xs">
+                      {tag}
+                    </Badge>
+                  ))}
                 </div>
+              )}
 
-                {/* 分类和标签 */}
-                {definition.category && (
-                  <div className="flex items-center text-sm">
-                    <span className="text-text-tertiary mr-2">分类:</span>
-                    <Badge variant="default">{definition.category}</Badge>
-                  </div>
-                )}
-
-                {definition.tags && definition.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {definition.tags.map((tag, idx) => (
-                      <Badge key={idx} variant="outline" className="text-xs">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-
-                {/* 操作按钮 */}
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleShowVersions(definition)}
-                    className="flex-1"
-                  >
-                    <History className="w-4 h-4 mr-1" />
-                    版本
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedDefinition(definition)
-                      setShowInstallDialog(true)
-                    }}
-                    className="flex-1"
-                  >
-                    <Package className="w-4 h-4 mr-1" />
-                    安装
-                  </Button>
-                  <Button
-                    variant={definition.isActive ? 'secondary' : 'primary'}
-                    size="sm"
-                    onClick={() => handleToggleActive(definition)}
-                    disabled={actionLoading}
-                    className="flex-1"
-                  >
-                    <Power className="w-4 h-4 mr-1" />
-                    {definition.isActive ? '禁用' : '启用'}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleDelete(definition)}
-                    disabled={actionLoading}
-                    title="删除技能"
-                  >
-                    <Trash2 className="w-4 h-4 text-error-500" />
-                  </Button>
-                </div>
-              </CardContent>
+              {/* 操作按钮 */}
+              <div className="flex gap-1.5 pt-2 border-t border-border-subtle">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleShowVersions(definition)}
+                >
+                  <History className="w-3.5 h-3.5 mr-1" />
+                  版本
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedDefinition(definition)
+                    setShowInstallDialog(true)
+                  }}
+                >
+                  <Package className="w-3.5 h-3.5 mr-1" />
+                  安装
+                </Button>
+                <div className="flex-1" />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleToggleActive(definition)}
+                  disabled={actionLoading}
+                  title={definition.isActive ? '禁用' : '启用'}
+                >
+                  <Power className={clsx('w-3.5 h-3.5', definition.isActive ? 'text-success-500' : 'text-text-tertiary')} />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleDelete(definition)}
+                  disabled={actionLoading}
+                  title="删除"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-error-500" />
+                </Button>
+              </div>
             </Card>
           ))}
         </div>
