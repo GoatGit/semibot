@@ -105,6 +105,12 @@ if (!redis.isConnected) {
 
 ---
 
+## 执行上下文隔离
+
+缓存 key、临时文件、内存命名空间必须按 `org_id` 隔离，防止跨租户数据泄漏。
+
+---
+
 ## SSE 连接限制
 
 ```typescript
