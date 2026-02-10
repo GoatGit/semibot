@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
 import { useChat } from '@/hooks/useChat'
 import { useSessionStore } from '@/stores/sessionStore'
 import { apiClient } from '@/lib/api'
@@ -468,12 +469,18 @@ function MessageBubble({ message }: MessageBubbleProps) {
           message.status === 'error' && 'border-error-400'
         )}
       >
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-          {message.content}
-          {message.isStreaming && (
-            <span className="inline-block w-2 h-4 bg-primary-400 animate-pulse ml-1" />
-          )}
-        </p>
+        {isUser ? (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">
+            {message.content}
+          </p>
+        ) : (
+          <div className="text-sm">
+            <MarkdownBlock data={{ content: message.content }} />
+            {message.isStreaming && (
+              <span className="inline-block w-2 h-4 bg-primary-400 animate-pulse ml-1" />
+            )}
+          </div>
+        )}
         <div
           className={clsx(
             'flex items-center gap-2 mt-2 text-xs',

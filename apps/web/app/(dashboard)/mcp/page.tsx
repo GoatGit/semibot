@@ -55,14 +55,6 @@ interface McpServer {
   resources?: McpResource[]
   lastConnectedAt?: string
 }
-
-interface McpConnectionTestResult {
-  success: boolean
-  tools: McpTool[]
-  resources: McpResource[]
-  message?: string
-}
-
 type TransportType = 'stdio' | 'sse' | 'streamable_http'
 
 const TRANSPORT_OPTIONS: {

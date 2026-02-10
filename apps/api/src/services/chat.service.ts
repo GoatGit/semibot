@@ -8,8 +8,10 @@ import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
 import * as agentService from './agent.service'
 import * as skillService from './skill.service'
+import * as mcpService from './mcp.service'
 import * as llmService from './llm.service'
 import type { LLMMessage, LLMStreamChunk } from './llm.service'
+import type { ToolCall } from './llm/index'
 import {
   VALIDATION_MESSAGE_TOO_LONG,
   SSE_STREAM_ERROR,
@@ -34,7 +36,7 @@ import {
   type RuntimeExecutionResult,
 } from '../adapters/runtime.adapter'
 import { getRuntimeMonitor } from './runtime-monitor.service'
-import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/shared-types'
+import type { Agent2UIMessage, Agent2UIType, Agent2UIData, McpCallData } from '@semibot/shared-types'
 import { chatLogger } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
@@ -456,6 +458,21 @@ async function handleChatDirect(
     })
   })
 
+  // 加载 Agent 关联的 MCP 工具
+  let mcpTools: mcpService.McpToolForLLM[] = []
+  const mcpToolMap = new Map<string, mcpService.McpToolForLLM>()
+  try {
+    mcpTools = await mcpService.getMcpToolsForAgent(agent.id)
+    for (const tool of mcpTools) {
+      mcpToolMap.set(tool.function.name, tool)
+    }
+  } catch (err) {
+    chatLogger.warn('加载 MCP 工具失败，继续无工具模式', { agentId: agent.id, error: (err as Error).message })
+  }
+
+  // 构建 tools 参数（MCP 工具，不含 _mcpMeta）
+  const toolDefinitions = mcpTools.map(({ _mcpMeta: _, ...rest }) => rest)
+
   // 创建 SSE 连接
   const connection = createSSEConnection(res, sessionId, userId, orgId)
 
@@ -475,7 +492,7 @@ async function handleChatDirect(
     // 获取历史消息
     const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
 
-    // 截断历史消息（保留最近 20 条）
+    // 截断历史消息（保留最近 N 条）
     if (historyMessages.length > MAX_HISTORY_MESSAGES) {
       chatLogger.debug('历史消息截断', {
         total: historyMessages.length,
@@ -509,7 +526,6 @@ async function handleChatDirect(
     if (!llmService.isLLMAvailable()) {
       chatLogger.warn('LLM 服务不可用，终止本次请求')
 
-      // 记录失败
       monitor.recordExecution({
         sessionId,
         orgId,
@@ -527,18 +543,23 @@ async function handleChatDirect(
       return
     }
 
+    const llmConfig = {
+      model: agent.config?.model ?? undefined,
+      temperature: agent.config?.temperature ?? 0.7,
+      maxTokens: agent.config?.maxTokens ?? 4096,
+      container: anthropicContainerSkills.length > 0 ? { skills: anthropicContainerSkills } : undefined,
+      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+      toolChoice: toolDefinitions.length > 0 ? 'auto' as const : undefined,
+    }
+
     // 调用 LLM 流式生成
     let fullContent = ''
     let totalTokens = 0
+    const pendingToolCalls: ToolCall[] = []
 
     await llmService.generateStream(
       llmMessages,
-      {
-        model: agent.config?.model ?? undefined,
-        temperature: agent.config?.temperature ?? 0.7,
-        maxTokens: agent.config?.maxTokens ?? 4096,
-        container: anthropicContainerSkills.length > 0 ? { skills: anthropicContainerSkills } : undefined,
-      },
+      llmConfig,
       (chunk: LLMStreamChunk) => {
         if (!connection.isActive) return
 
@@ -552,6 +573,7 @@ async function handleChatDirect(
 
           case 'tool_call':
             if (chunk.toolCall) {
+              pendingToolCalls.push(chunk.toolCall)
               sendAgent2UIMessage(connection, 'tool_call', {
                 toolName: chunk.toolCall.function.name,
                 arguments: JSON.parse(chunk.toolCall.function.arguments || '{}'),
@@ -562,7 +584,7 @@ async function handleChatDirect(
 
           case 'done':
             if (chunk.usage) {
-              totalTokens = chunk.usage.totalTokens
+              totalTokens += chunk.usage.totalTokens
             }
             break
 
@@ -575,6 +597,131 @@ async function handleChatDirect(
         }
       }
     )
+
+    // MCP 工具调用循环（最多 10 轮）
+    const MAX_TOOL_ROUNDS = 10
+    let toolRound = 0
+
+    while (pendingToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS && connection.isActive) {
+      toolRound++
+      chatLogger.info('执行 MCP 工具调用', { round: toolRound, toolCount: pendingToolCalls.length })
+
+      // 将 assistant 的 tool_calls 消息加入上下文
+      const assistantMsg: LLMMessage = {
+        role: 'assistant',
+        content: fullContent || '',
+        toolCalls: [...pendingToolCalls],
+      }
+      llmMessages.push(assistantMsg)
+
+      // 执行每个工具调用
+      for (const toolCall of pendingToolCalls) {
+        const mcpTool = mcpToolMap.get(toolCall.function.name)
+        let toolResult: string
+
+        if (mcpTool) {
+          try {
+            const toolArgs = JSON.parse(toolCall.function.arguments || '{}')
+
+            sendAgent2UIMessage(connection, 'mcp_call', {
+              serverId: mcpTool._mcpMeta.serverId,
+              toolName: toolCall.function.name,
+              arguments: toolArgs,
+              status: 'calling',
+            } as McpCallData)
+
+            const result = await mcpService.callMcpTool(
+              mcpTool._mcpMeta.serverId,
+              orgId,
+              mcpTool._mcpMeta.originalToolName,
+              toolArgs
+            )
+            toolResult = typeof result === 'string' ? result : JSON.stringify(result)
+
+            sendAgent2UIMessage(connection, 'mcp_call', {
+              serverId: mcpTool._mcpMeta.serverId,
+              toolName: toolCall.function.name,
+              arguments: toolArgs,
+              result: toolResult,
+              status: 'success',
+            } as McpCallData)
+          } catch (err) {
+            toolResult = `工具调用失败: ${(err as Error).message}`
+            chatLogger.error('MCP 工具调用失败', err as Error, {
+              toolName: toolCall.function.name,
+              serverId: mcpTool._mcpMeta.serverId,
+            })
+
+            sendAgent2UIMessage(connection, 'mcp_call', {
+              serverId: mcpTool._mcpMeta.serverId,
+              toolName: toolCall.function.name,
+              arguments: JSON.parse(toolCall.function.arguments || '{}'),
+              error: (err as Error).message,
+              status: 'error',
+            } as McpCallData)
+          }
+        } else {
+          toolResult = `未知工具: ${toolCall.function.name}`
+        }
+
+        // 将工具结果加入上下文
+        llmMessages.push({
+          role: 'tool',
+          content: toolResult,
+          toolCallId: toolCall.id,
+        })
+      }
+
+      // 清空待处理工具调用，准备下一轮
+      pendingToolCalls.length = 0
+      fullContent = ''
+
+      // 用工具结果继续调用 LLM
+      sendAgent2UIMessage(connection, 'thinking', {
+        content: '正在根据工具结果生成回答...',
+      })
+
+      await llmService.generateStream(
+        llmMessages,
+        llmConfig,
+        (chunk: LLMStreamChunk) => {
+          if (!connection.isActive) return
+
+          switch (chunk.type) {
+            case 'text':
+              if (chunk.content) {
+                fullContent += chunk.content
+                sendAgent2UIMessage(connection, 'text', { content: chunk.content })
+              }
+              break
+
+            case 'tool_call':
+              if (chunk.toolCall) {
+                pendingToolCalls.push(chunk.toolCall)
+                sendAgent2UIMessage(connection, 'tool_call', {
+                  toolName: chunk.toolCall.function.name,
+                  arguments: JSON.parse(chunk.toolCall.function.arguments || '{}'),
+                  status: 'calling',
+                })
+              }
+              break
+
+            case 'done':
+              if (chunk.usage) {
+                totalTokens += chunk.usage.totalTokens
+              }
+              break
+
+            case 'error':
+              sendSSEEvent(connection, 'error', {
+                code: chunk.error?.code ?? SSE_STREAM_ERROR,
+                message: chunk.error?.message ?? '生成失败',
+              })
+              break
+          }
+        }
+      )
+    }
 
     const latencyMs = Date.now() - startTime
 

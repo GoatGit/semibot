@@ -629,3 +629,159 @@ export async function syncToolsAndResources(
 
   return rowToMcpServer(row)
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Agent-MCP 集成
+// ═══════════════════════════════════════════════════════════════
+
+export interface McpToolForLLM {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+  }
+  _mcpMeta: {
+    serverId: string
+    serverName: string
+    originalToolName: string
+  }
+}
+
+/**
+ * 获取 Agent 关联的 MCP 工具（转换为 LLM function calling 格式）
+ * 使用数据库中缓存的工具列表，不实时连接 MCP Server
+ */
+export async function getMcpToolsForAgent(agentId: string): Promise<McpToolForLLM[]> {
+  const servers = await mcpRepository.findByAgentId(agentId)
+
+  const tools: McpToolForLLM[] = []
+
+  for (const server of servers) {
+    const serverTools: McpTool[] = parseJsonField(server.tools) || []
+    const enabledTools: string[] = parseJsonField(server.enabled_tools) || []
+
+    for (const tool of serverTools) {
+      // 如果设置了 enabled_tools 过滤，只包含启用的工具
+      if (enabledTools.length > 0 && !enabledTools.includes(tool.name)) {
+        continue
+      }
+
+      // 工具名加上服务器前缀避免冲突: mcp_serverName__toolName
+      const prefixedName = `mcp_${server.name}__${tool.name}`
+
+      tools.push({
+        type: 'function',
+        function: {
+          name: prefixedName,
+          description: tool.description || '',
+          parameters: tool.inputSchema || {},
+        },
+        _mcpMeta: {
+          serverId: server.id,
+          serverName: server.name,
+          originalToolName: tool.name,
+        },
+      })
+    }
+  }
+
+  mcpLogger.info('加载 Agent MCP 工具', {
+    agentId,
+    serverCount: servers.length,
+    toolCount: tools.length,
+  })
+
+  return tools
+}
+
+/**
+ * 调用 MCP 工具（实时连接 MCP Server 执行）
+ */
+export async function callMcpTool(
+  serverId: string,
+  orgId: string,
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const server = await getMcpServer(orgId, serverId)
+
+  mcpLogger.info('调用 MCP 工具', { serverId, toolName, serverName: server.name })
+
+  const headers = buildAuthHeaders(server.authConfig)
+
+  let transport: Transport
+
+  switch (server.transport) {
+    case 'stdio': {
+      const parts = server.endpoint.split(/\s+/)
+      const command = parts[0]
+      const cmdArgs = parts.slice(1)
+      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+      transport = new StdioClientTransport({ command, args: cmdArgs })
+      break
+    }
+    case 'sse':
+      transport = new SSEClientTransport(new URL(server.endpoint), {
+        eventSourceInit: { fetch: (url: string | URL | Request, init?: RequestInit) => fetch(url, { ...init as RequestInit, headers: { ...(init as RequestInit)?.headers, ...headers } }) },
+        requestInit: { headers },
+      })
+      break
+    case 'streamable_http':
+      transport = new StreamableHTTPClientTransport(new URL(server.endpoint), {
+        requestInit: { headers },
+      })
+      break
+    default:
+      throw new Error(`不支持的传输类型: ${server.transport}`)
+  }
+
+  const client = new Client({ name: 'semibot', version: '1.0.0' })
+
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('MCP 工具调用超时')), MCP_CONNECTION_TIMEOUT_MS)
+    })
+
+    await Promise.race([client.connect(transport), timeoutPromise])
+
+    const result = await Promise.race([
+      client.callTool({ name: toolName, arguments: args }),
+      timeoutPromise,
+    ])
+
+    mcpLogger.info('MCP 工具调用成功', { serverId, toolName })
+
+    return result
+  } finally {
+    await client.close().catch(() => {})
+  }
+}
+
+/**
+ * 获取 Agent 关联的 MCP Server ID 列表
+ */
+export async function getAgentMcpServerIds(agentId: string): Promise<string[]> {
+  return mcpRepository.getAgentMcpServerIds(agentId)
+}
+
+/**
+ * 设置 Agent 关联的 MCP Servers
+ */
+export async function setAgentMcpServers(agentId: string, mcpServerIds: string[]): Promise<void> {
+  return mcpRepository.setAgentMcpServers(agentId, mcpServerIds)
+}
+
+function parseJsonField(value: unknown): any {
+  if (value === null || value === undefined) return null
+  if (Array.isArray(value)) return value
+  if (typeof value === 'object') return value
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  return null
+}

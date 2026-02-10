@@ -108,7 +108,7 @@ router.get(
   combinedRateLimit,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const page = parseInt(req.query.page as string) || 1
-    const pageSize = parseInt(req.query.pageSize as string) || 20
+    const pageSize = parseInt(req.query.limit as string) || parseInt(req.query.pageSize as string) || 20
     const search = req.query.search as string
     const isActive = req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined
 

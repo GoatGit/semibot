@@ -390,7 +390,7 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
         setLoading(true)
         setError(null)
 
-        const response = await apiClient.post<ApiResponse<any>>('/skill-definitions/install/anthropic', {
+        const response = await apiClient.post<ApiResponse<any>>('/skill-definitions/install-from-anthropic', {
           skillId,
           version,
         })
@@ -420,7 +420,7 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
         setLoading(true)
         setError(null)
 
-        const response = await apiClient.post<ApiResponse<any>>('/skill-definitions/install/manifest', {
+        const response = await apiClient.post<ApiResponse<any>>('/skill-definitions/install-from-manifest', {
           manifestUrl,
         })
 

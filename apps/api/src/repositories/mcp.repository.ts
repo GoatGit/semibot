@@ -149,7 +149,7 @@ export async function findAll(params: ListMcpServersParams): Promise<PaginatedRe
   logPaginationLimit('McpRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
   // 构建 WHERE 条件
-  let whereClause = sql`org_id = ${orgId} AND is_active = true`
+  let whereClause = sql`org_id = ${orgId} AND is_active = true AND deleted_at IS NULL`
 
   if (search) {
     const searchPattern = `%${search}%`
@@ -192,7 +192,7 @@ export async function findAll(params: ListMcpServersParams): Promise<PaginatedRe
  */
 export async function countByOrg(orgId: string): Promise<number> {
   const result = await sql`
-    SELECT COUNT(*) as count FROM mcp_servers WHERE org_id = ${orgId} AND is_active = true
+    SELECT COUNT(*) as count FROM mcp_servers WHERE org_id = ${orgId} AND is_active = true AND deleted_at IS NULL
   `
   return parseInt((result[0] as { count: string }).count, 10)
 }
@@ -239,6 +239,81 @@ export async function update(id: string, orgId: string, data: UpdateMcpServerDat
 /**
  * 软删除 MCP Server
  */
+// ═══════════════════════════════════════════════════════════════
+// Agent-MCP 关联查询
+// ═══════════════════════════════════════════════════════════════
+
+export interface AgentMcpServerRow {
+  id: string
+  agent_id: string
+  mcp_server_id: string
+  enabled_tools: string[]
+  enabled_resources: string[]
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * 查询 Agent 关联的 MCP Servers（含服务器详情）
+ */
+export async function findByAgentId(agentId: string): Promise<(McpServerRow & { enabled_tools: string[]; enabled_resources: string[] })[]> {
+  const result = await sql`
+    SELECT ms.*, ams.enabled_tools, ams.enabled_resources
+    FROM agent_mcp_servers ams
+    JOIN mcp_servers ms ON ms.id = ams.mcp_server_id
+    WHERE ams.agent_id = ${agentId}
+      AND ams.is_active = true
+      AND ms.is_active = true
+      AND ms.deleted_at IS NULL
+    ORDER BY ms.name
+  `
+
+  return result as unknown as (McpServerRow & { enabled_tools: string[]; enabled_resources: string[] })[]
+}
+
+/**
+ * 设置 Agent 关联的 MCP Servers（全量替换）
+ */
+export async function setAgentMcpServers(
+  agentId: string,
+  mcpServerIds: string[]
+): Promise<void> {
+  // 先删除旧关联
+  await sql`
+    DELETE FROM agent_mcp_servers WHERE agent_id = ${agentId}
+  `
+
+  // 插入新关联
+  if (mcpServerIds.length > 0) {
+    const values = mcpServerIds.map((serverId) => ({
+      agent_id: agentId,
+      mcp_server_id: serverId,
+      is_active: true,
+    }))
+
+    await sql`
+      INSERT INTO agent_mcp_servers ${sql(values, 'agent_id', 'mcp_server_id', 'is_active')}
+    `
+  }
+}
+
+/**
+ * 获取 Agent 关联的 MCP Server ID 列表
+ */
+export async function getAgentMcpServerIds(agentId: string): Promise<string[]> {
+  const result = await sql`
+    SELECT mcp_server_id FROM agent_mcp_servers
+    WHERE agent_id = ${agentId} AND is_active = true
+  `
+
+  return result.map((row) => (row as Record<string, string>).mcp_server_id)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 软删除
+// ═══════════════════════════════════════════════════════════════
+
 export async function softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
   const result = await sql`
     UPDATE mcp_servers

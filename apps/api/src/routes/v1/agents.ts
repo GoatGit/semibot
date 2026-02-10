@@ -8,6 +8,7 @@ import { authenticate, requirePermission, type AuthRequest } from '../../middlew
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
 import * as agentService from '../../services/agent.service'
+import * as mcpService from '../../services/mcp.service'
 
 const router: Router = Router()
 
@@ -30,6 +31,7 @@ const createAgentSchema = z.object({
     })
     .optional(),
   skills: z.array(z.string()).optional(),
+  mcpServerIds: z.array(z.string().uuid()).optional(),
   subAgents: z.array(z.string()).optional(),
   isPublic: z.boolean().optional(),
 })
@@ -49,6 +51,7 @@ const updateAgentSchema = z.object({
     })
     .optional(),
   skills: z.array(z.string()).optional(),
+  mcpServerIds: z.array(z.string().uuid()).optional(),
   subAgents: z.array(z.string()).optional(),
   isActive: z.boolean().optional(),
   isPublic: z.boolean().optional(),
@@ -76,13 +79,19 @@ router.post(
   validate(createAgentSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
-    const input = req.body
+    const { mcpServerIds, ...input } = req.body
 
     const agent = await agentService.createAgent(orgId, input)
 
+    // 保存 MCP Server 关联
+    if (mcpServerIds && mcpServerIds.length > 0) {
+      await mcpService.setAgentMcpServers(agent.id, mcpServerIds)
+    }
+
+    // 返回时附带 mcpServerIds
     res.status(201).json({
       success: true,
-      data: agent,
+      data: { ...agent, mcpServerIds: mcpServerIds || [] },
     })
   })
 )
@@ -124,10 +133,11 @@ router.get(
     const agentId = req.params.id
 
     const agent = await agentService.getAgent(orgId, agentId)
+    const mcpServerIds = await mcpService.getAgentMcpServerIds(agentId)
 
     res.json({
       success: true,
-      data: agent,
+      data: { ...agent, mcpServerIds },
     })
   })
 )
@@ -144,13 +154,20 @@ router.put(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const agentId = req.params.id
-    const input = req.body
+    const { mcpServerIds, ...input } = req.body
 
     const agent = await agentService.updateAgent(orgId, agentId, input)
 
+    // 更新 MCP Server 关联（如果传入了 mcpServerIds）
+    if (mcpServerIds !== undefined) {
+      await mcpService.setAgentMcpServers(agentId, mcpServerIds)
+    }
+
+    const currentMcpServerIds = await mcpService.getAgentMcpServerIds(agentId)
+
     res.json({
       success: true,
-      data: agent,
+      data: { ...agent, mcpServerIds: currentMcpServerIds },
     })
   })
 )

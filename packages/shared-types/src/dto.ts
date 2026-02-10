@@ -537,7 +537,7 @@ export interface UpdateToolInput {
 /**
  * MCP transport types
  */
-export type McpTransport = 'stdio' | 'http' | 'websocket';
+export type McpTransport = 'stdio' | 'sse' | 'streamable_http';
 
 /**
  * MCP auth types

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
+import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { Bot, Plus, Search, Settings, Trash2, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -12,13 +13,12 @@ import type { ApiResponse, Agent } from '@/types'
 import { useLLMModels, type LLMModel } from '@/hooks/useLLMModels'
 
 export default function AgentsPage() {
+  const router = useRouter()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [agents, setAgents] = useState<Agent[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [formMode, setFormMode] = useState<'create' | 'edit'>('create')
-  const [editingAgentId, setEditingAgentId] = useState<string | null>(null)
   const [formValues, setFormValues] = useState({
     name: '',
     description: '',
@@ -88,9 +88,6 @@ export default function AgentsPage() {
 
   const openCreateForm = () => {
     setStatusMessage(null)
-    setFormMode('create')
-    setEditingAgentId(null)
-    // 使用第一个可用模型作为默认值
     const defaultModel = llmModels.length > 0 ? llmModels[0].modelId : ''
     setFormValues({ name: '', description: '', model: defaultModel, systemPrompt: '' })
     setFormErrors({})
@@ -98,21 +95,7 @@ export default function AgentsPage() {
   }
 
   const openEditForm = (agent: Agent) => {
-    setStatusMessage(null)
-    setFormMode('edit')
-    setEditingAgentId(agent.id)
-    // 如果 agent 的模型不在可用列表中，使用第一个可用模型
-    const agentModel = agent.config?.model || ''
-    const isModelAvailable = llmModels.some(m => m.modelId === agentModel)
-    const defaultModel = llmModels.length > 0 ? llmModels[0].modelId : ''
-    setFormValues({
-      name: agent.name,
-      description: agent.description || '',
-      model: isModelAvailable ? agentModel : defaultModel,
-      systemPrompt: agent.systemPrompt || '',
-    })
-    setFormErrors({})
-    setShowForm(true)
+    router.push(`/agents/${agent.id}`)
   }
 
   const handleSave = async () => {
@@ -129,41 +112,21 @@ export default function AgentsPage() {
 
     setIsSubmitting(true)
     try {
-      if (formMode === 'create') {
-        const response = await apiClient.post<ApiResponse<Agent>>('/agents', {
-          name: formValues.name.trim(),
-          description: formValues.description.trim(),
-          systemPrompt: formValues.systemPrompt,
-          config: {
-            model: formValues.model,
-          },
-          isActive: true,
-        })
+      const response = await apiClient.post<ApiResponse<Agent>>('/agents', {
+        name: formValues.name.trim(),
+        description: formValues.description.trim(),
+        systemPrompt: formValues.systemPrompt,
+        config: {
+          model: formValues.model,
+        },
+        isActive: true,
+      })
 
-        if (response.success && response.data) {
-          const newAgent = response.data
-          setAgents((prev) => [newAgent, ...prev])
-          setStatusMessage({ type: 'success', text: '创建成功' })
-          setShowForm(false)
-        }
-      } else if (editingAgentId) {
-        const response = await apiClient.patch<ApiResponse<Agent>>(`/agents/${editingAgentId}`, {
-          name: formValues.name.trim(),
-          description: formValues.description.trim(),
-          systemPrompt: formValues.systemPrompt,
-          config: {
-            model: formValues.model,
-          },
-        })
-
-        if (response.success && response.data) {
-          const updatedAgent = response.data
-          setAgents((prev) =>
-            prev.map((agent) => (agent.id === editingAgentId ? updatedAgent : agent))
-          )
-          setStatusMessage({ type: 'success', text: '更新成功' })
-          setShowForm(false)
-        }
+      if (response.success && response.data) {
+        const newAgent = response.data
+        setAgents((prev) => [newAgent, ...prev])
+        setStatusMessage({ type: 'success', text: '创建成功' })
+        setShowForm(false)
       }
     } catch (err) {
       console.error('[Agents] 保存失败:', err)
@@ -327,7 +290,7 @@ export default function AgentsPage() {
 
       {showForm && (
         <AgentFormModal
-          mode={formMode}
+          mode="create"
           values={formValues}
           errors={formErrors}
           isSubmitting={isSubmitting}
