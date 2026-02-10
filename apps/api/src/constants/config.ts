@@ -250,6 +250,15 @@ export const PASSWORD_RESET_REQUEST_PREFIX = 'auth:password_reset_request:'
 // Skill 重试配置
 // ═══════════════════════════════════════════════════════════════
 
+/** Skill 上传临时解压目录 */
+export const SKILL_UPLOAD_TEMP_DIR = process.env.SKILL_UPLOAD_TEMP_DIR ?? '/tmp/semibot/skill-uploads'
+
+/** Skill 上传允许的扩展名 */
+export const SKILL_UPLOAD_ALLOWED_EXTENSIONS = ['.zip', '.tar.gz', '.tgz']
+
+/** Skill 上传临时文件过期时间 (毫秒) - 1 小时 */
+export const SKILL_UPLOAD_TEMP_TTL_MS = 3600000
+
 /** Skill 重试默认最大次数 */
 export const SKILL_DEFAULT_MAX_RETRIES = 3
 

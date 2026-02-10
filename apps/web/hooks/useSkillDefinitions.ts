@@ -44,7 +44,7 @@ interface VersionHistoryItem {
 
 interface InstallPackageInput {
   version: string
-  sourceType: 'git' | 'url' | 'registry' | 'local' | 'anthropic'
+  sourceType: 'git' | 'url' | 'registry' | 'local' | 'anthropic' | 'upload'
   sourceUrl?: string
   sourceRef?: string
   manifestUrl?: string
@@ -382,6 +382,48 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
   }, [])
 
   /**
+   * 上传安装包并安装
+   */
+  const uploadAndInstall = useCallback(
+    async (
+      definitionId: string,
+      file: File,
+      version: string,
+      enableRetry?: boolean
+    ): Promise<any> => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        const formData = new FormData()
+        formData.append('file', file)
+        formData.append('version', version)
+        if (enableRetry) {
+          formData.append('enableRetry', 'true')
+        }
+
+        const response = await apiClient.upload<ApiResponse<any>>(
+          `/skill-definitions/${definitionId}/upload-install`,
+          formData
+        )
+
+        if (response.success) {
+          await fetchDefinitions()
+          return response.data
+        }
+
+        throw new Error('上传安装失败')
+      } catch (err) {
+        setError(err as Error)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [fetchDefinitions]
+  )
+
+  /**
    * 从 Anthropic Skill ID 安装
    */
   const installFromAnthropic = useCallback(
@@ -462,5 +504,6 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
     getInstallLogs,
     installFromAnthropic,
     installFromManifest,
+    uploadAndInstall,
   }
 }

@@ -244,6 +244,75 @@ export const apiClient = {
   delete<T>(path: string, options?: RequestOptions): Promise<T> {
     return request<T>('DELETE', path, options)
   },
+
+  /**
+   * 文件上传请求 (FormData)
+   *
+   * 不设置 Content-Type，让浏览器自动设置 multipart boundary
+   */
+  async upload<T>(path: string, formData: FormData, options: RequestOptions = {}): Promise<T> {
+    const {
+      timeout = 120000,
+      retry = true,
+      maxRetries = DEFAULT_MAX_RETRIES,
+      headers: customHeaders,
+    } = options
+
+    const baseUrl = getApiBaseUrl()
+    const url = `${baseUrl}${path}`
+
+    const headers: Record<string, string> = {
+      ...(customHeaders as Record<string, string>),
+    }
+
+    const token = getAuthToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    let lastError: Error | null = null
+    let attempt = 0
+
+    while (attempt <= maxRetries) {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: formData,
+          signal: controller.signal,
+        })
+
+        clearTimeout(timeoutId)
+
+        const data = await response.json()
+
+        if (!response.ok && retry && shouldRetry(response.status) && attempt < maxRetries) {
+          const retryDelay = getRetryDelay(attempt)
+          await delay(retryDelay)
+          attempt++
+          continue
+        }
+
+        return data as T
+      } catch (error) {
+        lastError = error as Error
+
+        if (retry && attempt < maxRetries && (error as Error).name !== 'AbortError') {
+          const retryDelay = getRetryDelay(attempt)
+          await delay(retryDelay)
+          attempt++
+          continue
+        }
+
+        break
+      }
+    }
+
+    throw lastError ?? new Error('上传请求失败')
+  },
 }
 
 export default apiClient

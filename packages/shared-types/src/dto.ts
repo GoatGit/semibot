@@ -177,7 +177,8 @@ export type SkillSourceType =
   | 'url'           // HTTP(S) URL
   | 'registry'      // 技能注册中心
   | 'local'         // 本地文件
-  | 'anthropic';    // Anthropic Skills
+  | 'anthropic'     // Anthropic Skills
+  | 'upload';       // 文件上传
 
 /**
  * Skill install operation type

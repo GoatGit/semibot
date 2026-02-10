@@ -1,424 +1,607 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { Search, Plus, Sparkles, Trash2, Loader2 } from 'lucide-react'
+import { Search, Plus, History, RefreshCw, AlertCircle, Package, Loader2, Power, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Card, CardContent } from '@/components/ui/Card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
+import { Badge } from '@/components/ui/Badge'
+import { FileUpload } from '@/components/ui/FileUpload'
 import { apiClient } from '@/lib/api'
+import type { SkillDefinition } from '@semibot/shared-types'
 
 interface ApiResponse<T> {
   success: boolean
   data: T
-}
-
-interface AnthropicSkillCatalogItem {
-  skillId: string
-  name: string
-  description?: string
-  version?: string
-  manifestUrl?: string
-}
-
-interface Skill {
-  id: string
-  name: string
-  description?: string
-  triggerKeywords: string[]
-  config?: {
-    maxExecutionTime?: number
-    retryAttempts?: number
-    requiresApproval?: boolean
-    source?: 'local' | 'anthropic' | 'custom'
-    anthropicSkill?: {
-      skillId: string
-      version?: string
-    }
+  meta?: {
+    total: number
+    page: number
+    limit: number
+    totalPages: number
   }
-  isBuiltin: boolean
-  isActive: boolean
-  createdAt: string
 }
 
-export default function SkillsPage() {
-  const [skills, setSkills] = useState<Skill[]>([])
+interface VersionHistoryItem {
+  version: string
+  status: string
+  isCurrent: boolean
+  installedAt?: string
+  installedBy?: string
+  sourceType: string
+  sourceUrl?: string
+  checksumSha256: string
+  fileSizeBytes?: number
+  deprecatedAt?: string
+  deprecatedReason?: string
+}
+
+export default function SkillDefinitionsPage() {
+  const [definitions, setDefinitions] = useState<SkillDefinition[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
-  const [showInstallAnthropic, setShowInstallAnthropic] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newDescription, setNewDescription] = useState('')
-  const [newKeywords, setNewKeywords] = useState('')
-  const [newMaxExecutionTime, setNewMaxExecutionTime] = useState(30000)
-  const [newRetryAttempts, setNewRetryAttempts] = useState(1)
-  const [newRequiresApproval, setNewRequiresApproval] = useState(false)
-  const [anthropicSkillId, setAnthropicSkillId] = useState('')
-  const [anthropicVersion, setAnthropicVersion] = useState('latest')
-  const [anthropicName, setAnthropicName] = useState('')
-  const [anthropicDescription, setAnthropicDescription] = useState('')
-  const [anthropicManifestUrl, setAnthropicManifestUrl] = useState('')
-  const [catalogItems, setCatalogItems] = useState<AnthropicSkillCatalogItem[]>([])
-  const [selectedCatalogSkillId, setSelectedCatalogSkillId] = useState('')
+  const [selectedDefinition, setSelectedDefinition] = useState<SkillDefinition | null>(null)
+  const [versions, setVersions] = useState<VersionHistoryItem[]>([])
+  const [showVersions, setShowVersions] = useState(false)
+  const [showInstallDialog, setShowInstallDialog] = useState(false)
+  const [showRollbackDialog, setShowRollbackDialog] = useState(false)
+  const [rollbackTarget, setRollbackTarget] = useState<string>('')
+  const [rollbackReason, setRollbackReason] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
 
-  const loadSkills = useCallback(async () => {
+  // 安装表单状态
+  const [installVersion, setInstallVersion] = useState('')
+  const [installSourceType, setInstallSourceType] = useState<'anthropic' | 'git' | 'url' | 'upload'>('anthropic')
+  const [installSourceUrl, setInstallSourceUrl] = useState('')
+  const [installManifestUrl, setInstallManifestUrl] = useState('')
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadError, setUploadError] = useState('')
+
+  // 创建表单状态
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [createSkillId, setCreateSkillId] = useState('')
+  const [createName, setCreateName] = useState('')
+  const [createDescription, setCreateDescription] = useState('')
+  const [createTriggerKeywords, setCreateTriggerKeywords] = useState('')
+
+  const loadDefinitions = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const response = await apiClient.get<ApiResponse<Skill[]>>('/skills', {
-        params: { page: 1, limit: 100, includeBuiltin: true },
+      const response = await apiClient.get<ApiResponse<SkillDefinition[]>>('/skill-definitions', {
+        params: { page: 1, limit: 100 },
       })
       if (response.success) {
-        setSkills(response.data || [])
+        setDefinitions(response.data || [])
       }
     } catch (err) {
-      console.error('[Skills] 加载失败:', err)
-      setError('加载技能失败')
+      console.error('[SkillDefinitions] 加载失败:', err)
+      setError('加载技能定义失败')
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    loadSkills()
-  }, [loadSkills])
+    loadDefinitions()
+  }, [loadDefinitions])
 
-  useEffect(() => {
-    const loadCatalog = async () => {
-      try {
-        const response = await apiClient.get<ApiResponse<AnthropicSkillCatalogItem[]>>(
-          '/skills/catalog/anthropic'
-        )
-        if (response.success && Array.isArray(response.data)) {
-          setCatalogItems(response.data)
-        }
-      } catch (err) {
-        console.warn('[Skills] 加载 Anthropic 目录失败:', err)
-      }
-    }
-
-    loadCatalog()
-  }, [])
-
-  const filteredSkills = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return skills
-    return skills.filter((skill) => {
-      return (
-        skill.name.toLowerCase().includes(query) ||
-        (skill.description || '').toLowerCase().includes(query)
-      )
-    })
-  }, [skills, searchQuery])
-
-  const handleToggle = async (skill: Skill) => {
-    if (skill.isBuiltin) return
+  const loadVersions = async (definitionId: string) => {
     try {
-      setSaving(true)
-      await apiClient.put<ApiResponse<Skill>>(`/skills/${skill.id}`, {
-        isActive: !skill.isActive,
-      })
-      await loadSkills()
+      const response = await apiClient.get<ApiResponse<VersionHistoryItem[]>>(
+        `/skill-definitions/${definitionId}/versions`
+      )
+      if (response.success) {
+        setVersions(response.data || [])
+      }
     } catch (err) {
-      console.error('[Skills] 更新状态失败:', err)
-      setError('更新技能状态失败')
+      console.error('[SkillDefinitions] 加载版本失败:', err)
+      setError('加载版本历史失败')
+    }
+  }
+
+  const handleShowVersions = async (definition: SkillDefinition) => {
+    setSelectedDefinition(definition)
+    setShowVersions(true)
+    await loadVersions(definition.id)
+  }
+
+  const handleInstall = async () => {
+    if (!selectedDefinition || !installVersion) return
+
+    try {
+      setActionLoading(true)
+      setError(null)
+
+      if (installSourceType === 'upload') {
+        if (!uploadFile) {
+          setError('请选择要上传的安装包文件')
+          return
+        }
+
+        const formData = new FormData()
+        formData.append('file', uploadFile)
+        formData.append('version', installVersion)
+        formData.append('enableRetry', 'true')
+
+        await apiClient.upload(`/skill-definitions/${selectedDefinition.id}/upload-install`, formData)
+      } else {
+        const payload: Record<string, string | boolean> = {
+          version: installVersion,
+          sourceType: installSourceType,
+          enableRetry: true,
+        }
+
+        if (installSourceType === 'git' || installSourceType === 'url') {
+          payload.sourceUrl = installSourceUrl
+        }
+
+        if (installManifestUrl) {
+          payload.manifestUrl = installManifestUrl
+        }
+
+        await apiClient.post(`/skill-definitions/${selectedDefinition.id}/install`, payload)
+      }
+
+      setShowInstallDialog(false)
+      setInstallVersion('')
+      setInstallSourceUrl('')
+      setInstallManifestUrl('')
+      setUploadFile(null)
+      setUploadError('')
+      await loadVersions(selectedDefinition.id)
+      await loadDefinitions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
+      console.error('[SkillDefinitions] 安装��败:', err)
+      setError(error.response?.data?.error?.message || '安装失败')
     } finally {
-      setSaving(false)
+      setActionLoading(false)
+    }
+  }
+
+  const handleRollback = async () => {
+    if (!selectedDefinition || !rollbackTarget) return
+
+    try {
+      setActionLoading(true)
+      setError(null)
+
+      await apiClient.post(`/skill-definitions/${selectedDefinition.id}/rollback`, {
+        targetVersion: rollbackTarget,
+        reason: rollbackReason,
+      })
+
+      setShowRollbackDialog(false)
+      setRollbackTarget('')
+      setRollbackReason('')
+      await loadVersions(selectedDefinition.id)
+      await loadDefinitions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
+      console.error('[SkillDefinitions] 回滚失败:', err)
+      setError(error.response?.data?.error?.message || '回滚失败')
+    } finally {
+      setActionLoading(false)
     }
   }
 
   const handleCreate = async () => {
-    if (!newName.trim()) return
-    const triggerKeywords = newKeywords
-      .split(',')
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0)
+    if (!createSkillId || !createName) return
 
     try {
-      setSaving(true)
-      await apiClient.post<ApiResponse<Skill>>('/skills', {
-        name: newName.trim(),
-        description: newDescription.trim() || undefined,
-        triggerKeywords: triggerKeywords.length > 0 ? triggerKeywords : undefined,
-        config: {
-          maxExecutionTime: newMaxExecutionTime,
-          retryAttempts: newRetryAttempts,
-          requiresApproval: newRequiresApproval,
-        },
-      })
-      setNewName('')
-      setNewDescription('')
-      setNewKeywords('')
-      setNewMaxExecutionTime(30000)
-      setNewRetryAttempts(1)
-      setNewRequiresApproval(false)
-      setShowCreate(false)
-      await loadSkills()
-    } catch (err) {
-      console.error('[Skills] 创建失败:', err)
-      setError('创建技能失败')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleDelete = async (skill: Skill) => {
-    if (skill.isBuiltin) return
-    try {
-      setSaving(true)
-      await apiClient.delete(`/skills/${skill.id}`)
-      await loadSkills()
-    } catch (err) {
-      console.error('[Skills] 删除失败:', err)
-      setError('删除技能失败')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleInstallAnthropicSkill = async () => {
-    if (!anthropicSkillId.trim() && !anthropicManifestUrl.trim()) return
-
-    try {
-      setSaving(true)
+      setActionLoading(true)
       setError(null)
-      const payload = {
-        skillId: anthropicSkillId.trim() || undefined,
-        version: anthropicVersion.trim() || 'latest',
-        name: anthropicName.trim() || undefined,
-        description: anthropicDescription.trim() || undefined,
-      }
 
-      if (anthropicManifestUrl.trim()) {
-        await apiClient.post<ApiResponse<Skill>>('/skills/install/anthropic/manifest', {
-          manifestUrl: anthropicManifestUrl.trim(),
-          ...payload,
-        })
-      } else if (payload.skillId) {
-        await apiClient.post<ApiResponse<Skill>>('/skills/install/anthropic', payload)
-      }
+      await apiClient.post('/skill-definitions', {
+        skillId: createSkillId,
+        name: createName,
+        ...(createDescription && { description: createDescription }),
+        ...(createTriggerKeywords.trim() && {
+          triggerKeywords: createTriggerKeywords.split(',').map(k => k.trim()).filter(Boolean),
+        }),
+      })
 
-      setAnthropicSkillId('')
-      setAnthropicVersion('latest')
-      setAnthropicName('')
-      setAnthropicDescription('')
-      setAnthropicManifestUrl('')
-      setSelectedCatalogSkillId('')
-      setShowInstallAnthropic(false)
-      await loadSkills()
-    } catch (err) {
-      console.error('[Skills] 安装 Anthropic Skill 失败:', err)
-      setError('安装 Anthropic Skill 失败')
+      setShowCreateDialog(false)
+      setCreateSkillId('')
+      setCreateName('')
+      setCreateDescription('')
+      setCreateTriggerKeywords('')
+      await loadDefinitions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
+      console.error('[SkillDefinitions] 创建失败:', err)
+      setError(error.response?.data?.error?.message || '创建技能失败')
     } finally {
-      setSaving(false)
+      setActionLoading(false)
     }
   }
 
-  const handleSelectCatalogSkill = (skillId: string) => {
-    setSelectedCatalogSkillId(skillId)
-    const selected = catalogItems.find((item) => item.skillId === skillId)
-    if (!selected) return
+  const handleToggleActive = async (definition: SkillDefinition) => {
+    try {
+      setActionLoading(true)
+      setError(null)
 
-    setAnthropicSkillId(selected.skillId)
-    setAnthropicVersion(selected.version || 'latest')
-    setAnthropicName(selected.name)
-    setAnthropicDescription(selected.description || '')
-    setAnthropicManifestUrl(selected.manifestUrl || '')
+      await apiClient.put(`/skill-definitions/${definition.id}`, {
+        isActive: !definition.isActive,
+      })
+
+      await loadDefinitions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
+      console.error('[SkillDefinitions] 切换状态失败:', err)
+      setError(error.response?.data?.error?.message || '切换状态失败')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleDelete = async (definition: SkillDefinition) => {
+    if (!confirm(`确定要删除技能「${definition.name}」吗？此操作不可撤销。`)) return
+
+    try {
+      setActionLoading(true)
+      setError(null)
+
+      await apiClient.delete(`/skill-definitions/${definition.id}`)
+
+      await loadDefinitions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } } }
+      console.error('[SkillDefinitions] 删除失败:', err)
+      setError(error.response?.data?.error?.message || '删除失败')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const filteredDefinitions = definitions.filter(
+    (def) =>
+      def.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      def.skillId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      def.description?.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const getStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'error' | 'default' }> = {
+      active: { label: '已激活', variant: 'success' },
+      pending: { label: '等待中', variant: 'warning' },
+      downloading: { label: '下载中', variant: 'warning' },
+      validating: { label: '校验中', variant: 'warning' },
+      installing: { label: '安装中', variant: 'warning' },
+      failed: { label: '失败', variant: 'error' },
+      deprecated: { label: '已废弃', variant: 'default' },
+    }
+
+    const config = statusConfig[status] || { label: status, variant: 'default' }
+    return <Badge variant={config.variant}>{config.label}</Badge>
+  }
+
+  const formatBytes = (bytes?: number) => {
+    if (!bytes) return 'N/A'
+    const mb = bytes / 1024 / 1024
+    return `${mb.toFixed(2)} MB`
+  }
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return 'N/A'
+    return new Date(dateStr).toLocaleString('zh-CN')
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-primary-500 mx-auto mb-4" />
+          <p className="text-text-secondary">加载中...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
+      {/* 头部 */}
       <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-text-primary">Skills</h1>
-            <p className="text-sm text-text-secondary mt-1">共 {skills.length} 个技能</p>
+            <h1 className="text-xl font-semibold text-text-primary">技能管理</h1>
+            <p className="text-sm text-text-secondary mt-1">
+              管理平台技能定义和版本，共 {definitions.length} 个
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>
-              添加技能
-            </Button>
-            <Button variant="secondary" onClick={() => setShowInstallAnthropic(true)}>
-              安装 Anthropic Skill
-            </Button>
-          </div>
+          <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreateDialog(true)}>
+            创建技能
+          </Button>
         </div>
-        <div className="mt-4 max-w-md">
-          <Input
-            placeholder="搜索技能..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search size={16} />}
-          />
-        </div>
-      </header>
 
-      <div className="flex-1 overflow-y-auto p-6">
+        {/* 错��提示 */}
         {error && (
-          <div className="mb-4 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500">
-            {error}
+          <div className="mt-3 rounded-md px-3 py-2 border bg-error-500/10 border-error-500/20">
+            <div className="flex items-start">
+              <AlertCircle className="w-4 h-4 text-error-500 mr-2 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-error-500">{error}</p>
+            </div>
           </div>
         )}
 
-        {loading ? (
-          <div className="h-40 flex items-center justify-center text-text-secondary">
-            <Loader2 size={18} className="animate-spin mr-2" />
-            加载中...
+        {/* 搜索栏 */}
+        <div className="flex items-center gap-4 mt-4">
+          <div className="flex-1 max-w-md">
+            <Input
+              placeholder="搜索技能名称、ID 或描述..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
           </div>
-        ) : filteredSkills.length === 0 ? (
-          <div className="h-40 flex items-center justify-center text-text-secondary">
-            暂无技能
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredSkills.map((skill) => (
-              <Card key={skill.id}>
-                <CardContent>
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-md bg-primary-500/20 flex items-center justify-center">
-                        <Sparkles size={16} className="text-primary-400" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold text-text-primary">{skill.name}</div>
-                        <div className="text-xs text-text-secondary mt-1">
-                          {skill.description || '无描述'}
-                        </div>
-                        <div className="text-[11px] text-text-tertiary mt-2">
-                          {skill.isBuiltin
-                            ? '内置技能'
-                            : skill.config?.source === 'anthropic'
-                              ? 'Anthropic Skill'
-                              : '自定义技能'}
-                        </div>
-                        {skill.config?.source === 'anthropic' && skill.config?.anthropicSkill?.skillId && (
-                          <div className="mt-1 text-[11px] text-text-tertiary">
-                            ID: {skill.config.anthropicSkill.skillId}
-                            {skill.config.anthropicSkill.version
-                              ? `@${skill.config.anthropicSkill.version}`
-                              : ''}
-                          </div>
-                        )}
-                        {skill.triggerKeywords.length > 0 && (
-                          <div className="mt-2 text-[11px] text-text-tertiary">
-                            触发词：{skill.triggerKeywords.join(' / ')}
-                          </div>
-                        )}
-                        {!skill.isBuiltin && (
-                          <div className="mt-1 text-[11px] text-text-tertiary">
-                            超时 {skill.config?.maxExecutionTime ?? 30000}ms · 重试 {skill.config?.retryAttempts ?? 0} 次 ·
-                            {skill.config?.requiresApproval ? ' 需审批' : ' 免审批'}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {!skill.isBuiltin && (
-                      <button
-                        onClick={() => handleDelete(skill)}
-                        disabled={saving}
-                        className="p-1.5 text-text-tertiary hover:text-error-500"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
+          <Button variant="secondary" onClick={loadDefinitions}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            刷新
+          </Button>
+        </div>
+      </header>
 
-                  <div className="mt-4 flex items-center justify-between">
-                    <span className={clsx('text-xs', skill.isActive ? 'text-success-500' : 'text-text-tertiary')}>
-                      {skill.isActive ? '已启用' : '已禁用'}
-                    </span>
-                    <button
-                      onClick={() => handleToggle(skill)}
-                      disabled={saving || skill.isBuiltin}
-                      className={clsx(
-                        'relative inline-flex w-10 h-5 items-center rounded-full p-0.5 transition-colors',
-                        skill.isActive ? 'bg-primary-500' : 'bg-neutral-600',
-                        (saving || skill.isBuiltin) && 'opacity-60 cursor-not-allowed'
-                      )}
-                    >
-                      <span
-                        className={clsx(
-                          'block h-4 w-4 rounded-full bg-white transition-transform',
-                          skill.isActive ? 'translate-x-5' : 'translate-x-0'
-                        )}
-                      />
-                    </button>
+      {/* 技能列表 */}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredDefinitions.map((definition) => (
+            <Card key={definition.id} interactive>
+              <CardHeader>
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <CardTitle className="text-lg">{definition.name}</CardTitle>
+                    <p className="text-sm text-text-tertiary mt-1">{definition.skillId}</p>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
+                  {definition.isActive ? (
+                    <Badge variant="success">已启用</Badge>
+                  ) : (
+                    <Badge variant="default">已禁用</Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-text-secondary line-clamp-2">
+                  {definition.description || '暂无描述'}
+                </p>
+
+                {/* 触发词 */}
+                {definition.triggerKeywords && definition.triggerKeywords.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="text-xs text-text-tertiary mr-1">触发词:</span>
+                    {definition.triggerKeywords.map((keyword, idx) => (
+                      <Badge key={idx} variant="outline" className="text-xs">
+                        {keyword}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                {/* 版本信息 */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-text-tertiary">当前版本:</span>
+                  <span className="font-medium text-text-primary">{definition.currentVersion || 'N/A'}</span>
+                </div>
+
+                {/* 分类和标签 */}
+                {definition.category && (
+                  <div className="flex items-center text-sm">
+                    <span className="text-text-tertiary mr-2">分类:</span>
+                    <Badge variant="default">{definition.category}</Badge>
+                  </div>
+                )}
+
+                {definition.tags && definition.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {definition.tags.map((tag, idx) => (
+                      <Badge key={idx} variant="outline" className="text-xs">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                {/* 操作按钮 */}
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleShowVersions(definition)}
+                    className="flex-1"
+                  >
+                    <History className="w-4 h-4 mr-1" />
+                    版本
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedDefinition(definition)
+                      setShowInstallDialog(true)
+                    }}
+                    className="flex-1"
+                  >
+                    <Package className="w-4 h-4 mr-1" />
+                    安装
+                  </Button>
+                  <Button
+                    variant={definition.isActive ? 'secondary' : 'primary'}
+                    size="sm"
+                    onClick={() => handleToggleActive(definition)}
+                    disabled={actionLoading}
+                    className="flex-1"
+                  >
+                    <Power className="w-4 h-4 mr-1" />
+                    {definition.isActive ? '禁用' : '启用'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleDelete(definition)}
+                    disabled={actionLoading}
+                    title="删除技能"
+                  >
+                    <Trash2 className="w-4 h-4 text-error-500" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {filteredDefinitions.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <div className="w-16 h-16 rounded-2xl bg-bg-elevated flex items-center justify-center mb-4">
+              <Package size={32} className="text-text-tertiary" />
+            </div>
+            <h3 className="text-lg font-medium text-text-primary">没有找到技能定义</h3>
+            <p className="text-sm text-text-secondary mt-1">尝试调整搜索条件</p>
           </div>
         )}
       </div>
 
-      {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-lg bg-bg-surface border border-border-default p-6 space-y-4">
-            <h3 className="text-lg font-semibold text-text-primary">添加技能</h3>
-            <Input
-              placeholder="技能名称"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              disabled={saving}
-            />
-            <textarea
-              placeholder="技能描述"
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              disabled={saving}
-              className={clsx(
-                'w-full h-24 px-3 py-2 rounded-md resize-none',
-                'bg-bg-surface border border-border-default',
-                'text-text-primary placeholder:text-text-tertiary',
-                'focus:outline-none focus:border-primary-500'
-              )}
-            />
-            <Input
-              placeholder="触发词（逗号分隔，例如：报表,统计,分析）"
-              value={newKeywords}
-              onChange={(e) => setNewKeywords(e.target.value)}
-              disabled={saving}
-            />
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-text-tertiary mb-1">最大执行时长(ms)</label>
-                <Input
-                  type="number"
-                  min={1000}
-                  max={300000}
-                  value={newMaxExecutionTime}
-                  onChange={(e) => setNewMaxExecutionTime(Number(e.target.value) || 30000)}
-                  disabled={saving}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-text-tertiary mb-1">重试次数</label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={5}
-                  value={newRetryAttempts}
-                  onChange={(e) => setNewRetryAttempts(Number(e.target.value) || 0)}
-                  disabled={saving}
-                />
+      {/* 版本历史对话框 */}
+      {showVersions && selectedDefinition && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-bg-surface border border-border-default rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-border-subtle">
+              <h2 className="text-xl font-semibold text-text-primary">版本历史 - {selectedDefinition.name}</h2>
+              <p className="text-sm text-text-secondary mt-1">{selectedDefinition.skillId}</p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-4">
+                {versions.map((version) => (
+                  <Card key={version.version} className={version.isCurrent ? 'border-primary-500 border-2' : ''}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center space-x-3">
+                          <span className="text-lg font-semibold text-text-primary">{version.version}</span>
+                          {version.isCurrent && <Badge variant="success">当前版本</Badge>}
+                          {getStatusBadge(version.status)}
+                        </div>
+                        {!version.isCurrent && version.status === 'active' && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setRollbackTarget(version.version)
+                              setShowRollbackDialog(true)
+                            }}
+                          >
+                            <RefreshCw className="w-4 h-4 mr-1" />
+                            回滚
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="text-text-tertiary">来源类型:</span>
+                          <span className="ml-2 font-medium text-text-primary">{version.sourceType}</span>
+                        </div>
+                        <div>
+                          <span className="text-text-tertiary">包大小:</span>
+                          <span className="ml-2 font-medium text-text-primary">{formatBytes(version.fileSizeBytes)}</span>
+                        </div>
+                        <div className="col-span-2">
+                          <span className="text-text-tertiary">安装时间:</span>
+                          <span className="ml-2 font-medium text-text-primary">{formatDate(version.installedAt)}</span>
+                        </div>
+                        <div className="col-span-2">
+                          <span className="text-text-tertiary">校验值:</span>
+                          <span className="ml-2 font-mono text-xs text-text-secondary">{version.checksumSha256?.substring(0, 16) ?? 'N/A'}...</span>
+                        </div>
+                        {version.sourceUrl && (
+                          <div className="col-span-2">
+                            <span className="text-text-tertiary">来源 URL:</span>
+                            <span className="ml-2 text-xs text-text-secondary break-all">{version.sourceUrl}</span>
+                          </div>
+                        )}
+                        {version.deprecatedAt && (
+                          <div className="col-span-2 text-error-500">
+                            <span className="text-text-tertiary">废弃时间:</span>
+                            <span className="ml-2">{formatDate(version.deprecatedAt)}</span>
+                            {version.deprecatedReason && (
+                              <p className="text-sm mt-1">原因: {version.deprecatedReason}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             </div>
-            <label className="flex items-center gap-2 text-sm text-text-secondary">
-              <input
-                type="checkbox"
-                checked={newRequiresApproval}
-                onChange={(e) => setNewRequiresApproval(e.target.checked)}
-                disabled={saving}
-              />
-              执行前需要审批
-            </label>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={saving}>
+
+            <div className="p-6 border-t border-border-subtle flex justify-end">
+              <Button variant="secondary" onClick={() => setShowVersions(false)}>
+                关闭
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 创建技能对话框 */}
+      {showCreateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-bg-surface border border-border-default rounded-lg max-w-lg w-full">
+            <div className="p-6 border-b border-border-subtle">
+              <h2 className="text-lg font-semibold text-text-primary">创建技能</h2>
+              <p className="text-sm text-text-secondary mt-1">创建一个新的技能定义</p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">技能 ID *</label>
+                <Input
+                  type="text"
+                  placeholder="例如: my-org/my-skill"
+                  value={createSkillId}
+                  onChange={(e) => setCreateSkillId(e.target.value)}
+                />
+                <p className="text-xs text-text-tertiary mt-1">支持字母、数字、点、下划线、冒号、斜杠和连字符</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">名称 *</label>
+                <Input
+                  type="text"
+                  placeholder="技能显示名称"
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">描述</label>
+                <Input
+                  type="text"
+                  placeholder="技能功能描述（可选）"
+                  value={createDescription}
+                  onChange={(e) => setCreateDescription(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">触发词</label>
+                <Input
+                  type="text"
+                  placeholder="用逗号分隔多个关键词，如: 翻译,translate"
+                  value={createTriggerKeywords}
+                  onChange={(e) => setCreateTriggerKeywords(e.target.value)}
+                />
+                <p className="text-xs text-text-tertiary mt-1">用于匹配用户消息自动触发技能</p>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-border-subtle flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShowCreateDialog(false)} disabled={actionLoading}>
                 取消
               </Button>
-              <Button onClick={handleCreate} loading={saving}>
+              <Button onClick={handleCreate} loading={actionLoading} disabled={!createSkillId || !createName}>
                 创建
               </Button>
             </div>
@@ -426,77 +609,142 @@ export default function SkillsPage() {
         </div>
       )}
 
-      {showInstallAnthropic && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-lg bg-bg-surface border border-border-default p-6 space-y-4">
-            <h3 className="text-lg font-semibold text-text-primary">安装 Anthropic Skill</h3>
-            <Input
-              placeholder="Skill ID（例如：text-editor）"
-              value={anthropicSkillId}
-              onChange={(e) => setAnthropicSkillId(e.target.value)}
-              disabled={saving}
-            />
-            <div>
-              <label className="block text-xs text-text-tertiary mb-1">从 Anthropic 目录选择（可选）</label>
-              <select
-                value={selectedCatalogSkillId}
-                onChange={(e) => handleSelectCatalogSkill(e.target.value)}
-                disabled={saving}
-                className={clsx(
-                  'w-full h-10 px-3 rounded-md',
-                  'bg-bg-surface border border-border-default',
-                  'text-text-primary',
-                  'focus:outline-none focus:border-primary-500'
-                )}
-              >
-                <option value="">手动输入 / 选择目录项</option>
-                {catalogItems.map((item) => (
-                  <option key={item.skillId} value={item.skillId}>
-                    {item.name} ({item.skillId})
-                  </option>
-                ))}
-              </select>
+      {/* 安装对话框 */}
+      {showInstallDialog && selectedDefinition && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-bg-surface border border-border-default rounded-lg max-w-lg w-full">
+            <div className="p-6 border-b border-border-subtle">
+              <h2 className="text-lg font-semibold text-text-primary">安装新版本</h2>
+              <p className="text-sm text-text-secondary mt-1">{selectedDefinition.name}</p>
             </div>
-            <Input
-              placeholder="Manifest URL（可选，优先）"
-              value={anthropicManifestUrl}
-              onChange={(e) => setAnthropicManifestUrl(e.target.value)}
-              disabled={saving}
-            />
-            <Input
-              placeholder="版本（默认 latest）"
-              value={anthropicVersion}
-              onChange={(e) => setAnthropicVersion(e.target.value)}
-              disabled={saving}
-            />
-            <Input
-              placeholder="本地显示名称（可选）"
-              value={anthropicName}
-              onChange={(e) => setAnthropicName(e.target.value)}
-              disabled={saving}
-            />
-            <textarea
-              placeholder="描述（可选）"
-              value={anthropicDescription}
-              onChange={(e) => setAnthropicDescription(e.target.value)}
-              disabled={saving}
-              className={clsx(
-                'w-full h-20 px-3 py-2 rounded-md resize-none',
-                'bg-bg-surface border border-border-default',
-                'text-text-primary placeholder:text-text-tertiary',
-                'focus:outline-none focus:border-primary-500'
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">版本号 *</label>
+                <Input
+                  type="text"
+                  placeholder="1.0.0"
+                  value={installVersion}
+                  onChange={(e) => setInstallVersion(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">来源类型 *</label>
+                <select
+                  className={clsx(
+                    'w-full px-3 py-2 rounded-md',
+                    'bg-bg-surface border border-border-default',
+                    'text-text-primary',
+                    'focus:outline-none focus:border-primary-500',
+                    'transition-all duration-fast'
+                  )}
+                  value={installSourceType}
+                  onChange={(e) => setInstallSourceType(e.target.value as 'anthropic' | 'git' | 'url' | 'upload')}
+                >
+                  <option value="anthropic">Anthropic</option>
+                  <option value="git">Git</option>
+                  <option value="url">URL</option>
+                  <option value="upload">上传安装包</option>
+                </select>
+              </div>
+
+              {(installSourceType === 'git' || installSourceType === 'url') && (
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-1.5">来源 URL *</label>
+                  <Input
+                    type="text"
+                    placeholder="https://..."
+                    value={installSourceUrl}
+                    onChange={(e) => setInstallSourceUrl(e.target.value)}
+                  />
+                </div>
               )}
-            />
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => setShowInstallAnthropic(false)}
-                disabled={saving}
-              >
+
+              {installSourceType === 'upload' && (
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-1.5">安装包文件 *</label>
+                  <FileUpload
+                    accept=".zip,.tar.gz,.tgz"
+                    allowedExtensions={['.zip', '.tar.gz', '.tgz']}
+                    maxSize={100 * 1024 * 1024}
+                    value={uploadFile}
+                    onFileSelect={setUploadFile}
+                    error={uploadError}
+                    onError={setUploadError}
+                    hint="支持 .zip、.tar.gz、.tgz 格式，最大 100MB"
+                    disabled={actionLoading}
+                  />
+                </div>
+              )}
+
+              {installSourceType !== 'upload' && (
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-1.5">Manifest URL（可选）</label>
+                  <Input
+                    type="text"
+                    placeholder="https://..."
+                    value={installManifestUrl}
+                    onChange={(e) => setInstallManifestUrl(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-border-subtle flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShowInstallDialog(false)} disabled={actionLoading}>
                 取消
               </Button>
-              <Button onClick={handleInstallAnthropicSkill} loading={saving}>
+              <Button onClick={handleInstall} loading={actionLoading} disabled={!installVersion || (installSourceType === 'upload' && !uploadFile)}>
                 安装
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 回滚对话框 */}
+      {showRollbackDialog && selectedDefinition && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-bg-surface border border-border-default rounded-lg max-w-lg w-full">
+            <div className="p-6 border-b border-border-subtle">
+              <h2 className="text-lg font-semibold text-text-primary">回滚版本</h2>
+              <p className="text-sm text-text-secondary mt-1">
+                将 {selectedDefinition.name} 回滚到版本 {rollbackTarget}
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="rounded-md px-3 py-2 border bg-warning-500/10 border-warning-500/20">
+                <p className="text-sm text-warning-500">
+                  <strong>警告:</strong> 回滚操作将更改当前激活版本，请确认后再继续。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1.5">回滚原因（可选）</label>
+                <textarea
+                  className={clsx(
+                    'w-full px-3 py-2 rounded-md resize-none',
+                    'bg-bg-surface border border-border-default',
+                    'text-text-primary placeholder:text-text-tertiary',
+                    'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
+                    'transition-all duration-fast'
+                  )}
+                  rows={3}
+                  placeholder="请输入回滚原因..."
+                  value={rollbackReason}
+                  onChange={(e) => setRollbackReason(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-border-subtle flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShowRollbackDialog(false)} disabled={actionLoading}>
+                取消
+              </Button>
+              <Button onClick={handleRollback} loading={actionLoading}>
+                确认回滚
               </Button>
             </div>
           </div>

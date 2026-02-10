@@ -22,7 +22,7 @@ const skillInstallLogger = createLogger('skill-install')
 export interface InstallSkillPackageInput {
   skillDefinitionId: string
   version: string
-  sourceType: 'anthropic' | 'codex' | 'local'
+  sourceType: 'anthropic' | 'codex' | 'local' | 'upload'
   sourceUrl?: string
   localPath?: string
 }
@@ -88,7 +88,7 @@ export async function installSkillPackage(
     // Step 5: 下载/复制包文件
     await skillPackageRepo.update(pkg.id, { status: 'downloading' })
 
-    if (sourceType === 'local' && localPath) {
+    if ((sourceType === 'local' || sourceType === 'upload') && localPath) {
       // 从本地路径复制
       await fs.ensureDir(packagePath)
       await fs.copy(localPath, packagePath)

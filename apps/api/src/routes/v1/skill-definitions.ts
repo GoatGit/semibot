@@ -24,6 +24,8 @@ import {
   getVersionHistory,
   canRollbackToVersion,
 } from '../../services/skill-retry-rollback.service'
+import { uploadAndInstall } from '../../services/skill-upload.service'
+import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
 
 const router: Router = Router()
 
@@ -35,20 +37,23 @@ const createSkillDefinitionSchema = z.object({
   skillId: z.string().min(1).max(120).regex(/^[a-zA-Z0-9._:/-]+$/),
   name: z.string().min(1).max(100),
   description: z.string().max(1000).optional(),
+  triggerKeywords: z.array(z.string().max(50)).max(20).optional(),
   protocol: z.enum(['anthropic', 'codex', 'semibot']).optional(),
-  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry']).optional(),
+  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry', 'upload']).optional(),
   sourceUrl: z.string().url().optional(),
 })
 
 const updateSkillDefinitionSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(1000).optional(),
+  triggerKeywords: z.array(z.string().max(50)).max(20).optional(),
   status: z.enum(['active', 'inactive', 'deprecated']).optional(),
+  isActive: z.boolean().optional(),
 })
 
 const installSkillPackageSchema = z.object({
   version: z.string().min(1).max(50),
-  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry']),
+  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry', 'upload']),
   sourceUrl: z.string().url().optional(),
   localPath: z.string().optional(),
   enableRetry: z.boolean().optional(),
@@ -56,7 +61,7 @@ const installSkillPackageSchema = z.object({
 
 const publishVersionSchema = z.object({
   version: z.string().min(1).max(50),
-  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry']),
+  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry', 'upload']),
   sourceUrl: z.string().url().optional(),
   sourceRef: z.string().max(200).optional(),
   manifestUrl: z.string().url().optional(),
@@ -315,6 +320,65 @@ router.post(
     res.status(201).json({
       success: true,
       data: pkg,
+    })
+  })
+)
+
+/**
+ * POST /api/v1/skill-definitions/:id/upload-install
+ * 通过上传压缩包安装技能（仅管理员）
+ */
+router.post(
+  '/:id/upload-install',
+  authenticate,
+  requirePermission('admin'),
+  combinedRateLimit,
+  handleFileUpload,
+  asyncHandler(async (req: UploadRequest & AuthRequest, res: Response) => {
+    const { id } = req.params
+    const uploadedFile = req.uploadedFile
+    const fields = req.uploadFields || {}
+
+    if (!uploadedFile) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'SKILL_UPLOAD_NO_FILE',
+          message: '未检测到上传文件',
+        },
+      })
+      return
+    }
+
+    // 手动验证 version 字段
+    const version = fields.version?.trim()
+    if (!version || version.length === 0 || version.length > 50) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: '版本号不能为空且长度不超过 50 字符',
+        },
+      })
+      return
+    }
+
+    const enableRetry = fields.enableRetry === 'true'
+
+    const packageId = await uploadAndInstall({
+      skillDefinitionId: id,
+      version,
+      tempFilePath: uploadedFile.tempPath,
+      originalName: uploadedFile.originalName,
+      enableRetry,
+    })
+
+    const pkg = await skillPackageRepo.findById(packageId)
+
+    res.status(201).json({
+      success: true,
+      data: pkg,
+      message: `已通过上传安装版本 ${version}`,
     })
   })
 )

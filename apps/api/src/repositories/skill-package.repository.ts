@@ -12,7 +12,7 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
 // ═══════════════════════════════════════════════════════════════
 
 export type SkillPackageStatus = 'pending' | 'downloading' | 'validating' | 'installing' | 'active' | 'deprecated' | 'failed'
-export type SkillPackageSourceType = 'anthropic' | 'codex' | 'local'
+export type SkillPackageSourceType = 'anthropic' | 'codex' | 'local' | 'upload'
 
 export interface SkillPackageRow {
   id: string
