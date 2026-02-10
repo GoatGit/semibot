@@ -1,0 +1,12 @@
+skills:
+  - name: code_executor
+    enabled: true
+    config:
+      timeout: 60
+      max_output_size: 100000
+  - name: web_search
+    enabled: true
+    config:
+      provider: tavily
+      api_key_env: TAVILY_API_KEY
+      fallback_api_key_env: SERPAPI_API_KEY

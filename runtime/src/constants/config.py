@@ -276,3 +276,22 @@ MCP_RECONNECT_DELAY = 5
 
 MCP_MAX_RETRIES = 3
 """MCP 最大重试次数"""
+
+# =============================================================================
+# HTTP Server
+# =============================================================================
+
+HTTP_SERVER_HOST = "0.0.0.0"
+"""HTTP 服务监听地址"""
+
+HTTP_SERVER_PORT = 8000
+"""HTTP 服务监听端口"""
+
+HTTP_SERVER_WORKERS = 1
+"""HTTP 服务工作进程数"""
+
+SSE_KEEPALIVE_INTERVAL = 15
+"""SSE 心跳间隔（秒）"""
+
+EXECUTION_STREAM_TIMEOUT = 300
+"""执行流超时（秒）"""

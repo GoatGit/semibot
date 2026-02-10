@@ -12,6 +12,7 @@ an updated state. These nodes implement the core Agent execution logic:
 - RESPOND: Generate final response
 """
 
+import time
 from typing import Any
 
 from src.constants import MAX_REPLAN_ATTEMPTS
@@ -54,6 +55,10 @@ async def start_node(state: AgentState, context: dict[str, Any]) -> dict[str, An
         "Starting agent execution",
         extra={"session_id": state["session_id"], "agent_id": state["agent_id"]},
     )
+
+    event_emitter = context.get("event_emitter")
+    if event_emitter:
+        await event_emitter.emit_thinking("正在初始化执行上下文...", "analyzing")
 
     memory_system = context.get("memory_system")
     memory_context = ""
@@ -111,6 +116,10 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         extra={"session_id": state["session_id"], "iteration": state["iteration"]},
     )
 
+    event_emitter = context.get("event_emitter")
+    if event_emitter:
+        await event_emitter.emit_thinking("正在分析任务并制定执行计划...", "planning")
+
     llm_provider = context.get("llm_provider")
     skill_registry = context.get("skill_registry")
 
@@ -161,6 +170,13 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         # Parse plan from response
         plan = parse_plan_response(plan_response)
 
+        # Emit plan_created event
+        if event_emitter and plan.steps:
+            await event_emitter.emit_plan_created([
+                {"id": step.id, "title": step.title}
+                for step in plan.steps
+            ])
+
         # Check if this is a simple question (no tools needed)
         if not plan.steps:
             return {
@@ -208,6 +224,8 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         },
     )
 
+    event_emitter = context.get("event_emitter")
+
     # Check for UnifiedActionExecutor first (preferred)
     unified_executor = context.get("unified_executor")
     action_executor = context.get("action_executor")
@@ -242,7 +260,7 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         if parallel_actions:
             import asyncio
             parallel_results = await asyncio.gather(
-                *[unified_executor.execute(action) for action in parallel_actions],
+                *[_execute_with_events(unified_executor, action, event_emitter) for action in parallel_actions],
                 return_exceptions=True,
             )
             # Convert exceptions to error results
@@ -262,7 +280,7 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         # Execute sequential actions
         for action in sequential_actions:
             try:
-                result = await unified_executor.execute(action)
+                result = await _execute_with_events(unified_executor, action, event_emitter)
                 results.append(result)
             except Exception as e:
                 logger.error(f"Action execution failed: {e}")
@@ -359,6 +377,41 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
     }
 
 
+async def _execute_with_events(
+    executor: Any,
+    action: PlanStep,
+    event_emitter: Any | None,
+) -> ToolCallResult:
+    """Execute a single action and emit events before/after."""
+    start_ms = time.monotonic()
+
+    # Pre-execution events
+    if event_emitter:
+        await event_emitter.emit_plan_step_start(action.id, action.title, action.tool, action.params)
+        if action.tool:
+            await event_emitter.emit_tool_call_start(action.tool, action.params)
+
+    result: ToolCallResult = await executor.execute(action)
+    duration_ms = int((time.monotonic() - start_ms) * 1000)
+
+    # Post-execution events
+    if event_emitter:
+        if result.success:
+            await event_emitter.emit_tool_call_complete(
+                result.tool_name, result.result, True, duration=duration_ms,
+            )
+            await event_emitter.emit_plan_step_complete(
+                action.id, action.title, result.result, duration_ms,
+            )
+        else:
+            await event_emitter.emit_tool_call_complete(
+                result.tool_name, None, False, error=result.error, duration=duration_ms,
+            )
+            await event_emitter.emit_plan_step_failed(action.id, action.title, result.error or "Unknown error")
+
+    return result
+
+
 async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
     """
     DELEGATE node: Delegate task to a SubAgent.
@@ -384,6 +437,7 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
         },
     )
 
+    event_emitter = context.get("event_emitter")
     delegator = context.get("sub_agent_delegator")
     plan = state["plan"]
 
@@ -394,6 +448,12 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
         }
 
     try:
+        # Emit skill call start
+        if event_emitter:
+            await event_emitter.emit_skill_call_start(
+                plan.delegate_to, f"subagent:{plan.delegate_to}", {"task": plan.goal},
+            )
+
         # Get the task from plan
         task = plan.goal
         delegation_context = {
@@ -416,6 +476,16 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
             error=result.get("error"),
         )
 
+        # Emit skill call complete
+        if event_emitter:
+            await event_emitter.emit_skill_call_complete(
+                plan.delegate_to,
+                f"subagent:{plan.delegate_to}",
+                result.get("result"),
+                not result.get("error"),
+                error=result.get("error"),
+            )
+
         return {
             "tool_results": [tool_result],
             "current_step": "observe",
@@ -423,6 +493,16 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
 
     except Exception as e:
         logger.error(f"Delegation failed: {e}")
+
+        if event_emitter:
+            await event_emitter.emit_skill_call_complete(
+                plan.delegate_to,
+                f"subagent:{plan.delegate_to}",
+                None,
+                False,
+                error=str(e),
+            )
+
         return {
             "tool_results": [
                 ToolCallResult(
@@ -460,6 +540,10 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             "result_count": len(state["tool_results"]),
         },
     )
+
+    event_emitter = context.get("event_emitter")
+    if event_emitter:
+        await event_emitter.emit_thinking("正在分析执行结果...", "reasoning")
 
     llm_provider = context.get("llm_provider")
     config = context.get("config", {})
@@ -542,6 +626,10 @@ async def reflect_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         extra={"session_id": state["session_id"]},
     )
 
+    event_emitter = context.get("event_emitter")
+    if event_emitter:
+        await event_emitter.emit_thinking("正在总结执行结果...", "concluding")
+
     llm_provider = context.get("llm_provider")
     memory_system = context.get("memory_system")
 
@@ -602,6 +690,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         extra={"session_id": state["session_id"]},
     )
 
+    event_emitter = context.get("event_emitter")
     llm_provider = context.get("llm_provider")
 
     # Check for errors
@@ -612,6 +701,8 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             name=None,
             tool_call_id=None,
         )
+        if event_emitter:
+            await event_emitter.emit_text_chunk(error_message["content"])
         return {"messages": [error_message]}
 
     # Generate response
@@ -628,6 +719,12 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             logger.error(f"Response generation failed: {e}")
             response_content = f"I completed the task but encountered an issue generating the response: {e}"
 
+    # Emit text chunks for streaming
+    if event_emitter:
+        # Send the full response as a single chunk for now
+        # (LLM streaming would send multiple chunks)
+        await event_emitter.emit_text_chunk(response_content)
+
     response_message = Message(
         role="assistant",
         content=response_content,
@@ -639,7 +736,3 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
 
 
 # Helper functions
-
-
-
-

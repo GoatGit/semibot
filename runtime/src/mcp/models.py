@@ -26,6 +26,39 @@ class McpErrorCode(str, Enum):
     UNKNOWN_ERROR = "unknown_error"
 
 
+class McpTransportType(str, Enum):
+    """MCP transport types."""
+
+    STDIO = "stdio"
+    HTTP_SSE = "http"
+    WEBSOCKET = "websocket"
+
+
+@dataclass
+class StdioTransportParams:
+    """Parameters for stdio transport."""
+
+    command: str
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class HttpSseTransportParams:
+    """Parameters for HTTP/SSE transport."""
+
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class WebSocketTransportParams:
+    """Parameters for WebSocket transport."""
+
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
+
+
 @dataclass
 class McpServerConfig:
     """MCP server configuration."""

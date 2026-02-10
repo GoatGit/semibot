@@ -11,6 +11,10 @@ from src.mcp.models import (
     McpToolResult,
     McpError,
     McpErrorCode,
+    McpTransportType,
+    StdioTransportParams,
+    HttpSseTransportParams,
+    WebSocketTransportParams,
 )
 from src.mcp.client import McpClient
 
@@ -21,5 +25,9 @@ __all__ = [
     "McpToolResult",
     "McpError",
     "McpErrorCode",
+    "McpTransportType",
+    "StdioTransportParams",
+    "HttpSseTransportParams",
+    "WebSocketTransportParams",
     "McpClient",
 ]

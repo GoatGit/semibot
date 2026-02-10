@@ -8,13 +8,53 @@
  */
 
 import axios, { AxiosInstance } from 'axios'
-import { RUNTIME_SERVICE_URL, RUNTIME_EXECUTION_TIMEOUT_MS, MCP_CONNECTION_TIMEOUT_MS } from '../constants/config'
+import { z } from 'zod'
+import {
+  RUNTIME_SERVICE_URL,
+  RUNTIME_EXECUTION_TIMEOUT_MS,
+  RUNTIME_HEALTH_CHECK_TIMEOUT_MS,
+  RUNTIME_STALL_TIMEOUT_MS,
+  RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES,
+} from '../constants/config'
 import { SSE_STREAM_ERROR } from '../constants/errorCodes'
 import type { SSEConnection } from '../services/chat.service'
 import { sendSSEEvent, sendAgent2UIMessage } from '../services/chat.service'
 import { createLogger } from '../lib/logger'
 
 const runtimeLogger = createLogger('runtime-adapter')
+
+// ═══════════════════════════════════════════════════════════════
+// Zod Schemas
+// ═══════════════════════════════════════════════════════════════
+
+const runtimeInputStateSchema = z.object({
+  session_id: z.string().min(1),
+  agent_id: z.string().min(1),
+  org_id: z.string().min(1),
+  user_message: z.string().min(1),
+  history_messages: z.array(z.object({
+    role: z.enum(['user', 'assistant', 'system']),
+    content: z.string(),
+  })).optional(),
+  agent_config: z.object({
+    system_prompt: z.string().optional(),
+    model: z.string().optional(),
+    temperature: z.number().optional(),
+    max_tokens: z.number().optional(),
+  }).optional(),
+  metadata: z.record(z.unknown()).optional(),
+})
+
+const runtimeEventSchema = z.object({
+  event: z.enum([
+    'plan_created', 'plan_step_start', 'plan_step_complete', 'plan_step_failed',
+    'tool_call_start', 'tool_call_complete', 'skill_call_start', 'skill_call_complete',
+    'mcp_call_start', 'mcp_call_complete', 'thinking', 'text_chunk',
+    'execution_complete', 'execution_error',
+  ]),
+  data: z.record(z.unknown()),
+  timestamp: z.string(),
+})
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -110,6 +150,16 @@ export class RuntimeAdapter {
     input: RuntimeInputState,
     onComplete?: (result: RuntimeExecutionResult) => void
   ): Promise<void> {
+    // 输入验证
+    const parseResult = runtimeInputStateSchema.safeParse(input)
+    if (!parseResult.success) {
+      runtimeLogger.error('RuntimeInputState 验证失败', undefined, { errors: parseResult.error.issues })
+      if (onComplete) {
+        onComplete({ success: false, error: `输入验证失败: ${parseResult.error.message}` })
+      }
+      return
+    }
+
     const startTime = Date.now()
     let fullResponse = ''
     const totalTokens = 0
@@ -128,8 +178,33 @@ export class RuntimeAdapter {
       // 处理 SSE 流
       const stream = response.data
       let buffer = '' // 缓冲区用于处理跨 chunk 的数据
+      let consecutiveParseFailures = 0
+
+      // Stall 检测
+      let stallTimer: NodeJS.Timeout | null = null
+
+      const clearStallTimer = () => {
+        if (stallTimer) {
+          clearTimeout(stallTimer)
+          stallTimer = null
+        }
+      }
+
+      const resetStallTimer = () => {
+        clearStallTimer()
+        stallTimer = setTimeout(() => {
+          runtimeLogger.error('SSE 流 stall 超时', {
+            sessionId: input.session_id,
+            timeoutMs: RUNTIME_STALL_TIMEOUT_MS,
+          })
+          stream.destroy(new Error('Stream stall timeout'))
+        }, RUNTIME_STALL_TIMEOUT_MS)
+      }
+
+      resetStallTimer()
 
       stream.on('data', (chunk: Buffer) => {
+        resetStallTimer()
         buffer += chunk.toString()
         const lines = buffer.split('\n')
 
@@ -143,21 +218,43 @@ export class RuntimeAdapter {
             const data = line.slice(6) // 移除 "data: " 前缀
             if (data === '[DONE]') continue
 
-            const event: RuntimeEvent = JSON.parse(data)
-            this.handleRuntimeEvent(event, connection, (text) => {
+            const parsed = JSON.parse(data)
+            const validated = runtimeEventSchema.safeParse(parsed)
+            if (!validated.success) {
+              consecutiveParseFailures++
+              runtimeLogger.warn('SSE 事件验证失败', {
+                errors: validated.error.issues,
+                rawData: data,
+              })
+              if (consecutiveParseFailures >= RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES) {
+                runtimeLogger.error('连续解析失败次数过多，中断流', {
+                  count: consecutiveParseFailures,
+                })
+                stream.destroy(new Error('Too many consecutive parse failures'))
+              }
+              continue
+            }
+            consecutiveParseFailures = 0
+            this.handleRuntimeEvent(validated.data as RuntimeEvent, connection, (text) => {
               fullResponse += text
             })
           } catch (err) {
+            consecutiveParseFailures++
             runtimeLogger.error('解析事件失败', err as Error, { rawData: line })
-            sendSSEEvent(connection, 'error', {
-              code: SSE_STREAM_ERROR,
-              message: 'SSE 流解析失败，请稍后重试',
-            })
+            if (consecutiveParseFailures >= RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES) {
+              runtimeLogger.error('连续解析失败次数过多，中断流', {
+                count: consecutiveParseFailures,
+              })
+              stream.destroy(new Error('Too many consecutive parse failures'))
+              break
+            }
           }
         }
       })
 
       stream.on('end', () => {
+        clearStallTimer()
+
         // 处理缓冲区中剩余的数据
         if (buffer.trim() && buffer.startsWith('data: ')) {
           try {
@@ -190,6 +287,7 @@ export class RuntimeAdapter {
       })
 
       stream.on('error', (err: Error) => {
+        clearStallTimer()
         hasError = true
         errorMessage = err.message
         runtimeLogger.error('流错误', err)
@@ -457,11 +555,11 @@ export class RuntimeAdapter {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.client.get('/health', { timeout: MCP_CONNECTION_TIMEOUT_MS })
+      const response = await this.client.get('/health', { timeout: RUNTIME_HEALTH_CHECK_TIMEOUT_MS })
       return response.status === 200
     } catch (error) {
       if (error instanceof Error && error.message.includes('timeout')) {
-        runtimeLogger.warn('健康检查超时', { timeoutMs: MCP_CONNECTION_TIMEOUT_MS })
+        runtimeLogger.warn('健康检查超时', { timeoutMs: RUNTIME_HEALTH_CHECK_TIMEOUT_MS })
       } else {
         runtimeLogger.error('健康检查失败', error as Error)
       }

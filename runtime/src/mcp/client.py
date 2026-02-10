@@ -1,34 +1,37 @@
-"""MCP client implementation.
+"""MCP client implementation using the MCP SDK.
 
 This module provides the MCP client for connecting to and interacting with
-MCP servers. It supports multiple transport types (stdio, http, websocket).
-
-WARNING: MCP client is currently in MOCK mode. The actual connection and tool
-call logic is not yet implemented. All operations return mock data for testing.
-DO NOT use in production until the implementation is complete.
+MCP servers. It supports multiple transport types (stdio, http/sse, websocket).
 """
 
+import asyncio
 import os
+from contextlib import AsyncExitStack
 from typing import Any
-from src.mcp.models import (
-    McpConnectionStatus,
-    McpServerConfig,
-    McpToolCall,
-    McpToolResult,
-    McpError,
-    McpErrorCode,
-)
-from src.utils.logging import get_logger
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.client.sse import sse_client
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from src.constants.config import (
-    MCP_CONNECTION_TIMEOUT,
     MCP_CALL_TIMEOUT,
+    MCP_CONNECTION_TIMEOUT,
     MCP_MAX_RETRIES,
 )
+from src.mcp.models import (
+    McpConnectionStatus,
+    McpError,
+    McpErrorCode,
+    McpServerConfig,
+    McpTransportType,
+)
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# 功能开关：设置为 False 禁用 MCP 功能
-MCP_ENABLED = os.getenv("MCP_ENABLED", "false").lower() == "true"
+# 功能开关：默认启用 MCP 功能
+MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
 
 
 class McpClient:
@@ -39,10 +42,11 @@ class McpClient:
     a unified interface for calling tools and accessing resources.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the MCP client."""
         self._servers: dict[str, McpServerConfig] = {}
-        self._connections: dict[str, Any] = {}
+        self._sessions: dict[str, ClientSession] = {}
+        self._exit_stacks: dict[str, AsyncExitStack] = {}
         self._connection_status: dict[str, McpConnectionStatus] = {}
 
     async def add_server(self, config: McpServerConfig) -> None:
@@ -82,11 +86,11 @@ class McpClient:
         if not MCP_ENABLED:
             logger.warning(
                 "[MCP] MCP 功能已禁用，跳过连接",
-                extra={"server_id": server_id}
+                extra={"server_id": server_id},
             )
             raise McpError(
                 code=McpErrorCode.CONNECTION_FAILED,
-                message="MCP functionality is disabled. Set MCP_ENABLED=true to enable."
+                message="MCP functionality is disabled. Set MCP_ENABLED=true to enable.",
             )
 
         if server_id not in self._servers:
@@ -100,21 +104,76 @@ class McpClient:
 
         logger.info(
             f"Connecting to MCP server: {config.server_name}",
-            extra={"server_id": server_id},
+            extra={"server_id": server_id, "transport": config.transport_type},
         )
 
         try:
-            # TODO: Implement actual connection logic based on transport type
-            # For now, just mark as connected
-            logger.warning(
-                "[MCP] 使用 MOCK 模式连接 - 实际连接逻辑尚未实现",
-                extra={"server_id": server_id, "transport": config.transport_type}
+            exit_stack = AsyncExitStack()
+            await exit_stack.__aenter__()
+
+            transport_type = config.transport_type.lower()
+            params = config.connection_params
+
+            if transport_type == McpTransportType.STDIO.value:
+                server_params = StdioServerParameters(
+                    command=params["command"],
+                    args=params.get("args", []),
+                    env=params.get("env"),
+                )
+                stdio_transport = await exit_stack.enter_async_context(
+                    stdio_client(server_params)
+                )
+                read_stream, write_stream = stdio_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+
+            elif transport_type == McpTransportType.HTTP_SSE.value:
+                url = params["url"]
+                headers = params.get("headers", {})
+                sse_transport = await exit_stack.enter_async_context(
+                    sse_client(url=url, headers=headers)
+                )
+                read_stream, write_stream = sse_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+
+            else:
+                await exit_stack.aclose()
+                raise McpError(
+                    code=McpErrorCode.CONNECTION_FAILED,
+                    message=f"Unsupported transport type: {transport_type}",
+                )
+
+            # Initialize the session (MCP handshake)
+            await asyncio.wait_for(
+                session.initialize(),
+                timeout=MCP_CONNECTION_TIMEOUT,
             )
+
+            self._sessions[server_id] = session
+            self._exit_stacks[server_id] = exit_stack
             self._connection_status[server_id] = McpConnectionStatus.CONNECTED
+
             logger.info(
                 f"Connected to MCP server: {config.server_name}",
                 extra={"server_id": server_id},
             )
+
+        except asyncio.TimeoutError:
+            self._connection_status[server_id] = McpConnectionStatus.ERROR
+            logger.error(
+                "MCP connection timed out",
+                extra={"server_id": server_id, "timeout": MCP_CONNECTION_TIMEOUT},
+            )
+            raise McpError(
+                code=McpErrorCode.CONNECTION_TIMEOUT,
+                message=f"Connection to server {server_id} timed out after {MCP_CONNECTION_TIMEOUT}s",
+            )
+        except McpError:
+            self._connection_status[server_id] = McpConnectionStatus.ERROR
+            raise
         except Exception as e:
             self._connection_status[server_id] = McpConnectionStatus.ERROR
             logger.error(
@@ -142,11 +201,16 @@ class McpClient:
             extra={"server_id": server_id},
         )
 
-        # TODO: Implement actual disconnection logic
-        self._connection_status[server_id] = McpConnectionStatus.DISCONNECTED
+        # Close the exit stack which cleans up session + transport
+        exit_stack = self._exit_stacks.pop(server_id, None)
+        if exit_stack:
+            try:
+                await exit_stack.aclose()
+            except Exception as e:
+                logger.error(f"Error closing exit stack for {server_id}: {e}")
 
-        if server_id in self._connections:
-            del self._connections[server_id]
+        self._sessions.pop(server_id, None)
+        self._connection_status[server_id] = McpConnectionStatus.DISCONNECTED
 
     def get_connection_status(self, server_id: str) -> McpConnectionStatus:
         """
@@ -180,7 +244,7 @@ class McpClient:
         timeout: int | None = None,
     ) -> Any:
         """
-        Call a tool on an MCP server.
+        Call a tool on an MCP server with retry.
 
         Args:
             server_id: Server ID
@@ -200,40 +264,44 @@ class McpClient:
                 message=f"Server {server_id} is not connected",
             )
 
-        config = self._servers.get(server_id)
-        if not config:
+        session = self._sessions.get(server_id)
+        if not session:
             raise McpError(
                 code=McpErrorCode.SERVER_ERROR,
-                message=f"Server {server_id} not found",
+                message=f"No session for server {server_id}",
             )
 
-        timeout = timeout or config.timeout or MCP_CALL_TIMEOUT
+        config = self._servers.get(server_id)
+        effective_timeout = timeout or (config.timeout if config else MCP_CALL_TIMEOUT)
 
         logger.info(
-            f"Calling MCP tool: {tool_name} on server {config.server_name}",
+            f"Calling MCP tool: {tool_name} on server {server_id}",
             extra={"server_id": server_id, "tool_name": tool_name},
         )
 
         try:
-            # TODO: Implement actual tool call logic
-            # For now, return a mock result
-            logger.warning(
-                "[MCP] 使用 MOCK 模式调用工具 - 实际调用逻辑尚未实现，返回模拟数据",
-                extra={"server_id": server_id, "tool_name": tool_name, "arguments": arguments}
+            result = await self._call_tool_with_retry(
+                session, tool_name, arguments, effective_timeout,
             )
-            result = {
-                "status": "success",
-                "message": f"Mock result for {tool_name}",
-                "arguments": arguments,
-            }
 
             logger.info(
                 f"MCP tool call succeeded: {tool_name}",
                 extra={"server_id": server_id, "tool_name": tool_name},
             )
-
             return result
 
+        except asyncio.TimeoutError:
+            logger.error(
+                "MCP tool call timed out",
+                extra={"server_id": server_id, "tool_name": tool_name, "timeout": effective_timeout},
+            )
+            raise McpError(
+                code=McpErrorCode.TOOL_EXECUTION_FAILED,
+                message=f"Tool call {tool_name} timed out after {effective_timeout}s",
+                details={"server_id": server_id, "tool_name": tool_name},
+            )
+        except McpError:
+            raise
         except Exception as e:
             logger.error(
                 f"MCP tool call failed: {e}",
@@ -244,6 +312,37 @@ class McpClient:
                 message=f"Tool call failed: {str(e)}",
                 details={"server_id": server_id, "tool_name": tool_name},
             )
+
+    @retry(
+        stop=stop_after_attempt(MCP_MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    async def _call_tool_with_retry(
+        self,
+        session: ClientSession,
+        tool_name: str,
+        arguments: dict[str, Any],
+        timeout: int,
+    ) -> Any:
+        """Call a tool with exponential backoff retry."""
+        result = await asyncio.wait_for(
+            session.call_tool(tool_name, arguments),
+            timeout=timeout,
+        )
+        # Extract content from MCP result
+        if hasattr(result, "content"):
+            # MCP SDK returns CallToolResult with content list
+            contents = result.content
+            if len(contents) == 1:
+                item = contents[0]
+                if hasattr(item, "text"):
+                    return item.text
+            return [
+                {"type": getattr(c, "type", "text"), "text": getattr(c, "text", str(c))}
+                for c in contents
+            ]
+        return result
 
     async def list_tools(self, server_id: str) -> list[dict[str, Any]]:
         """
@@ -264,15 +363,28 @@ class McpClient:
                 message=f"Server {server_id} is not connected",
             )
 
+        session = self._sessions.get(server_id)
+        if not session:
+            raise McpError(
+                code=McpErrorCode.SERVER_ERROR,
+                message=f"No session for server {server_id}",
+            )
+
         logger.info(
             f"Listing tools on MCP server {server_id}",
             extra={"server_id": server_id},
         )
 
         try:
-            # TODO: Implement actual tool listing logic
-            # For now, return empty list
-            return []
+            result = await session.list_tools()
+            tools: list[dict[str, Any]] = []
+            for tool in result.tools:
+                tools.append({
+                    "name": tool.name,
+                    "description": getattr(tool, "description", ""),
+                    "inputSchema": getattr(tool, "inputSchema", {}),
+                })
+            return tools
 
         except Exception as e:
             logger.error(
@@ -302,10 +414,11 @@ class McpClient:
 
         # 清理所有字典，防止内存泄漏
         self._servers.clear()
-        self._connections.clear()
+        self._sessions.clear()
+        self._exit_stacks.clear()
         self._connection_status.clear()
 
         logger.info(
             "All MCP connections closed and resources cleaned up",
-            extra={"closed_count": len(server_ids)}
+            extra={"closed_count": len(server_ids)},
         )
