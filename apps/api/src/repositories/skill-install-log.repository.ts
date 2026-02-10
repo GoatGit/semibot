@@ -209,42 +209,26 @@ export async function findAll(options: {
 /**
  * 更新安装日志
  */
-export async function update(id: string, data: UpdateSkillInstallLogData): Promise<SkillInstallLog> {
-  const updates: string[] = []
-  const params: any[] = []
-  let paramIndex = 1
-
-  if (data.skillPackageId !== undefined) {
-    updates.push(`skill_package_id = $${paramIndex++}`)
-    params.push(data.skillPackageId)
-  }
-
-  if (data.status !== undefined) {
-    updates.push(`status = $${paramIndex++}`)
-    params.push(data.status)
-  }
-
-  if (data.errorMessage !== undefined) {
-    updates.push(`error_message = $${paramIndex++}`)
-    params.push(data.errorMessage)
-  }
-
-  if (data.completedAt !== undefined) {
-    updates.push(`completed_at = $${paramIndex++}`)
-    params.push(data.completedAt)
-  }
-
-  updates.push(`updated_at = NOW()`)
-  params.push(id)
-
+export async function update(id: string, data: UpdateSkillInstallLogData): Promise<SkillInstallLog | null> {
   const rows = await sql<SkillInstallLogRow[]>`
+    SELECT * FROM skill_install_logs WHERE id = ${id} LIMIT 1
+  `
+  if (rows.length === 0) return null
+
+  const current = rows[0]
+
+  const result = await sql<SkillInstallLogRow[]>`
     UPDATE skill_install_logs
-    SET ${sql.unsafe(updates.join(', '))}
-    WHERE id = $${paramIndex}
+    SET skill_package_id = ${data.skillPackageId ?? current.skill_package_id},
+        status = ${data.status ?? current.status},
+        error_message = ${data.errorMessage ?? current.error_message},
+        completed_at = ${data.completedAt ?? current.completed_at},
+        updated_at = NOW()
+    WHERE id = ${id}
     RETURNING *
   `
 
-  return rowToSkillInstallLog(rows[0])
+  return result.length > 0 ? rowToSkillInstallLog(result[0]) : null
 }
 
 /**

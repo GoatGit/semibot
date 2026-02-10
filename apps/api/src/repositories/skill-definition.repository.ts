@@ -203,52 +203,28 @@ export async function findAll(options: {
 /**
  * 更新技能定义
  */
-export async function update(id: string, data: UpdateSkillDefinitionData): Promise<SkillDefinition> {
-  const updates: string[] = []
-  const params: any[] = []
-  let paramIndex = 1
-
-  if (data.name !== undefined) {
-    updates.push(`name = $${paramIndex++}`)
-    params.push(data.name)
-  }
-
-  if (data.description !== undefined) {
-    updates.push(`description = $${paramIndex++}`)
-    params.push(data.description)
-  }
-
-  if (data.triggerKeywords !== undefined) {
-    updates.push(`trigger_keywords = $${paramIndex++}`)
-    params.push(data.triggerKeywords)
-  }
-
-  if (data.currentVersion !== undefined) {
-    updates.push(`current_version = $${paramIndex++}`)
-    params.push(data.currentVersion)
-  }
-
-  if (data.isActive !== undefined) {
-    updates.push(`is_active = $${paramIndex++}`)
-    params.push(data.isActive)
-  }
-
-  if (data.isPublic !== undefined) {
-    updates.push(`is_public = $${paramIndex++}`)
-    params.push(data.isPublic)
-  }
-
-  updates.push(`updated_at = NOW()`)
-  params.push(id)
-
+export async function update(id: string, data: UpdateSkillDefinitionData): Promise<SkillDefinition | null> {
   const rows = await sql<SkillDefinitionRow[]>`
+    SELECT * FROM skill_definitions WHERE id = ${id} LIMIT 1
+  `
+  if (rows.length === 0) return null
+
+  const current = rows[0]
+
+  const result = await sql<SkillDefinitionRow[]>`
     UPDATE skill_definitions
-    SET ${sql.unsafe(updates.join(', '))}
-    WHERE id = $${paramIndex}
+    SET name = ${data.name ?? current.name},
+        description = ${data.description ?? current.description},
+        trigger_keywords = ${data.triggerKeywords ?? current.trigger_keywords},
+        current_version = ${data.currentVersion ?? current.current_version},
+        is_active = ${data.isActive ?? current.is_active},
+        is_public = ${data.isPublic ?? current.is_public},
+        updated_at = NOW()
+    WHERE id = ${id}
     RETURNING *
   `
 
-  return rowToSkillDefinition(rows[0])
+  return result.length > 0 ? rowToSkillDefinition(result[0]) : null
 }
 
 /**
