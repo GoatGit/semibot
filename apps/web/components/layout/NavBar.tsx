@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { useAuthStore } from '@/stores/authStore'
 import { usePathname } from 'next/navigation'
+import Link from 'next/link'
+import { MS_PER_DAY, RELATIVE_TIME_DAYS_THRESHOLD } from '@/constants/config'
 import clsx from 'clsx'
 import {
   Home,
@@ -17,6 +19,8 @@ import {
   LogOut,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { apiClient } from '@/lib/api'
+import type { ApiResponse, Session } from '@/types'
 
 interface NavItem {
   icon: React.ReactNode
@@ -42,6 +46,8 @@ const navItems: NavItem[] = [
  * - 首页自动展开，其他页面自动收起
  * - 折叠状态下鼠标悬停自动展开
  */
+const NAVBAR_SESSION_LIMIT = 10
+
 export function NavBar() {
   const { navBarExpanded } = useLayoutStore()
   const { user, logout } = useAuthStore()
@@ -49,6 +55,45 @@ export function NavBar() {
   const router = useRouter()
   const [isHovered, setIsHovered] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement>(null)
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false)
+
+  // 点击外部关闭用户菜单
+  useEffect(() => {
+    if (!showUserMenu) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showUserMenu])
+
+  // 加载最近会话列表
+  useEffect(() => {
+    let cancelled = false
+    const loadSessions = async () => {
+      try {
+        setIsLoadingSessions(true)
+        const response = await apiClient.get<ApiResponse<Session[]>>('/sessions', {
+          params: { limit: NAVBAR_SESSION_LIMIT },
+        })
+        if (!cancelled && response.success && response.data) {
+          setSessions(response.data)
+        }
+      } catch {
+        // 静默处理，不影响导航栏其他功能
+      } finally {
+        if (!cancelled) {
+          setIsLoadingSessions(false)
+        }
+      }
+    }
+    loadSessions()
+    return () => { cancelled = true }
+  }, [])
 
   // 实际显示的展开状态：固定展开 或 悬停展开
   const isExpanded = navBarExpanded || isHovered
@@ -119,19 +164,39 @@ export function NavBar() {
           variant="primary"
         />
 
-        {/* 会话列表占位 */}
+        {/* 会话列表 */}
         {isExpanded && (
           <div className="mt-2 space-y-1">
-            <SessionItem title="销售数据分析" time="14:30" />
-            <SessionItem title="市场调研报告" time="10:15" />
-            <SessionItem title="竞品分析" time="昨天" />
+            {isLoadingSessions ? (
+              <>
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2 animate-pulse">
+                    <div className="w-4 h-4 rounded bg-neutral-700" />
+                    <div className="flex-1 space-y-1">
+                      <div className="h-3 bg-neutral-700 rounded w-3/4" />
+                      <div className="h-2 bg-neutral-700 rounded w-1/2" />
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : sessions.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-text-tertiary">暂无会话</p>
+            ) : (
+              sessions.map((session) => (
+                <SessionItem
+                  key={session.id}
+                  session={session}
+                  active={pathname === `/chat/${session.id}`}
+                />
+              ))
+            )}
           </div>
         )}
       </div>
 
       {/* 用户菜单 */}
       <div className="border-t border-border-subtle p-2">
-        <div className="relative">
+        <div className="relative" ref={userMenuRef}>
           <button
             type="button"
             data-testid="user-menu"
@@ -195,7 +260,7 @@ interface NavButtonProps {
 
 function NavButton({ icon, label, href, active, expanded, variant = 'default' }: NavButtonProps) {
   return (
-    <a
+    <Link
       href={href}
       className={clsx(
         'flex items-center gap-3 h-10 px-3 rounded-md',
@@ -211,30 +276,51 @@ function NavButton({ icon, label, href, active, expanded, variant = 'default' }:
     >
       {icon}
       {expanded && <span className="text-sm font-medium">{label}</span>}
-    </a>
+    </Link>
   )
 }
 
 interface SessionItemProps {
-  title: string
-  time: string
+  session: Session
+  active?: boolean
 }
 
-function SessionItem({ title, time }: SessionItemProps) {
+function formatSessionTime(dateString: string): string {
+  const date = new Date(dateString)
+  if (isNaN(date.getTime())) {
+    return '--'
+  }
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const days = Math.floor(diff / MS_PER_DAY)
+
+  if (days === 0) {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  } else if (days === 1) {
+    return '昨天'
+  } else if (days < RELATIVE_TIME_DAYS_THRESHOLD) {
+    return `${days} 天前`
+  }
+  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+}
+
+function SessionItem({ session, active }: SessionItemProps) {
   return (
-    <a
-      href="#"
+    <Link
+      href={`/chat/${session.id}`}
       className={clsx(
         'flex items-center gap-2 px-3 py-2 rounded-md',
-        'text-text-secondary hover:bg-interactive-hover hover:text-text-primary',
-        'transition-colors duration-fast'
+        'transition-colors duration-fast',
+        active
+          ? 'bg-interactive-active text-text-primary'
+          : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
       )}
     >
       <MessageSquare size={16} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm truncate">{title}</div>
-        <div className="text-xs text-text-tertiary">{time}</div>
+        <div className="text-sm truncate">{session.title ?? '未命名会话'}</div>
+        <div className="text-xs text-text-tertiary">{formatSessionTime(session.createdAt)}</div>
       </div>
-    </a>
+    </Link>
   )
 }

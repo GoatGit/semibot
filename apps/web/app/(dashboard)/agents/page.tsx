@@ -400,7 +400,7 @@ function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
             <span className="px-2 py-0.5 text-xs bg-bg-elevated text-text-secondary rounded">
               {agent.config?.model || 'gpt-4o'}
             </span>
-            {agent.skills?.slice(0, 2).map((skill) => (
+            {agent.skills?.slice(0, 2).map((skill: string) => (
               <span
                 key={skill}
                 className="px-2 py-0.5 text-xs bg-bg-elevated text-text-secondary rounded"

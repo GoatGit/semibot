@@ -2,7 +2,7 @@
 
 import clsx from 'clsx'
 import { FileText } from 'lucide-react'
-import type { ReportData } from '@/types'
+import type { ReportData, ReportSection } from '@/types'
 import { Agent2UIRenderer } from '../Agent2UIRenderer'
 
 /**
@@ -51,7 +51,7 @@ export function ReportView({ data, className }: ReportViewProps) {
 
       {/* 报告内容 */}
       <div className="divide-y divide-border-subtle">
-        {data.sections.map((section, sectionIndex) => (
+        {data.sections.map((section: ReportSection, sectionIndex: number) => (
           <div key={sectionIndex} className="px-6 py-5">
             {/* 章节标题 */}
             <h3 className="text-base font-semibold text-text-primary mb-4">

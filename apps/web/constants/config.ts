@@ -64,6 +64,15 @@ export const HOME_PATH = '/'
 /** 侧边导航宽度 (像素) */
 export const SIDEBAR_NAV_WIDTH_PX = 224 // w-56 = 14rem = 224px
 
+/** 详情画布展开宽度 (像素) */
+export const DETAIL_CANVAS_WIDTH_PX = 640
+
+/** 一天的毫秒数 */
+export const MS_PER_DAY = 1000 * 60 * 60 * 24
+
+/** 显示"X天前"的天数阈值 */
+export const RELATIVE_TIME_DAYS_THRESHOLD = 7
+
 /** 设置页面内容最大宽度 */
 export const SETTINGS_CONTENT_MAX_WIDTH = '2xl' // max-w-2xl
 

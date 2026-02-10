@@ -69,7 +69,7 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
     return (
       <div className={clsx('overflow-x-auto', className)}>
         <div className="flex items-center gap-2 min-w-max p-4">
-          {data.steps.map((step, index) => (
+          {data.steps.map((step: PlanStep, index: number) => (
             <div key={step.id} className="flex items-center">
               {/* 步骤 */}
               <div className="flex flex-col items-center gap-2">
@@ -109,7 +109,7 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
   // 垂直模式
   return (
     <div className={clsx('space-y-0', className)}>
-      {data.steps.map((step, index) => (
+      {data.steps.map((step: PlanStep, index: number) => (
         <div key={step.id} className="flex gap-4">
           {/* 左侧：图标和连接线 */}
           <div className="flex flex-col items-center">
@@ -158,7 +158,7 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
             {/* 子步骤 */}
             {step.substeps && step.substeps.length > 0 && (
               <div className="mt-2 ml-2 space-y-1">
-                {step.substeps.map((substep) => (
+                {step.substeps.map((substep: PlanStep) => (
                   <div
                     key={substep.id}
                     className="flex items-center gap-2 text-sm text-text-secondary"

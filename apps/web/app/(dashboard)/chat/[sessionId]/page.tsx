@@ -146,8 +146,8 @@ export default function ChatSessionPage() {
 
         if (messagesResponse.success && messagesResponse.data) {
           const historyMessages: DisplayMessage[] = messagesResponse.data
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => ({
+            .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+            .map((m: { id: string; role: string; content: string; createdAt: string }) => ({
               id: m.id,
               role: m.role as 'user' | 'assistant',
               content: m.content,

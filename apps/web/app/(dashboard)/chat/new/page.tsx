@@ -111,8 +111,8 @@ export default function NewChatPage() {
 
       if (response.success && response.data && response.data.length > 0) {
         const agentOptions: AgentOption[] = response.data
-          .filter((a) => a.isActive)
-          .map((agent, index) => ({
+          .filter((a: Agent) => a.isActive)
+          .map((agent: Agent, index: number) => ({
             id: agent.id,
             name: agent.name,
             description: agent.description ?? '智能 AI 助手',

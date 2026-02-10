@@ -21,7 +21,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts'
-import type { ChartData } from '@/types'
+import type { ChartData, ChartSeries } from '@/types'
 
 /**
  * Chart - 图表组件
@@ -52,7 +52,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
   const chartData = useMemo(() => {
     if (data.chartType === 'pie') {
       // 饼图数据格式
-      return data.series[0]?.data.map((value, index) => ({
+      return data.series[0]?.data.map((value: number, index: number) => ({
         name: data.xAxis?.data?.[index] || `项目 ${index + 1}`,
         value,
       })) || []
@@ -60,9 +60,9 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
 
     // 折线图/柱状图数据格式
     const xAxisData = data.xAxis?.data || []
-    return xAxisData.map((label, index) => {
+    return xAxisData.map((label: string, index: number) => {
       const point: Record<string, string | number> = { name: label }
-      data.series.forEach((series) => {
+      data.series.forEach((series: ChartSeries) => {
         point[series.name] = series.data[index] || 0
       })
       return point
@@ -108,7 +108,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
               iconType="circle"
               iconSize={8}
             />
-            {data.series.map((series, index) => (
+            {data.series.map((series: ChartSeries, index: number) => (
               <Line
                 key={series.name}
                 type="monotone"
@@ -158,7 +158,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
               iconType="rect"
               iconSize={10}
             />
-            {data.series.map((series, index) => (
+            {data.series.map((series: ChartSeries, index: number) => (
               <Bar
                 key={series.name}
                 dataKey={series.name}
@@ -185,7 +185,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
               }
               labelLine={{ stroke: 'var(--text-tertiary)' }}
             >
-              {chartData.map((_, index) => (
+              {chartData.map((_: Record<string, string | number>, index: number) => (
                 <Cell
                   key={`cell-${index}`}
                   fill={CHART_COLORS[index % CHART_COLORS.length]}
@@ -245,7 +245,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
               iconType="circle"
               iconSize={8}
             />
-            {data.series.map((series, index) => (
+            {data.series.map((series: ChartSeries, index: number) => (
               <Scatter
                 key={series.name}
                 name={series.name}
@@ -293,7 +293,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
               iconType="rect"
               iconSize={10}
             />
-            {data.series.map((series, index) => (
+            {data.series.map((series: ChartSeries, index: number) => (
               <Area
                 key={series.name}
                 type="monotone"

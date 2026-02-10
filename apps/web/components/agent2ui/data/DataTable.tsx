@@ -36,7 +36,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
       return data.rows
     }
 
-    const column = data.columns.find((col) => col.key === sortState.column)
+    const column = data.columns.find((col: TableColumn) => col.key === sortState.column)
     if (!column) return data.rows
 
     return [...data.rows].sort((a, b) => {
@@ -114,7 +114,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-bg-elevated border-b border-border-subtle">
-              {data.columns.map((column) => (
+              {data.columns.map((column: TableColumn) => (
                 <th
                   key={column.key}
                   className={clsx(
@@ -135,7 +135,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
             </tr>
           </thead>
           <tbody>
-            {sortedRows.map((row, rowIndex) => (
+            {sortedRows.map((row: Record<string, unknown>, rowIndex: number) => (
               <tr
                 key={rowIndex}
                 className={clsx(
@@ -144,7 +144,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
                   'hover:bg-interactive-hover'
                 )}
               >
-                {data.columns.map((column) => (
+                {data.columns.map((column: TableColumn) => (
                   <td
                     key={column.key}
                     className={clsx(
