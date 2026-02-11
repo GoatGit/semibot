@@ -230,7 +230,6 @@ Please analyze this request and create an execution plan.
             response = await self.llm_provider.chat(
                 messages=messages,
                 temperature=self.config.temperature,
-                response_format={"type": "json_object"},
             )
 
             # Parse the response
@@ -247,8 +246,10 @@ Please analyze this request and create an execution plan.
 
         lines = []
         for skill in skills:
-            name = skill.get("name", "unknown")
-            description = skill.get("description", "No description")
+            # Support both flat {"name": ...} and nested {"function": {"name": ...}} formats
+            func = skill.get("function", {})
+            name = func.get("name") or skill.get("name", "unknown")
+            description = func.get("description") or skill.get("description", "No description")
             lines.append(f"- {name}: {description}")
 
         return "\n".join(lines)

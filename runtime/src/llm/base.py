@@ -169,10 +169,14 @@ class LLMProvider(ABC):
         # Build planning prompt
         tools_text = ""
         if available_tools:
-            tools_text = "\n".join(
-                f"- {t.get('name', 'unknown')}: {t.get('description', '')}"
-                for t in available_tools
-            )
+            tool_lines = []
+            for t in available_tools:
+                # Support both flat {"name": ...} and nested {"function": {"name": ...}} formats
+                func = t.get("function", {})
+                name = func.get("name") or t.get("name", "unknown")
+                desc = func.get("description") or t.get("description", "")
+                tool_lines.append(f"- {name}: {desc}")
+            tools_text = "\n".join(tool_lines)
 
         planning_prompt = f"""Analyze the user's request and create an execution plan.
 
@@ -182,7 +186,7 @@ Available tools:
 Memory context:
 {memory or "No context."}
 
-Return a JSON object with:
+You MUST respond with ONLY a JSON object (no markdown fences, no extra text) with these keys:
 - goal: The overall objective
 - steps: Array of steps, each with id, title, tool (or null), params, parallel (bool)
 - requires_delegation: Boolean if sub-agent needed
@@ -194,17 +198,35 @@ Return a JSON object with:
 
         response = await self.chat(
             messages=all_messages,
-            response_format={"type": "json_object"},
             temperature=0.3,
         )
 
-        # Parse JSON response
+        # Parse JSON response — extract JSON from content which may contain
+        # markdown fences or surrounding text from thinking models.
         import json
+        import re
 
+        text = response.content.strip()
+        # Try direct parse first
         try:
-            return json.loads(response.content)
+            return json.loads(text)
         except json.JSONDecodeError:
-            return {"goal": "", "steps": [], "error": "Failed to parse plan"}
+            pass
+        # Try extracting from markdown code fence
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except json.JSONDecodeError:
+                pass
+        # Try finding first { ... } block
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+        return {"goal": "", "steps": [], "error": "Failed to parse plan"}
 
     async def generate_response(
         self,
@@ -273,7 +295,7 @@ Be concise but informative. If there were errors, explain what happened and sugg
         prompt = """Reflect on this task execution. Analyze what was accomplished,
 what could be improved, and if there are valuable insights to remember.
 
-Return a JSON object with:
+You MUST respond with ONLY a JSON object (no markdown fences, no extra text) with these keys:
 - summary: Brief summary of what was accomplished
 - lessons_learned: Array of key lessons
 - worth_remembering: Boolean if this should be stored in memory
@@ -282,21 +304,35 @@ Return a JSON object with:
 
         response = await self.chat(
             messages=[{"role": "system", "content": prompt}] + messages,
-            response_format={"type": "json_object"},
             temperature=0.5,
         )
 
         import json
+        import re
 
+        text = response.content.strip()
         try:
-            return json.loads(response.content)
+            return json.loads(text)
         except json.JSONDecodeError:
-            return {
-                "summary": "Task completed.",
-                "lessons_learned": [],
-                "worth_remembering": False,
-                "importance": 0.5,
-            }
+            pass
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except json.JSONDecodeError:
+                pass
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+        return {
+            "summary": "Task completed.",
+            "lessons_learned": [],
+            "worth_remembering": False,
+            "importance": 0.5,
+        }
 
     async def health_check(self) -> bool:
         """

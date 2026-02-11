@@ -367,6 +367,24 @@ async function handleChatWithRuntime(
       },
     }
 
+    // 加载 Agent 关联的 MCP Servers
+    try {
+      const mcpServers = await mcpService.getMcpServersForRuntime(agent.id)
+      if (mcpServers.length > 0) {
+        runtimeInput.available_mcp_servers = mcpServers
+        chatLogger.info('已加载 MCP Servers', {
+          agentId: agent.id,
+          serverCount: mcpServers.length,
+          toolCount: mcpServers.reduce((sum, s) => sum + s.available_tools.length, 0),
+        })
+      }
+    } catch (err) {
+      chatLogger.warn('加载 MCP Servers 失败，继续无 MCP 模式', {
+        agentId: agent.id,
+        error: (err as Error).message,
+      })
+    }
+
     // 执行 Runtime 编排
     const adapter = getRuntimeAdapter()
     let fullContent = ''

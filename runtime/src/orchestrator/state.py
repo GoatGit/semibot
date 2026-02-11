@@ -1,18 +1,17 @@
 """Agent state type definitions for LangGraph orchestration."""
 
-from typing import Annotated, Any, Literal, TYPE_CHECKING
+from typing import Annotated, Any, Literal
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from operator import add
 
-if TYPE_CHECKING:
-    from src.orchestrator.context import RuntimeSessionContext
+from src.orchestrator.context import RuntimeSessionContext
 
 
 class PlanStep(BaseModel):
     """A single step in the execution plan."""
 
-    id: str = Field(..., description="Unique step identifier")
+    id: str = Field(..., description="Unique step identifier", coerce_numbers_to_str=True)
     title: str = Field(..., description="Step title/description")
     tool: str | None = Field(default=None, description="Tool to execute")
     params: dict[str, Any] = Field(default_factory=dict, description="Tool parameters")

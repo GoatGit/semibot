@@ -772,6 +772,43 @@ export async function setAgentMcpServers(agentId: string, mcpServerIds: string[]
   return mcpRepository.setAgentMcpServers(agentId, mcpServerIds)
 }
 
+/**
+ * 获取 Agent 关联的 MCP Servers（转换为 Runtime McpServerDefinition 格式）
+ */
+export async function getMcpServersForRuntime(agentId: string): Promise<Array<{
+  id: string
+  name: string
+  endpoint: string
+  transport: string
+  is_connected: boolean
+  available_tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
+}>> {
+  const servers = await mcpRepository.findByAgentId(agentId)
+
+  return servers.map((server) => {
+    const serverTools: McpTool[] = parseJsonField(server.tools) || []
+    const enabledTools: string[] = parseJsonField(server.enabled_tools) || []
+
+    const filteredTools = serverTools
+      .filter((tool) => enabledTools.length === 0 || enabledTools.includes(tool.name))
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description || '',
+        parameters: tool.inputSchema || {},
+      }))
+
+    return {
+      id: server.id,
+      name: server.name,
+      endpoint: server.endpoint,
+      transport: server.transport,
+      is_connected: true,
+      auth_config: parseJsonField(server.auth_config) || null,
+      available_tools: filteredTools,
+    }
+  })
+}
+
 function parseJsonField(value: unknown): any {
   if (value === null || value === undefined) return null
   if (Array.isArray(value)) return value

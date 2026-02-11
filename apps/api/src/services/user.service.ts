@@ -145,8 +145,8 @@ export async function updateUserPreferences(
     UPDATE organizations
     SET settings = COALESCE(settings, '{}'::jsonb) || jsonb_strip_nulls(
       jsonb_build_object(
-        'theme', ${theme},
-        'language', ${language}
+        'theme', ${theme}::text,
+        'language', ${language}::text
       )
     )
     WHERE id = (

@@ -180,3 +180,7 @@ class EventEmitter:
 
     async def emit_execution_error(self, error: str) -> None:
         await self.emit("execution_error", {"error": error})
+
+    async def emit_ping(self) -> None:
+        """Send a keepalive ping event to prevent stall timeouts."""
+        await self.emit("ping", {})

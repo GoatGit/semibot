@@ -37,13 +37,13 @@ def route_after_plan(
     if not plan:
         return "respond"
 
+    # Check if there are steps with tool calls to execute (prefer act over delegate)
+    if plan.steps and any(step.tool for step in plan.steps):
+        return "act"
+
     # Check if delegation is required
     if plan.requires_delegation and plan.delegate_to:
         return "delegate"
-
-    # Check if there are steps to execute
-    if plan.steps:
-        return "act"
 
     # No steps - simple question, direct response
     return "respond"

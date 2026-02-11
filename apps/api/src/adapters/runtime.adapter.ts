@@ -42,6 +42,19 @@ const runtimeInputStateSchema = z.object({
     temperature: z.number().optional(),
     max_tokens: z.number().optional(),
   }).optional(),
+  available_mcp_servers: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    endpoint: z.string(),
+    transport: z.string(),
+    is_connected: z.boolean(),
+    auth_config: z.record(z.unknown()).nullable().optional(),
+    available_tools: z.array(z.object({
+      name: z.string(),
+      description: z.string(),
+      parameters: z.record(z.unknown()),
+    })),
+  })).optional(),
   metadata: z.record(z.unknown()).optional(),
 })
 
@@ -50,7 +63,7 @@ const runtimeEventSchema = z.object({
     'plan_created', 'plan_step_start', 'plan_step_complete', 'plan_step_failed',
     'tool_call_start', 'tool_call_complete', 'skill_call_start', 'skill_call_complete',
     'mcp_call_start', 'mcp_call_complete', 'thinking', 'text_chunk',
-    'execution_complete', 'execution_error',
+    'execution_complete', 'execution_error', 'ping',
   ]),
   data: z.record(z.unknown()),
   timestamp: z.string(),
@@ -78,6 +91,19 @@ export interface RuntimeInputState {
     temperature?: number
     max_tokens?: number
   }
+  available_mcp_servers?: Array<{
+    id: string
+    name: string
+    endpoint: string
+    transport: string
+    is_connected: boolean
+    auth_config?: Record<string, unknown> | null
+    available_tools: Array<{
+      name: string
+      description: string
+      parameters: Record<string, unknown>
+    }>
+  }>
   metadata?: Record<string, unknown>
 }
 
@@ -203,106 +229,111 @@ export class RuntimeAdapter {
 
       resetStallTimer()
 
-      stream.on('data', (chunk: Buffer) => {
-        resetStallTimer()
-        buffer += chunk.toString()
-        const lines = buffer.split('\n')
+      // 等待流完成后再返回，防止函数提前 resolve 导致 Express 关闭响应
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (chunk: Buffer) => {
+          resetStallTimer()
+          buffer += chunk.toString()
+          const lines = buffer.split('\n')
 
-        // 保留最后一个不完整的行
-        buffer = lines.pop() || ''
+          // 保留最后一个不完整的行
+          buffer = lines.pop() || ''
 
-        for (const line of lines) {
-          if (!line.trim() || !line.startsWith('data: ')) continue
+          for (const line of lines) {
+            if (!line.trim() || !line.startsWith('data: ')) continue
 
-          try {
-            const data = line.slice(6) // 移除 "data: " 前缀
-            if (data === '[DONE]') continue
+            try {
+              const data = line.slice(6).trim() // 移除 "data: " 前缀和尾部空白
+              if (data === '[DONE]') continue
 
-            const parsed = JSON.parse(data)
-            const validated = runtimeEventSchema.safeParse(parsed)
-            if (!validated.success) {
-              consecutiveParseFailures++
-              runtimeLogger.warn('SSE 事件验证失败', {
-                errors: validated.error.issues,
-                rawData: data,
+              const parsed = JSON.parse(data)
+              const validated = runtimeEventSchema.safeParse(parsed)
+              if (!validated.success) {
+                consecutiveParseFailures++
+                runtimeLogger.warn('SSE 事件验证失败', {
+                  errors: validated.error.issues,
+                  rawData: data,
+                })
+                if (consecutiveParseFailures >= RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES) {
+                  runtimeLogger.error('连续解析失败次数过多，中断流', {
+                    count: consecutiveParseFailures,
+                  })
+                  stream.destroy(new Error('Too many consecutive parse failures'))
+                }
+                continue
+              }
+              consecutiveParseFailures = 0
+              this.handleRuntimeEvent(validated.data as RuntimeEvent, connection, (text) => {
+                fullResponse += text
               })
+            } catch (err) {
+              consecutiveParseFailures++
+              runtimeLogger.error('解析事件失败', err as Error, { rawData: line })
               if (consecutiveParseFailures >= RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES) {
                 runtimeLogger.error('连续解析失败次数过多，中断流', {
                   count: consecutiveParseFailures,
                 })
                 stream.destroy(new Error('Too many consecutive parse failures'))
+                break
               }
-              continue
-            }
-            consecutiveParseFailures = 0
-            this.handleRuntimeEvent(validated.data as RuntimeEvent, connection, (text) => {
-              fullResponse += text
-            })
-          } catch (err) {
-            consecutiveParseFailures++
-            runtimeLogger.error('解析事件失败', err as Error, { rawData: line })
-            if (consecutiveParseFailures >= RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES) {
-              runtimeLogger.error('连续解析失败次数过多，中断流', {
-                count: consecutiveParseFailures,
-              })
-              stream.destroy(new Error('Too many consecutive parse failures'))
-              break
             }
           }
-        }
-      })
-
-      stream.on('end', () => {
-        clearStallTimer()
-
-        // 处理缓冲区中剩余的数据
-        if (buffer.trim() && buffer.startsWith('data: ')) {
-          try {
-            const data = buffer.slice(6)
-            if (data !== '[DONE]') {
-              const event: RuntimeEvent = JSON.parse(data)
-              this.handleRuntimeEvent(event, connection, (text) => {
-                fullResponse += text
-              })
-            }
-          } catch (err) {
-            runtimeLogger.error('解析最后一行失败', err as Error, { rawData: buffer })
-          }
-        }
-
-        const latencyMs = Date.now() - startTime
-        runtimeLogger.info('执行完成', { sessionId: input.session_id, latencyMs })
-
-        if (onComplete) {
-          onComplete({
-            success: !hasError,
-            final_response: fullResponse,
-            error: hasError ? errorMessage : undefined,
-            usage: {
-              total_tokens: totalTokens,
-              latency_ms: latencyMs,
-            },
-          })
-        }
-      })
-
-      stream.on('error', (err: Error) => {
-        clearStallTimer()
-        hasError = true
-        errorMessage = err.message
-        runtimeLogger.error('流错误', err)
-
-        sendSSEEvent(connection, 'error', {
-          code: SSE_STREAM_ERROR,
-          message: `Runtime 执行失败: ${err.message}`,
         })
 
-        if (onComplete) {
-          onComplete({
-            success: false,
-            error: err.message,
+        stream.on('end', async () => {
+          clearStallTimer()
+
+          // 处理缓冲区中剩余的数据
+          if (buffer.trim() && buffer.startsWith('data: ')) {
+            try {
+              const data = buffer.slice(6)
+              if (data !== '[DONE]') {
+                const event: RuntimeEvent = JSON.parse(data)
+                this.handleRuntimeEvent(event, connection, (text) => {
+                  fullResponse += text
+                })
+              }
+            } catch (err) {
+              runtimeLogger.error('解析最后一行失败', err as Error, { rawData: buffer })
+            }
+          }
+
+          const latencyMs = Date.now() - startTime
+          runtimeLogger.info('执行完成', { sessionId: input.session_id, latencyMs })
+
+          if (onComplete) {
+            await onComplete({
+              success: !hasError,
+              final_response: fullResponse,
+              error: hasError ? errorMessage : undefined,
+              usage: {
+                total_tokens: totalTokens,
+                latency_ms: latencyMs,
+              },
+            })
+          }
+          resolve()
+        })
+
+        stream.on('error', (err: Error) => {
+          clearStallTimer()
+          hasError = true
+          errorMessage = err.message
+          runtimeLogger.error('流错误', err)
+
+          sendSSEEvent(connection, 'error', {
+            code: SSE_STREAM_ERROR,
+            message: `Runtime 执行失败: ${err.message}`,
           })
-        }
+
+          if (onComplete) {
+            onComplete({
+              success: false,
+              error: err.message,
+            })
+          }
+          resolve() // resolve 而非 reject，因为错误已通过 SSE 发送给客户端
+        })
       })
     } catch (error) {
       const latencyMs = Date.now() - startTime
@@ -391,6 +422,10 @@ export class RuntimeAdapter {
 
       case 'execution_error':
         this.handleExecutionError(event, connection)
+        break
+
+      case 'ping':
+        // Keepalive event, no action needed
         break
 
       default:
