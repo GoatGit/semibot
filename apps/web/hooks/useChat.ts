@@ -4,18 +4,24 @@
  * 整合 SSE 连接和 Agent2UI 消息处理，提供完整的对话交互能力
  */
 
-import { useCallback, useState } from 'react'
-import { useSSE, type SSEState } from './useSSE'
+import { useCallback, useRef, useState } from 'react'
 import { useAgent2UI } from './useAgent2UI'
 import { useSessionStore } from '@/stores/sessionStore'
 import type { Agent2UIMessage, SSEDoneData, SSEErrorData } from '@/types'
-import { getApiBaseUrl } from '@/lib/api'
 
 // ═══════════════════════════════════════════════════════════════
 // 常量
 // ═══════════════════════════════════════════════════════════════
 
-/** 获取认证 Token (从 localStorage 或其他来源) */
+/**
+ * SSE 请求直连后端地址，绕过 Next.js rewrite proxy 的响应缓冲。
+ * Next.js dev server 的 rewrite proxy 会缓冲整个响应体，导致 SSE 事件
+ * 无法实时推送到浏览器，表现为"文本一次性蹦出来"。
+ */
+const SSE_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
+
+/** 获取认证 Token */
 function getAuthToken(): string | undefined {
   if (typeof window === 'undefined') return undefined
   return localStorage.getItem('auth_token') ?? undefined
@@ -39,8 +45,6 @@ export interface UseChatOptions {
 }
 
 export interface UseChatReturn {
-  /** SSE 连接状态 */
-  connectionState: SSEState
   /** Agent2UI 状态 */
   agent2uiState: ReturnType<typeof useAgent2UI>['state']
   /** 是否正在发送 */
@@ -65,6 +69,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const [isSending, setIsSending] = useState(false)
   const [lastMessage, setLastMessage] = useState<string>('')
   const [lastParentMessageId, setLastParentMessageId] = useState<string | undefined>()
+
+  // 用于中止正在进行的 SSE 请求
+  const abortRef = useRef<AbortController | null>(null)
 
   // Session Store
   const {
@@ -139,6 +146,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const handleDone = useCallback((data: SSEDoneData) => {
     setIsSending(false)
     setIsThinking(false)
+    abortRef.current = null
 
     // 将累积的流式文本作为助手消息添加
     if (agent2ui.state.streamingText) {
@@ -161,20 +169,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const handleError = useCallback((error: SSEErrorData) => {
     setIsSending(false)
     setIsThinking(false)
+    abortRef.current = null
     console.error('[Chat] 错误:', error)
     onError?.(error)
   }, [setIsThinking, onError])
-
-  // SSE 连接 (初始不连接，发送消息时建立)
-  const sse = useSSE({
-    url: '', // 动态设置
-    method: 'POST',
-    token: getAuthToken(),
-    autoReconnect: false, // 对话模式不自动重连
-    onMessage: handleMessage,
-    onDone: handleDone,
-    onError: handleError,
-  })
 
   /**
    * 发送消息
@@ -202,24 +200,25 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       createdAt: new Date().toISOString(),
     })
 
-    // 构建 SSE URL 和请求体
-    const baseUrl = getApiBaseUrl()
+    // 构建 SSE URL 和请求体（直连后端，绕过 Next.js proxy）
     let url: string
     let body: unknown
 
     if (sessionId) {
-      // 在已有会话中发送
-      url = `${baseUrl}/chat/sessions/${sessionId}`
+      url = `${SSE_BASE_URL}/chat/sessions/${sessionId}`
       body = { message, parentMessageId }
     } else if (agentId) {
-      // 创建新会话并发送
-      url = `${baseUrl}/chat/start`
+      url = `${SSE_BASE_URL}/chat/start`
       body = { agentId, message }
     } else {
       console.error('[Chat] 缺少 sessionId 或 agentId')
       setIsSending(false)
       return
     }
+
+    // 创建 AbortController 用于中止请求
+    const controller = new AbortController()
+    abortRef.current = controller
 
     // 发起 SSE 请求
     try {
@@ -232,6 +231,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(body),
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -248,6 +248,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       const decoder = new TextDecoder()
       let buffer = ''
 
+      // SSE 解析状态（跨 chunk 保持）
+      let currentEvent = ''
+      let dataLines: string[] = []
+
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read()
@@ -258,43 +262,57 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
         buffer += decoder.decode(value, { stream: true })
 
-        // 解析 SSE 事件
+        // 按行分割，保留最后一个不完整的行
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
-
-        let currentEvent = ''
-        let currentData = ''
 
         for (const line of lines) {
           if (line.startsWith('event:')) {
             currentEvent = line.slice(6).trim()
           } else if (line.startsWith('data:')) {
-            currentData = line.slice(5).trim()
-          } else if (line === '' && currentData) {
-            try {
-              const data = JSON.parse(currentData)
+            dataLines.push(line.slice(5).trim())
+          } else if (line === '') {
+            // 空行表示事件结束
+            if (dataLines.length > 0) {
+              const rawData = dataLines.join('\n')
+              dataLines = []
 
-              switch (currentEvent) {
-                case 'message':
-                  handleMessage(data)
-                  break
-                case 'done':
-                  handleDone(data)
-                  break
-                case 'error':
-                  handleError(data)
-                  break
+              try {
+                const data = JSON.parse(rawData)
+
+                switch (currentEvent) {
+                  case 'message':
+                    handleMessage(data)
+                    break
+                  case 'done':
+                    handleDone(data)
+                    break
+                  case 'error':
+                    handleError(data)
+                    break
+                  // heartbeat 等其他事件静默忽略
+                }
+              } catch (e) {
+                console.error('[Chat] 解析事件失败:', e, rawData)
               }
-            } catch (e) {
-              console.error('[Chat] 解析事件失败:', e)
             }
-
             currentEvent = ''
-            currentData = ''
           }
         }
       }
+
+      // 流正常结束但未收到 done 事件时，确保状态归位
+      if (isSending) {
+        setIsSending(false)
+        setIsThinking(false)
+        abortRef.current = null
+      }
     } catch (error) {
+      // AbortError 是用户主动中止，不需要报错
+      if ((error as Error).name === 'AbortError') {
+        return
+      }
+
       const errorData: SSEErrorData = {
         code: 'CHAT_ERROR',
         message: error instanceof Error ? error.message : '发送消息失败',
@@ -307,10 +325,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
    * 停止生成
    */
   const stopGeneration = useCallback(() => {
-    sse.disconnect()
+    abortRef.current?.abort()
+    abortRef.current = null
     setIsSending(false)
     setIsThinking(false)
-  }, [sse, setIsThinking])
+  }, [setIsThinking])
 
   /**
    * 重试最后一条消息
@@ -325,15 +344,15 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
    * 重置状态
    */
   const reset = useCallback(() => {
-    sse.disconnect()
+    abortRef.current?.abort()
+    abortRef.current = null
     agent2ui.reset()
     setIsSending(false)
     setLastMessage('')
     setLastParentMessageId(undefined)
-  }, [sse, agent2ui])
+  }, [agent2ui])
 
   return {
-    connectionState: sse.state,
     agent2uiState: agent2ui.state,
     isSending,
     sendMessage,

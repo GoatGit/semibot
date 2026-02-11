@@ -15,40 +15,45 @@ export interface PlanViewProps {
   data: PlanData
   className?: string
   mode?: 'horizontal' | 'vertical'
+  variant?: 'card' | 'inline'
 }
 
-export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps) {
-  const getStepIcon = (step: PlanStep) => {
+export function PlanView({ data, className, mode = 'horizontal', variant = 'card' }: PlanViewProps) {
+  const getStepIcon = (step: PlanStep, small = false) => {
+    const size = small ? 'w-6 h-6' : 'w-8 h-8'
+    const iconSize = small ? 'w-3 h-3' : 'w-4 h-4'
+    const smallCircle = small ? 'w-2 h-2' : 'w-3 h-3'
+
     switch (step.status) {
       case 'completed':
         return (
-          <div className="w-8 h-8 rounded-full bg-success-500 flex items-center justify-center">
-            <Check className="w-4 h-4 text-neutral-950" />
+          <div className={clsx(size, 'rounded-full bg-success-500 flex items-center justify-center')}>
+            <Check className={clsx(iconSize, 'text-neutral-950')} />
           </div>
         )
       case 'running':
         return (
-          <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center">
-            <Loader2 className="w-4 h-4 text-neutral-950 animate-spin" />
+          <div className={clsx(size, 'rounded-full bg-primary-500 flex items-center justify-center')}>
+            <Loader2 className={clsx(iconSize, 'text-neutral-950 animate-spin')} />
           </div>
         )
       case 'failed':
         return (
-          <div className="w-8 h-8 rounded-full bg-error-500 flex items-center justify-center">
-            <XCircle className="w-4 h-4 text-neutral-0" />
+          <div className={clsx(size, 'rounded-full bg-error-500 flex items-center justify-center')}>
+            <XCircle className={clsx(iconSize, 'text-neutral-0')} />
           </div>
         )
       case 'skipped':
         return (
-          <div className="w-8 h-8 rounded-full bg-neutral-600 flex items-center justify-center">
-            <Circle className="w-3 h-3 text-neutral-400" />
+          <div className={clsx(size, 'rounded-full bg-neutral-600 flex items-center justify-center')}>
+            <Circle className={clsx(smallCircle, 'text-neutral-400')} />
           </div>
         )
       case 'pending':
       default:
         return (
-          <div className="w-8 h-8 rounded-full border-2 border-border-default flex items-center justify-center">
-            <Circle className="w-3 h-3 text-text-tertiary" />
+          <div className={clsx(size, 'rounded-full border-2 border-border-default flex items-center justify-center')}>
+            <Circle className={clsx(smallCircle, 'text-text-tertiary')} />
           </div>
         )
     }
@@ -63,6 +68,44 @@ export function PlanView({ data, className, mode = 'horizontal' }: PlanViewProps
       skipped: '已跳过',
     }
     return labels[status]
+  }
+
+  if (variant === 'inline') {
+    return (
+      <div className={clsx('space-y-0', className)}>
+        {data.steps.map((step: PlanStep, index: number) => (
+          <div key={step.id} className="flex gap-3 items-start">
+            <div className="flex flex-col items-center">
+              {getStepIcon(step, true)}
+              {index < data.steps.length - 1 && (
+                <div
+                  className={clsx(
+                    'w-0.5 flex-1 min-h-[16px] my-0.5',
+                    step.status === 'completed'
+                      ? 'bg-success-500'
+                      : 'bg-border-default'
+                  )}
+                />
+              )}
+            </div>
+            <div className="flex-1 pb-3">
+              <span
+                className={clsx(
+                  'text-sm',
+                  step.status === 'running' && 'text-primary-500 font-medium',
+                  step.status === 'completed' && 'text-text-primary',
+                  step.status === 'failed' && 'text-error-500',
+                  step.status === 'skipped' && 'text-neutral-400',
+                  step.status === 'pending' && 'text-text-tertiary'
+                )}
+              >
+                {step.title}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   if (mode === 'horizontal') {

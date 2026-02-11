@@ -130,7 +130,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
                     config = McpServerConfig(
                         server_id=srv_input.id,
                         server_name=srv_input.name,
-                        transport_type="http" if transport in ("sse", "http", "streamable_http") else transport,
+                        transport_type=transport if transport != "sse" else "http",
                         connection_params=connection_params,
                     )
                     try:

@@ -61,6 +61,7 @@ export function NavBar() {
   const [hasMoreSessions, setHasMoreSessions] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // 点击外部关闭用户菜单
   useEffect(() => {
@@ -125,14 +126,15 @@ export function NavBar() {
   // IntersectionObserver 监听哨兵元素
   useEffect(() => {
     const sentinel = sentinelRef.current
-    if (!sentinel) return
+    const root = scrollContainerRef.current
+    if (!sentinel || !root) return
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMoreSessions && !isLoadingMore) {
           loadMoreSessions()
         }
       },
-      { threshold: 0.1 }
+      { root, threshold: 0.1 }
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
@@ -182,7 +184,7 @@ export function NavBar() {
       </div>
 
       {/* 导航项 */}
-      <div className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
         {navItems.map((item) => (
           <NavButton
             key={item.href}
@@ -238,7 +240,7 @@ export function NavBar() {
                     <div className="w-4 h-4 border-2 border-text-tertiary border-t-transparent rounded-full animate-spin" />
                   </div>
                 )}
-                {hasMoreSessions && <div ref={sentinelRef} className="h-1" />}
+                {hasMoreSessions && <div ref={sentinelRef} className="h-4" />}
               </>
             )}
           </div>

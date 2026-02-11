@@ -14,9 +14,10 @@ import type { ThinkingData } from '@/types'
 export interface ThinkingViewProps {
   data: ThinkingData
   className?: string
+  variant?: 'card' | 'inline'
 }
 
-export function ThinkingView({ data, className }: ThinkingViewProps) {
+export function ThinkingView({ data, className, variant = 'card' }: ThinkingViewProps) {
   // 解析思考内容，支持多行和列表格式
   const parseContent = (content: string): string[] => {
     return content
@@ -26,6 +27,41 @@ export function ThinkingView({ data, className }: ThinkingViewProps) {
   }
 
   const lines = parseContent(data.content)
+
+  const contentBlock = (
+    <div className={clsx(variant === 'card' ? 'px-4 py-3 space-y-2' : 'space-y-1.5')}>
+      {lines.map((line, index) => {
+        const isListItem = /^[>\-*]/.test(line)
+        const cleanLine = line.replace(/^[>\-*]\s*/, '')
+
+        return (
+          <div
+            key={index}
+            className={clsx(
+              'flex items-start gap-2',
+              'animate-fade-in-up',
+              'text-text-secondary text-sm'
+            )}
+            style={{
+              animationDelay: `${index * 100}ms`,
+              animationFillMode: 'both',
+            }}
+          >
+            {isListItem && (
+              <span className="text-primary-500 mt-0.5">›</span>
+            )}
+            <span className={clsx(!isListItem && 'text-text-primary')}>
+              {cleanLine}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  if (variant === 'inline') {
+    return <div className={className}>{contentBlock}</div>
+  }
 
   return (
     <div
@@ -45,12 +81,10 @@ export function ThinkingView({ data, className }: ThinkingViewProps) {
       >
         <div className="relative">
           <Brain className="w-5 h-5 text-primary-500" />
-          {/* 脉冲动画 */}
           <span className="absolute inset-0 rounded-full bg-primary-500/30 animate-ping" />
         </div>
         <span className="text-sm font-medium text-text-primary">正在思考...</span>
 
-        {/* 思考点动画 */}
         <div className="flex items-center gap-1 ml-auto">
           <span
             className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse"
@@ -67,38 +101,8 @@ export function ThinkingView({ data, className }: ThinkingViewProps) {
         </div>
       </div>
 
-      {/* 内容 */}
-      <div className="px-4 py-3 space-y-2">
-        {lines.map((line, index) => {
-          // 检测是否是列表项 (以 > 或 - 或 * 开头)
-          const isListItem = /^[>\-*]/.test(line)
-          const cleanLine = line.replace(/^[>\-*]\s*/, '')
+      {contentBlock}
 
-          return (
-            <div
-              key={index}
-              className={clsx(
-                'flex items-start gap-2',
-                'animate-fade-in-up',
-                'text-text-secondary text-sm'
-              )}
-              style={{
-                animationDelay: `${index * 100}ms`,
-                animationFillMode: 'both',
-              }}
-            >
-              {isListItem && (
-                <span className="text-primary-500 mt-0.5">›</span>
-              )}
-              <span className={clsx(!isListItem && 'text-text-primary')}>
-                {cleanLine}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* 底部渐变遮罩，暗示内容可能还在增加 */}
       <div
         className={clsx(
           'h-4 bg-gradient-to-t from-bg-surface to-transparent',

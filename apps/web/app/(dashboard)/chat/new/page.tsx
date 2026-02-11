@@ -164,63 +164,22 @@ export default function NewChatPage() {
         throw new Error('请先选择一个 Agent')
       }
 
-      // 调用 API 创建会话并发送第一条消息
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api/v1'}/chat/start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token') ?? ''}`,
-        },
-        body: JSON.stringify({
-          agentId,
-          message: message.trim() || '你好，请介绍一下你自己',
-        }),
+      const initialMessage = message.trim() || '你好，请介绍一下你自己'
+
+      // 创建会话（普通 REST 请求，立即返回 sessionId）
+      const response = await apiClient.post<ApiResponse<{ id: string }>>('/sessions', {
+        agentId,
+        title: initialMessage.slice(0, 100),
       })
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error?.message ?? `创建会话失败: ${response.status}`)
+      if (!response.success || !response.data) {
+        throw new Error(response.error?.message ?? '创建会话失败')
       }
 
-      // 从响应中解析 sessionId
-      // SSE 流的第一个 done 事件会包含 sessionId
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      let sessionId: string | null = null
+      const sessionId = response.data.id
 
-      if (reader) {
-        let buffer = ''
-        while (!sessionId) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-
-          for (const line of lines) {
-            if (line.startsWith('data:')) {
-              try {
-                const data = JSON.parse(line.slice(5).trim())
-                if (data.sessionId) {
-                  sessionId = data.sessionId
-                  break
-                }
-              } catch {
-                // 忽略解析错误
-              }
-            }
-          }
-        }
-        reader.cancel()
-      }
-
-      if (sessionId) {
-        router.push(`/chat/${sessionId}`)
-      } else {
-        throw new Error('无法获取会话 ID')
-      }
+      // 立即跳转到会话页面，通过 query 参数传递初始消息
+      router.push(`/chat/${sessionId}?initialMessage=${encodeURIComponent(initialMessage)}`)
     } catch (err) {
       console.error('[NewChat] 创建会话失败:', err)
       setError(err instanceof Error ? err.message : '创建会话失败')

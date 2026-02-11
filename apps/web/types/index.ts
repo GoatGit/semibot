@@ -42,6 +42,7 @@ export type {
   ImageData,
   FileData,
   PlanData,
+  PlanStepData,
   ProgressData,
   ToolCallData,
   ToolResultData,

@@ -125,6 +125,7 @@ export type RuntimeEventType =
   | 'text_chunk'
   | 'execution_complete'
   | 'execution_error'
+  | 'ping'
 
 /**
  * Runtime 事件
@@ -230,7 +231,7 @@ export class RuntimeAdapter {
       resetStallTimer()
 
       // 等待流完成后再返回，防止函数提前 resolve 导致 Express 关闭响应
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve, _reject) => {
         stream.on('data', (chunk: Buffer) => {
           resetStallTimer()
           buffer += chunk.toString()

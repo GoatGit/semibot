@@ -1,17 +1,17 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
+import { ProcessCard } from '@/components/agent2ui/process/ProcessCard'
 import { useChat } from '@/hooks/useChat'
 import { useSessionStore } from '@/stores/sessionStore'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Session, Message as ApiMessage } from '@/types'
 import {
-  TYPING_INDICATOR_DELAYS,
   TIME_FORMAT_OPTIONS,
   DEFAULT_LOCALE,
 } from '@/constants/config'
@@ -37,7 +37,9 @@ interface DisplayMessage {
 export default function ChatSessionPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const sessionId = params.sessionId as string
+  const initialMessage = searchParams.get('initialMessage')
 
   const [inputValue, setInputValue] = useState('')
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([])
@@ -172,6 +174,33 @@ export default function ChatSessionPage() {
     }
   }, [sessionId, setStoreSession])
 
+  // 自动发送 initialMessage（从新建会话页面跳转过来时）
+  const initialMessageSentRef = useRef(false)
+  useEffect(() => {
+    if (!initialMessage || isLoadingSession || initialMessageSentRef.current || isSending) return
+    initialMessageSentRef.current = true
+
+    // 清除 URL 参数，避免刷新重复发送
+    router.replace(`/chat/${sessionId}`, { scroll: false })
+
+    const userMessage: DisplayMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: initialMessage,
+      timestamp: new Date(),
+      status: 'sent',
+    }
+    setDisplayMessages((prev) => [...prev, userMessage])
+    sendMessage(initialMessage).catch((error) => {
+      console.error('[Chat] 自动发送初始消息失败:', error)
+      setDisplayMessages((prev) =>
+        prev.map((m) =>
+          m.id === userMessage.id ? { ...m, status: 'error' as const } : m
+        )
+      )
+    })
+  }, [initialMessage, isLoadingSession, isSending, sessionId, router, sendMessage])
+
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -290,54 +319,36 @@ export default function ChatSessionPage() {
             </div>
           )}
 
-          {displayMessages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
+          {displayMessages.map((message, index) => (
+            <div key={message.id}>
+              {/* 执行过程卡片：显示在流式 assistant 消息的上方 */}
+              {isSending && message.isStreaming && message.role === 'assistant' && (
+                <div className="mb-4">
+                  <ProcessCard
+                    isActive={isSending}
+                    thinking={agent2uiState.thinking}
+                    isThinking={agent2uiState.isThinking}
+                    plan={agent2uiState.plan}
+                    toolCalls={agent2uiState.toolCalls}
+                    className="max-w-3xl"
+                  />
+                </div>
+              )}
+              <MessageBubble message={message} />
+            </div>
           ))}
 
-          {/* 思考中指示器 */}
-          {agent2uiState.isThinking && (
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0">
-                <Bot size={16} className="text-primary-400" />
-              </div>
-              <div className="bg-bg-elevated rounded-xl rounded-bl-sm px-4 py-3 border border-border-subtle">
-                <p className="text-sm text-text-secondary mb-2">
-                  {agent2uiState.thinking?.content ?? '正在思考...'}
-                </p>
-                <div className="flex items-center gap-1">
-                  <span className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse" />
-                  <span
-                    className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse"
-                    style={{ animationDelay: `${TYPING_INDICATOR_DELAYS.DOT_2}s` }}
-                  />
-                  <span
-                    className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse"
-                    style={{ animationDelay: `${TYPING_INDICATOR_DELAYS.DOT_3}s` }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 正在输入指示器 (非思考状态但正在发送) */}
-          {isSending && !agent2uiState.isThinking && !agent2uiState.streamingText && (
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0">
-                <Bot size={16} className="text-primary-400" />
-              </div>
-              <div className="bg-bg-elevated rounded-xl rounded-bl-sm px-4 py-3 border border-border-subtle">
-                <div className="flex items-center gap-1">
-                  <span className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse" />
-                  <span
-                    className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse"
-                    style={{ animationDelay: `${TYPING_INDICATOR_DELAYS.DOT_2}s` }}
-                  />
-                  <span
-                    className="w-2 h-2 bg-text-tertiary rounded-full animate-pulse"
-                    style={{ animationDelay: `${TYPING_INDICATOR_DELAYS.DOT_3}s` }}
-                  />
-                </div>
-              </div>
+          {/* 执行过程卡片：尚无流式消息时显示在末尾 */}
+          {isSending && !displayMessages.some((m) => m.isStreaming) && (
+            <div className="mt-2">
+              <ProcessCard
+                isActive={isSending}
+                thinking={agent2uiState.thinking}
+                isThinking={agent2uiState.isThinking}
+                plan={agent2uiState.plan}
+                toolCalls={agent2uiState.toolCalls}
+                className="max-w-3xl"
+              />
             </div>
           )}
 

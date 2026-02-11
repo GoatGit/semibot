@@ -12,6 +12,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.constants.config import (
@@ -135,6 +136,17 @@ class McpClient:
                     sse_client(url=url, headers=headers)
                 )
                 read_stream, write_stream = sse_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+
+            elif transport_type == McpTransportType.STREAMABLE_HTTP.value:
+                url = params["url"]
+                headers = params.get("headers", {})
+                http_transport = await exit_stack.enter_async_context(
+                    streamablehttp_client(url=url, headers=headers)
+                )
+                read_stream, write_stream = http_transport[0], http_transport[1]
                 session = await exit_stack.enter_async_context(
                     ClientSession(read_stream, write_stream)
                 )

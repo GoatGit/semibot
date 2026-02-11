@@ -16,9 +16,10 @@ export interface ToolCallViewProps {
   data: ToolCallData
   className?: string
   onRetry?: () => void
+  variant?: 'default' | 'compact'
 }
 
-export function ToolCallView({ data, className, onRetry }: ToolCallViewProps) {
+export function ToolCallView({ data, className, onRetry, variant = 'default' }: ToolCallViewProps) {
   const [expanded, setExpanded] = useState(false)
 
   const getStatusIcon = () => {
@@ -70,6 +71,59 @@ export function ToolCallView({ data, className, onRetry }: ToolCallViewProps) {
     } catch {
       return String(result)
     }
+  }
+
+  if (variant === 'compact') {
+    return (
+      <div className={clsx('relative', className)}>
+        <div
+          className={clsx(
+            'flex items-center gap-3 px-3 py-2 rounded-md',
+            'cursor-pointer hover:bg-interactive-hover transition-colors duration-fast'
+          )}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <Wrench className="w-4 h-4 text-text-tertiary flex-shrink-0" />
+          <span className="font-mono text-sm text-text-primary">{data.toolName}</span>
+          <div className={clsx('flex items-center gap-1.5 text-sm ml-auto', getStatusColor())}>
+            {getStatusIcon()}
+            <span>{getStatusLabel()}</span>
+          </div>
+          {expanded ? (
+            <ChevronUp className="w-3.5 h-3.5 text-text-tertiary" />
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
+          )}
+        </div>
+        {expanded && (
+          <div className="border border-border-subtle rounded-md bg-bg-surface mt-1 overflow-hidden">
+            {Object.keys(data.arguments).length > 0 && (
+              <div className="px-3 py-2 border-b border-border-subtle">
+                <div className="text-xs text-text-tertiary mb-1">参数</div>
+                <pre className="text-xs font-mono text-text-secondary bg-bg-elevated p-2 rounded overflow-x-auto">
+                  {formatArguments(data.arguments)}
+                </pre>
+              </div>
+            )}
+            {data.result !== undefined && (
+              <div className="px-3 py-2">
+                <div className="text-xs text-text-tertiary mb-1">结果</div>
+                <pre
+                  className={clsx(
+                    'text-xs font-mono p-2 rounded overflow-x-auto max-h-36',
+                    data.status === 'error'
+                      ? 'text-error-400 bg-error-500/10'
+                      : 'text-text-secondary bg-bg-elevated'
+                  )}
+                >
+                  {formatResult(data.result)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (

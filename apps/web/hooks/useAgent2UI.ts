@@ -9,6 +9,7 @@ import type {
   Agent2UIMessage,
   Agent2UIType,
   PlanData,
+  PlanStepData,
   ToolCallData,
   ThinkingData,
   TextData,
@@ -111,6 +112,28 @@ export function useAgent2UI(): UseAgent2UIReturn {
           }
         }
 
+        case 'plan_step': {
+          const data = message.data as PlanStepData
+          // Update the matching step's status in the existing plan
+          if (prev.plan) {
+            const updatedSteps = prev.plan.steps.map((step) =>
+              step.id === data.stepId
+                ? { ...step, status: data.status === 'running' ? 'running' as const : data.status === 'completed' ? 'completed' as const : data.status === 'failed' ? 'failed' as const : step.status }
+                : step
+            )
+            return {
+              ...prev,
+              messages,
+              plan: {
+                ...prev.plan,
+                steps: updatedSteps,
+                currentStep: data.status === 'running' ? data.stepId : prev.plan.currentStep,
+              },
+            }
+          }
+          return { ...prev, messages }
+        }
+
         case 'tool_call': {
           const data = message.data as ToolCallData
           // 更新或添加工具调用
@@ -133,6 +156,39 @@ export function useAgent2UI(): UseAgent2UIReturn {
             messages,
             toolCalls,
           }
+        }
+
+        case 'tool_result': {
+          // Update the matching tool call with result
+          const data = message.data as { toolName: string; result?: unknown; success: boolean; error?: string; duration?: number }
+          const toolCalls = prev.toolCalls.map((tc) =>
+            tc.toolName === data.toolName && tc.status === 'calling'
+              ? { ...tc, status: (data.success ? 'success' : 'error') as ToolCallData['status'], result: data.result, error: data.error, duration: data.duration }
+              : tc
+          )
+          return { ...prev, messages, toolCalls }
+        }
+
+        case 'mcp_call': {
+          // Treat MCP calls like tool calls for UI display
+          const data = message.data as { toolName: string; arguments: Record<string, unknown> }
+          const toolCalls = [...prev.toolCalls, {
+            toolName: data.toolName,
+            arguments: data.arguments,
+            status: 'calling' as const,
+          }]
+          return { ...prev, messages, toolCalls }
+        }
+
+        case 'mcp_result': {
+          // Update the matching MCP call with result
+          const data = message.data as { toolName: string; result?: unknown; success: boolean; error?: string; duration?: number }
+          const toolCalls = prev.toolCalls.map((tc) =>
+            tc.toolName === data.toolName && tc.status === 'calling'
+              ? { ...tc, status: (data.success ? 'success' : 'error') as ToolCallData['status'], result: data.result, error: data.error, duration: data.duration }
+              : tc
+          )
+          return { ...prev, messages, toolCalls }
         }
 
         case 'text': {

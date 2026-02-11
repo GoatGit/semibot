@@ -274,6 +274,52 @@ Be concise but informative. If there were errors, explain what happened and sugg
         response = await self.chat(messages=all_messages, temperature=0.7)
         return response.content
 
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, str]],
+        results: list[Any] | None = None,
+        reflection: Any = None,
+    ) -> AsyncIterator[str]:
+        """
+        Generate a final response to the user, streaming token by token.
+
+        Args:
+            messages: Conversation messages
+            results: Tool execution results
+            reflection: Reflection summary
+
+        Yields:
+            String chunks of the response
+        """
+        # Build context with results (same as generate_response)
+        context_parts = []
+        if results:
+            results_text = "\n".join(
+                f"- {r.tool_name}: {r.result if r.success else r.error}"
+                for r in results
+            )
+            context_parts.append(f"Execution results:\n{results_text}")
+
+        if reflection:
+            context_parts.append(f"Reflection: {reflection.summary}")
+
+        context = "\n\n".join(context_parts)
+
+        system_message = {
+            "role": "system",
+            "content": f"""Generate a helpful response to the user based on the execution results.
+
+{context}
+
+Be concise but informative. If there were errors, explain what happened and suggest alternatives.
+""",
+        }
+
+        all_messages = [system_message] + messages
+
+        async for chunk in self.chat_stream(messages=all_messages, temperature=0.7):
+            yield chunk
+
     async def reflect(
         self,
         messages: list[dict[str, str]],

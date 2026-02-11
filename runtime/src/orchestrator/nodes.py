@@ -710,19 +710,32 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
 
     if llm_provider:
         try:
-            response_content = await llm_provider.generate_response(
-                messages=state["messages"],
-                results=state["tool_results"],
-                reflection=state.get("reflection"),
-            )
+            # Use streaming to emit text chunks incrementally
+            if event_emitter and hasattr(llm_provider, 'generate_response_stream'):
+                chunks = []
+                async for chunk in llm_provider.generate_response_stream(
+                    messages=state["messages"],
+                    results=state["tool_results"],
+                    reflection=state.get("reflection"),
+                ):
+                    chunks.append(chunk)
+                    await event_emitter.emit_text_chunk(chunk)
+                response_content = "".join(chunks)
+            else:
+                response_content = await llm_provider.generate_response(
+                    messages=state["messages"],
+                    results=state["tool_results"],
+                    reflection=state.get("reflection"),
+                )
+                if event_emitter:
+                    await event_emitter.emit_text_chunk(response_content)
         except Exception as e:
             logger.error(f"Response generation failed: {e}")
             response_content = f"I completed the task but encountered an issue generating the response: {e}"
+            if event_emitter:
+                await event_emitter.emit_text_chunk(response_content)
 
-    # Emit text chunks for streaming
-    if event_emitter:
-        # Send the full response as a single chunk for now
-        # (LLM streaming would send multiple chunks)
+    elif event_emitter:
         await event_emitter.emit_text_chunk(response_content)
 
     response_message = Message(

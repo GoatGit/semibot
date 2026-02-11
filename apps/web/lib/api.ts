@@ -10,6 +10,7 @@ import {
   DEFAULT_MAX_RETRIES,
   RETRY_BASE_DELAY_MS,
 } from '@semibot/shared-config'
+import { useAuthStore } from '@/stores/authStore'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -95,6 +96,20 @@ function shouldRetry(status: number): boolean {
   return status >= 500 || status === 429
 }
 
+/**
+ * 处理认证过期：清除状态并跳转登录页
+ */
+function handleAuthExpired(): void {
+  if (typeof window === 'undefined') return
+
+  // 防止重复跳转
+  if (window.location.pathname === '/login') return
+
+  useAuthStore.getState().logout()
+  const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+  window.location.href = `/login?redirect=${redirect}`
+}
+
 // ═══════════════════════════════════════════════════════════════
 // API 客户端实现
 // ═══════════════════════════════════════════════════════════════
@@ -169,6 +184,12 @@ async function request<T>(
 
       // 解析响应
       const data = await response.json()
+
+      // 认证过期，跳转登录页
+      if (response.status === 401) {
+        handleAuthExpired()
+        throw new Error('认证已过期')
+      }
 
       // 检查是否需要重试
       if (!response.ok && retry && shouldRetry(response.status) && attempt < maxRetries) {

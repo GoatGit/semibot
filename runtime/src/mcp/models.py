@@ -31,6 +31,7 @@ class McpTransportType(str, Enum):
 
     STDIO = "stdio"
     HTTP_SSE = "http"
+    STREAMABLE_HTTP = "streamable_http"
     WEBSOCKET = "websocket"
 
 
