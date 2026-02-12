@@ -380,6 +380,7 @@ class UnifiedActionExecutor:
                 result=result.result if hasattr(result, 'result') else result,
                 error=result.error if hasattr(result, 'error') else None,
                 success=result.success if hasattr(result, 'success') else True,
+                metadata=result.metadata if hasattr(result, 'metadata') else {},
             )
         except Exception as e:
             return ToolCallResult(

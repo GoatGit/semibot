@@ -1,7 +1,7 @@
 /**
  * Skill Definitions API 路由（新模型）
  *
- * 提供技能定义和版本管理的 API
+ * 提供技能定义和安装管理的 API（无版本控制，每次安装覆盖旧包）
  */
 
 import { Router, type Response } from 'express'
@@ -17,14 +17,8 @@ import {
   installFromAnthropicSkillId,
   installFromManifestUrl,
 } from '../../services/skill-install.service'
-import {
-  installWithRetry,
-  rollbackToVersion,
-  rollbackToPreviousVersion,
-  getVersionHistory,
-  canRollbackToVersion,
-} from '../../services/skill-retry-rollback.service'
-import { uploadAndInstall } from '../../services/skill-upload.service'
+import { installWithRetry } from '../../services/skill-retry-rollback.service'
+import { uploadAndInstall, uploadCreateAndInstall } from '../../services/skill-upload.service'
 import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
 
 const router: Router = Router()
@@ -52,30 +46,14 @@ const updateSkillDefinitionSchema = z.object({
 })
 
 const installSkillPackageSchema = z.object({
-  version: z.string().min(1).max(50),
   sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry', 'upload']),
   sourceUrl: z.string().url().optional(),
   localPath: z.string().optional(),
   enableRetry: z.boolean().optional(),
 })
 
-const publishVersionSchema = z.object({
-  version: z.string().min(1).max(50),
-  sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry', 'upload']),
-  sourceUrl: z.string().url().optional(),
-  sourceRef: z.string().max(200).optional(),
-  manifestUrl: z.string().url().optional(),
-  releaseNotes: z.string().max(2000).optional(),
-})
-
-const rollbackVersionSchema = z.object({
-  targetVersion: z.string().min(1).max(50),
-  reason: z.string().max(500).optional(),
-})
-
 const installFromAnthropicSchema = z.object({
   skillId: z.string().min(1).max(120).regex(/^[a-zA-Z0-9._:/-]+$/),
-  version: z.string().min(1).max(50).optional(),
 })
 
 const installFromManifestSchema = z.object({
@@ -83,9 +61,60 @@ const installFromManifestSchema = z.object({
   skillId: z.string().min(1).max(120).optional(),
 })
 
-// ═════════════════════════════════════════════════���═════════════
+// ═══════════════════════════════════════════════════════════════
 // 快捷安装 API（必须在 /:id 路由之前定义，避免路径冲突）
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/v1/skill-definitions/upload-create
+ * 上传即创建：上传安装包 → 解析 SKILL.md → 自动创建/更新 definition + 安装 package
+ */
+router.post(
+  '/upload-create',
+  authenticate,
+  requirePermission('admin'),
+  combinedRateLimit,
+  handleFileUpload,
+  asyncHandler(async (req: UploadRequest & AuthRequest, res: Response) => {
+    const uploadedFile = req.uploadedFile
+    const fields = req.uploadFields || {}
+
+    if (!uploadedFile) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'SKILL_UPLOAD_NO_FILE',
+          message: '未检测到上传文件',
+        },
+      })
+      return
+    }
+
+    const enableRetry = fields.enableRetry === 'true'
+
+    const result = await uploadCreateAndInstall({
+      tempFilePath: uploadedFile.tempPath,
+      originalName: uploadedFile.originalName,
+      enableRetry,
+      createdBy: req.user?.id,
+    })
+
+    const definition = await skillDefinitionRepo.findById(result.definitionId)
+    const pkg = await skillPackageRepo.findById(result.packageId)
+
+    res.status(201).json({
+      success: true,
+      data: {
+        definition,
+        package: pkg,
+        created: result.created,
+      },
+      message: result.created
+        ? `已创建技能定义并安装`
+        : `已更新技能定义并重新安装`,
+    })
+  })
+)
 
 /**
  * POST /api/v1/skill-definitions/install/anthropic
@@ -98,9 +127,9 @@ router.post(
   combinedRateLimit,
   validate(installFromAnthropicSchema),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { skillId, version } = req.body
+    const { skillId } = req.body
 
-    const packageId = await installFromAnthropicSkillId(skillId, version)
+    const packageId = await installFromAnthropicSkillId(skillId)
     const pkg = await skillPackageRepo.findById(packageId)
 
     res.status(201).json({
@@ -285,12 +314,12 @@ router.delete(
 )
 
 // ═══════════════════════════════════════════════════════════════
-// 版本管理 API
+// 安装 API
 // ═══════════════════════════════════════════════════════════════
 
 /**
  * POST /api/v1/skill-definitions/:id/install
- * 安装技能包（仅管理员）
+ * 安装技能包（仅管理员，覆盖式安装）
  */
 router.post(
   '/:id/install',
@@ -304,7 +333,9 @@ router.post(
 
     const installInput = {
       skillDefinitionId: id,
-      ...input,
+      sourceType: input.sourceType,
+      sourceUrl: input.sourceUrl,
+      localPath: input.localPath,
     }
 
     let packageId: string
@@ -350,24 +381,10 @@ router.post(
       return
     }
 
-    // 手动验证 version 字段
-    const version = fields.version?.trim()
-    if (!version || version.length === 0 || version.length > 50) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'VALIDATION_FAILED',
-          message: '版本号不能为空且长度不超过 50 字符',
-        },
-      })
-      return
-    }
-
     const enableRetry = fields.enableRetry === 'true'
 
     const packageId = await uploadAndInstall({
       skillDefinitionId: id,
-      version,
       tempFilePath: uploadedFile.tempPath,
       originalName: uploadedFile.originalName,
       enableRetry,
@@ -378,151 +395,7 @@ router.post(
     res.status(201).json({
       success: true,
       data: pkg,
-      message: `已通过上传安装版本 ${version}`,
-    })
-  })
-)
-
-/**
- * POST /api/v1/skill-definitions/:id/publish
- * 发布新版本（仅管理员）
- */
-router.post(
-  '/:id/publish',
-  authenticate,
-  requirePermission('admin'),
-  combinedRateLimit,
-  validate(publishVersionSchema),
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { id } = req.params
-    const input = req.body
-
-    const installInput = {
-      skillDefinitionId: id,
-      version: input.version,
-      sourceType: input.sourceType,
-      sourceUrl: input.sourceUrl,
-    }
-
-    const packageId = await installSkillPackage(installInput)
-    const pkg = await skillPackageRepo.findById(packageId)
-
-    res.status(201).json({
-      success: true,
-      data: pkg,
-      message: `已发布版本 ${input.version}`,
-    })
-  })
-)
-
-/**
- * GET /api/v1/skill-definitions/:id/versions
- * 查询可用版本列表
- */
-router.get(
-  '/:id/versions',
-  authenticate,
-  combinedRateLimit,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { id } = req.params
-
-    const versions = await getVersionHistory(id)
-
-    res.json({
-      success: true,
-      data: versions,
-    })
-  })
-)
-
-/**
- * GET /api/v1/skill-definitions/:id/versions/:version
- * 获取特定版本详情
- */
-router.get(
-  '/:id/versions/:version',
-  authenticate,
-  combinedRateLimit,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { id, version } = req.params
-
-    const pkg = await skillPackageRepo.findByDefinitionAndVersion(id, version)
-
-    if (!pkg) {
-      res.status(404).json({
-        success: false,
-        error: {
-          code: 'VERSION_NOT_FOUND',
-          message: '版本不存在',
-        },
-      })
-      return
-    }
-
-    res.json({
-      success: true,
-      data: pkg,
-    })
-  })
-)
-
-/**
- * POST /api/v1/skill-definitions/:id/rollback
- * 回滚版本（仅管理员）
- */
-router.post(
-  '/:id/rollback',
-  authenticate,
-  requirePermission('admin'),
-  combinedRateLimit,
-  validate(rollbackVersionSchema),
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { id } = req.params
-    const userId = req.user!.userId
-    const { targetVersion } = req.body
-
-    // 检查是否可回滚
-    const checkResult = await canRollbackToVersion(id, targetVersion)
-
-    if (!checkResult.canRollback) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'ROLLBACK_NOT_ALLOWED',
-          message: checkResult.reason || '无法回滚到该版本',
-        },
-      })
-      return
-    }
-
-    const result = await rollbackToVersion(userId, id, targetVersion)
-
-    res.json({
-      success: true,
-      data: result,
-      message: `已回滚到版本 ${targetVersion}`,
-    })
-  })
-)
-
-/**
- * POST /api/v1/skill-definitions/:id/rollback-previous
- * 回滚到上一个版本（仅管理员）
- */
-router.post(
-  '/:id/rollback-previous',
-  authenticate,
-  requirePermission('admin'),
-  combinedRateLimit,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { id } = req.params
-
-    const result = await rollbackToPreviousVersion(id)
-
-    res.json({
-      success: true,
-      data: result,
-      message: `已回滚到上一个版本`,
+      message: `已通过上传安装技能`,
     })
   })
 )

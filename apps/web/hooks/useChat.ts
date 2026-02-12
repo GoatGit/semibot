@@ -4,7 +4,7 @@
  * 整合 SSE 连接和 Agent2UI 消息处理，提供完整的对话交互能力
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAgent2UI } from './useAgent2UI'
 import { useSessionStore } from '@/stores/sessionStore'
 import type { Agent2UIMessage, SSEDoneData, SSEErrorData } from '@/types'
@@ -72,6 +72,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
   // 用于中止正在进行的 SSE 请求
   const abortRef = useRef<AbortController | null>(null)
+
+  // 组件卸载时中止进行中的 SSE 请求，防止会话间数据泄漏
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort()
+      abortRef.current = null
+    }
+  }, [])
 
   // Session Store
   const {

@@ -2,15 +2,8 @@
  * Semibot API 服务入口
  */
 
-import { config } from 'dotenv'
-import { resolve, dirname } from 'path'
-import { fileURLToPath } from 'url'
-
-// 加载项目根目录的 .env.local（优先）和 .env
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const projectRoot = resolve(__dirname, '..', '..', '..')
-config({ path: resolve(projectRoot, '.env.local') })
-config({ path: resolve(projectRoot, '.env') })
+// 环境变量必须在所有其他模块之前加载（ESM import 提升问题）
+import './env'
 
 import express, { type Express, type Request, type Response, type NextFunction } from 'express'
 import cors from 'cors'

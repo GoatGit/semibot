@@ -91,14 +91,18 @@ export default defineConfig({
     },
   ],
 
-  // 本地开发服务器配置
-  webServer: {
-    command: 'pnpm --filter @semibot/web dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000,
-    cwd: '../..',
-  },
+  // 本地开发服务器配置（仅 CI 环境启动，本地需手动启动 dev server）
+  ...(process.env.CI
+    ? {
+        webServer: {
+          command: 'pnpm --filter @semibot/web dev',
+          url: 'http://localhost:3000',
+          reuseExistingServer: false,
+          timeout: 120000,
+          cwd: '../..',
+        },
+      }
+    : {}),
 
   // 输出目录
   outputDir: '../test-results',

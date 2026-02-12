@@ -181,6 +181,23 @@ class EventEmitter:
     async def emit_execution_error(self, error: str) -> None:
         await self.emit("execution_error", {"error": error})
 
+    async def emit_file_created(
+        self,
+        file_id: str,
+        filename: str,
+        mime_type: str,
+        size: int,
+        url: str,
+    ) -> None:
+        """Emit a file_created event for generated files."""
+        await self.emit("file_created", {
+            "file_id": file_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "size": size,
+            "url": url,
+        })
+
     async def emit_ping(self) -> None:
         """Send a keepalive ping event to prevent stall timeouts."""
         await self.emit("ping", {})

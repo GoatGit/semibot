@@ -63,7 +63,7 @@ const runtimeEventSchema = z.object({
     'plan_created', 'plan_step_start', 'plan_step_complete', 'plan_step_failed',
     'tool_call_start', 'tool_call_complete', 'skill_call_start', 'skill_call_complete',
     'mcp_call_start', 'mcp_call_complete', 'thinking', 'text_chunk',
-    'execution_complete', 'execution_error', 'ping',
+    'execution_complete', 'execution_error', 'ping', 'file_created',
   ]),
   data: z.record(z.unknown()),
   timestamp: z.string(),
@@ -126,6 +126,7 @@ export type RuntimeEventType =
   | 'execution_complete'
   | 'execution_error'
   | 'ping'
+  | 'file_created'
 
 /**
  * Runtime 事件
@@ -159,6 +160,7 @@ export class RuntimeAdapter {
   private timeoutMs: number
 
   constructor(baseURL: string = RUNTIME_SERVICE_URL, timeoutMs: number = RUNTIME_EXECUTION_TIMEOUT_MS) {
+    runtimeLogger.info('RuntimeAdapter 初始化', { baseURL, timeoutMs })
     this.client = axios.create({
       baseURL,
       timeout: timeoutMs,
@@ -202,10 +204,13 @@ export class RuntimeAdapter {
         timeout: this.timeoutMs,
       })
 
+      runtimeLogger.info('Runtime 响应已收到', { status: response.status })
+
       // 处理 SSE 流
       const stream = response.data
       let buffer = '' // 缓冲区用于处理跨 chunk 的数据
       let consecutiveParseFailures = 0
+      let chunkCount = 0
 
       // Stall 检测
       let stallTimer: NodeJS.Timeout | null = null
@@ -234,7 +239,10 @@ export class RuntimeAdapter {
       await new Promise<void>((resolve, _reject) => {
         stream.on('data', (chunk: Buffer) => {
           resetStallTimer()
-          buffer += chunk.toString()
+          chunkCount++
+          const chunkStr = chunk.toString()
+          runtimeLogger.info('收到 chunk', { chunkCount, length: chunkStr.length, preview: chunkStr.slice(0, 200) })
+          buffer += chunkStr
           const lines = buffer.split('\n')
 
           // 保留最后一个不完整的行
@@ -283,6 +291,7 @@ export class RuntimeAdapter {
 
         stream.on('end', async () => {
           clearStallTimer()
+          runtimeLogger.info('流结束', { chunkCount, fullResponseLength: fullResponse.length, bufferRemaining: buffer.length })
 
           // 处理缓冲区中剩余的数据
           if (buffer.trim() && buffer.startsWith('data: ')) {
@@ -427,6 +436,10 @@ export class RuntimeAdapter {
 
       case 'ping':
         // Keepalive event, no action needed
+        break
+
+      case 'file_created':
+        this.handleFileCreated(event, connection)
         break
 
       default:
@@ -583,6 +596,21 @@ export class RuntimeAdapter {
     sendSSEEvent(connection, 'error', {
       code: code || SSE_STREAM_ERROR,
       message: error as string,
+    })
+  }
+
+  private handleFileCreated(event: RuntimeEvent, connection: SSEConnection): void {
+    const { file_id, filename, mime_type, size, url } = event.data
+
+    // Build absolute URL pointing to the Runtime service
+    const runtimeBaseUrl = RUNTIME_SERVICE_URL.replace(/\/+$/, '')
+    const absoluteUrl = `${runtimeBaseUrl}${url as string}`
+
+    sendAgent2UIMessage(connection, 'file', {
+      url: absoluteUrl,
+      filename: filename as string,
+      mimeType: mime_type as string,
+      size: size as number | undefined,
     })
   }
 

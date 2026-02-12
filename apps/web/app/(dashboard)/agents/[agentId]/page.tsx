@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/Input'
 import { Card, CardHeader, CardDescription, CardContent } from '@/components/ui/Card'
 import { apiClient } from '@/lib/api'
 import { useLLMModels } from '@/hooks/useLLMModels'
-import { useSkills } from '@/hooks/useSkills'
+import { useSkillDefinitions } from '@/hooks/useSkillDefinitions'
 import { useMcpServers } from '@/hooks/useMcpServers'
 import type { ApiResponse, Agent } from '@/types'
 
@@ -46,7 +46,14 @@ export default function AgentDetailPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { skills: availableSkills, loading: skillsLoading } = useSkills()
+  const { definitions: availableSkillDefs, loading: skillsLoading, fetchDefinitions } = useSkillDefinitions({
+    limit: 100,
+    isActive: true,
+  })
+
+  useEffect(() => {
+    fetchDefinitions()
+  }, [fetchDefinitions])
   const { servers: availableMcpServers, loading: mcpLoading } = useMcpServers()
 
   const groupedModels = useMemo(() => {
@@ -299,36 +306,36 @@ export default function AgentDetailPage() {
                 <Loader2 size={16} className="animate-spin mr-2" />
                 加载技能列表...
               </div>
-            ) : availableSkills.length === 0 ? (
+            ) : availableSkillDefs.length === 0 ? (
               <div className="text-sm text-text-tertiary">暂无可用技能</div>
             ) : (
               <div className="space-y-2 max-h-60 overflow-y-auto">
-                {availableSkills.map((skill) => (
+                {availableSkillDefs.map((def) => (
                   <label
-                    key={skill.id}
+                    key={def.id}
                     className={clsx(
                       'flex items-center gap-3 p-2 rounded-md cursor-pointer',
                       'hover:bg-interactive-hover',
-                      selectedSkills.includes(skill.id) && 'bg-primary-500/5'
+                      selectedSkills.includes(def.id) && 'bg-primary-500/5'
                     )}
                   >
                     <input
                       type="checkbox"
-                      checked={selectedSkills.includes(skill.id)}
+                      checked={selectedSkills.includes(def.id)}
                       onChange={(e) => {
                         if (e.target.checked) {
-                          setSelectedSkills((prev) => [...prev, skill.id])
+                          setSelectedSkills((prev) => [...prev, def.id])
                         } else {
-                          setSelectedSkills((prev) => prev.filter((id) => id !== skill.id))
+                          setSelectedSkills((prev) => prev.filter((id) => id !== def.id))
                         }
                       }}
                       disabled={isSaving}
                       className="rounded border-border-default"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-text-primary truncate">{skill.name}</div>
-                      {skill.description && (
-                        <div className="text-xs text-text-tertiary truncate">{skill.description}</div>
+                      <div className="text-sm font-medium text-text-primary truncate">{def.name}</div>
+                      {def.description && (
+                        <div className="text-xs text-text-tertiary truncate">{def.description}</div>
                       )}
                     </div>
                   </label>

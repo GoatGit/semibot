@@ -6,7 +6,8 @@
  */
 
 import * as path from 'path'
-import * as fs from 'fs-extra'
+import fs from 'fs-extra'
+import { writeFile, readdir, stat } from 'fs/promises'
 import AdmZip from 'adm-zip'
 import * as tar from 'tar'
 import { createError } from '../middleware/errorHandler'
@@ -86,7 +87,7 @@ export async function extractZip(archivePath: string, destDir: string): Promise<
         await fs.ensureDir(resolvedEntryPath)
       } else {
         await fs.ensureDir(path.dirname(resolvedEntryPath))
-        await fs.writeFile(resolvedEntryPath, entry.getData())
+        await writeFile(resolvedEntryPath, entry.getData())
       }
     }
 
@@ -154,14 +155,14 @@ export async function extractArchive(archivePath: string, destDir: string): Prom
 // 包根目录检测
 // ═══════════════════════════════════════════════════════════════
 
-/** 技能包标识文件 */
-const PACKAGE_MARKERS = ['SKILL.md', 'manifest.json']
+/** 技能包标识文件（仅 SKILL.md） */
+const PACKAGE_MARKERS = ['SKILL.md']
 
 /**
  * 智能检测包根目录
  *
  * 如果解压后只有一个顶层目录，则进入该目录
- * 检查 SKILL.md 或 manifest.json 确认包根目录
+ * 检查 SKILL.md 确认包根目录
  */
 export async function findPackageRoot(extractedDir: string): Promise<string> {
   // 检查当前目录是否包含标识文件
@@ -172,14 +173,14 @@ export async function findPackageRoot(extractedDir: string): Promise<string> {
   }
 
   // 检查是否只有一个顶层目录
-  const entries = await fs.readdir(extractedDir)
+  const entries = await readdir(extractedDir)
   const nonHiddenEntries = entries.filter((e) => !e.startsWith('.'))
 
   if (nonHiddenEntries.length === 1) {
     const singleEntry = path.join(extractedDir, nonHiddenEntries[0])
-    const stat = await fs.stat(singleEntry)
+    const entryStat = await stat(singleEntry)
 
-    if (stat.isDirectory()) {
+    if (entryStat.isDirectory()) {
       // 检查子目录是否包含标识文件
       for (const marker of PACKAGE_MARKERS) {
         if (await fs.pathExists(path.join(singleEntry, marker))) {

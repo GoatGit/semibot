@@ -224,8 +224,6 @@ export interface SkillDefinition {
   homepageUrl?: string;
   /** 文档 URL */
   documentationUrl?: string;
-  /** 当前激活版本 */
-  currentVersion?: string;
   /** 是否启用 */
   isActive: boolean;
   /** 是否公开（全租户可见） */
@@ -239,31 +237,21 @@ export interface SkillDefinition {
 }
 
 /**
- * Skill Package - 可执行目录包（按版本存储）
+ * Skill Package - 可执行目录包（单版本覆盖）
  */
 export interface SkillPackage {
   /** 包记录唯一标识 */
   id: string;
   /** 关联的技能定义 ID */
   skillDefinitionId: string;
-  /** 版本号 */
-  version: string;
   /** 来源类型 */
   sourceType: SkillSourceType;
   /** 来源 URL */
   sourceUrl?: string;
   /** 来源引用（git commit/tag/branch） */
   sourceRef?: string;
-  /** Manifest URL */
-  manifestUrl?: string;
-  /** Manifest 内容 */
-  manifestContent?: Record<string, unknown>;
   /** 包存储路径 */
   packagePath: string;
-  /** SHA256 校验值 */
-  checksumSha256: string;
-  /** 文件大小（字节） */
-  fileSizeBytes?: number;
   /** 状态 */
   status: SkillPackageStatus;
   /** 校验结果 */
@@ -283,10 +271,6 @@ export interface SkillPackage {
   installedAt?: string;
   /** 安装者 ID */
   installedBy?: string;
-  /** 废弃时间 */
-  deprecatedAt?: string;
-  /** 废弃原因 */
-  deprecatedReason?: string;
   /** 创建时间 */
   createdAt: string;
   /** 更新时间 */
@@ -391,49 +375,18 @@ export interface UpdateSkillDefinitionInput {
 export interface InstallSkillPackageInput {
   /** 技能定义 ID */
   skillDefinitionId: string;
-  /** 版本号 */
-  version: string;
   /** 来源类型 */
   sourceType: SkillSourceType;
   /** 来源 URL */
   sourceUrl?: string;
   /** 来源引用 */
   sourceRef?: string;
-  /** Manifest URL */
-  manifestUrl?: string;
   /** 工具配置 */
   tools?: SkillToolInput[];
   /** 包配置 */
   config?: Record<string, unknown>;
 }
 
-/**
- * Publish Skill Version request DTO
- */
-export interface PublishSkillVersionInput {
-  /** 版本号 */
-  version: string;
-  /** 来源类型 */
-  sourceType: SkillSourceType;
-  /** 来源 URL */
-  sourceUrl?: string;
-  /** 来源引用 */
-  sourceRef?: string;
-  /** Manifest URL */
-  manifestUrl?: string;
-  /** 发布说明 */
-  releaseNotes?: string;
-}
-
-/**
- * Rollback Skill Version request DTO
- */
-export interface RollbackSkillVersionInput {
-  /** 目标版本号 */
-  targetVersion: string;
-  /** 回滚原因 */
-  reason?: string;
-}
 
 /**
  * Create Skill request DTO (Legacy - 向后兼容)

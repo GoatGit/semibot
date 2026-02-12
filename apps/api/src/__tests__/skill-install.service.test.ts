@@ -1,5 +1,5 @@
 /**
- * Skill Install Service 单元测试
+ * Skill Install Service 单元测试 (SKILL.md 模式，无版本控制)
  */
 
 // Set environment variables BEFORE importing the module
@@ -11,23 +11,27 @@ import * as skillDefinitionRepo from '../repositories/skill-definition.repositor
 import * as skillPackageRepo from '../repositories/skill-package.repository'
 import * as skillInstallLogRepo from '../repositories/skill-install-log.repository'
 import * as skillValidator from '../utils/skill-validator'
-import * as fs from 'fs-extra'
+import fs from 'fs-extra'
 
 // Mock repositories
 vi.mock('../repositories/skill-definition.repository')
 vi.mock('../repositories/skill-package.repository')
 vi.mock('../repositories/skill-install-log.repository')
 vi.mock('../utils/skill-validator')
-vi.mock('fs-extra', () => ({
-  ensureDir: vi.fn(),
-  copy: vi.fn(),
-  stat: vi.fn(),
-  readFile: vi.fn(),
-  writeFile: vi.fn(),
-}))
+vi.mock('fs-extra', () => {
+  const fns = {
+    ensureDir: vi.fn(),
+    copy: vi.fn(),
+    stat: vi.fn(),
+    readFile: vi.fn(),
+    writeFile: vi.fn(),
+    pathExists: vi.fn(),
+    remove: vi.fn(),
+  }
+  return { default: fns, ...fns }
+})
 
 describe('Skill Install Service', () => {
-  const mockUserId = 'user-123'
   const mockDefinitionId = 'def-123'
   const mockSkillId = 'test-skill'
 
@@ -52,7 +56,7 @@ describe('Skill Install Service', () => {
       })
 
       // Mock no existing package
-      ;(skillPackageRepo.findByDefinitionAndVersion as vi.Mock).mockResolvedValue(null)
+      ;(skillPackageRepo.findByDefinition as vi.Mock).mockResolvedValue(null)
 
       // Mock log creation
       ;(skillInstallLogRepo.create as vi.Mock).mockResolvedValue({
@@ -63,7 +67,6 @@ describe('Skill Install Service', () => {
       // Mock package creation
       ;(skillPackageRepo.create as vi.Mock).mockResolvedValue({
         id: 'pkg-123',
-        version: '1.0.0',
       })
 
       // Mock validation success
@@ -71,6 +74,7 @@ describe('Skill Install Service', () => {
         valid: true,
         errors: [],
         warnings: [],
+        skillMd: { skill_id: mockSkillId, name: 'Test Skill' },
       })
 
       // Mock checksum calculation
@@ -80,10 +84,14 @@ describe('Skill Install Service', () => {
       ;(fs.ensureDir as vi.Mock).mockResolvedValue(undefined)
       ;(fs.copy as vi.Mock).mockResolvedValue(undefined)
       ;(fs.stat as vi.Mock).mockResolvedValue({ size: 1024 })
+      ;(fs.pathExists as vi.Mock).mockResolvedValue(false)
+
+      // Mock package update
+      ;(skillPackageRepo.update as vi.Mock).mockResolvedValue({})
+      ;(skillInstallLogRepo.update as vi.Mock).mockResolvedValue({})
 
       const input = {
         skillDefinitionId: mockDefinitionId,
-        version: '1.0.0',
         sourceType: 'local' as const,
         localPath: '/tmp/test-skill',
       }
@@ -100,7 +108,6 @@ describe('Skill Install Service', () => {
 
       const input = {
         skillDefinitionId: mockDefinitionId,
-        version: '1.0.0',
         sourceType: 'anthropic' as const,
       }
 
@@ -109,35 +116,69 @@ describe('Skill Install Service', () => {
       )
     })
 
-    it('应该拒绝已存在的版本', async () => {
+    it('应该覆盖已存在的包', async () => {
+      // Mock definition exists
       ;(skillDefinitionRepo.findById as vi.Mock).mockResolvedValue({
         id: mockDefinitionId,
-        skill_id: mockSkillId,
+        skillId: mockSkillId,
       })
 
-      ;(skillPackageRepo.findByDefinitionAndVersion as vi.Mock).mockResolvedValue({
-        id: 'existing-pkg',
-        version: '1.0.0',
+      // Mock existing package (should be cleaned up)
+      ;(skillPackageRepo.findByDefinition as vi.Mock).mockResolvedValue({
+        id: 'old-pkg',
+        packagePath: '/tmp/old-path',
       })
+
+      // Mock fs.pathExists for cleanup
+      ;(fs.pathExists as vi.Mock).mockResolvedValue(true)
+      ;(fs.remove as vi.Mock).mockResolvedValue(undefined)
+
+      // Mock log creation
+      ;(skillInstallLogRepo.create as vi.Mock).mockResolvedValue({
+        id: 'log-123',
+        startedAt: new Date(),
+      })
+
+      // Mock package creation (upsert)
+      ;(skillPackageRepo.create as vi.Mock).mockResolvedValue({
+        id: 'pkg-new',
+      })
+
+      // Mock validation success
+      ;(skillValidator.validateSkillPackage as vi.Mock).mockResolvedValue({
+        valid: true,
+        errors: [],
+        warnings: [],
+        skillMd: { skill_id: mockSkillId, name: 'Test Skill' },
+      })
+
+      ;(skillValidator.calculateDirectorySHA256 as vi.Mock).mockResolvedValue('abc123')
+      ;(fs.ensureDir as vi.Mock).mockResolvedValue(undefined)
+      ;(fs.copy as vi.Mock).mockResolvedValue(undefined)
+      ;(fs.stat as vi.Mock).mockResolvedValue({ size: 1024 })
+      ;(skillPackageRepo.update as vi.Mock).mockResolvedValue({})
+      ;(skillInstallLogRepo.update as vi.Mock).mockResolvedValue({})
 
       const input = {
         skillDefinitionId: mockDefinitionId,
-        version: '1.0.0',
-        sourceType: 'anthropic' as const,
+        sourceType: 'local' as const,
+        localPath: '/tmp/test-skill',
       }
 
-      await expect(skillInstallService.installSkillPackage(input)).rejects.toThrow(
-        '该版本已存在'
-      )
+      const result = await skillInstallService.installSkillPackage(input)
+
+      expect(result).toBe('pkg-new')
+      // Should have cleaned up old package path
+      expect(fs.remove).toHaveBeenCalledWith('/tmp/old-path')
     })
 
     it('应该记录安装日志', async () => {
       ;(skillDefinitionRepo.findById as vi.Mock).mockResolvedValue({
         id: mockDefinitionId,
-        skill_id: mockSkillId,
+        skillId: mockSkillId,
       })
 
-      ;(skillPackageRepo.findByDefinitionAndVersion as vi.Mock).mockResolvedValue(null)
+      ;(skillPackageRepo.findByDefinition as vi.Mock).mockResolvedValue(null)
 
       ;(skillInstallLogRepo.create as vi.Mock).mockResolvedValue({
         id: 'log-123',
@@ -146,7 +187,6 @@ describe('Skill Install Service', () => {
 
       const input = {
         skillDefinitionId: mockDefinitionId,
-        version: '1.0.0',
         sourceType: 'anthropic' as const,
       }
 
@@ -165,13 +205,13 @@ describe('Skill Install Service', () => {
       )
     })
 
-    it('应该在失败时清理', async () => {
+    it('应该在失败时更新日志状态', async () => {
       ;(skillDefinitionRepo.findById as vi.Mock).mockResolvedValue({
         id: mockDefinitionId,
-        skill_id: mockSkillId,
+        skillId: mockSkillId,
       })
 
-      ;(skillPackageRepo.findByDefinitionAndVersion as vi.Mock).mockResolvedValue(null)
+      ;(skillPackageRepo.findByDefinition as vi.Mock).mockResolvedValue(null)
 
       ;(skillInstallLogRepo.create as vi.Mock).mockResolvedValue({
         id: 'log-123',
@@ -180,11 +220,12 @@ describe('Skill Install Service', () => {
 
       // Mock failure during package creation
       ;(skillPackageRepo.create as vi.Mock).mockRejectedValue(new Error('Database error'))
+      ;(skillInstallLogRepo.update as vi.Mock).mockResolvedValue({})
 
       const input = {
         skillDefinitionId: mockDefinitionId,
-        version: '1.0.0',
-        sourceType: 'anthropic' as const,
+        sourceType: 'local' as const,
+        localPath: '/tmp/test-skill',
       }
 
       await expect(skillInstallService.installSkillPackage(input)).rejects.toThrow()
@@ -200,8 +241,6 @@ describe('Skill Install Service', () => {
   })
 
   describe('installFromAnthropicSkillId', () => {
-    // TODO: 这些测试需要等待 Anthropic 下载功能实现后再启用
-    // 当前 installSkillPackage 会抛出 NOT_IMPLEMENTED 错误
     it.skip('应该创建新的技能定义', async () => {
       // Mock installSkillPackage to avoid NOT_IMPLEMENTED error
       const installSpy = vi.spyOn(skillInstallService, 'installSkillPackage')
@@ -214,10 +253,7 @@ describe('Skill Install Service', () => {
         skillId: mockSkillId,
       })
 
-      const result = await skillInstallService.installFromAnthropicSkillId(
-        mockSkillId,
-        '1.0.0'
-      )
+      const result = await skillInstallService.installFromAnthropicSkillId(mockSkillId)
 
       expect(skillDefinitionRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -229,7 +265,6 @@ describe('Skill Install Service', () => {
       expect(installSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           skillDefinitionId: mockDefinitionId,
-          version: '1.0.0',
           sourceType: 'anthropic',
         })
       )
@@ -240,7 +275,6 @@ describe('Skill Install Service', () => {
     })
 
     it.skip('应该使用现有的技能定义', async () => {
-      // Mock installSkillPackage to avoid NOT_IMPLEMENTED error
       const installSpy = vi.spyOn(skillInstallService, 'installSkillPackage')
       installSpy.mockResolvedValue('pkg-123')
 
@@ -249,117 +283,11 @@ describe('Skill Install Service', () => {
         skillId: mockSkillId,
       })
 
-      await skillInstallService.installFromAnthropicSkillId(mockSkillId, '1.0.0')
+      await skillInstallService.installFromAnthropicSkillId(mockSkillId)
 
       expect(skillDefinitionRepo.create).not.toHaveBeenCalled()
 
       installSpy.mockRestore()
-    })
-  })
-
-  describe('installFromManifestUrl', () => {
-    // TODO: 这些测试需要等待 Codex 下载功能实现后再启用
-    // 当前 installSkillPackage 会抛出 NOT_IMPLEMENTED 错误
-    it.skip('应该从 Manifest URL 安装', async () => {
-      const manifestUrl = 'https://example.com/manifest.json'
-
-      // Mock installSkillPackage to avoid NOT_IMPLEMENTED error
-      const installSpy = vi.spyOn(skillInstallService, 'installSkillPackage')
-      installSpy.mockResolvedValue('pkg-123')
-
-      ;(skillDefinitionRepo.findBySkillId as vi.Mock).mockResolvedValue(null)
-
-      ;(skillDefinitionRepo.create as vi.Mock).mockResolvedValue({
-        id: mockDefinitionId,
-        skillId: mockSkillId,
-      })
-
-      const result = await skillInstallService.installFromManifestUrl(manifestUrl, mockSkillId)
-
-      expect(skillDefinitionRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          skillId: mockSkillId,
-          sourceType: 'url',
-        })
-      )
-
-      expect(installSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          skillDefinitionId: mockDefinitionId,
-          sourceType: 'codex',
-        })
-      )
-
-      expect(result).toBe('pkg-123')
-
-      installSpy.mockRestore()
-    })
-
-    // TODO: 以下测试需要等待 Manifest 下载功能实现后再启用
-    // it('应该处理 Manifest 获取失败', ...)
-    // it('应该处理 Manifest 解析失败', ...)
-    // it('应该支持 Markdown Frontmatter', ...)
-    // it('应该处理超时', ...)
-  })
-
-  describe('状态机步骤', () => {
-    // TODO: 此测试需要等待步骤记录功能实现后再启用
-    // 当前代码中 installSkillPackage 没有记录 step 字段到 skillInstallLogRepo.update
-    it.skip('应该按顺序执行所有步骤', async () => {
-      const updateCalls: string[] = []
-
-      ;(skillDefinitionRepo.findById as vi.Mock).mockResolvedValue({
-        id: mockDefinitionId,
-        skillId: mockSkillId,  // 修改：使用 camelCase
-      })
-
-      ;(skillPackageRepo.findByDefinitionAndVersion as vi.Mock).mockResolvedValue(null)
-
-      ;(skillInstallLogRepo.create as vi.Mock).mockResolvedValue({
-        id: 'log-123',
-        startedAt: new Date(),
-      })
-
-      ;(skillInstallLogRepo.update as vi.Mock).mockImplementation(async (id, data) => {
-        if (data.step) {
-          updateCalls.push(data.step)
-        }
-        return {}
-      })
-
-      ;(skillPackageRepo.create as vi.Mock).mockResolvedValue({
-        id: 'pkg-123',
-      })
-
-      ;(skillPackageRepo.update as vi.Mock).mockResolvedValue({
-        id: 'pkg-123',
-        status: 'active',
-      })
-
-      const input = {
-        skillDefinitionId: mockDefinitionId,
-        version: '1.0.0',
-        sourceType: 'local' as const,  // 修改：从 anthropic 改为 local
-        localPath: '/tmp/test-skill',
-      }
-
-      await skillInstallService.installSkillPackage(input)
-
-      // 验证步骤顺序
-      const expectedSteps = [
-        'fetch_manifest',
-        'validate_manifest',
-        'download',
-        'checksum',
-        'validate_structure',
-        'save_db',
-        'activate',
-        'complete',
-      ]
-
-      expectedSteps.forEach((step, index) => {
-        expect(updateCalls[index]).toBe(step)
-      })
     })
   })
 })

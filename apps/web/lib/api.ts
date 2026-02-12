@@ -279,8 +279,9 @@ export const apiClient = {
       headers: customHeaders,
     } = options
 
-    const baseUrl = getApiBaseUrl()
-    const url = `${baseUrl}${path}`
+    // 上传直连后端，绕过 Next.js rewrite 代理（代理可能破坏 multipart body）
+    const directBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
+    const url = `${directBase}${path}`
 
     const headers: Record<string, string> = {
       ...(customHeaders as Record<string, string>),
@@ -310,11 +311,17 @@ export const apiClient = {
 
         const data = await response.json()
 
-        if (!response.ok && retry && shouldRetry(response.status) && attempt < maxRetries) {
-          const retryDelay = getRetryDelay(attempt)
-          await delay(retryDelay)
-          attempt++
-          continue
+        if (!response.ok) {
+          if (retry && shouldRetry(response.status) && attempt < maxRetries) {
+            const retryDelay = getRetryDelay(attempt)
+            await delay(retryDelay)
+            attempt++
+            continue
+          }
+          const message = (data as Record<string, unknown>)?.error
+            ? ((data as Record<string, { message?: string }>).error?.message || response.statusText)
+            : response.statusText
+          throw Object.assign(new Error(message), { response: { status: response.status, data } })
         }
 
         return data as T

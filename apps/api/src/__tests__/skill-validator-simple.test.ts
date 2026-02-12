@@ -9,17 +9,16 @@ describe('Skill Validator - Basic', () => {
     expect(true).toBe(true)
   })
 
-  describe('validateManifest', () => {
-    it('should validate basic manifest structure', () => {
-      const manifest = {
+  describe('SkillMdFrontmatter', () => {
+    it('should validate basic SKILL.md frontmatter structure', () => {
+      const frontmatter = {
         skill_id: 'test-skill',
         name: 'Test Skill',
-        version: '1.0.0',
         description: 'A test skill',
       }
 
-      expect(manifest.skill_id).toBe('test-skill')
-      expect(manifest.version).toBe('1.0.0')
+      expect(frontmatter.skill_id).toBe('test-skill')
+      expect(frontmatter.name).toBe('Test Skill')
     })
   })
 })

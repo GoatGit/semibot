@@ -18,20 +18,18 @@ export interface SkillInstallLogRow {
   id: string
   skill_definition_id: string
   skill_package_id: string | null
-  version: string
   operation: InstallOperation
   status: InstallStatus
   error_message: string | null
+  metadata: Record<string, unknown> | null
   started_at: string
   completed_at: string | null
   created_at: string
-  updated_at: string
 }
 
 export interface CreateSkillInstallLogData {
   skillDefinitionId: string
   skillPackageId?: string
-  version: string
   operation: InstallOperation
   status?: InstallStatus
   errorMessage?: string
@@ -49,14 +47,12 @@ export interface SkillInstallLog {
   id: string
   skillDefinitionId: string
   skillPackageId?: string
-  version: string
   operation: InstallOperation
   status: InstallStatus
   errorMessage?: string
   startedAt: string
   completedAt?: string
   createdAt: string
-  updatedAt: string
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -68,14 +64,12 @@ function rowToSkillInstallLog(row: SkillInstallLogRow): SkillInstallLog {
     id: row.id,
     skillDefinitionId: row.skill_definition_id,
     skillPackageId: row.skill_package_id || undefined,
-    version: row.version,
     operation: row.operation,
     status: row.status,
     errorMessage: row.error_message || undefined,
     startedAt: row.started_at,
     completedAt: row.completed_at || undefined,
     createdAt: row.created_at,
-    updatedAt: row.updated_at,
   }
 }
 
@@ -91,7 +85,6 @@ export async function create(data: CreateSkillInstallLogData): Promise<SkillInst
     INSERT INTO skill_install_logs (
       skill_definition_id,
       skill_package_id,
-      version,
       operation,
       status,
       error_message,
@@ -99,7 +92,6 @@ export async function create(data: CreateSkillInstallLogData): Promise<SkillInst
     ) VALUES (
       ${data.skillDefinitionId},
       ${data.skillPackageId || null},
-      ${data.version},
       ${data.operation},
       ${data.status || 'pending'},
       ${data.errorMessage || null},
@@ -222,8 +214,7 @@ export async function update(id: string, data: UpdateSkillInstallLogData): Promi
     SET skill_package_id = ${data.skillPackageId ?? current.skill_package_id},
         status = ${data.status ?? current.status},
         error_message = ${data.errorMessage ?? current.error_message},
-        completed_at = ${data.completedAt ?? current.completed_at},
-        updated_at = NOW()
+        completed_at = ${data.completedAt ?? current.completed_at}
     WHERE id = ${id}
     RETURNING *
   `

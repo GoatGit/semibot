@@ -56,22 +56,8 @@ export interface SkillConfig {
   anthropicSkill?: {
     type: 'anthropic' | 'custom'
     skillId: string
-    version?: string
-  }
-  container?: {
-    skills: Array<{
-      type: 'anthropic' | 'custom'
-      skill_id: string
-      version?: string
-    }>
   }
   [key: string]: unknown
-}
-
-export interface AnthropicContainerSkillRef {
-  type: 'anthropic' | 'custom'
-  skill_id: string
-  version?: string
 }
 
 export interface CreateSkillInput {
@@ -84,7 +70,6 @@ export interface CreateSkillInput {
 
 export interface InstallAnthropicSkillInput {
   skillId: string
-  version?: string
   name?: string
   description?: string
   triggerKeywords?: string[]
@@ -94,7 +79,6 @@ export interface InstallAnthropicSkillInput {
 export interface InstallAnthropicSkillFromManifestInput {
   manifestUrl: string
   skillId?: string
-  version?: string
   name?: string
   description?: string
   triggerKeywords?: string[]
@@ -105,7 +89,6 @@ export interface AnthropicSkillCatalogItem {
   skillId: string
   name: string
   description?: string
-  version?: string
   manifestUrl?: string
   sourceUrl?: string
 }
@@ -180,7 +163,6 @@ function rowToSkill(row: skillRepository.SkillRow): Skill {
 
 function toAnthropicSkillConfig(input: InstallAnthropicSkillInput): SkillConfig {
   const normalizedSkillId = input.skillId.trim()
-  const normalizedVersion = input.version?.trim() || 'latest'
 
   if (!ANTHROPIC_SKILL_ID_PATTERN.test(normalizedSkillId)) {
     throw createError(VALIDATION_INVALID_FORMAT, 'Anthropic skillId 格式无效')
@@ -191,16 +173,6 @@ function toAnthropicSkillConfig(input: InstallAnthropicSkillInput): SkillConfig 
     anthropicSkill: {
       type: 'anthropic',
       skillId: normalizedSkillId,
-      version: normalizedVersion,
-    },
-    container: {
-      skills: [
-        {
-          type: 'anthropic',
-          skill_id: normalizedSkillId,
-          version: normalizedVersion,
-        },
-      ],
     },
     requiresApproval: input.requiresApproval ?? true,
   }
@@ -284,7 +256,6 @@ async function resolveAnthropicManifest(
     const contentType = response.headers.get('content-type') ?? ''
 
     let manifestSkillId = normalizeManifestSkillId(input.skillId)
-    let manifestVersion = input.version?.trim()
     let manifestName = input.name?.trim()
     let manifestDescription = input.description?.trim()
     let manifestKeywords = input.triggerKeywords
@@ -292,7 +263,6 @@ async function resolveAnthropicManifest(
     if (contentType.includes('application/json') || rawText.trim().startsWith('{')) {
       const parsed = JSON.parse(rawText) as Record<string, unknown>
       manifestSkillId = manifestSkillId ?? normalizeManifestSkillId(parsed.skill_id ?? parsed.id)
-      manifestVersion = manifestVersion || (typeof parsed.version === 'string' ? parsed.version : undefined)
       manifestName = manifestName || (typeof parsed.name === 'string' ? parsed.name : undefined)
       manifestDescription =
         manifestDescription ||
@@ -301,7 +271,6 @@ async function resolveAnthropicManifest(
     } else {
       const parsed = parseSimpleFrontmatter(rawText)
       manifestSkillId = manifestSkillId ?? normalizeManifestSkillId(parsed.skill_id ?? parsed.id ?? parsed.name)
-      manifestVersion = manifestVersion || parsed.version
       manifestName = manifestName || parsed.name
       manifestDescription = manifestDescription || parsed.description
     }
@@ -312,7 +281,6 @@ async function resolveAnthropicManifest(
 
     return {
       skillId: manifestSkillId,
-      version: manifestVersion || 'latest',
       name: manifestName,
       description: manifestDescription,
       triggerKeywords: manifestKeywords,
@@ -364,9 +332,6 @@ function mapCatalogEntry(raw: unknown, baseUrl?: string): AnthropicSkillCatalogI
     typeof record.description === 'string' && record.description.trim()
       ? record.description.trim()
       : undefined
-  const version = typeof record.version === 'string' && record.version.trim()
-    ? record.version.trim()
-    : undefined
 
   const manifestUrl = normalizeAbsoluteUrl(
     record.manifest_url ?? record.manifestUrl ?? record.url,
@@ -378,7 +343,6 @@ function mapCatalogEntry(raw: unknown, baseUrl?: string): AnthropicSkillCatalogI
     skillId,
     name,
     description,
-    version,
     manifestUrl,
     sourceUrl,
   }

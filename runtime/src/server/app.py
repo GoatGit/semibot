@@ -65,11 +65,21 @@ async def lifespan(app: FastAPI):
     # Initialize LLM provider
     app.state.llm_provider = _create_llm_provider()
 
+    # Initialize FileManager and inject into CodeExecutorTool
+    from src.server.file_manager import FileManager
+    from src.skills.code_executor import set_file_manager
+
+    file_manager = FileManager()
+    file_manager.start_cleanup_loop()
+    app.state.file_manager = file_manager
+    set_file_manager(file_manager)
+
     logger.info("Runtime server ready")
     yield
 
     # --- Shutdown ---
     logger.info("Runtime server shutting down")
+    file_manager.stop_cleanup_loop()
 
 
 def create_app() -> FastAPI:

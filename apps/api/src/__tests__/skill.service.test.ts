@@ -132,7 +132,6 @@ describe('Skill Service', () => {
 
       await skillService.installAnthropicSkill(mockOrgId, mockUserId, {
         skillId: 'text-editor',
-        version: '1.0.0',
       })
 
       expect(mockSkillRepository.create).toHaveBeenCalledWith(
@@ -141,8 +140,9 @@ describe('Skill Service', () => {
           createdBy: mockUserId,
           config: expect.objectContaining({
             source: 'anthropic',
-            container: {
-              skills: [{ type: 'anthropic', skill_id: 'text-editor', version: '1.0.0' }],
+            anthropicSkill: {
+              type: 'anthropic',
+              skillId: 'text-editor',
             },
           }),
         })
@@ -173,7 +173,6 @@ describe('Skill Service', () => {
         text: async () =>
           JSON.stringify({
             skill_id: 'anthropic-code-review',
-            version: '2.0.0',
             name: 'Code Review',
             description: 'Review code quality',
             keywords: ['code-review', 'quality'],
@@ -189,14 +188,9 @@ describe('Skill Service', () => {
         expect.objectContaining({
           config: expect.objectContaining({
             source: 'anthropic',
-            container: {
-              skills: [
-                {
-                  type: 'anthropic',
-                  skill_id: 'anthropic-code-review',
-                  version: '2.0.0',
-                },
-              ],
+            anthropicSkill: {
+              type: 'anthropic',
+              skillId: 'anthropic-code-review',
             },
           }),
           triggerKeywords: ['code-review', 'quality'],

@@ -15,6 +15,7 @@ import {
 const createMockResponse = (): Partial<Response> => {
   const res: Partial<Response> = {
     setHeader: vi.fn().mockReturnThis() as unknown as Response['setHeader'],
+    flushHeaders: vi.fn() as unknown as Response['flushHeaders'],
     write: vi.fn().mockReturnValue(true) as unknown as Response['write'],
     end: vi.fn() as unknown as Response['end'],
     on: vi.fn() as unknown as Response['on'],
@@ -29,7 +30,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
 
       expect(connection).toBeDefined()
       expect(connection.id).toBeDefined()
@@ -43,10 +44,10 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      createSSEConnection(mockRes, sessionId, userId)
+      createSSEConnection(mockRes, sessionId, userId, uuidv4())
 
       expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream')
-      expect(mockRes.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-cache')
+      expect(mockRes.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-cache, no-transform')
       expect(mockRes.setHeader).toHaveBeenCalledWith('Connection', 'keep-alive')
       expect(mockRes.setHeader).toHaveBeenCalledWith('X-Accel-Buffering', 'no')
     })
@@ -56,7 +57,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      createSSEConnection(mockRes, sessionId, userId)
+      createSSEConnection(mockRes, sessionId, userId, uuidv4())
 
       expect(mockRes.on).toHaveBeenCalledWith('close', expect.any(Function))
     })
@@ -68,7 +69,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
       closeSSEConnection(connection.id)
 
       expect(connection.isActive).toBe(false)
@@ -86,7 +87,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
       const result = sendSSEEvent(connection, 'test-event', { message: 'hello' })
 
       expect(result).toBe(true)
@@ -99,7 +100,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
       closeSSEConnection(connection.id)
 
       const result = sendSSEEvent(connection, 'test-event', { message: 'hello' })
@@ -115,7 +116,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
       const result = sendSSEEvent(connection, 'test-event', { message: 'hello' })
 
       expect(result).toBe(false)
@@ -128,7 +129,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
       const result = sendAgent2UIMessage(connection, 'text', { content: 'Hello' })
 
       expect(result).toBe(true)
@@ -140,7 +141,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
       sendAgent2UIMessage(connection, 'text', { content: 'Hello' }, { source: 'test' })
 
       // 验证 write 被调用
@@ -152,7 +153,7 @@ describe('Chat Service', () => {
       const sessionId = uuidv4()
       const userId = uuidv4()
 
-      const connection = createSSEConnection(mockRes, sessionId, userId)
+      const connection = createSSEConnection(mockRes, sessionId, userId, uuidv4())
 
       const messageTypes = [
         'text',

@@ -17,9 +17,9 @@ declare const SSE_MAX_RETRIES = 5;
 /** 心跳超时阈值 (毫秒) - 超过此时间未收到心跳则认为断线 */
 declare const SSE_HEARTBEAT_TIMEOUT_MS = 45000;
 /** 每分钟请求限制 (用户级) */
-declare const RATE_LIMIT_PER_MINUTE_USER = 60;
+declare const RATE_LIMIT_PER_MINUTE_USER = 300;
 /** 每分钟请求限制 (组织级) */
-declare const RATE_LIMIT_PER_MINUTE_ORG = 600;
+declare const RATE_LIMIT_PER_MINUTE_ORG = 3000;
 /** 限流窗口大小 (毫秒) */
 declare const RATE_LIMIT_WINDOW_MS = 60000;
 /** 默认最大重试次数 */

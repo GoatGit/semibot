@@ -174,6 +174,7 @@ export const CHAT_RUNTIME_ERROR_RATE_THRESHOLD = parseFloat(
 
 /** Python Runtime 服务地址 */
 export const RUNTIME_SERVICE_URL = process.env.RUNTIME_SERVICE_URL ?? 'http://localhost:8000'
+console.log('[config.ts] RUNTIME_SERVICE_URL =', RUNTIME_SERVICE_URL, '| env =', process.env.RUNTIME_SERVICE_URL)
 
 // ═══════════════════════════════════════════════════════════════
 // Runtime 监控配置

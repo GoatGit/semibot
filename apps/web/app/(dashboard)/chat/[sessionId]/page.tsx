@@ -7,6 +7,7 @@ import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle } f
 import { Button } from '@/components/ui/Button'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
 import { ProcessCard } from '@/components/agent2ui/process/ProcessCard'
+import { FileDownload } from '@/components/agent2ui/media/FileDownload'
 import { useChat } from '@/hooks/useChat'
 import { useSessionStore } from '@/stores/sessionStore'
 import { apiClient } from '@/lib/api'
@@ -23,6 +24,7 @@ interface DisplayMessage {
   timestamp: Date
   status?: 'sending' | 'sent' | 'error'
   isStreaming?: boolean
+  fileData?: { url: string; filename: string; mimeType: string; size?: number }
 }
 
 /**
@@ -59,6 +61,30 @@ export default function ChatSessionPage() {
   } = useChat({
     sessionId,
     onMessage: (message) => {
+      // 处理文件消息
+      if (message.type === 'file') {
+        const fileData = message.data as { url: string; filename: string; mimeType: string; size?: number }
+        setDisplayMessages((prev) => {
+          // 按 filename 去重，避免 replan 重试导致重复卡片
+          const alreadyExists = prev.some(
+            (m) => m.fileData && m.fileData.filename === fileData.filename
+          )
+          if (alreadyExists) return prev
+
+          return [
+            ...prev,
+            {
+              id: `file-${Date.now()}`,
+              role: 'assistant' as const,
+              content: '',
+              timestamp: new Date(),
+              fileData,
+            },
+          ]
+        })
+        return
+      }
+
       // 处理流式文本消息
       if (message.type === 'text' || message.type === 'markdown') {
         const content = (message.data as { content: string }).content
@@ -484,6 +510,8 @@ function MessageBubble({ message }: MessageBubbleProps) {
           <p className="text-sm leading-relaxed whitespace-pre-wrap">
             {message.content}
           </p>
+        ) : message.fileData ? (
+          <FileDownload data={message.fileData} />
         ) : (
           <div className="text-sm">
             <MarkdownBlock data={{ content: message.content }} />

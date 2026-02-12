@@ -2,10 +2,11 @@
  * Skill Install Service
  *
  * 处理技能包的安装、验证和状态管理
+ * 每次安装覆盖旧包，不做版本管理
  */
 
 import * as path from 'path'
-import * as fs from 'fs-extra'
+import fs from 'fs-extra'
 import { createError } from '../middleware/errorHandler'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import * as skillPackageRepo from '../repositories/skill-package.repository'
@@ -15,13 +16,12 @@ import { createLogger } from '../lib/logger'
 
 const skillInstallLogger = createLogger('skill-install')
 
-// ════════════════════════════════════════════════════════���══════
+// ═══════════════════════════════════════════════════════════════
 // 类型定义
 // ═══════════════════════════════════════════════════════════════
 
 export interface InstallSkillPackageInput {
   skillDefinitionId: string
-  version: string
   sourceType: 'anthropic' | 'codex' | 'local' | 'upload'
   sourceUrl?: string
   localPath?: string
@@ -29,7 +29,7 @@ export interface InstallSkillPackageInput {
 
 // ═══════════════════════════════════════════════════════════════
 // 配置
-// ═══════════════════════════════════════════════════��═══════════
+// ═══════════════════════════════════════════════════════════════
 
 const SKILL_STORAGE_PATH = process.env.SKILL_STORAGE_PATH || '/var/lib/semibot/skills'
 
@@ -38,12 +38,12 @@ const SKILL_STORAGE_PATH = process.env.SKILL_STORAGE_PATH || '/var/lib/semibot/s
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 安装技能包（8步流程）
+ * 安装技能包（覆盖式，无版本控制）
  */
 export async function installSkillPackage(
   input: InstallSkillPackageInput
 ): Promise<string> {
-  const { skillDefinitionId, version, sourceType, sourceUrl, localPath } = input
+  const { skillDefinitionId, sourceType, sourceUrl, localPath } = input
 
   // Step 1: 验证技能定义存在
   const definition = await skillDefinitionRepo.findById(skillDefinitionId)
@@ -51,31 +51,41 @@ export async function installSkillPackage(
     throw createError('SKILL_NOT_FOUND', '技能定义不存在')
   }
 
-  // Step 2: 检查版本是否已存在
-  const existingPackage = await skillPackageRepo.findByDefinitionAndVersion(skillDefinitionId, version)
-  if (existingPackage) {
-    throw createError('SKILL_VERSION_EXISTS', '该版本已存在')
+  // Step 2: 检查是否有旧包，清理旧文件
+  const existingPackage = await skillPackageRepo.findByDefinition(skillDefinitionId)
+  if (existingPackage && existingPackage.packagePath) {
+    try {
+      if (await fs.pathExists(existingPackage.packagePath)) {
+        skillInstallLogger.info('清理旧版本文件', {
+          skillDefinitionId,
+          oldPath: existingPackage.packagePath,
+        })
+        await fs.remove(existingPackage.packagePath)
+      }
+    } catch (cleanupError) {
+      skillInstallLogger.warn('清理旧版本文件失败', {
+        error: (cleanupError as Error).message,
+      })
+    }
   }
 
   // Step 3: 创建安装日志
   const log = await skillInstallLogRepo.create({
     skillDefinitionId,
-    version,
     operation: 'install',
     status: 'pending',
     startedAt: new Date(),
   })
 
   try {
-    // Step 4: 创建包记录（pending 状态）
-    const packagePath = path.join(SKILL_STORAGE_PATH, definition.skillId, version)
+    // Step 4: 创建/覆盖包记录（upsert）
+    const packagePath = path.join(SKILL_STORAGE_PATH, definition.skillId, 'current')
     const pkg = await skillPackageRepo.create({
       skillDefinitionId,
-      version,
       sourceType,
       sourceUrl,
       packagePath,
-      checksumSha256: 'pending', // 临时值
+      checksumSha256: 'pending',
       status: 'pending',
     })
 
@@ -89,18 +99,13 @@ export async function installSkillPackage(
     await skillPackageRepo.update(pkg.id, { status: 'downloading' })
 
     if ((sourceType === 'local' || sourceType === 'upload') && localPath) {
-      // 从本地路径复制
       await fs.ensureDir(packagePath)
       await fs.copy(localPath, packagePath)
     } else if (sourceType === 'anthropic' && sourceUrl) {
-      // 从 Anthropic 下载（简化实现）
       await fs.ensureDir(packagePath)
-      // TODO: 实现实际的下载逻辑
       throw createError('NOT_IMPLEMENTED', 'Anthropic 下载功能尚未实现')
     } else if (sourceType === 'codex' && sourceUrl) {
-      // 从 Codex 下载（简化实现）
       await fs.ensureDir(packagePath)
-      // TODO: 实现实际的下载逻辑
       throw createError('NOT_IMPLEMENTED', 'Codex 下载功能尚未实现')
     } else {
       throw createError('INVALID_SOURCE', '无效的安装来源')
@@ -117,7 +122,6 @@ export async function installSkillPackage(
     // Step 7: 计算校验值
     const checksumSha256 = await calculateDirectorySHA256(packagePath)
 
-    // 获取包大小
     const stats = await fs.stat(packagePath)
     const packageSizeBytes = stats.size
 
@@ -130,15 +134,8 @@ export async function installSkillPackage(
       status: 'active',
       checksumSha256,
       packageSizeBytes,
-      validationResult: validationResult.manifest || {},
-      tools: validationResult.tools || [],
-      config: validationResult.config || {},
+      validationResult: validationResult.skillMd || {},
       installedAt: new Date(),
-    })
-
-    // 更新技能定义的当前版本
-    await skillDefinitionRepo.update(skillDefinitionId, {
-      currentVersion: version,
     })
 
     // 更新日志为成功
@@ -158,11 +155,10 @@ export async function installSkillPackage(
 
     // 清理失败的包
     try {
-      const pkg = await skillPackageRepo.findByDefinitionAndVersion(skillDefinitionId, version)
+      const pkg = await skillPackageRepo.findByDefinition(skillDefinitionId)
       if (pkg) {
         await skillPackageRepo.update(pkg.id, { status: 'failed' })
 
-        // 删除文件
         if (await fs.pathExists(pkg.packagePath)) {
           await fs.remove(pkg.packagePath)
         }
@@ -178,8 +174,8 @@ export async function installSkillPackage(
 /**
  * 获取安装状态
  */
-export async function getInstallStatus(skillDefinitionId: string, version: string) {
-  const pkg = await skillPackageRepo.findByDefinitionAndVersion(skillDefinitionId, version)
+export async function getInstallStatus(skillDefinitionId: string) {
+  const pkg = await skillPackageRepo.findByDefinition(skillDefinitionId)
   if (!pkg) {
     return { status: 'not_found' }
   }
@@ -198,8 +194,8 @@ export async function getInstallStatus(skillDefinitionId: string, version: strin
 /**
  * 取消安装
  */
-export async function cancelInstall(skillDefinitionId: string, version: string): Promise<void> {
-  const pkg = await skillPackageRepo.findByDefinitionAndVersion(skillDefinitionId, version)
+export async function cancelInstall(skillDefinitionId: string): Promise<void> {
+  const pkg = await skillPackageRepo.findByDefinition(skillDefinitionId)
   if (!pkg) {
     throw createError('PACKAGE_NOT_FOUND', '技能包不存在')
   }
@@ -208,10 +204,8 @@ export async function cancelInstall(skillDefinitionId: string, version: string):
     throw createError('CANNOT_CANCEL', '已安装的包无法取消')
   }
 
-  // 更新状态为 failed
   await skillPackageRepo.update(pkg.id, { status: 'failed' })
 
-  // 更新日志
   const logs = await skillInstallLogRepo.findByPackage(pkg.id)
   if (logs.length > 0) {
     await skillInstallLogRepo.update(logs[0].id, {
@@ -221,7 +215,6 @@ export async function cancelInstall(skillDefinitionId: string, version: string):
     })
   }
 
-  // 清理文件
   if (await fs.pathExists(pkg.packagePath)) {
     await fs.remove(pkg.packagePath)
   }
@@ -231,10 +224,9 @@ export async function cancelInstall(skillDefinitionId: string, version: string):
  * 卸载技能包
  */
 export async function uninstallSkillPackage(
-  skillDefinitionId: string,
-  version: string
+  skillDefinitionId: string
 ): Promise<void> {
-  const pkg = await skillPackageRepo.findByDefinitionAndVersion(skillDefinitionId, version)
+  const pkg = await skillPackageRepo.findByDefinition(skillDefinitionId)
   if (!pkg) {
     throw createError('PACKAGE_NOT_FOUND', '技能包不存在')
   }
@@ -244,24 +236,15 @@ export async function uninstallSkillPackage(
     throw createError('SKILL_NOT_FOUND', '技能定义不存在')
   }
 
-  // 创建卸载日志
   const log = await skillInstallLogRepo.create({
     skillDefinitionId,
     skillPackageId: pkg.id,
-    version,
-    operation: 'install', // 使用 install 操作类型，但状态为 failed
+    operation: 'install',
     status: 'in_progress',
     startedAt: new Date(),
   })
 
   try {
-    // 如果是当前版本，清除当前版本
-    if (definition.currentVersion === version) {
-      await skillDefinitionRepo.update(skillDefinitionId, {
-        currentVersion: undefined,
-      })
-    }
-
     // 删除包记录
     await skillPackageRepo.remove(pkg.id)
 
@@ -270,7 +253,6 @@ export async function uninstallSkillPackage(
       await fs.remove(pkg.packagePath)
     }
 
-    // 更新日志
     await skillInstallLogRepo.update(log.id, {
       status: 'success',
       completedAt: new Date(),
@@ -289,8 +271,8 @@ export async function uninstallSkillPackage(
 /**
  * 获取技能包信息
  */
-export async function getSkillPackageInfo(skillDefinitionId: string, version: string) {
-  const pkg = await skillPackageRepo.findByDefinitionAndVersion(skillDefinitionId, version)
+export async function getSkillPackageInfo(skillDefinitionId: string) {
+  const pkg = await skillPackageRepo.findByDefinition(skillDefinitionId)
   if (!pkg) {
     throw createError('PACKAGE_NOT_FOUND', '技能包不存在')
   }
@@ -302,20 +284,6 @@ export async function getSkillPackageInfo(skillDefinitionId: string, version: st
     package: pkg,
     definition,
     logs,
-    isCurrent: definition?.currentVersion === version,
-  }
-}
-
-/**
- * 列出所有技能包
- */
-export async function listSkillPackages(skillDefinitionId: string) {
-  const packages = await skillPackageRepo.findAllByDefinition(skillDefinitionId)
-  const definition = await skillDefinitionRepo.findById(skillDefinitionId)
-
-  return {
-    packages,
-    currentVersion: definition?.currentVersion,
   }
 }
 
@@ -323,14 +291,11 @@ export async function listSkillPackages(skillDefinitionId: string) {
  * 从 Anthropic Skill ID 安装
  */
 export async function installFromAnthropicSkillId(
-  skillId: string,
-  version?: string
+  skillId: string
 ): Promise<string> {
-  // 查找或创建技能定义
   let definition = await skillDefinitionRepo.findBySkillId(skillId)
 
   if (!definition) {
-    // 创建新的技能定义
     definition = await skillDefinitionRepo.create({
       skillId,
       name: skillId,
@@ -341,10 +306,8 @@ export async function installFromAnthropicSkillId(
     })
   }
 
-  // 安装技能包
   return installSkillPackage({
     skillDefinitionId: definition.id,
-    version: version || 'latest',
     sourceType: 'anthropic',
     sourceUrl: `https://api.anthropic.com/v1/skills/${skillId}`,
   })
@@ -357,11 +320,8 @@ export async function installFromManifestUrl(
   manifestUrl: string,
   skillId?: string
 ): Promise<string> {
-  // 下载并解析 manifest
-  // TODO: 实现实际的下载和解析逻辑
   const parsedSkillId = skillId || manifestUrl.split('/').pop() || 'unknown'
 
-  // 查找或创建技能定义
   let definition = await skillDefinitionRepo.findBySkillId(parsedSkillId)
 
   if (!definition) {
@@ -375,10 +335,8 @@ export async function installFromManifestUrl(
     })
   }
 
-  // 安装技能包
   return installSkillPackage({
     skillDefinitionId: definition.id,
-    version: 'latest',
     sourceType: 'codex',
     sourceUrl: manifestUrl,
   })

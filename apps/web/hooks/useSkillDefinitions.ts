@@ -28,32 +28,11 @@ interface UseSkillDefinitionsOptions {
   isActive?: boolean
 }
 
-interface VersionHistoryItem {
-  version: string
-  status: string
-  isCurrent: boolean
-  installedAt?: string
-  installedBy?: string
-  sourceType: string
-  sourceUrl?: string
-  checksumSha256: string
-  fileSizeBytes?: number
-  deprecatedAt?: string
-  deprecatedReason?: string
-}
-
 interface InstallPackageInput {
-  version: string
   sourceType: 'git' | 'url' | 'registry' | 'local' | 'anthropic' | 'upload'
   sourceUrl?: string
   sourceRef?: string
-  manifestUrl?: string
   enableRetry?: boolean
-}
-
-interface RollbackInput {
-  targetVersion: string
-  reason?: string
 }
 
 export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
@@ -234,134 +213,6 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
   }, [])
 
   /**
-   * 发布新版本
-   */
-  const publishVersion = useCallback(
-    async (
-      definitionId: string,
-      input: {
-        version: string
-        sourceType: 'git' | 'url' | 'registry' | 'local' | 'anthropic'
-        sourceUrl?: string
-        sourceRef?: string
-        manifestUrl?: string
-        releaseNotes?: string
-      }
-    ): Promise<any> => {
-      try {
-        setLoading(true)
-        setError(null)
-
-        const response = await apiClient.post<ApiResponse<any>>(`/skill-definitions/${definitionId}/publish`, input)
-
-        if (response.success) {
-          return response.data
-        }
-
-        throw new Error('发布版本失败')
-      } catch (err) {
-        setError(err as Error)
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    []
-  )
-
-  /**
-   * 获取版本历史
-   */
-  const getVersionHistory = useCallback(async (definitionId: string): Promise<VersionHistoryItem[]> => {
-    try {
-      const response = await apiClient.get<ApiResponse<VersionHistoryItem[]>>(
-        `/skill-definitions/${definitionId}/versions`
-      )
-
-      if (response.success) {
-        return response.data || []
-      }
-
-      throw new Error('获取版本历史失败')
-    } catch (err) {
-      setError(err as Error)
-      throw err
-    }
-  }, [])
-
-  /**
-   * 获取特定版本详情
-   */
-  const getVersion = useCallback(async (definitionId: string, version: string): Promise<any> => {
-    try {
-      const response = await apiClient.get<ApiResponse<any>>(
-        `/skill-definitions/${definitionId}/versions/${version}`
-      )
-
-      if (response.success) {
-        return response.data
-      }
-
-      throw new Error('获取版本详情失败')
-    } catch (err) {
-      setError(err as Error)
-      throw err
-    }
-  }, [])
-
-  /**
-   * 回滚版本
-   */
-  const rollbackVersion = useCallback(async (definitionId: string, input: RollbackInput): Promise<any> => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      const response = await apiClient.post<ApiResponse<any>>(`/skill-definitions/${definitionId}/rollback`, input)
-
-      if (response.success) {
-        return response.data
-      }
-
-      throw new Error('回滚版本失败')
-    } catch (err) {
-      setError(err as Error)
-      throw err
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  /**
-   * 回滚到上一个版本
-   */
-  const rollbackToPrevious = useCallback(
-    async (definitionId: string, reason?: string): Promise<any> => {
-      try {
-        setLoading(true)
-        setError(null)
-
-        const response = await apiClient.post<ApiResponse<any>>(
-          `/skill-definitions/${definitionId}/rollback-previous`,
-          { reason }
-        )
-
-        if (response.success) {
-          return response.data
-        }
-
-        throw new Error('回滚到上一版本失败')
-      } catch (err) {
-        setError(err as Error)
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    []
-  )
-
-  /**
    * 获取安装日志
    */
   const getInstallLogs = useCallback(async (definitionId: string, limit: number = 50): Promise<any[]> => {
@@ -388,7 +239,6 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
     async (
       definitionId: string,
       file: File,
-      version: string,
       enableRetry?: boolean
     ): Promise<any> => {
       try {
@@ -397,7 +247,6 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
 
         const formData = new FormData()
         formData.append('file', file)
-        formData.append('version', version)
         if (enableRetry) {
           formData.append('enableRetry', 'true')
         }
@@ -424,25 +273,31 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
   )
 
   /**
-   * 从 Anthropic Skill ID 安装
+   * 上传即创建：上传安装包 → 自动创建/更新 definition + 安装 package
    */
-  const installFromAnthropic = useCallback(
-    async (skillId: string, version?: string): Promise<any> => {
+  const uploadCreate = useCallback(
+    async (file: File, enableRetry?: boolean): Promise<any> => {
       try {
         setLoading(true)
         setError(null)
 
-        const response = await apiClient.post<ApiResponse<any>>('/skill-definitions/install-from-anthropic', {
-          skillId,
-          version,
-        })
+        const formData = new FormData()
+        formData.append('file', file)
+        if (enableRetry) {
+          formData.append('enableRetry', 'true')
+        }
+
+        const response = await apiClient.upload<ApiResponse<any>>(
+          `/skill-definitions/upload-create`,
+          formData
+        )
 
         if (response.success) {
           await fetchDefinitions()
           return response.data
         }
 
-        throw new Error('从 Anthropic 安装失败')
+        throw new Error('上传创建失败')
       } catch (err) {
         setError(err as Error)
         throw err
@@ -454,16 +309,16 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
   )
 
   /**
-   * 从 Manifest URL 安装
+   * 从 Anthropic Skill ID 安装
    */
-  const installFromManifest = useCallback(
-    async (manifestUrl: string): Promise<any> => {
+  const installFromAnthropic = useCallback(
+    async (skillId: string): Promise<any> => {
       try {
         setLoading(true)
         setError(null)
 
-        const response = await apiClient.post<ApiResponse<any>>('/skill-definitions/install-from-manifest', {
-          manifestUrl,
+        const response = await apiClient.post<ApiResponse<any>>('/skill-definitions/install-from-anthropic', {
+          skillId,
         })
 
         if (response.success) {
@@ -471,7 +326,7 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
           return response.data
         }
 
-        throw new Error('从 Manifest 安装失败')
+        throw new Error('从 Anthropic 安装失败')
       } catch (err) {
         setError(err as Error)
         throw err
@@ -496,14 +351,9 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
     updateDefinition,
     deleteDefinition,
     installPackage,
-    publishVersion,
-    getVersionHistory,
-    getVersion,
-    rollbackVersion,
-    rollbackToPrevious,
     getInstallLogs,
     installFromAnthropic,
-    installFromManifest,
     uploadAndInstall,
+    uploadCreate,
   }
 }

@@ -7,7 +7,8 @@
 
 import type { Request, Response, NextFunction } from 'express'
 import Busboy from 'busboy'
-import * as fs from 'fs-extra'
+import { createWriteStream } from 'fs'
+import fs from 'fs-extra'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import { createError } from './errorHandler'
@@ -95,6 +96,11 @@ export function handleFileUpload(req: UploadRequest, _res: Response, next: NextF
     return
   }
 
+  uploadLogger.info('开始处理文件��传', {
+    contentType,
+    contentLength: req.headers['content-length'],
+  })
+
   // 确保临时目录存在
   fs.ensureDirSync(SKILL_UPLOAD_TEMP_DIR)
 
@@ -110,14 +116,49 @@ export function handleFileUpload(req: UploadRequest, _res: Response, next: NextF
   let tempPath = ''
   let fileSize = 0
   let fileLimitReached = false
+  let writeFinished = false
+  let busboyFinished = false
+  let fileInfo: { fieldName: string; originalName: string; mimeType: string } | null = null
   const fields: Record<string, string> = {}
 
+  // 当文件写入和 busboy 解析都完成时，调用 next()
+  function tryFinalize() {
+    if (!busboyFinished || (fileReceived && !writeFinished && !fileLimitReached)) {
+      return
+    }
+
+    if (fileLimitReached) {
+      next(createError(SKILL_UPLOAD_TOO_LARGE, `文件大小超过限制 (最大 ${Math.round(SKILL_MAX_SIZE_BYTES / 1024 / 1024)}MB)`))
+      return
+    }
+
+    if (!fileReceived) {
+      next(createError(SKILL_UPLOAD_NO_FILE, '未检测到上传文件'))
+      return
+    }
+
+    if (fileInfo) {
+      req.uploadedFile = {
+        fieldName: fileInfo.fieldName,
+        originalName: fileInfo.originalName,
+        mimeType: fileInfo.mimeType,
+        tempPath,
+        size: fileSize,
+      }
+    }
+
+    req.uploadFields = fields
+    next()
+  }
+
   busboy.on('field', (fieldName: string, value: string) => {
+    uploadLogger.debug('收到字段', { fieldName, value: value.slice(0, 100) })
     fields[fieldName] = value
   })
 
   busboy.on('file', (fieldName: string, fileStream: NodeJS.ReadableStream, info: { filename: string; encoding: string; mimeType: string }) => {
     const { filename, mimeType } = info
+    uploadLogger.info('收到文件', { fieldName, filename, mimeType })
 
     if (!filename) {
       fileStream.resume()
@@ -132,8 +173,9 @@ export function handleFileUpload(req: UploadRequest, _res: Response, next: NextF
     }
 
     fileReceived = true
+    fileInfo = { fieldName, originalName: filename, mimeType }
     tempPath = generateTempPath(filename)
-    const writeStream = fs.createWriteStream(tempPath)
+    const writeStream = createWriteStream(tempPath)
 
     fileStream.on('data', (chunk: Buffer) => {
       fileSize += chunk.length
@@ -148,6 +190,7 @@ export function handleFileUpload(req: UploadRequest, _res: Response, next: NextF
       })
       writeStream.destroy()
       cleanupTempFile(tempPath)
+      tryFinalize()
     })
 
     fileStream.pipe(writeStream)
@@ -160,30 +203,17 @@ export function handleFileUpload(req: UploadRequest, _res: Response, next: NextF
 
     writeStream.on('close', () => {
       if (!fileLimitReached) {
-        req.uploadedFile = {
-          fieldName,
-          originalName: filename,
-          mimeType,
-          tempPath,
-          size: fileSize,
-        }
+        writeFinished = true
+        uploadLogger.debug('文件写入完成', { tempPath, fileSize })
+        tryFinalize()
       }
     })
   })
 
   busboy.on('finish', () => {
-    if (fileLimitReached) {
-      next(createError(SKILL_UPLOAD_TOO_LARGE, `文件大小超过限制 (最大 ${Math.round(SKILL_MAX_SIZE_BYTES / 1024 / 1024)}MB)`))
-      return
-    }
-
-    if (!fileReceived) {
-      next(createError(SKILL_UPLOAD_NO_FILE, '未检测到上传文件'))
-      return
-    }
-
-    req.uploadFields = fields
-    next()
+    uploadLogger.info('busboy finish', { fileReceived, fileLimitReached, writeFinished, fields: Object.keys(fields) })
+    busboyFinished = true
+    tryFinalize()
   })
 
   busboy.on('error', (err: Error) => {

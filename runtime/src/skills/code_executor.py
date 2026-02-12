@@ -9,10 +9,20 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from src.server.file_manager import FileManager
 from src.skills.base import BaseTool, ToolResult
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Module-level FileManager instance, set by app lifespan
+_file_manager: FileManager | None = None
+
+
+def set_file_manager(fm: FileManager) -> None:
+    """Set the module-level FileManager (called during app startup)."""
+    global _file_manager
+    _file_manager = fm
 
 
 class CodeExecutorTool(BaseTool):
@@ -20,7 +30,7 @@ class CodeExecutorTool(BaseTool):
     Code execution tool with sandboxing.
 
     Supports:
-    - Python code execution
+    - Python code execution (fpdf2 available for PDF generation)
     - JavaScript (Node.js) execution
     - Shell script execution
 
@@ -67,7 +77,19 @@ class CodeExecutorTool(BaseTool):
         return (
             "Execute code in various programming languages. "
             "Supports Python, JavaScript (Node.js), and shell scripts. "
-            "Returns stdout, stderr, and exit code."
+            "Returns stdout, stderr, and exit code. "
+            "Python environment has fpdf2 installed for PDF generation. "
+            "IMPORTANT: Any output files (PDF, CSV, images, etc.) MUST be saved "
+            "to the current working directory using a relative path (e.g. "
+            "'report.pdf', NOT '/tmp/report.pdf'). Files saved to the current "
+            "directory will be automatically collected and made available for download. "
+            "NOTE for PDF: fpdf2's built-in fonts (Helvetica, Times, Courier) do NOT "
+            "support CJK characters. For Chinese/Japanese/Korean text, use "
+            "pdf.add_font('Noto', '', '/System/Library/Fonts/PingFang.ttc', uni=True) "
+            "or write content in English. "
+            "Each code execution runs in an isolated environment — you cannot reference "
+            "variables or results from previous steps. Include all necessary data and "
+            "logic within a single code block."
         )
 
     @property
@@ -143,11 +165,17 @@ class CodeExecutorTool(BaseTool):
             script_path = Path(tmpdir) / "script.py"
             script_path.write_text(code)
 
-            return await self._run_process(
+            result = await self._run_process(
                 ["python3", str(script_path)],
                 stdin=stdin,
                 cwd=tmpdir,
             )
+
+            generated_files = self._collect_output_files(tmpdir, {"script.py"})
+            if generated_files:
+                result.metadata["generated_files"] = generated_files
+
+            return result
 
     async def _execute_javascript(
         self,
@@ -159,11 +187,17 @@ class CodeExecutorTool(BaseTool):
             script_path = Path(tmpdir) / "script.js"
             script_path.write_text(code)
 
-            return await self._run_process(
+            result = await self._run_process(
                 ["node", str(script_path)],
                 stdin=stdin,
                 cwd=tmpdir,
             )
+
+            generated_files = self._collect_output_files(tmpdir, {"script.js"})
+            if generated_files:
+                result.metadata["generated_files"] = generated_files
+
+            return result
 
     async def _execute_shell(
         self,
@@ -176,11 +210,71 @@ class CodeExecutorTool(BaseTool):
             script_path.write_text(code)
             script_path.chmod(0o755)
 
-            return await self._run_process(
+            result = await self._run_process(
                 ["bash", str(script_path)],
                 stdin=stdin,
                 cwd=tmpdir,
             )
+
+            generated_files = self._collect_output_files(tmpdir, {"script.sh"})
+            if generated_files:
+                result.metadata["generated_files"] = generated_files
+
+            return result
+
+    def _collect_output_files(
+        self,
+        work_dir: str,
+        exclude: set[str],
+    ) -> list[dict[str, Any]]:
+        """Scan work_dir for generated files and persist them via FileManager.
+
+        Args:
+            work_dir: The temporary working directory
+            exclude: Filenames to skip (e.g. the script itself)
+
+        Returns:
+            List of file metadata dicts from FileManager.persist_file
+        """
+        if _file_manager is None:
+            logger.debug("FileManager not available, skipping file collection")
+            return []
+
+        collected: list[dict[str, Any]] = []
+        work_path = Path(work_dir)
+
+        # Recursively scan for all files (handles subdirectories too)
+        for entry in work_path.rglob("*"):
+            if not entry.is_file():
+                continue
+            if entry.name in exclude:
+                continue
+
+            logger.info(
+                "Found output file: %s (size: %d)",
+                entry.name,
+                entry.stat().st_size,
+            )
+
+            meta = _file_manager.persist_file(entry)
+            if meta is not None:
+                collected.append(meta)
+
+        if collected:
+            logger.info(
+                "Collected %d output file(s) from code execution",
+                len(collected),
+            )
+        else:
+            # Log all files in work_dir for debugging
+            all_files = list(work_path.rglob("*"))
+            logger.debug(
+                "No eligible output files found in work_dir (total files: %d, entries: %s)",
+                len(all_files),
+                [str(f.relative_to(work_path)) for f in all_files],
+            )
+
+        return collected
 
     async def _run_process(
         self,

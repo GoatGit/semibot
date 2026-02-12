@@ -1,19 +1,18 @@
 /**
- * Skill Validator 单元测试
+ * Skill Validator 单元测试 (SKILL.md 模式)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import * as fs from 'fs-extra'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import fs from 'fs-extra'
 import * as path from 'path'
 import * as os from 'os'
 import {
-  validateManifest,
+  parseSkillMd,
   validatePackageStructure,
-  checkProtocolCompatibility,
   calculateFileSHA256,
   calculateDirectorySHA256,
   validateSkillPackage,
-  SemibotSkillManifestSchema,
+  SkillMdFrontmatterSchema,
 } from '../utils/skill-validator'
 
 describe('Skill Validator', () => {
@@ -27,72 +26,52 @@ describe('Skill Validator', () => {
     await fs.remove(tempDir)
   })
 
-  describe('validateManifest', () => {
-    it('应该验证有效的 Manifest', () => {
-      const manifest = {
+  describe('SkillMdFrontmatterSchema', () => {
+    it('应该验证有效的 frontmatter', () => {
+      const frontmatter = {
         skill_id: 'test-skill',
         name: 'Test Skill',
-        version: '1.0.0',
         description: 'A test skill',
         trigger_keywords: ['test', 'demo'],
       }
 
-      const result = validateManifest(manifest)
+      const result = SkillMdFrontmatterSchema.parse(frontmatter)
 
       expect(result.skill_id).toBe('test-skill')
       expect(result.name).toBe('Test Skill')
-      expect(result.version).toBe('1.0.0')
     })
 
-    it('应该拒绝缺少必需字段的 Manifest', () => {
-      const manifest = {
+    it('应该拒绝缺少必需字段的 frontmatter', () => {
+      const frontmatter = {
         name: 'Test Skill',
-        version: '1.0.0',
       }
 
-      expect(() => validateManifest(manifest)).toThrow('skill_id')
+      expect(() => SkillMdFrontmatterSchema.parse(frontmatter)).toThrow()
     })
 
     it('应该拒绝无效的 skill_id 格式', () => {
-      const manifest = {
+      const frontmatter = {
         skill_id: 'invalid skill id!',
         name: 'Test Skill',
-        version: '1.0.0',
       }
 
-      expect(() => validateManifest(manifest)).toThrow('skill_id')
+      expect(() => SkillMdFrontmatterSchema.parse(frontmatter)).toThrow()
     })
 
-    it('应该拒绝无效的版本号格式', () => {
-      const manifest = {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: 'invalid',
-      }
+    it('应该接受有效的 skill_id 格式', () => {
+      const validIds = ['test-skill', 'my-org/my-skill', 'skill_v2', 'a.b:c/d']
 
-      expect(() => validateManifest(manifest)).toThrow('version')
-    })
-
-    it('应该接受语义化版本号', () => {
-      const versions = ['1.0.0', '1.2.3', '2.0.0-beta', '1.0.0-alpha.1']
-
-      versions.forEach((version) => {
-        const manifest = {
-          skill_id: 'test-skill',
-          name: 'Test Skill',
-          version,
-        }
-
-        const result = validateManifest(manifest)
-        expect(result.version).toBe(version)
+      validIds.forEach((id) => {
+        const frontmatter = { skill_id: id, name: 'Test' }
+        const result = SkillMdFrontmatterSchema.parse(frontmatter)
+        expect(result.skill_id).toBe(id)
       })
     })
 
     it('应该验证可选字段', () => {
-      const manifest = {
+      const frontmatter = {
         skill_id: 'test-skill',
         name: 'Test Skill',
-        version: '1.0.0',
         description: 'A test skill',
         trigger_keywords: ['test'],
         author: 'Test Author',
@@ -103,7 +82,7 @@ describe('Skill Validator', () => {
         icon_url: 'https://example.com/icon.png',
       }
 
-      const result = validateManifest(manifest)
+      const result = SkillMdFrontmatterSchema.parse(frontmatter)
 
       expect(result.description).toBe('A test skill')
       expect(result.author).toBe('Test Author')
@@ -111,87 +90,121 @@ describe('Skill Validator', () => {
       expect(result.tags).toEqual(['test', 'demo'])
     })
 
-    it('应该验证 Anthropic 兼容字段', () => {
-      const manifest = {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: '1.0.0',
-        anthropic: {
-          type: 'anthropic' as const,
-          skill_id: 'test-skill',
-          version: '1.0.0',
-        },
-      }
-
-      const result = validateManifest(manifest)
-
-      expect(result.anthropic).toBeDefined()
-      expect(result.anthropic?.type).toBe('anthropic')
-    })
-
     it('应该限制字段长度', () => {
-      const manifest = {
+      const frontmatter = {
         skill_id: 'a'.repeat(121), // 超过 120
         name: 'Test Skill',
-        version: '1.0.0',
       }
 
-      expect(() => validateManifest(manifest)).toThrow()
+      expect(() => SkillMdFrontmatterSchema.parse(frontmatter)).toThrow()
     })
 
     it('应该限制数组大小', () => {
-      const manifest = {
+      const frontmatter = {
         skill_id: 'test-skill',
         name: 'Test Skill',
-        version: '1.0.0',
         trigger_keywords: Array(21).fill('keyword'), // 超过 20
       }
 
-      expect(() => validateManifest(manifest)).toThrow()
+      expect(() => SkillMdFrontmatterSchema.parse(frontmatter)).toThrow()
+    })
+  })
+
+  describe('parseSkillMd', () => {
+    it('应该解析有效的 SKILL.md', async () => {
+      const skillMd = `---
+skill_id: test-skill
+name: Test Skill
+description: A test skill
+---
+
+# Test Skill
+
+This is a test skill.
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
+
+      const result = await parseSkillMd(path.join(tempDir, 'SKILL.md'))
+
+      expect(result.frontmatter.skill_id).toBe('test-skill')
+      expect(result.frontmatter.name).toBe('Test Skill')
+      expect(result.content).toContain('# Test Skill')
+    })
+
+    it('应该拒绝不存在的文件', async () => {
+      await expect(parseSkillMd(path.join(tempDir, 'SKILL.md'))).rejects.toThrow('not found')
+    })
+
+    it('应该��绝空文件', async () => {
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '')
+
+      await expect(parseSkillMd(path.join(tempDir, 'SKILL.md'))).rejects.toThrow('empty')
+    })
+
+    it('应该拒绝无效的 frontmatter', async () => {
+      const skillMd = `---
+invalid_field: true
+---
+
+# Test
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
+
+      await expect(parseSkillMd(path.join(tempDir, 'SKILL.md'))).rejects.toThrow('validation failed')
     })
   })
 
   describe('validatePackageStructure', () => {
     it('应该验证有效的包结构', async () => {
-      // 创建测试包结构
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test Skill\n\nDescription')
-      await fs.writeJson(path.join(tempDir, 'manifest.json'), {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: '1.0.0',
-      })
+      const skillMd = `---
+skill_id: test-skill
+name: Test Skill
+---
+
+# Test Skill
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
 
       const result = await validatePackageStructure(tempDir)
 
       expect(result.valid).toBe(true)
       expect(result.errors).toHaveLength(0)
       expect(result.details.hasSkillMd).toBe(true)
-      expect(result.details.hasManifestJson).toBe(true)
     })
 
     it('应该检测缺少 SKILL.md', async () => {
-      await fs.writeJson(path.join(tempDir, 'manifest.json'), {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: '1.0.0',
-      })
-
+      // 空目录
       const result = await validatePackageStructure(tempDir)
 
       expect(result.valid).toBe(false)
       expect(result.errors).toContain('Missing required file: SKILL.md')
     })
 
-    it('应该警告缺少 manifest.json', async () => {
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test Skill')
+    it('应该警告存在 manifest.json', async () => {
+      const skillMd = `---
+skill_id: test-skill
+name: Test Skill
+---
+
+# Test Skill
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
+      await fs.writeJson(path.join(tempDir, 'manifest.json'), { test: 'data' })
 
       const result = await validatePackageStructure(tempDir)
 
-      expect(result.warnings).toContain('Missing recommended file: manifest.json')
+      expect(result.warnings.some((w) => w.includes('manifest.json is deprecated'))).toBe(true)
     })
 
     it('应该检测 scripts 目录', async () => {
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test Skill')
+      const skillMd = `---
+skill_id: test-skill
+name: Test Skill
+---
+
+# Test Skill
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
       await fs.ensureDir(path.join(tempDir, 'scripts'))
       await fs.writeFile(path.join(tempDir, 'scripts', 'main.py'), 'print("hello")')
 
@@ -202,14 +215,18 @@ describe('Skill Validator', () => {
     })
 
     it('应该推断入口文件', async () => {
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test Skill')
-      await fs.ensureDir(path.join(tempDir, 'scripts'))
-
       const entryFiles = ['main.py', 'main.js', 'main.ts', 'index.py', 'index.js']
 
       for (const file of entryFiles) {
         const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-entry-'))
-        await fs.writeFile(path.join(testDir, 'SKILL.md'), '# Test')
+        const skillMd = `---
+skill_id: test-skill
+name: Test
+---
+
+# Test
+`
+        await fs.writeFile(path.join(testDir, 'SKILL.md'), skillMd)
         await fs.ensureDir(path.join(testDir, 'scripts'))
         await fs.writeFile(path.join(testDir, 'scripts', file), 'content')
 
@@ -222,7 +239,14 @@ describe('Skill Validator', () => {
     })
 
     it('应该检测 references 和 assets 目录', async () => {
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test Skill')
+      const skillMd = `---
+skill_id: test-skill
+name: Test Skill
+---
+
+# Test Skill
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
       await fs.ensureDir(path.join(tempDir, 'references'))
       await fs.ensureDir(path.join(tempDir, 'assets'))
 
@@ -233,8 +257,16 @@ describe('Skill Validator', () => {
     })
 
     it('应该计算文件统计信息', async () => {
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test Skill\n\nContent')
-      await fs.writeJson(path.join(tempDir, 'manifest.json'), { test: 'data' })
+      const skillMd = `---
+skill_id: test-skill
+name: Test Skill
+---
+
+# Test Skill
+
+Content
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
 
       const result = await validatePackageStructure(tempDir)
 
@@ -243,7 +275,14 @@ describe('Skill Validator', () => {
     })
 
     it('应该拒绝超大包', async () => {
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test')
+      const skillMd = `---
+skill_id: test-skill
+name: Test
+---
+
+# Test
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
 
       // 创建一个大文件（模拟超过 100MB）
       const largeContent = Buffer.alloc(101 * 1024 * 1024) // 101MB
@@ -255,32 +294,18 @@ describe('Skill Validator', () => {
       expect(result.errors.some((e) => e.includes('size exceeds limit'))).toBe(true)
     })
 
-    it('应该验证 manifest.json 内容', async () => {
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test')
-      await fs.writeJson(path.join(tempDir, 'manifest.json'), {
-        skill_id: 'invalid id!', // 无效格式
-        name: 'Test',
-        version: '1.0.0',
-      })
-
-      const result = await validatePackageStructure(tempDir)
-
-      expect(result.errors.some((e) => e.includes('Invalid manifest.json'))).toBe(true)
-    })
-
     it('应该处理空 SKILL.md', async () => {
       await fs.writeFile(path.join(tempDir, 'SKILL.md'), '')
 
       const result = await validatePackageStructure(tempDir)
 
       expect(result.valid).toBe(false)
-      expect(result.errors).toContain('SKILL.md is empty')
     })
 
     it('应该解析 SKILL.md Frontmatter', async () => {
       const skillMd = `---
 skill_id: test-skill
-version: 1.0.0
+name: Test Skill
 ---
 
 # Test Skill
@@ -289,61 +314,7 @@ version: 1.0.0
 
       const result = await validatePackageStructure(tempDir)
 
-      expect(result.warnings.some((w) => w.includes('frontmatter'))).toBe(false)
-    })
-  })
-
-  describe('checkProtocolCompatibility', () => {
-    it('应该检测 Anthropic 兼容性', () => {
-      const manifest = {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: '1.0.0',
-        anthropic: {
-          type: 'anthropic' as const,
-          skill_id: 'test-skill',
-        },
-      }
-
-      const result = checkProtocolCompatibility(manifest)
-
-      expect(result.anthropic).toBe(true)
-      expect(result.codex).toBe(true)
-      expect(result.semibot).toBe(true)
-    })
-
-    it('应该检测缺少兼容字段', () => {
-      const manifest = {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: '1.0.0',
-      }
-
-      const result = checkProtocolCompatibility(manifest)
-
-      expect(result.anthropic).toBe(false)
-      expect(result.issues).toContain('Missing Anthropic compatibility fields (anthropic or container)')
-    })
-
-    it('应该支持 container 协议', () => {
-      const manifest = {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: '1.0.0',
-        container: {
-          skills: [
-            {
-              type: 'anthropic' as const,
-              skill_id: 'test-skill',
-              version: '1.0.0',
-            },
-          ],
-        },
-      }
-
-      const result = checkProtocolCompatibility(manifest)
-
-      expect(result.anthropic).toBe(true)
+      expect(result.valid).toBe(true)
     })
   })
 
@@ -425,24 +396,24 @@ version: 1.0.0
 
   describe('validateSkillPackage', () => {
     it('应该执行完整验证', async () => {
-      // 创建完整的测试包
-      await fs.writeFile(path.join(tempDir, 'SKILL.md'), '# Test Skill')
-      await fs.writeJson(path.join(tempDir, 'manifest.json'), {
-        skill_id: 'test-skill',
-        name: 'Test Skill',
-        version: '1.0.0',
-        description: 'A test skill',
-      })
+      const skillMd = `---
+skill_id: test-skill
+name: Test Skill
+description: A test skill
+---
+
+# Test Skill
+`
+      await fs.writeFile(path.join(tempDir, 'SKILL.md'), skillMd)
       await fs.ensureDir(path.join(tempDir, 'scripts'))
       await fs.writeFile(path.join(tempDir, 'scripts', 'main.py'), 'print("hello")')
 
       const result = await validateSkillPackage(tempDir)
 
       expect(result.valid).toBe(true)
-      expect(result.manifest).toBeDefined()
-      expect(result.manifest?.skill_id).toBe('test-skill')
+      expect(result.skillMd).toBeDefined()
+      expect(result.skillMd?.skill_id).toBe('test-skill')
       expect(result.structure.valid).toBe(true)
-      expect(result.compatibility.semibot).toBe(true)
       expect(result.checksum).toMatch(/^[a-f0-9]{64}$/)
     })
 
@@ -474,16 +445,15 @@ version: 1.0.0
       expect(result.errors).toContain('Missing required file: SKILL.md')
     })
 
-    it('应该处理特殊字符', async () => {
-      const manifest = {
+    it('应该处理特殊字符', () => {
+      const frontmatter = {
         skill_id: 'test-skill',
         name: 'Test Skill with 中文 and émojis 🎉',
-        version: '1.0.0',
       }
 
-      const result = validateManifest(manifest)
+      const result = SkillMdFrontmatterSchema.parse(frontmatter)
 
-      expect(result.name).toBe(manifest.name)
+      expect(result.name).toBe(frontmatter.name)
     })
   })
 })

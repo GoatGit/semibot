@@ -17,7 +17,6 @@ export interface SkillDefinitionRow {
   name: string
   description: string | null
   trigger_keywords: string[]
-  current_version: string | null
   is_active: boolean
   is_public: boolean
   created_by: string
@@ -43,7 +42,6 @@ export interface UpdateSkillDefinitionData {
   name?: string
   description?: string
   triggerKeywords?: string[]
-  currentVersion?: string
   isActive?: boolean
   isPublic?: boolean
 }
@@ -54,7 +52,6 @@ export interface SkillDefinition {
   name: string
   description?: string
   triggerKeywords: string[]
-  currentVersion?: string
   isActive: boolean
   isPublic: boolean
   createdBy: string
@@ -73,7 +70,6 @@ function rowToSkillDefinition(row: SkillDefinitionRow): SkillDefinition {
     name: row.name,
     description: row.description || undefined,
     triggerKeywords: row.trigger_keywords,
-    currentVersion: row.current_version || undefined,
     isActive: row.is_active,
     isPublic: row.is_public,
     createdBy: row.created_by,
@@ -106,7 +102,7 @@ export async function create(data: CreateSkillDefinitionData): Promise<SkillDefi
       ${data.triggerKeywords || []},
       ${data.isActive ?? true},
       ${data.isPublic ?? false},
-      ${data.createdBy || 'system'}
+      ${data.createdBy || null}
     )
     RETURNING *
   `
@@ -154,39 +150,38 @@ export async function findAll(options: {
   const pageSize = Math.min(options.pageSize || DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
   const offset = (page - 1) * pageSize
 
-  // 构建查询条件
-  const conditions: string[] = []
-  const params: any[] = []
+  // 使用 postgres.js fragment 构建动态 WHERE 条件
+  const conditions = []
 
   if (options.isActive !== undefined) {
-    conditions.push(`is_active = $${params.length + 1}`)
-    params.push(options.isActive)
+    conditions.push(sql`is_active = ${options.isActive}`)
   }
 
   if (options.isPublic !== undefined) {
-    conditions.push(`is_public = $${params.length + 1}`)
-    params.push(options.isPublic)
+    conditions.push(sql`is_public = ${options.isPublic}`)
   }
 
   if (options.search) {
-    conditions.push(`(name ILIKE $${params.length + 1} OR description ILIKE $${params.length + 1})`)
-    params.push(`%${options.search}%`)
+    const pattern = `%${options.search}%`
+    conditions.push(sql`(name ILIKE ${pattern} OR description ILIKE ${pattern})`)
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const whereClause = conditions.length > 0
+    ? sql`WHERE ${conditions.reduce((acc, cond, i) => i === 0 ? cond : sql`${acc} AND ${cond}`)}`
+    : sql``
 
   // 查询总数
   const countResult = await sql<[{ count: string }]>`
     SELECT COUNT(*) as count
     FROM skill_definitions
-    ${sql.unsafe(whereClause)}
+    ${whereClause}
   `
   const total = parseInt(countResult[0].count, 10)
 
   // 查询数据
   const rows = await sql<SkillDefinitionRow[]>`
     SELECT * FROM skill_definitions
-    ${sql.unsafe(whereClause)}
+    ${whereClause}
     ORDER BY created_at DESC
     LIMIT ${pageSize}
     OFFSET ${offset}
@@ -216,7 +211,6 @@ export async function update(id: string, data: UpdateSkillDefinitionData): Promi
     SET name = ${data.name ?? current.name},
         description = ${data.description ?? current.description},
         trigger_keywords = ${data.triggerKeywords ?? current.trigger_keywords},
-        current_version = ${data.currentVersion ?? current.current_version},
         is_active = ${data.isActive ?? current.is_active},
         is_public = ${data.isPublic ?? current.is_public},
         updated_at = NOW()

@@ -1,0 +1,92 @@
+{
+  "stories": [
+    {
+      "id": "MCP-001",
+      "title": "MCP 工具在聊天流程中被正确加载和使用",
+      "description": "当 Agent 关联了 MCP Server 后，聊天时应自动加载 MCP 工具并注入到 LLM 请求中",
+      "acceptance_criteria": [
+        {
+          "id": "MCP-001-AC1",
+          "description": "mcp.repository.ts 有 findByAgentId 方法，通过 agent_mcp_servers 关联表查询 Agent 关联的 MCP Servers",
+          "status": "pending"
+        },
+        {
+          "id": "MCP-001-AC2",
+          "description": "mcp.service.ts 有 getMcpToolsForAgent 方法，返回 Agent 关联的所有 MCP 工具（尊重 enabled_tools 过滤）",
+          "status": "pending"
+        },
+        {
+          "id": "MCP-001-AC3",
+          "description": "chat.service.ts 在聊天流程中调用 getMcpToolsForAgent 加载 MCP 工具",
+          "status": "pending"
+        },
+        {
+          "id": "MCP-001-AC4",
+          "description": "MCP 工具被正确转换为 LLM tools 格式并注入到 LLM 请求",
+          "status": "pending"
+        },
+        {
+          "id": "MCP-001-AC5",
+          "description": "API 测试通过，验证 MCP 工具加载逻辑正确",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "MCP-002",
+      "title": "前端 Agent 编辑页面支持关联 MCP Server",
+      "description": "Agent 编辑页面应能选择和管理关联的 MCP Servers",
+      "acceptance_criteria": [
+        {
+          "id": "MCP-002-AC1",
+          "description": "后端 Agent API 支持返回和更新 agent_mcp_servers 关联",
+          "status": "pending"
+        },
+        {
+          "id": "MCP-002-AC2",
+          "description": "前端 Agent 编辑页面有 MCP Server 选择 UI",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-001",
+      "title": "修复 Skill 前后端 API 端点不匹配",
+      "description": "前端调用的 API 路径与后端路由定义不一致，导致功能不可用",
+      "acceptance_criteria": [
+        {
+          "id": "SKILL-001-AC1",
+          "description": "前端 skill-definitions 页面的安装 API 路径与后端路由一致",
+          "status": "pending"
+        },
+        {
+          "id": "SKILL-001-AC2",
+          "description": "前端 skills 页面的所有 API 调用路径与后端路由一致",
+          "status": "pending"
+        },
+        {
+          "id": "SKILL-001-AC3",
+          "description": "TypeScript 编译通过，API 测试通过",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-002",
+      "title": "Skills 页面支持编辑已创建的技能",
+      "description": "用户应能编辑已创建的 Skill 的名称、描述、配置等",
+      "acceptance_criteria": [
+        {
+          "id": "SKILL-002-AC1",
+          "description": "skills 页面有编辑按钮和编辑表单",
+          "status": "pending"
+        },
+        {
+          "id": "SKILL-002-AC2",
+          "description": "编辑表单正确调用 PUT /skills/{id} API",
+          "status": "pending"
+        }
+      ]
+    }
+  ]
+}

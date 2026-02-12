@@ -295,3 +295,24 @@ SSE_KEEPALIVE_INTERVAL = 15
 
 EXECUTION_STREAM_TIMEOUT = 300
 """执行流超时（秒）"""
+
+# =============================================================================
+# Generated Files
+# =============================================================================
+
+GENERATED_FILES_DIR = "/tmp/semibot/generated-files"
+"""生成文件持久化目录"""
+
+GENERATED_FILES_TTL_SECONDS = 3600
+"""生成文件过期时间（秒）- 1 小时"""
+
+GENERATED_FILES_MAX_SIZE_BYTES = 50 * 1024 * 1024
+"""生成文件最大大小（字节）- 50MB"""
+
+GENERATED_FILES_ALLOWED_EXTENSIONS = {
+    ".pdf", ".csv", ".json", ".txt", ".png", ".jpg", ".svg", ".html", ".xlsx",
+}
+"""允许持久化的文件扩展名"""
+
+GENERATED_FILES_CLEANUP_INTERVAL_SECONDS = 300
+"""过期文件清理间隔（秒）- 5 分钟"""

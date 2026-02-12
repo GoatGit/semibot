@@ -17,11 +17,10 @@ export type SkillPackageSourceType = 'anthropic' | 'codex' | 'local' | 'upload'
 export interface SkillPackageRow {
   id: string
   skill_definition_id: string
-  version: string
   source_type: SkillPackageSourceType
   source_url: string | null
   package_path: string
-  package_size_bytes: number
+  file_size_bytes: number
   checksum_sha256: string
   status: SkillPackageStatus
   validation_result: Record<string, unknown>
@@ -34,7 +33,6 @@ export interface SkillPackageRow {
 
 export interface CreateSkillPackageData {
   skillDefinitionId: string
-  version: string
   sourceType: SkillPackageSourceType
   sourceUrl?: string
   packagePath: string
@@ -59,7 +57,6 @@ export interface UpdateSkillPackageData {
 export interface SkillPackage {
   id: string
   skillDefinitionId: string
-  version: string
   sourceType: SkillPackageSourceType
   sourceUrl?: string
   packagePath: string
@@ -82,11 +79,10 @@ function rowToSkillPackage(row: SkillPackageRow): SkillPackage {
   return {
     id: row.id,
     skillDefinitionId: row.skill_definition_id,
-    version: row.version,
     sourceType: row.source_type,
     sourceUrl: row.source_url || undefined,
     packagePath: row.package_path,
-    packageSizeBytes: row.package_size_bytes,
+    packageSizeBytes: row.file_size_bytes,
     checksumSha256: row.checksum_sha256,
     status: row.status,
     validationResult: row.validation_result,
@@ -103,17 +99,17 @@ function rowToSkillPackage(row: SkillPackageRow): SkillPackage {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 创建技能包
+ * 创建或覆盖技能包（upsert）
+ * 一个 skill_definition 只保留一个 package，重复安装时覆盖
  */
 export async function create(data: CreateSkillPackageData): Promise<SkillPackage> {
   const rows = await sql<SkillPackageRow[]>`
     INSERT INTO skill_packages (
       skill_definition_id,
-      version,
       source_type,
       source_url,
       package_path,
-      package_size_bytes,
+      file_size_bytes,
       checksum_sha256,
       status,
       validation_result,
@@ -121,7 +117,6 @@ export async function create(data: CreateSkillPackageData): Promise<SkillPackage
       config
     ) VALUES (
       ${data.skillDefinitionId},
-      ${data.version},
       ${data.sourceType},
       ${data.sourceUrl || null},
       ${data.packagePath},
@@ -132,6 +127,17 @@ export async function create(data: CreateSkillPackageData): Promise<SkillPackage
       ${sql.json((data.tools || []) as Parameters<typeof sql.json>[0])},
       ${sql.json((data.config || {}) as Parameters<typeof sql.json>[0])}
     )
+    ON CONFLICT (skill_definition_id) DO UPDATE SET
+      source_type = EXCLUDED.source_type,
+      source_url = EXCLUDED.source_url,
+      package_path = EXCLUDED.package_path,
+      file_size_bytes = EXCLUDED.file_size_bytes,
+      checksum_sha256 = EXCLUDED.checksum_sha256,
+      status = EXCLUDED.status,
+      validation_result = EXCLUDED.validation_result,
+      tools = EXCLUDED.tools,
+      config = EXCLUDED.config,
+      updated_at = NOW()
     RETURNING *
   `
 
@@ -152,16 +158,12 @@ export async function findById(id: string): Promise<SkillPackage | null> {
 }
 
 /**
- * 根据技能定义 ID 和版本查找技能包
+ * 根据技能定义 ID 查找唯一的技能包（无版本控制，一个 definition 只有一个 package）
  */
-export async function findByDefinitionAndVersion(
-  skillDefinitionId: string,
-  version: string
-): Promise<SkillPackage | null> {
+export async function findByDefinition(skillDefinitionId: string): Promise<SkillPackage | null> {
   const rows = await sql<SkillPackageRow[]>`
     SELECT * FROM skill_packages
     WHERE skill_definition_id = ${skillDefinitionId}
-    AND version = ${version}
     LIMIT 1
   `
 
@@ -258,7 +260,7 @@ export async function update(id: string, data: UpdateSkillPackageData): Promise<
   const rows = await sql<SkillPackageRow[]>`
     UPDATE skill_packages
     SET status = ${data.status ?? existing.status},
-        package_size_bytes = ${data.packageSizeBytes ?? existing.packageSizeBytes},
+        file_size_bytes = ${data.packageSizeBytes ?? existing.packageSizeBytes},
         checksum_sha256 = ${data.checksumSha256 ?? existing.checksumSha256},
         validation_result = ${sql.json((data.validationResult ?? existing.validationResult) as Parameters<typeof sql.json>[0])},
         tools = ${sql.json((data.tools ?? existing.tools) as Parameters<typeof sql.json>[0])},
@@ -276,12 +278,10 @@ export async function update(id: string, data: UpdateSkillPackageData): Promise<
  * 软删除技能包（设置 status = 'deprecated'）
  * 注：skill_packages 表使用 status 标记而非 deleted_at
  */
-export async function softDelete(id: string, reason?: string): Promise<boolean> {
+export async function softDelete(id: string): Promise<boolean> {
   const result = await sql`
     UPDATE skill_packages
     SET status = 'deprecated',
-        deprecated_at = NOW(),
-        deprecated_reason = ${reason ?? null},
         updated_at = NOW()
     WHERE id = ${id} AND status != 'deprecated'
     RETURNING id
@@ -329,37 +329,4 @@ export async function count(options?: {
   `
 
   return parseInt(result[0].count, 10)
-}
-
-/**
- * 检查版本是否已存在
- */
-export async function existsByDefinitionAndVersion(
-  skillDefinitionId: string,
-  version: string
-): Promise<boolean> {
-  const result = await sql<[{ exists: boolean }]>`
-    SELECT EXISTS(
-      SELECT 1 FROM skill_packages
-      WHERE skill_definition_id = ${skillDefinitionId}
-      AND version = ${version}
-    ) as exists
-  `
-
-  return result[0].exists
-}
-
-/**
- * 获取最新版本
- */
-export async function getLatestVersion(skillDefinitionId: string): Promise<SkillPackage | null> {
-  const rows = await sql<SkillPackageRow[]>`
-    SELECT * FROM skill_packages
-    WHERE skill_definition_id = ${skillDefinitionId}
-    AND status = 'active'
-    ORDER BY created_at DESC
-    LIMIT 1
-  `
-
-  return rows.length > 0 ? rowToSkillPackage(rows[0]) : null
 }
