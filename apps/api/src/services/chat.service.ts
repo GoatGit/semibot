@@ -7,9 +7,11 @@ import type { Response } from 'express'
 import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
 import * as agentService from './agent.service'
-import * as skillService from './skill.service'
 import * as mcpService from './mcp.service'
 import * as llmService from './llm.service'
+import { buildSkillIndex } from './skill-prompt-builder'
+import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
+import * as skillPackageRepo from '../repositories/skill-package.repository'
 import type { LLMMessage, LLMStreamChunk } from './llm.service'
 import type { ToolCall } from './llm/index'
 import {
@@ -301,32 +303,34 @@ async function handleChatWithRuntime(
   agent: any,
   session: any
 ): Promise<void> {
-  // 创建 SSE 连接
-  const connection = createSSEConnection(res, sessionId, userId, orgId)
   const startTime = Date.now()
   const monitor = getRuntimeMonitor()
 
+  // 检查 Runtime 是否可用（在创建 SSE 连接之前）
+  const runtimeReady = await isRuntimeAvailable()
+  if (!runtimeReady) {
+    chatLogger.warn('Runtime 不可用，回退到 direct 模式')
+
+    // 记录失败
+    monitor.recordExecution({
+      sessionId,
+      orgId,
+      mode: 'runtime_orchestrator',
+      success: false,
+      error: 'Runtime service unavailable',
+      errorType: 'transient',
+      latencyMs: Date.now() - startTime,
+      timestamp: Date.now(),
+    })
+
+    await handleChatDirect(orgId, userId, sessionId, input, res, agent, session)
+    return
+  }
+
+  // 创建 SSE 连接（确认使用 runtime 模式后再创建）
+  const connection = createSSEConnection(res, sessionId, userId, orgId)
+
   try {
-    // 检查 Runtime 是否可用
-    const runtimeReady = await isRuntimeAvailable()
-    if (!runtimeReady) {
-      chatLogger.warn('Runtime 不可用，回退到 direct 模式')
-
-      // 记录失败
-      monitor.recordExecution({
-        sessionId,
-        orgId,
-        mode: 'runtime_orchestrator',
-        success: false,
-        error: 'Runtime service unavailable',
-        errorType: 'transient',
-        latencyMs: Date.now() - startTime,
-        timestamp: Date.now(),
-      })
-
-      await handleChatDirect(orgId, userId, sessionId, input, res, agent, session)
-      return
-    }
 
     // 保存用户消息
     await sessionService.addMessage(orgId, sessionId, {
@@ -366,6 +370,35 @@ async function handleChatWithRuntime(
       metadata: {
         user_id: userId,
       },
+    }
+
+    // 加载 Agent 关联的 Skill 定义，构建 skill index 注入 system prompt
+    if (agent.skills && agent.skills.length > 0) {
+      try {
+        const skillPairs: Array<{ definition: skillDefinitionRepo.SkillDefinition; package: skillPackageRepo.SkillPackage }> = []
+        for (const skillDefId of agent.skills) {
+          const def = await skillDefinitionRepo.findById(skillDefId)
+          if (!def || !def.isActive) continue
+          const pkg = await skillPackageRepo.findByDefinition(skillDefId)
+          if (!pkg) continue
+          skillPairs.push({ definition: def, package: pkg })
+        }
+        if (skillPairs.length > 0) {
+          const skillIndexXml = await buildSkillIndex(skillPairs)
+          if (skillIndexXml) {
+            runtimeInput.agent_config!.system_prompt += '\n\n' + skillIndexXml
+            chatLogger.info('已注入 Skill 索引到 system prompt', {
+              agentId: agent.id,
+              skillCount: skillPairs.length,
+            })
+          }
+        }
+      } catch (err) {
+        chatLogger.warn('加载 Skills 失败，继续无 Skill 模式', {
+          agentId: agent.id,
+          error: (err as Error).message,
+        })
+      }
     }
 
     // 加载 Agent 关联的 MCP Servers
@@ -489,20 +522,6 @@ async function handleChatDirect(
   const startTime = Date.now()
   const monitor = getRuntimeMonitor()
 
-  const boundSkills = await skillService.getActiveSkillsByIds(orgId, agent.skills ?? [])
-  const anthropicContainerSkills = boundSkills.flatMap((skill) => {
-    const skills = skill.config?.container?.skills
-    if (!Array.isArray(skills)) return []
-    return skills.filter((entry): entry is skillService.AnthropicContainerSkillRef => {
-      return (
-        !!entry &&
-        (entry.type === 'anthropic' || entry.type === 'custom') &&
-        typeof entry.skill_id === 'string' &&
-        entry.skill_id.trim().length > 0
-      )
-    })
-  })
-
   // 加载 Agent 关联的 MCP 工具
   let mcpTools: mcpService.McpToolForLLM[] = []
   const mcpToolMap = new Map<string, mcpService.McpToolForLLM>()
@@ -592,7 +611,6 @@ async function handleChatDirect(
       model: agent.config?.model ?? undefined,
       temperature: agent.config?.temperature ?? 0.7,
       maxTokens: agent.config?.maxTokens ?? 4096,
-      container: anthropicContainerSkills.length > 0 ? { skills: anthropicContainerSkills } : undefined,
       tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
       toolChoice: toolDefinitions.length > 0 ? 'auto' as const : undefined,
     }
