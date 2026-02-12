@@ -178,7 +178,12 @@ class LLMProvider(ABC):
                 tool_lines.append(f"- {name}: {desc}")
             tools_text = "\n".join(tool_lines)
 
-        planning_prompt = f"""Analyze the user's request and create an execution plan.
+        planning_prompt = f"""You are a task planner. Analyze the user's request and create an execution plan that uses the available tools.
+
+IMPORTANT RULES:
+1. You MUST use tools whenever the task requires actions beyond simple text answers.
+2. If the user asks to generate, create, or produce a file (PDF, CSV, image, etc.), you MUST include a step that calls the "code_executor" tool with the appropriate code.
+3. Only return an empty steps array if the request is a simple question that needs no tool usage.
 
 Available tools:
 {tools_text or "No tools available."}
@@ -188,9 +193,12 @@ Memory context:
 
 You MUST respond with ONLY a JSON object (no markdown fences, no extra text) with these keys:
 - goal: The overall objective
-- steps: Array of steps, each with id, title, tool (or null), params, parallel (bool)
+- steps: Array of steps, each with id (string), title, tool (tool name string or null), params (object), parallel (bool)
 - requires_delegation: Boolean if sub-agent needed
 - delegate_to: Sub-agent ID if delegation needed
+
+Example — user asks "generate a PDF report about AI":
+{{"goal":"Generate a PDF report about AI","steps":[{{"id":"1","title":"Generate PDF report using code_executor","tool":"code_executor","params":{{"language":"python","code":"from fpdf import FPDF\\npdf = FPDF()\\npdf.add_page()\\npdf.set_font('Helvetica', size=16)\\npdf.cell(200, 10, text='AI Report', new_x=\\"LMARGIN\\", new_y=\\"NEXT\\", align='C')\\npdf.set_font('Helvetica', size=12)\\npdf.multi_cell(0, 8, text='AI is transforming industries...')\\npdf.output('ai_report.pdf')\\nprint('PDF generated')"}},"parallel":false}}],"requires_delegation":false,"delegate_to":null}}
 """
 
         system_message = {"role": "system", "content": planning_prompt}

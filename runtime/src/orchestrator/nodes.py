@@ -409,6 +409,27 @@ async def _execute_with_events(
             )
             await event_emitter.emit_plan_step_failed(action.id, action.title, result.error or "Unknown error")
 
+        # Emit file_created events for any generated files
+        generated_files = (result.metadata or {}).get("generated_files", [])
+        logger.info(
+            "[ACT] file_created check",
+            extra={
+                "tool_name": result.tool_name,
+                "has_metadata": result.metadata is not None,
+                "metadata_keys": list((result.metadata or {}).keys()),
+                "generated_files_count": len(generated_files),
+            },
+        )
+        for file_meta in generated_files:
+            file_id = file_meta.get("file_id", "")
+            await event_emitter.emit_file_created(
+                file_id=file_id,
+                filename=file_meta.get("filename", ""),
+                mime_type=file_meta.get("mime_type", "application/octet-stream"),
+                size=file_meta.get("size", 0),
+                url=f"/api/v1/files/{file_id}",
+            )
+
     return result
 
 
