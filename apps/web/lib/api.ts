@@ -48,7 +48,7 @@ export function getApiBaseUrl(): string {
   }
 
   // 服务端默认
-  return `http://localhost:3001${API_BASE_PATH}`
+  return `${process.env.API_URL || 'http://localhost:3101'}${API_BASE_PATH}`
 }
 
 /**
@@ -291,7 +291,7 @@ export const apiClient = {
     } = options
 
     // 上传直连后端，绕过 Next.js rewrite 代理（代理可能破坏 multipart body）
-    const directBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
+    const directBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
     const url = `${directBase}${path}`
 
     const headers: Record<string, string> = {

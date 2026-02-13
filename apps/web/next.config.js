@@ -9,10 +9,11 @@ const nextConfig = {
     optimizePackageImports: ['lucide-react'],
   },
   async rewrites() {
+    const apiUrl = process.env.API_URL || 'http://localhost:3101'
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:3001/api/:path*',
+        destination: `${apiUrl}/api/:path*`,
       },
     ]
   },

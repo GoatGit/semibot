@@ -396,7 +396,7 @@ audit_buffer_size = Gauge(
 #!/bin/bash
 # health_check.sh
 
-HEALTH_URL="http://localhost:8000/health"
+HEALTH_URL="http://localhost:8901/health"
 RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_URL)
 
 if [ $RESPONSE -eq 200 ]; then
@@ -615,13 +615,13 @@ sudo systemctl status semibot-runtime
 
 ```bash
 # 检查健康状态
-curl http://localhost:8000/health
+curl http://localhost:8901/health
 
 # 检查日志
 tail -f /var/log/semibot/runtime.log
 
 # 检查版本
-curl http://localhost:8000/version
+curl http://localhost:8901/version
 ```
 
 ### 回滚步骤

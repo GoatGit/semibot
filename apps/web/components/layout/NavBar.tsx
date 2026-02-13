@@ -123,13 +123,20 @@ export function NavBar() {
     }
   }, [isLoadingMore, hasMoreSessions, sessionPage])
 
+  // 实际显示的展开状态：固定展开 或 悬停展开
+  const isExpanded = navBarExpanded || isHovered
+
   // IntersectionObserver 监听哨兵元素
+  // 跟踪哨兵是否在视口内，用于加载完成后判断是否需要继续加载
+  const sentinelVisibleRef = useRef(false)
+
   useEffect(() => {
     const sentinel = sentinelRef.current
     const root = scrollContainerRef.current
     if (!sentinel || !root) return
     const observer = new IntersectionObserver(
       (entries) => {
+        sentinelVisibleRef.current = entries[0].isIntersecting
         if (entries[0].isIntersecting && hasMoreSessions && !isLoadingMore) {
           loadMoreSessions()
         }
@@ -138,10 +145,14 @@ export function NavBar() {
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [hasMoreSessions, isLoadingMore, loadMoreSessions])
+  }, [isExpanded, hasMoreSessions, isLoadingMore, loadMoreSessions])
 
-  // 实际显示的展开状态：固定展开 或 悬停展开
-  const isExpanded = navBarExpanded || isHovered
+  // 加载完成后，如果哨兵仍在视口内，继续加载下一页
+  useEffect(() => {
+    if (!isLoadingMore && hasMoreSessions && sentinelVisibleRef.current) {
+      loadMoreSessions()
+    }
+  }, [isLoadingMore, hasMoreSessions, loadMoreSessions])
 
   const handleMouseEnter = useCallback(() => {
     if (!navBarExpanded) {
