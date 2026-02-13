@@ -149,8 +149,11 @@ async function request<T>(
     ...(customHeaders as Record<string, string>),
   }
 
+  // 登录/注册等认证接口不应携带旧 token
+  const isAuthEndpoint = path === '/auth/login' || path === '/auth/register' || path === '/auth/refresh'
+
   const token = getAuthToken()
-  if (token) {
+  if (token && !isAuthEndpoint) {
     headers['Authorization'] = `Bearer ${token}`
   }
 
@@ -185,10 +188,18 @@ async function request<T>(
       // 解析响应
       const data = await response.json()
 
-      // 认证过期，跳转登录页
-      if (response.status === 401) {
+      // 认证过期，跳转登录页（但登录/注册接口的 401 不应触发跳转）
+      if (response.status === 401 && !isAuthEndpoint) {
         handleAuthExpired()
         throw new Error('认证已过期')
+      }
+
+      // 请求失败，抛出错误
+      if (!response.ok) {
+        const errorMessage = data?.error?.message || data?.message || response.statusText
+        throw Object.assign(new Error(errorMessage), {
+          response: { status: response.status, data }
+        })
       }
 
       // 检查是否需要重试
