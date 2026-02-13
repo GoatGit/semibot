@@ -1,0 +1,69 @@
+{
+  "id": "US-001",
+  "title": "聊天流程中通过 code_executor 生成 xlsx 文件",
+  "description": "用户在 /chat/new 页面选择「测试xslx的代理」，发送消息要求生成 Excel 文件，验证 agent 正确调用 code_executor 技能执行 Python 代码生成 xlsx 文件，并通过 FileManager 持久化后返回可下载的文件卡片。",
+  "actor": "已登录用户",
+  "preconditions": [
+    "用户已登录系统",
+    "后端服务 (api + runtime) 正常运行",
+    "数据库中存在「测试xslx的代理」agent",
+    "Runtime 环境已安装 openpyxl 或 pandas"
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "action": "访问 /chat/new 页面",
+      "expected": "页面加载成功，显示可用 agent 列表"
+    },
+    {
+      "step": 2,
+      "action": "从 agent 列表中选择「测试xslx的代理」",
+      "expected": "agent 被选中，高亮显示"
+    },
+    {
+      "step": 3,
+      "action": "输入消息「请生成一个包含示例销售数据的 xlsx 文件」并发送",
+      "expected": "创建新会话，跳转到 /chat/{sessionId} 页面"
+    },
+    {
+      "step": 4,
+      "action": "等待 agent 响应",
+      "expected": "SSE 流正常推送，显示 agent 思考过程"
+    },
+    {
+      "step": 5,
+      "action": "观察 agent 调用 code_executor",
+      "expected": "agent 调用 code_executor 执行 Python 代码，代码中使用 openpyxl 或 pandas 生成 .xlsx 文件"
+    },
+    {
+      "step": 6,
+      "action": "观察文件生成事件",
+      "expected": "收到 file_created 事件，包含 file_id、filename（.xlsx 扩展名）、mime_type、size、url"
+    },
+    {
+      "step": 7,
+      "action": "查看聊天界面中的文件下载卡片",
+      "expected": "FileDownload 组件正确渲染，显示文件名、大小、下载按钮"
+    },
+    {
+      "step": 8,
+      "action": "点击下载按钮",
+      "expected": "文件成功下载，可用 Excel 打开，内容包含示例销售数据"
+    }
+  ],
+  "acceptance_criteria": [
+    "agent 选择页面正确加载并显示「测试xslx的代理」",
+    "消息发送后成功创建会话并跳转",
+    "SSE 流正常推送，无中断或超时",
+    "agent 正确调用 code_executor 工具",
+    "code_executor 执行的 Python 代码成功生成 .xlsx 文件",
+    "file_created 事件包含正确的文件元数据",
+    "FileDownload 组件正确渲染文件卡片",
+    "文件可通过 /api/v1/files/{file_id} 端点成功下载",
+    "下载的 xlsx 文件内容正确且可被 Excel 打开"
+  ],
+  "passes": true,
+  "test_type": "e2e",
+  "priority": "high",
+  "tags": ["chat", "xlsx", "code_executor", "file_generation", "file_download"]
+}

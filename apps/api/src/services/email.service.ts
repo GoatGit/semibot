@@ -14,7 +14,7 @@ export interface PasswordResetEmailInput {
 }
 
 export async function sendPasswordResetEmail(input: PasswordResetEmailInput): Promise<void> {
-  const appBaseUrl = process.env.APP_BASE_URL ?? 'http://localhost:3000'
+  const appBaseUrl = process.env.APP_BASE_URL ?? 'http://localhost:3100'
   const resetUrl = `${appBaseUrl}/reset-password?token=${encodeURIComponent(input.resetToken)}`
 
   // TODO: 接入真实邮件发送服务（SMTP/SES/SendGrid 等）

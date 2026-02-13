@@ -19,7 +19,7 @@ import type { Agent2UIMessage, SSEDoneData, SSEErrorData } from '@/types'
  * 无法实时推送到浏览器，表现为"文本一次性蹦出来"。
  */
 const SSE_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
+  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
 
 /** 获取认证 Token */
 function getAuthToken(): string | undefined {

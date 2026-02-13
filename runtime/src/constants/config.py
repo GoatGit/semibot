@@ -4,6 +4,8 @@ All magic numbers and hardcoded values should be defined here.
 Includes constants for: Queue, Memory, LLM, Orchestrator modules.
 """
 
+import os
+
 # =============================================================================
 # Queue Names
 # =============================================================================
@@ -284,7 +286,7 @@ MCP_MAX_RETRIES = 3
 HTTP_SERVER_HOST = "0.0.0.0"
 """HTTP 服务监听地址"""
 
-HTTP_SERVER_PORT = 8000
+HTTP_SERVER_PORT = int(os.environ.get("HTTP_SERVER_PORT", "8901"))
 """HTTP 服务监听端口"""
 
 HTTP_SERVER_WORKERS = 1
