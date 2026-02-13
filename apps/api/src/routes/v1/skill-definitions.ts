@@ -96,7 +96,7 @@ router.post(
       tempFilePath: uploadedFile.tempPath,
       originalName: uploadedFile.originalName,
       enableRetry,
-      createdBy: req.user?.id,
+      createdBy: req.user?.userId,
     })
 
     const definition = await skillDefinitionRepo.findById(result.definitionId)

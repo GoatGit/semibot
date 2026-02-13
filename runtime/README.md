@@ -15,9 +15,50 @@ Semibot Runtime is a Python-based execution engine for AI agents. It provides:
 
 ## Installation
 
+### Prerequisites
+
+- Python 3.11 or higher
+- pip 26.0+
+
+### Setup
+
 ```bash
-# Install dependencies
+# 1. Install Python 3.11+ (if not already installed)
+# macOS:
+brew install python@3.11
+
+# Ubuntu/Debian:
+sudo apt install python3.11 python3.11-venv
+
+# 2. Create virtual environment
+python3.11 -m venv .venv
+
+# 3. Activate virtual environment
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 4. Upgrade pip
+pip install --upgrade pip
+
+# 5. Install project dependencies
+pip install -e .
+
+# 6. Install additional dependencies
+pip install "aiohttp>=3.9.0" "docker>=7.0.0" "fastapi>=0.115.0" \
+    "uvicorn[standard]>=0.30.0" "sse-starlette>=2.1.0" \
+    "opentelemetry-exporter-otlp>=1.26.0"
+
+# 7. Install MCP SDK from GitHub
+pip install "mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git"
+
+# 8. Install dev dependencies (optional)
 pip install -e ".[dev]"
+```
+
+### Verify Installation
+
+```bash
+# Check Python version
+python --version  # Should be 3.11+
 
 # Run tests
 pytest

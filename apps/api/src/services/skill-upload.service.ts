@@ -15,7 +15,7 @@ import { installWithRetry } from './skill-retry-rollback.service'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import { SKILL_UPLOAD_TEMP_DIR, SKILL_MAX_SIZE_BYTES } from '../constants/config'
 import { createError } from '../middleware/errorHandler'
-import { SKILL_UPLOAD_EXTRACT_FAILED, SKILL_UPLOAD_NO_FILE } from '../constants/errorCodes'
+import { SKILL_UPLOAD_EXTRACT_FAILED } from '../constants/errorCodes'
 import { createLogger } from '../lib/logger'
 
 const uploadServiceLogger = createLogger('skill-upload')

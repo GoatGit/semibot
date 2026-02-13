@@ -43,4 +43,5 @@ uvicorn[standard]>=0.30.0
 sse-starlette>=2.1.0
 
 # MCP Protocol
-mcp>=1.0.0
+# Note: MCP SDK must be installed separately from GitHub:
+# pip install "mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git"

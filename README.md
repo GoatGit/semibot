@@ -99,21 +99,44 @@ semibot/
 git clone https://github.com/your-org/semibot.git
 cd semibot
 
-# 2. 安装依赖
+# 2. 安装 Node.js 依赖
 pnpm install
 
-# 3. 配置环境变量
+# 3. 设置 Python 环境（Runtime 引擎）
+# 确保安装了 Python 3.11+
+python3.11 --version  # 如果没有，使用 brew install python@3.11
+
+# 创建虚拟环境
+cd runtime
+python3.11 -m venv .venv
+
+# 激活虚拟环境并安装依赖
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -e .
+
+# 安装额外依赖
+pip install "aiohttp>=3.9.0" "docker>=7.0.0" "fastapi>=0.115.0" \
+    "uvicorn[standard]>=0.30.0" "sse-starlette>=2.1.0" \
+    "opentelemetry-exporter-otlp>=1.26.0"
+
+# 安装 MCP SDK（从 GitHub）
+pip install "mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git"
+
+cd ..
+
+# 4. 配置环境变量
 cp .env.example .env.local
 # 编辑 .env.local 填入配置
 
-# 4. 启动数据库
+# 5. 启动数据库
 docker-compose up -d postgres redis
 
-# 5. 运行数据库迁移
+# 6. 运行数据库迁移
 cd database
 psql -U postgres -d semibot -f migrations/001_init_schema.sql
 
-# 6. 启动开发服务器
+# 7. 启动开发服务器
 pnpm dev
 ```
 

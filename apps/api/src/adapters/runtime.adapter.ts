@@ -600,7 +600,7 @@ export class RuntimeAdapter {
   }
 
   private handleFileCreated(event: RuntimeEvent, connection: SSEConnection): void {
-    const { file_id, filename, mime_type, size, url } = event.data
+    const { filename, mime_type, size, url } = event.data
 
     // Build absolute URL pointing to the Runtime service
     const runtimeBaseUrl = RUNTIME_SERVICE_URL.replace(/\/+$/, '')
