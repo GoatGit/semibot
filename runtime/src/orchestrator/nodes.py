@@ -156,8 +156,29 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         )
 
     # Extract state data
-    messages = state["messages"]
+    messages = list(state["messages"])
     memory_context = state["memory_context"]
+
+    # On replan: inject previous tool errors so LLM can learn from failures
+    tool_results = state.get("tool_results", [])
+    failed_results = [r for r in tool_results if not r.success]
+    if failed_results and state["iteration"] > 0:
+        error_lines = []
+        for r in failed_results:
+            error_lines.append(f"Tool '{r.tool_name}' failed:")
+            if r.error:
+                error_lines.append(f"  Error: {r.error}")
+            if isinstance(r.result, dict) and r.result.get("stderr"):
+                error_lines.append(f"  Stderr: {r.result['stderr']}")
+        error_context = "\n".join(error_lines)
+        messages.append({
+            "role": "user",
+            "content": f"[SYSTEM] Previous execution failed. Fix the errors and generate a new plan.\n{error_context}",
+        })
+        logger.info(
+            "Injected error context for replan",
+            extra={"session_id": state["session_id"], "error_count": len(failed_results)},
+        )
 
     try:
         # Call LLM to generate plan
@@ -405,7 +426,7 @@ async def _execute_with_events(
             )
         else:
             await event_emitter.emit_tool_call_complete(
-                result.tool_name, None, False, error=result.error, duration=duration_ms,
+                result.tool_name, result.result, False, error=result.error, duration=duration_ms,
             )
             await event_emitter.emit_plan_step_failed(action.id, action.title, result.error or "Unknown error")
 

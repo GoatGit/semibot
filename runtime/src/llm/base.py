@@ -184,6 +184,9 @@ IMPORTANT RULES:
 1. You MUST use tools whenever the task requires actions beyond simple text answers.
 2. If the user asks to generate, create, or produce a file (PDF, CSV, image, etc.), you MUST include a step that calls the "code_executor" tool with the appropriate code.
 3. Only return an empty steps array if the request is a simple question that needs no tool usage.
+4. If the user asks to generate a report, analysis, or summary about a topic, you MUST FIRST search for relevant up-to-date information using available search/MCP tools, THEN generate the report based on the search results. Never generate reports purely from your own knowledge — always search first.
+5. Respond in the same language as the user's request. If the user writes in Chinese, your plan titles and the generated content should be in Chinese.
+6. For PDF generation with Chinese content, you MUST use the CJK font: pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc', uni=True). Do NOT use Helvetica/Times/Courier for Chinese text.
 
 Available tools:
 {tools_text or "No tools available."}
@@ -197,9 +200,39 @@ You MUST respond with ONLY a JSON object (no markdown fences, no extra text) wit
 - requires_delegation: Boolean if sub-agent needed
 - delegate_to: Sub-agent ID if delegation needed
 
-Example — user asks "generate a PDF report about AI":
-{{"goal":"Generate a PDF report about AI","steps":[{{"id":"1","title":"Generate PDF report using code_executor","tool":"code_executor","params":{{"language":"python","code":"from fpdf import FPDF\\npdf = FPDF()\\npdf.add_page()\\npdf.set_font('Helvetica', size=16)\\npdf.cell(200, 10, text='AI Report', new_x=\\"LMARGIN\\", new_y=\\"NEXT\\", align='C')\\npdf.set_font('Helvetica', size=12)\\npdf.multi_cell(0, 8, text='AI is transforming industries...')\\npdf.output('ai_report.pdf')\\nprint('PDF generated')"}},"parallel":false}}],"requires_delegation":false,"delegate_to":null}}
+IMPORTANT: You MUST use the exact tool names from the "Available tools" list above. Do NOT invent tool names like "search" — use the actual name (e.g. "tavily-search", "bailian_web_search", etc.).
+
+Example — user asks "生成一份关于AI趋势的PDF报告" (assuming "tavily-search" is available):
 """
+        # Build the example JSON separately to avoid f-string escaping hell.
+        # Use real newlines so json.dumps produces clean \n escapes in the JSON,
+        # preventing the LLM from seeing garbled escape sequences and generating
+        # code with mismatched quotes (e.g. 'HiraginoGB").
+        example_code = (
+            "from fpdf import FPDF\n"
+            "pdf = FPDF()\n"
+            "pdf.add_page()\n"
+            "pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc', uni=True)\n"
+            "pdf.set_font('HiraginoGB', size=18)\n"
+            "pdf.cell(200, 10, text='AI趋势报告', new_x='LMARGIN', new_y='NEXT', align='C')\n"
+            "pdf.set_font('HiraginoGB', size=12)\n"
+            "pdf.multi_cell(0, 8, text='根据搜索结果整理的AI趋势...')\n"
+            "pdf.output('ai_trends_report.pdf')\n"
+            "print('PDF generated')"
+        )
+        import json as _json
+        example_json = _json.dumps({
+            "goal": "搜索最新AI趋势信息并生成中文PDF报告",
+            "steps": [
+                {"id": "1", "title": "搜索最新AI趋势信息", "tool": "tavily-search",
+                 "params": {"query": "2024 2025 AI trends latest developments"}, "parallel": False},
+                {"id": "2", "title": "使用code_executor生成中文PDF报告", "tool": "code_executor",
+                 "params": {"language": "python", "code": example_code}, "parallel": False},
+            ],
+            "requires_delegation": False,
+            "delegate_to": None,
+        }, ensure_ascii=False)
+        planning_prompt += example_json + "\n"
 
         system_message = {"role": "system", "content": planning_prompt}
         all_messages = [system_message] + messages

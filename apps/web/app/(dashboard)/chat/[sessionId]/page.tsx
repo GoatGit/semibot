@@ -61,6 +61,7 @@ export default function ChatSessionPage() {
   } = useChat({
     sessionId,
     onMessage: (message) => {
+      console.log('[Chat] onMessage 收到消息:', message.type, message.data)
       // 处理文件消息
       if (message.type === 'file') {
         const fileData = message.data as { url: string; filename: string; mimeType: string; size?: number }

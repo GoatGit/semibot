@@ -606,6 +606,8 @@ export class RuntimeAdapter {
     const runtimeBaseUrl = RUNTIME_SERVICE_URL.replace(/\/+$/, '')
     const absoluteUrl = `${runtimeBaseUrl}${url as string}`
 
+    runtimeLogger.info('发送 file 消息到前端', { filename, absoluteUrl, mime_type, size })
+
     sendAgent2UIMessage(connection, 'file', {
       url: absoluteUrl,
       filename: filename as string,

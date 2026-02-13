@@ -143,8 +143,12 @@ class McpClient:
             elif transport_type == McpTransportType.STREAMABLE_HTTP.value:
                 url = params["url"]
                 headers = params.get("headers", {})
+                # streamable_http_client doesn't accept headers directly;
+                # pass a custom httpx.AsyncClient with default headers instead.
+                import httpx
+                custom_client = httpx.AsyncClient(headers=headers) if headers else None
                 http_transport = await exit_stack.enter_async_context(
-                    streamable_http_client(url=url, headers=headers)
+                    streamable_http_client(url=url, http_client=custom_client)
                 )
                 read_stream, write_stream = http_transport[0], http_transport[1]
                 session = await exit_stack.enter_async_context(

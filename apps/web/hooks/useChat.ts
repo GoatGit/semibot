@@ -98,6 +98,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
    * 处理 Agent2UI 消息
    */
   const handleMessage = useCallback((message: Agent2UIMessage) => {
+    console.log('[useChat] handleMessage:', message.type, JSON.stringify(message.data).slice(0, 200))
     // 更新 Agent2UI 状态
     agent2ui.handleMessage(message)
 
@@ -290,6 +291,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
                 switch (currentEvent) {
                   case 'message':
+                    console.log('[useChat] SSE message event:', data.type, data.id)
                     handleMessage(data)
                     break
                   case 'done':
