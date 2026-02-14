@@ -99,7 +99,7 @@ function buildSSEStream(): string {
         id: 'msg-5',
         type: 'file',
         data: {
-          url: `http://localhost:8901/api/v1/files/${TEST_FILE_ID}`,
+          url: `http://localhost:8801/api/v1/files/${TEST_FILE_ID}`,
           filename: 'sales_data.xlsx',
           mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           size: 5432,

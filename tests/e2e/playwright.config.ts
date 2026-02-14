@@ -32,7 +32,7 @@ export default defineConfig({
   // 全局测试配置
   use: {
     // 基础 URL
-    baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3100',
+    baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
 
     // 请求追踪 - 仅在首次重试时收集
     trace: 'on-first-retry',
@@ -94,7 +94,7 @@ export default defineConfig({
   // 开发服务器配置
   webServer: {
     command: 'pnpm --filter @semibot/web dev',
-    url: 'http://localhost:3100',
+    url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
     cwd: '../..',

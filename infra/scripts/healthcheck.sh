@@ -86,7 +86,7 @@ main() {
     fi
 
     # Check Runtime health endpoint
-    if check_service "Runtime Service" "http://localhost:8000/health"; then
+    if check_service "Runtime Service" "http://localhost:8801/health"; then
         :
     else
         exit_code=1

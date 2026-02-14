@@ -267,7 +267,7 @@ sudo systemctl status semibot-runtime
 
 ```nginx
 upstream semibot_runtime {
-    server 127.0.0.1:8000;
+    server 127.0.0.1:8801;
 }
 
 server {
@@ -396,7 +396,7 @@ audit_buffer_size = Gauge(
 #!/bin/bash
 # health_check.sh
 
-HEALTH_URL="http://localhost:8901/health"
+HEALTH_URL="http://localhost:8801/health"
 RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_URL)
 
 if [ $RESPONSE -eq 200 ]; then
@@ -615,13 +615,13 @@ sudo systemctl status semibot-runtime
 
 ```bash
 # 检查健康状态
-curl http://localhost:8901/health
+curl http://localhost:8801/health
 
 # 检查日志
 tail -f /var/log/semibot/runtime.log
 
 # 检查版本
-curl http://localhost:8901/version
+curl http://localhost:8801/version
 ```
 
 ### 回滚步骤
@@ -730,7 +730,7 @@ chmod 644 /var/log/semibot/*.log
 
 ```bash
 # 配置防火墙
-sudo ufw allow 8000/tcp  # 应用端口
+sudo ufw allow 8801/tcp  # 应用端口
 sudo ufw allow 5432/tcp  # PostgreSQL（仅内网）
 sudo ufw enable
 ```

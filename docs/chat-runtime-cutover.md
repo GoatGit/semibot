@@ -37,7 +37,7 @@
 CHAT_EXECUTION_MODE="direct_llm"
 
 # Runtime 服务地址
-RUNTIME_SERVICE_URL="http://localhost:8000"
+RUNTIME_SERVICE_URL="http://localhost:8801"
 
 # Runtime 灰度白名单（逗号分隔的组织 ID）
 CHAT_RUNTIME_ENABLED_ORGS="org-uuid-1,org-uuid-2"
@@ -230,7 +230,7 @@ npm test src/__tests__/chat-runtime.integration.test.ts
 
 ```bash
 cd runtime
-python -m uvicorn src.main:app --reload --port 8000
+python -m uvicorn src.main:app --reload --port 8801
 ```
 
 2. 启动 API 服务：
@@ -260,7 +260,7 @@ curl -X POST http://localhost:3001/api/v1/chat/start \
 
 **排查步骤**：
 
-1. 检查 Runtime 服务是否运行：`curl http://localhost:8000/health`
+1. 检查 Runtime 服务是否运行：`curl http://localhost:8801/health`
 2. 检查 `RUNTIME_SERVICE_URL` 配置是否正确
 3. 查看 API 日志：`[RuntimeAdapter] 健康检查失败`
 

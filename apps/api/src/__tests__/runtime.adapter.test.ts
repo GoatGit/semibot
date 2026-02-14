@@ -15,7 +15,7 @@ describe('RuntimeAdapter', () => {
   let mockConnection: SSEConnection
 
   beforeEach(() => {
-    adapter = new RuntimeAdapter('http://localhost:8000', 30000)
+    adapter = new RuntimeAdapter('http://localhost:8801', 30000)
     mockConnection = {
       id: 'test-connection-id',
       res: {} as any,

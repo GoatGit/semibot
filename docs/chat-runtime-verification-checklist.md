@@ -31,7 +31,7 @@ grep -E "CHAT_|RUNTIME_" .env.example
 
 # 预期输出：
 # CHAT_EXECUTION_MODE="direct_llm"
-# RUNTIME_SERVICE_URL="http://localhost:8000"
+# RUNTIME_SERVICE_URL="http://localhost:8801"
 # CHAT_RUNTIME_ENABLED_ORGS=""
 # CHAT_RUNTIME_SHADOW_PERCENT="0"
 # CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS="300000"
@@ -117,7 +117,7 @@ npm test src/__tests__/chat-runtime.integration.test.ts
 ```bash
 # 终端 1：启动 Runtime 服务
 cd runtime
-python -m uvicorn src.main:app --reload --port 8000
+python -m uvicorn src.main:app --reload --port 8801
 
 # 终端 2：启动 API 服务
 cd apps/api
@@ -128,7 +128,7 @@ npm run dev
 
 ```bash
 # 检查 Runtime 服务
-curl http://localhost:8000/health
+curl http://localhost:8801/health
 # 预期：{"status": "healthy"}
 
 # 检查 API 服务

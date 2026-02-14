@@ -176,7 +176,7 @@ annotations:
 1. **确认服务状态**
    ```bash
    # 检查 Runtime 服务
-   curl http://localhost:8000/health
+   curl http://localhost:8801/health
 
    # 检查进程
    ps aux | grep uvicorn
@@ -198,7 +198,7 @@ annotations:
 
 4. **验证恢复**
    ```bash
-   curl http://localhost:8000/health
+   curl http://localhost:8801/health
    ```
 
 5. **重置回退状态**（如果需要���

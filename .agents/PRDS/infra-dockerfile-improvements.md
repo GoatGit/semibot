@@ -61,11 +61,11 @@ RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 **Dockerfile.runtime:**
 ```dockerfile
 # 变更前
-HEALTHCHECK ... CMD curl --fail http://localhost:8000/health || exit 1
+HEALTHCHECK ... CMD curl --fail http://localhost:8801/health || exit 1
 
 # 变更后
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8801/health')" || exit 1
 ```
 
 移除 `curl` 安装以减少攻击面。
@@ -98,7 +98,7 @@ __pycache__
 ```dockerfile
 # 使用环境变量控制
 ENV UVICORN_WORKERS=4
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${UVICORN_WORKERS}"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8801", "--workers", "${UVICORN_WORKERS}"]
 ```
 
 ## 验收标准

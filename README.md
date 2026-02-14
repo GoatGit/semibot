@@ -142,9 +142,9 @@ pnpm dev
 
 ### 访问应用
 
-- **Web 前端**: http://localhost:3100
-- **API 服务**: http://localhost:3101
-- **API 文档**: http://localhost:3101/api-docs
+- **Web 前端**: http://localhost:3000
+- **API 服务**: http://localhost:3001
+- **API 文档**: http://localhost:3001/api-docs
 
 ## 常用命令
 
