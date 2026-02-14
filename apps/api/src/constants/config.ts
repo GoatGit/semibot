@@ -39,7 +39,7 @@ export {
 // ═══════════════════════════════════════════════════════════════
 
 /** 服务器端口 */
-export const SERVER_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3101
+export const SERVER_PORT = process.env.API_PORT ? parseInt(process.env.API_PORT, 10) : 3001
 
 /** 服务器主机 */
 export const SERVER_HOST = process.env.HOST ?? '0.0.0.0'
@@ -173,8 +173,8 @@ export const CHAT_RUNTIME_ERROR_RATE_THRESHOLD = parseFloat(
 )
 
 /** Python Runtime 服务地址 */
-export const RUNTIME_SERVICE_URL = process.env.RUNTIME_SERVICE_URL ?? 'http://localhost:8901'
-console.log('[config.ts] RUNTIME_SERVICE_URL =', RUNTIME_SERVICE_URL, '| env =', process.env.RUNTIME_SERVICE_URL)
+export const RUNTIME_SERVICE_URL = process.env.RUNTIME_URL ?? 'http://localhost:8801'
+console.log('[config.ts] RUNTIME_SERVICE_URL =', RUNTIME_SERVICE_URL, '| env =', process.env.RUNTIME_URL)
 
 // ═══════════════════════════════════════════════════════════════
 // Runtime 监控配置
