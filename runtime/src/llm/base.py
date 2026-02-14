@@ -154,6 +154,8 @@ class LLMProvider(ABC):
         messages: list[dict[str, str]],
         memory: str = "",
         available_tools: list[dict[str, Any]] | None = None,
+        available_sub_agents: list[dict[str, Any]] | None = None,
+        agent_system_prompt: str = "",
     ) -> dict[str, Any]:
         """
         Generate an execution plan from user messages.
@@ -234,6 +236,30 @@ Example — user asks "生成一份关于AI趋势的PDF报告" (assuming "tavily
         }, ensure_ascii=False)
         planning_prompt += example_json + "\n"
 
+        # Inject sub-agent candidates into planning prompt
+        if available_sub_agents:
+            sa_lines = []
+            for sa in available_sub_agents:
+                sa_lines.append(f"- {sa['name']} (id: {sa['id']}): {sa['description']}")
+            sub_agents_text = "\n".join(sa_lines)
+            planning_prompt += f"""
+Available specialized agents for delegation:
+{sub_agents_text}
+
+DELEGATION RULES:
+- ALWAYS prefer using your own tools first. Only delegate when:
+  1. The task clearly requires expertise that a specialized agent has but you don't
+  2. Your available tools cannot accomplish the task
+  3. A specialized agent's description explicitly matches the task domain
+- Set requires_delegation=true and delegate_to=<agent_id> ONLY when delegating
+- You can only delegate to ONE agent per plan
+- Do NOT delegate simple questions or tasks your tools can handle
+"""
+
+        # Inject Agent system_prompt as persona prefix
+        if agent_system_prompt:
+            planning_prompt = f"{agent_system_prompt}\n\n---\n\n{planning_prompt}"
+
         system_message = {"role": "system", "content": planning_prompt}
         all_messages = [system_message] + messages
 
@@ -274,6 +300,7 @@ Example — user asks "生成一份关于AI趋势的PDF报告" (assuming "tavily
         messages: list[dict[str, str]],
         results: list[Any] | None = None,
         reflection: Any = None,
+        agent_system_prompt: str = "",
     ) -> str:
         """
         Generate a final response to the user.
@@ -300,9 +327,14 @@ Example — user asks "生成一份关于AI趋势的PDF报告" (assuming "tavily
 
         context = "\n\n".join(context_parts)
 
+        base_prompt = agent_system_prompt or "You are a helpful assistant."
         system_message = {
             "role": "system",
-            "content": f"""Generate a helpful response to the user based on the execution results.
+            "content": f"""{base_prompt}
+
+---
+
+Generate a helpful response to the user based on the execution results.
 
 {context}
 
@@ -320,6 +352,7 @@ Be concise but informative. If there were errors, explain what happened and sugg
         messages: list[dict[str, str]],
         results: list[Any] | None = None,
         reflection: Any = None,
+        agent_system_prompt: str = "",
     ) -> AsyncIterator[str]:
         """
         Generate a final response to the user, streaming token by token.
@@ -346,9 +379,14 @@ Be concise but informative. If there were errors, explain what happened and sugg
 
         context = "\n\n".join(context_parts)
 
+        base_prompt = agent_system_prompt or "You are a helpful assistant."
         system_message = {
             "role": "system",
-            "content": f"""Generate a helpful response to the user based on the execution results.
+            "content": f"""{base_prompt}
+
+---
+
+Generate a helpful response to the user based on the execution results.
 
 {context}
 
@@ -366,6 +404,7 @@ Be concise but informative. If there were errors, explain what happened and sugg
         messages: list[dict[str, str]],
         plan: Any | None = None,
         results: list[Any] | None = None,
+        agent_system_prompt: str = "",
     ) -> dict[str, Any]:
         """
         Generate a reflection on the execution.
@@ -388,6 +427,10 @@ You MUST respond with ONLY a JSON object (no markdown fences, no extra text) wit
 - worth_remembering: Boolean if this should be stored in memory
 - importance: Float 0-1 indicating importance
 """
+
+        # Inject Agent system_prompt as persona prefix
+        if agent_system_prompt:
+            prompt = f"{agent_system_prompt}\n\n---\n\n{prompt}"
 
         response = await self.chat(
             messages=[{"role": "system", "content": prompt}] + messages,

@@ -55,6 +55,29 @@ const runtimeInputStateSchema = z.object({
       parameters: z.record(z.unknown()),
     })),
   })).optional(),
+  available_sub_agents: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string(),
+    system_prompt: z.string(),
+    model: z.string().optional(),
+    temperature: z.number().optional(),
+    max_tokens: z.number().optional(),
+    skills: z.array(z.string()).optional(),
+    mcp_servers: z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      endpoint: z.string(),
+      transport: z.string(),
+      is_connected: z.boolean(),
+      auth_config: z.record(z.unknown()).nullable().optional(),
+      available_tools: z.array(z.object({
+        name: z.string(),
+        description: z.string(),
+        parameters: z.record(z.unknown()),
+      })),
+    })).optional(),
+  })).optional(),
   metadata: z.record(z.unknown()).optional(),
 })
 
@@ -102,6 +125,29 @@ export interface RuntimeInputState {
       name: string
       description: string
       parameters: Record<string, unknown>
+    }>
+  }>
+  available_sub_agents?: Array<{
+    id: string
+    name: string
+    description: string
+    system_prompt: string
+    model?: string
+    temperature?: number
+    max_tokens?: number
+    skills?: string[]
+    mcp_servers?: Array<{
+      id: string
+      name: string
+      endpoint: string
+      transport: string
+      is_connected: boolean
+      auth_config?: Record<string, unknown> | null
+      available_tools: Array<{
+        name: string
+        description: string
+        parameters: Record<string, unknown>
+      }>
     }>
   }>
   metadata?: Record<string, unknown>

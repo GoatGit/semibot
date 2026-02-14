@@ -23,6 +23,7 @@ from src.orchestrator.context import (
     AgentConfig,
     McpServerDefinition,
     RuntimeSessionContext,
+    SubAgentDefinition,
     ToolDefinition,
 )
 from src.orchestrator.graph import create_agent_graph
@@ -192,6 +193,37 @@ async def execute_stream(body: RuntimeInputState, request: Request):
                 available_mcp_servers=mcp_servers,
             )
 
+            # Build SubAgent definitions from input
+            sub_agents: list[SubAgentDefinition] = []
+            if body.available_sub_agents:
+                for sa in body.available_sub_agents:
+                    sa_mcp_servers: list[McpServerDefinition] = []
+                    if sa.mcp_servers:
+                        for srv in sa.mcp_servers:
+                            sa_mcp_servers.append(McpServerDefinition(
+                                id=srv.id,
+                                name=srv.name,
+                                endpoint=srv.endpoint,
+                                transport=srv.transport,
+                                is_connected=False,
+                                available_tools=[
+                                    {"name": t.name, "description": t.description, "parameters": t.parameters}
+                                    for t in srv.available_tools
+                                ],
+                            ))
+                    sub_agents.append(SubAgentDefinition(
+                        id=sa.id,
+                        name=sa.name,
+                        description=sa.description,
+                        system_prompt=sa.system_prompt,
+                        model=sa.model,
+                        temperature=sa.temperature,
+                        max_tokens=sa.max_tokens,
+                        skills=sa.skills,
+                        mcp_servers=sa_mcp_servers,
+                    ))
+                runtime_context.available_sub_agents = sub_agents
+
             # Build graph context dict (injected dependencies)
             context: dict[str, Any] = {
                 "event_emitter": emitter,
@@ -216,6 +248,18 @@ async def execute_stream(body: RuntimeInputState, request: Request):
                 mcp_client=mcp_client,
             )
             context["unified_executor"] = unified_executor
+
+            # Create SubAgentDelegator if sub-agents are available
+            if sub_agents:
+                from src.agents.delegator import SubAgentDelegator
+                delegator = SubAgentDelegator(
+                    runtime_context=runtime_context,
+                    llm_provider=llm_provider,
+                    skill_registry=skill_registry,
+                    event_emitter=emitter,
+                    max_depth=2,
+                )
+                context["sub_agent_delegator"] = delegator
 
             # Create the graph
             graph = create_agent_graph(context=context, runtime_context=runtime_context)

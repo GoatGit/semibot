@@ -268,6 +268,27 @@ export async function update(
 }
 
 /**
+ * 查询同组织下除当前 Agent 外的所有活跃 Agent（用于 SubAgent 委派候选池）
+ */
+export async function findOtherActiveByOrg(
+  orgId: string,
+  excludeAgentId: string,
+  limit: number = 20
+): Promise<AgentRow[]> {
+  const result = await sql`
+    SELECT * FROM agents
+    WHERE org_id = ${orgId}
+      AND id != ${excludeAgentId}
+      AND is_active = true
+      AND deleted_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `
+
+  return result as unknown as AgentRow[]
+}
+
+/**
  * 软删除 Agent
  */
 export async function softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {

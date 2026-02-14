@@ -419,6 +419,23 @@ async function handleChatWithRuntime(
       })
     }
 
+    // 加载同组织下其他 Agent 作为委派候选池
+    try {
+      const candidateSubAgents = await agentService.getCandidateSubAgents(orgId, agent.id)
+      if (candidateSubAgents.length > 0) {
+        runtimeInput.available_sub_agents = candidateSubAgents
+        chatLogger.info('已加载候选 SubAgents', {
+          agentId: agent.id,
+          candidateCount: candidateSubAgents.length,
+        })
+      }
+    } catch (err) {
+      chatLogger.warn('加载候选 SubAgents 失败，继续无委派模式', {
+        agentId: agent.id,
+        error: (err as Error).message,
+      })
+    }
+
     // 执行 Runtime 编排
     const adapter = getRuntimeAdapter()
     let fullContent = ''

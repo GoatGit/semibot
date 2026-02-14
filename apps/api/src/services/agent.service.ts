@@ -14,6 +14,10 @@ import {
 import { MAX_AGENTS_PER_ORG } from '../constants/config'
 import * as agentRepository from '../repositories/agent.repository'
 import { getAvailableModels } from './llm.service'
+import * as mcpService from './mcp.service'
+import { buildSkillIndex } from './skill-prompt-builder'
+import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
+import * as skillPackageRepo from '../repositories/skill-package.repository'
 import { createLogger } from '../lib/logger'
 
 const agentLogger = createLogger('agent')
@@ -301,4 +305,92 @@ export async function validateAgentForSession(
   }
 
   return agent
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SubAgent 委派候选池
+// ═══════════════════════════════════════════════════════════════
+
+export interface SubAgentConfigForRuntime {
+  id: string
+  name: string
+  description: string
+  system_prompt: string
+  model?: string
+  temperature: number
+  max_tokens: number
+  skills: string[]
+  mcp_servers: Array<{
+    id: string
+    name: string
+    endpoint: string
+    transport: string
+    is_connected: boolean
+    available_tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
+  }>
+}
+
+/**
+ * 获取同组织下其他活跃 Agent 作为委派候选池
+ * 为每个候选 Agent 加载其独立的 Skills 和 MCP Servers
+ */
+export async function getCandidateSubAgents(
+  orgId: string,
+  currentAgentId: string
+): Promise<SubAgentConfigForRuntime[]> {
+  const candidates = await agentRepository.findOtherActiveByOrg(orgId, currentAgentId)
+  const results: SubAgentConfigForRuntime[] = []
+
+  for (const row of candidates) {
+    const a = rowToAgent(row)
+
+    // 加载候选 Agent 自己的 Skill 索引（注入 system_prompt）
+    let systemPrompt = a.systemPrompt || `你是 ${a.name}，一个有帮助的 AI 助手。`
+    if (a.skills && a.skills.length > 0) {
+      try {
+        const skillPairs: Array<{ definition: skillDefinitionRepo.SkillDefinition; package: skillPackageRepo.SkillPackage }> = []
+        for (const skillDefId of a.skills) {
+          const def = await skillDefinitionRepo.findById(skillDefId)
+          if (!def || !def.isActive) continue
+          const pkg = await skillPackageRepo.findByDefinition(skillDefId)
+          if (!pkg) continue
+          skillPairs.push({ definition: def, package: pkg })
+        }
+        if (skillPairs.length > 0) {
+          const skillIndexXml = await buildSkillIndex(skillPairs)
+          if (skillIndexXml) {
+            systemPrompt += '\n\n' + skillIndexXml
+          }
+        }
+      } catch (err) {
+        agentLogger.warn('加载候选 Agent Skills 失败', {
+          agentId: a.id, error: (err as Error).message,
+        })
+      }
+    }
+
+    // 加载候选 Agent 自己的 MCP Servers
+    let mcpServers: SubAgentConfigForRuntime['mcp_servers'] = []
+    try {
+      mcpServers = await mcpService.getMcpServersForRuntime(a.id)
+    } catch (err) {
+      agentLogger.warn('加载候选 Agent MCP Servers 失败', {
+        agentId: a.id, error: (err as Error).message,
+      })
+    }
+
+    results.push({
+      id: a.id,
+      name: a.name,
+      description: a.description || '',
+      system_prompt: systemPrompt,
+      model: a.config?.model,
+      temperature: a.config?.temperature ?? 0.7,
+      max_tokens: a.config?.maxTokens ?? 4096,
+      skills: a.skills || [],
+      mcp_servers: mcpServers,
+    })
+  }
+
+  return results
 }

@@ -60,6 +60,21 @@ class McpServerDefinition:
 
 
 @dataclass
+class SubAgentDefinition:
+    """SubAgent definition for delegation."""
+
+    id: str
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    model: str | None = None
+    temperature: float = 0.7
+    max_tokens: int = 4096
+    skills: list[str] = field(default_factory=list)
+    mcp_servers: list[McpServerDefinition] = field(default_factory=list)
+
+
+@dataclass
 class RuntimePolicy:
     """Runtime execution policy."""
 
@@ -101,6 +116,7 @@ class RuntimeSessionContext:
     available_skills: list[SkillDefinition] = field(default_factory=list)
     available_tools: list[ToolDefinition] = field(default_factory=list)
     available_mcp_servers: list[McpServerDefinition] = field(default_factory=list)
+    available_sub_agents: list[SubAgentDefinition] = field(default_factory=list)
 
     # Execution policy
     runtime_policy: RuntimePolicy = field(default_factory=RuntimePolicy)

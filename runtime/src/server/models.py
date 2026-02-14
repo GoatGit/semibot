@@ -45,6 +45,20 @@ class McpServerInput(BaseModel):
     available_tools: list[McpToolInput] = Field(default_factory=list)
 
 
+class SubAgentInput(BaseModel):
+    """SubAgent configuration from the API layer."""
+
+    id: str
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    model: str | None = None
+    temperature: float = 0.7
+    max_tokens: int = 4096
+    skills: list[str] = Field(default_factory=list)
+    mcp_servers: list[McpServerInput] = Field(default_factory=list)
+
+
 class RuntimeInputState(BaseModel):
     """Input payload for POST /api/v1/execute/stream.
 
@@ -58,6 +72,7 @@ class RuntimeInputState(BaseModel):
     history_messages: list[HistoryMessage] | None = None
     agent_config: AgentConfigInput | None = None
     available_mcp_servers: list[McpServerInput] | None = None
+    available_sub_agents: list[SubAgentInput] | None = None
     metadata: dict | None = None
 
 
