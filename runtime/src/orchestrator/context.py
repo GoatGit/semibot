@@ -55,6 +55,7 @@ class McpServerDefinition:
     endpoint: str
     transport: str  # stdio, http, websocket
     is_connected: bool = False
+    auth_config: dict[str, Any] | None = None
     available_tools: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 

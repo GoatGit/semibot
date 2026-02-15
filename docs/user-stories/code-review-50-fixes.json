@@ -1,0 +1,59 @@
+{
+  "id": "US-002",
+  "title": "Code Review #50 发现的 4 个问题修复",
+  "description": "修复最近 2 次提交 code review 发现的 1 个 High 和 3 个 Medium 问题：SubAgent auth_config 透传、PORT 环境变量兼容、跨平台脚本兼容、N+1 查询优化。",
+  "actor": "开发者",
+  "preconditions": [
+    "代码已合并到 feat/x1 分支",
+    "后端服务可正常编译运行"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "McpServerDefinition 包含 auth_config 字段",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "routes.py 构建 sub_agents 时透传 auth_config 到 McpServerDefinition",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "delegator.py 重建 McpServerInput 时透传 auth_config",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "SERVER_PORT 采用 API_PORT ?? PORT ?? 3001 兼容读取",
+      "passes": "skipped",
+      "note": "无需修复，按用户决定保持原样"
+    },
+    {
+      "id": "AC-5",
+      "description": "apps/web/package.json dev 脚本跨平台兼容",
+      "passes": "skipped",
+      "note": "无需修复，按用户决定保持原样"
+    },
+    {
+      "id": "AC-6",
+      "description": "runtime/package.json dev 脚本跨平台兼容",
+      "passes": "skipped",
+      "note": "无需修复，按用户决定保持原样"
+    },
+    {
+      "id": "AC-7",
+      "description": "getCandidateSubAgents 中 Skill 查询改为批量并行",
+      "passes": true
+    },
+    {
+      "id": "AC-8",
+      "description": "getCandidateSubAgents 中 MCP 拉取改为并行",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["code-review", "auth_config", "port-compat", "cross-platform", "n+1-query"]
+}

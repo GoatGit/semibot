@@ -163,6 +163,7 @@ class SubAgentDelegator:
                         endpoint=srv.endpoint,
                         transport=srv.transport,
                         is_connected=False,
+                        auth_config=srv.auth_config,
                         available_tools=[
                             McpToolInput(
                                 name=t.get("name", ""),
