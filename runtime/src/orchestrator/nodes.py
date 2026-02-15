@@ -183,8 +183,10 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
     try:
         # Extract agent system_prompt for LLM persona injection
         agent_system_prompt = ""
+        agent_model = None
         if runtime_context and runtime_context.agent_config:
             agent_system_prompt = runtime_context.agent_config.system_prompt or ""
+            agent_model = runtime_context.agent_config.model
 
         # Extract sub-agent candidates for planner
         sub_agents_for_planner = []
@@ -201,6 +203,7 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             available_tools=available_skills,
             available_sub_agents=sub_agents_for_planner or None,
             agent_system_prompt=agent_system_prompt,
+            model=agent_model,
         )
 
         # Parse plan from response
@@ -702,15 +705,18 @@ async def reflect_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         try:
             # Extract agent system_prompt for LLM persona injection
             agent_system_prompt = ""
+            agent_model = None
             runtime_context = state.get("context")
             if runtime_context and runtime_context.agent_config:
                 agent_system_prompt = runtime_context.agent_config.system_prompt or ""
+                agent_model = runtime_context.agent_config.model
 
             reflection_response = await llm_provider.reflect(
                 messages=state["messages"],
                 plan=state["plan"],
                 results=state["tool_results"],
                 agent_system_prompt=agent_system_prompt,
+                model=agent_model,
             )
             reflection = parse_reflection_response(reflection_response)
         except Exception as e:
@@ -776,9 +782,11 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         try:
             # Extract agent system_prompt for LLM persona injection
             agent_system_prompt = ""
+            agent_model = None
             runtime_context = state.get("context")
             if runtime_context and runtime_context.agent_config:
                 agent_system_prompt = runtime_context.agent_config.system_prompt or ""
+                agent_model = runtime_context.agent_config.model
 
             # Use streaming to emit text chunks incrementally
             if event_emitter and hasattr(llm_provider, 'generate_response_stream'):
@@ -788,6 +796,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                     results=state["tool_results"],
                     reflection=state.get("reflection"),
                     agent_system_prompt=agent_system_prompt,
+                    model=agent_model,
                 ):
                     chunks.append(chunk)
                     await event_emitter.emit_text_chunk(chunk)
@@ -798,6 +807,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                     results=state["tool_results"],
                     reflection=state.get("reflection"),
                     agent_system_prompt=agent_system_prompt,
+                    model=agent_model,
                 )
                 if event_emitter:
                     await event_emitter.emit_text_chunk(response_content)

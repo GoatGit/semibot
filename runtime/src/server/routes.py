@@ -54,10 +54,7 @@ def _get_llm_provider(request: Request):
 async def _connect_single_mcp(
     mcp_client: McpClient, srv_input: McpServerInput
 ) -> bool:
-    """Connect to a single MCP server in an isolated task.
-
-    Running in a separate asyncio.Task prevents anyio cancel-scope leaks
-    from poisoning the caller's task when the MCP handshake fails.
+    """Connect to a single MCP server.
 
     Returns True on success, False on failure.
     """
@@ -98,21 +95,21 @@ async def _setup_mcp_client(
 ) -> McpClient | None:
     """Create McpClient and connect to all servers.
 
-    Each connection runs in its own asyncio.Task to isolate anyio cancel
-    scopes.  If all connections fail the client is still returned (with no
-    connected servers) so the graph can run without MCP tools.
+    Connections run directly in the caller's asyncio Task so that anyio
+    cancel-scopes entered during connect() are later exited in the same
+    task during disconnect()/close_all().  Individual connection failures
+    are caught and logged without aborting the remaining servers.
     """
     if not mcp_servers:
         return None
 
     mcp_client = McpClient()
     for srv_input in mcp_servers:
-        # Run each connection in a separate task to isolate cancel scopes
         try:
-            task = asyncio.create_task(
-                _connect_single_mcp(mcp_client, srv_input)
+            await asyncio.wait_for(
+                _connect_single_mcp(mcp_client, srv_input),
+                timeout=MCP_CONNECT_TIMEOUT,
             )
-            await asyncio.wait_for(task, timeout=MCP_CONNECT_TIMEOUT)
         except (asyncio.TimeoutError, asyncio.CancelledError) as e:
             logger.error(
                 f"MCP server {srv_input.name} connection timed out or cancelled: {e}"

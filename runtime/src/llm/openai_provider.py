@@ -60,6 +60,7 @@ class OpenAIProvider(LLMProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, str] | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """
@@ -83,8 +84,9 @@ class OpenAIProvider(LLMProvider):
         self._validate_messages(messages)
 
         # Build request parameters
+        effective_model = model or self.config.model
         params: dict[str, Any] = {
-            "model": self.config.model,
+            "model": effective_model,
             "messages": messages,
             "temperature": temperature or self.config.temperature,
             "max_tokens": max_tokens or self.config.max_tokens,
@@ -100,7 +102,7 @@ class OpenAIProvider(LLMProvider):
         # Add any additional kwargs
         params.update(kwargs)
 
-        logger.debug(f"OpenAI chat request: model={self.config.model}")
+        logger.debug(f"OpenAI chat request: model={effective_model}")
 
         try:
             response = await self.client.chat.completions.create(**params)
@@ -145,6 +147,7 @@ class OpenAIProvider(LLMProvider):
         tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """
@@ -167,7 +170,7 @@ class OpenAIProvider(LLMProvider):
         self._validate_messages(messages)
 
         params: dict[str, Any] = {
-            "model": self.config.model,
+            "model": model or self.config.model,
             "messages": messages,
             "temperature": temperature or self.config.temperature,
             "max_tokens": max_tokens or self.config.max_tokens,

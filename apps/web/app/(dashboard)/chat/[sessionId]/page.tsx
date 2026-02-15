@@ -141,6 +141,14 @@ export default function ChatSessionPage() {
     },
   })
 
+  // 思考过程数据是否存在（用于控制 ProcessCard 渲染，独立于 isSending）
+  const hasProcessData = !!(
+    agent2uiState.thinking ||
+    agent2uiState.plan ||
+    agent2uiState.toolCalls.length > 0 ||
+    agent2uiState.isThinking
+  )
+
   // 加载会话数据
   useEffect(() => {
     const loadSession = async () => {
@@ -327,6 +335,12 @@ export default function ChatSessionPage() {
     )
   }
 
+  // 最后一条 assistant 消息的索引（用于定位 ProcessCard）
+  const lastAssistantIndex = displayMessages.reduce(
+    (last, m, i) => (m.role === 'assistant' ? i : last),
+    -1
+  )
+
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
       {/* 消息列表 */}
@@ -346,27 +360,32 @@ export default function ChatSessionPage() {
             </div>
           )}
 
-          {displayMessages.map((message, index) => (
-            <div key={message.id}>
-              {/* 执行过程卡片：显示在流式 assistant 消息的上方 */}
-              {isSending && message.isStreaming && message.role === 'assistant' && (
-                <div className="mb-4">
-                  <ProcessCard
-                    isActive={isSending}
-                    thinking={agent2uiState.thinking}
-                    isThinking={agent2uiState.isThinking}
-                    plan={agent2uiState.plan}
-                    toolCalls={agent2uiState.toolCalls}
-                    className="max-w-3xl"
-                  />
-                </div>
-              )}
-              <MessageBubble message={message} />
-            </div>
-          ))}
+          {displayMessages.map((message, index) => {
+            // ProcessCard 显示在最后一条 assistant 消息上方
+            const isLastAssistant =
+              message.role === 'assistant' &&
+              index === lastAssistantIndex
+            return (
+              <div key={message.id}>
+                {hasProcessData && isLastAssistant && (
+                  <div className="mb-4">
+                    <ProcessCard
+                      isActive={isSending}
+                      thinking={agent2uiState.thinking}
+                      isThinking={agent2uiState.isThinking}
+                      plan={agent2uiState.plan}
+                      toolCalls={agent2uiState.toolCalls}
+                      className="max-w-3xl"
+                    />
+                  </div>
+                )}
+                <MessageBubble message={message} />
+              </div>
+            )
+          })}
 
-          {/* 执行过程卡片：尚无流式消息时显示在末尾 */}
-          {isSending && !displayMessages.some((m) => m.isStreaming) && (
+          {/* 执行过程卡片：尚无 assistant 消息时显示在末尾（早期思考阶段） */}
+          {hasProcessData && !displayMessages.some((m) => m.role === 'assistant') && (
             <div className="mt-2">
               <ProcessCard
                 isActive={isSending}

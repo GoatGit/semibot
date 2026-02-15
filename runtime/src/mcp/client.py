@@ -222,6 +222,11 @@ class McpClient:
         if exit_stack:
             try:
                 await exit_stack.aclose()
+            except RuntimeError as e:
+                # anyio cancel-scope mismatch when streamable_http_client's
+                # internal TaskGroup is torn down after asyncio cancellation.
+                # The connection is already dead at this point — safe to ignore.
+                logger.debug(f"Ignoring anyio cancel-scope error during disconnect for {server_id}: {e}")
             except Exception as e:
                 logger.error(f"Error closing exit stack for {server_id}: {e}")
 

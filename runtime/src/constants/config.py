@@ -146,7 +146,7 @@ EMBEDDING_RETRY_DELAY_MAX = 10
 # LLM Provider
 # =============================================================================
 
-LLM_MAX_RETRIES = 3
+LLM_MAX_RETRIES = 2
 """Maximum retries for LLM API calls."""
 
 LLM_RETRY_DELAY_BASE = 1

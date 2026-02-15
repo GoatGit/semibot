@@ -44,7 +44,7 @@ class LLMConfig:
     base_url: str | None = None
     temperature: float = 0.7
     max_tokens: int = 4096
-    timeout: int = 60
+    timeout: int = 30
     max_retries: int = 3
 
 
@@ -107,6 +107,7 @@ class LLMProvider(ABC):
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, str] | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """
@@ -132,6 +133,7 @@ class LLMProvider(ABC):
         tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """
@@ -156,6 +158,7 @@ class LLMProvider(ABC):
         available_tools: list[dict[str, Any]] | None = None,
         available_sub_agents: list[dict[str, Any]] | None = None,
         agent_system_prompt: str = "",
+        model: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate an execution plan from user messages.
@@ -266,6 +269,7 @@ DELEGATION RULES:
         response = await self.chat(
             messages=all_messages,
             temperature=0.3,
+            model=model,
         )
 
         # Parse JSON response — extract JSON from content which may contain
@@ -301,6 +305,7 @@ DELEGATION RULES:
         results: list[Any] | None = None,
         reflection: Any = None,
         agent_system_prompt: str = "",
+        model: str | None = None,
     ) -> str:
         """
         Generate a final response to the user.
@@ -344,7 +349,7 @@ Be concise but informative. If there were errors, explain what happened and sugg
 
         all_messages = [system_message] + messages
 
-        response = await self.chat(messages=all_messages, temperature=0.7)
+        response = await self.chat(messages=all_messages, temperature=0.7, model=model)
         return response.content
 
     async def generate_response_stream(
@@ -353,6 +358,7 @@ Be concise but informative. If there were errors, explain what happened and sugg
         results: list[Any] | None = None,
         reflection: Any = None,
         agent_system_prompt: str = "",
+        model: str | None = None,
     ) -> AsyncIterator[str]:
         """
         Generate a final response to the user, streaming token by token.
@@ -396,7 +402,7 @@ Be concise but informative. If there were errors, explain what happened and sugg
 
         all_messages = [system_message] + messages
 
-        async for chunk in self.chat_stream(messages=all_messages, temperature=0.7):
+        async for chunk in self.chat_stream(messages=all_messages, temperature=0.7, model=model):
             yield chunk
 
     async def reflect(
@@ -405,6 +411,7 @@ Be concise but informative. If there were errors, explain what happened and sugg
         plan: Any | None = None,
         results: list[Any] | None = None,
         agent_system_prompt: str = "",
+        model: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate a reflection on the execution.
@@ -435,6 +442,7 @@ You MUST respond with ONLY a JSON object (no markdown fences, no extra text) wit
         response = await self.chat(
             messages=[{"role": "system", "content": prompt}] + messages,
             temperature=0.5,
+            model=model,
         )
 
         import json
