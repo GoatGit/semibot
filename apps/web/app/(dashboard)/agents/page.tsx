@@ -341,6 +341,7 @@ interface AgentCardProps {
 
 function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: AgentCardProps) {
   const isActive = agent.isActive
+  const isSystem = agent.isSystem === true
 
   return (
     <Card interactive className="relative" data-testid="agent-card">
@@ -353,12 +354,19 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
                 <Bot size={20} className="text-primary-400" />
               </div>
               <div>
-                <h3
-                  className="text-sm font-semibold text-text-primary"
-                  data-testid="agent-name"
-                >
-                  {agent.name}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3
+                    className="text-sm font-semibold text-text-primary"
+                    data-testid="agent-name"
+                  >
+                    {agent.name}
+                  </h3>
+                  {isSystem && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary-500/20 text-primary-400 rounded">
+                      系统
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className={clsx('w-1.5 h-1.5 rounded-full', isActive ? 'bg-success-500' : 'bg-neutral-500')} />
                   <span
@@ -369,60 +377,62 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                data-testid="toggle-agent-btn"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onToggleActive()
-                }}
-                disabled={isToggling}
-                className={clsx(
-                  'p-1.5 rounded-md',
-                  'transition-colors duration-fast',
-                  isToggling
-                    ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-interactive-hover',
-                  isActive ? 'text-success-500' : 'text-text-tertiary hover:text-text-primary'
-                )}
-              >
-                <Power size={16} />
-              </button>
-              <button
-                type="button"
-                data-testid="edit-agent-btn"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onEdit()
-                }}
-                className={clsx(
-                  'p-1.5 rounded-md',
-                  'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
-                  'transition-colors duration-fast'
-                )}
-              >
-                <Settings size={16} />
-              </button>
-              <button
-                type="button"
-                data-testid="delete-agent-btn"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onDelete()
-                }}
-                className={clsx(
-                  'p-1.5 rounded-md',
-                  'text-text-tertiary hover:text-error-500 hover:bg-error-500/10',
-                  'transition-colors duration-fast'
-                )}
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
+            {!isSystem && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  data-testid="toggle-agent-btn"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onToggleActive()
+                  }}
+                  disabled={isToggling}
+                  className={clsx(
+                    'p-1.5 rounded-md',
+                    'transition-colors duration-fast',
+                    isToggling
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-interactive-hover',
+                    isActive ? 'text-success-500' : 'text-text-tertiary hover:text-text-primary'
+                  )}
+                >
+                  <Power size={16} />
+                </button>
+                <button
+                  type="button"
+                  data-testid="edit-agent-btn"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onEdit()
+                  }}
+                  className={clsx(
+                    'p-1.5 rounded-md',
+                    'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
+                    'transition-colors duration-fast'
+                  )}
+                >
+                  <Settings size={16} />
+                </button>
+                <button
+                  type="button"
+                  data-testid="delete-agent-btn"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onDelete()
+                  }}
+                  className={clsx(
+                    'p-1.5 rounded-md',
+                    'text-text-tertiary hover:text-error-500 hover:bg-error-500/10',
+                    'transition-colors duration-fast'
+                  )}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* 描述 */}

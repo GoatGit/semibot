@@ -14,7 +14,7 @@ import { logPaginationLimit } from '../lib/logger'
 
 export interface AgentRow {
   id: string
-  org_id: string
+  org_id: string | null
   name: string
   description: string | null
   system_prompt: string
@@ -24,6 +24,7 @@ export interface AgentRow {
   version: number
   is_active: boolean
   is_public: boolean
+  is_system: boolean
   created_at: string
   updated_at: string
 }
@@ -114,11 +115,26 @@ export async function findById(id: string): Promise<AgentRow | null> {
 }
 
 /**
- * 根据 ID 和组织 ID 获取 Agent
+ * 获取系统默认 Agent
+ */
+export async function findSystemDefault(): Promise<AgentRow | null> {
+  const result = await sql`
+    SELECT * FROM agents WHERE is_system = true AND deleted_at IS NULL LIMIT 1
+  `
+
+  if (result.length === 0) {
+    return null
+  }
+
+  return result[0] as unknown as AgentRow
+}
+
+/**
+ * 根据 ID 和组织 ID 获取 Agent（系统 Agent 对所有 org 可见）
  */
 export async function findByIdAndOrg(id: string, orgId: string): Promise<AgentRow | null> {
   const result = await sql`
-    SELECT * FROM agents WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+    SELECT * FROM agents WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -147,49 +163,49 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
     const searchPattern = `%${search}%`
     countResult = await sql`
       SELECT COUNT(*) as total FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
+      WHERE (org_id = ${orgId} OR is_system = true) AND is_active = ${isActive} AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
     `
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
+      WHERE (org_id = ${orgId} OR is_system = true) AND is_active = ${isActive} AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
-      ORDER BY updated_at DESC
+      ORDER BY is_system DESC, updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
     `
   } else if (search) {
     const searchPattern = `%${search}%`
     countResult = await sql`
       SELECT COUNT(*) as total FROM agents
-      WHERE org_id = ${orgId} AND deleted_at IS NULL
+      WHERE (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
     `
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId} AND deleted_at IS NULL
+      WHERE (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
       AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})
-      ORDER BY updated_at DESC
+      ORDER BY is_system DESC, updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
     `
   } else if (isActive !== undefined) {
     countResult = await sql`
       SELECT COUNT(*) as total FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
+      WHERE (org_id = ${orgId} OR is_system = true) AND is_active = ${isActive} AND deleted_at IS NULL
     `
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId} AND is_active = ${isActive} AND deleted_at IS NULL
-      ORDER BY updated_at DESC
+      WHERE (org_id = ${orgId} OR is_system = true) AND is_active = ${isActive} AND deleted_at IS NULL
+      ORDER BY is_system DESC, updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
     `
   } else {
     countResult = await sql`
-      SELECT COUNT(*) as total FROM agents WHERE org_id = ${orgId} AND deleted_at IS NULL
+      SELECT COUNT(*) as total FROM agents WHERE (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
     `
     dataResult = await sql`
       SELECT * FROM agents
-      WHERE org_id = ${orgId} AND deleted_at IS NULL
-      ORDER BY updated_at DESC
+      WHERE (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
+      ORDER BY is_system DESC, updated_at DESC
       LIMIT ${actualLimit} OFFSET ${offset}
     `
   }
@@ -238,6 +254,9 @@ export async function update(
   const agent = await findByIdAndOrg(id, orgId)
   if (!agent) return null
 
+  // 系统 Agent 不可修改
+  if (agent.is_system) return null
+
   // 如果提供了期望版本，检查版本冲突
   if (expectedVersion !== undefined && agent.version !== expectedVersion) {
     return null // 版本冲突
@@ -277,7 +296,7 @@ export async function findOtherActiveByOrg(
 ): Promise<AgentRow[]> {
   const result = await sql`
     SELECT * FROM agents
-    WHERE org_id = ${orgId}
+    WHERE (org_id = ${orgId} OR is_system = true)
       AND id != ${excludeAgentId}
       AND is_active = true
       AND deleted_at IS NULL
@@ -298,7 +317,7 @@ export async function softDelete(id: string, orgId: string, deletedBy?: string):
         deleted_by = ${deletedBy ?? null},
         is_active = false,
         updated_at = NOW()
-    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL AND is_system = false
     RETURNING id
   `
 

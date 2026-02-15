@@ -14,7 +14,7 @@ import { logPaginationLimit } from '../lib/logger'
 
 export interface McpServerRow {
   id: string
-  org_id: string
+  org_id: string | null
   name: string
   description: string | null
   endpoint: string
@@ -26,6 +26,7 @@ export interface McpServerRow {
   status: string
   last_connected_at: string | null
   is_active: boolean
+  is_system: boolean
   created_by: string | null
   created_at: string
   updated_at: string
@@ -123,11 +124,11 @@ export async function findById(id: string): Promise<McpServerRow | null> {
 }
 
 /**
- * 根据 ID 和组织 ID 获取 MCP Server
+ * 根据 ID 和组织 ID 获取 MCP Server（系统 MCP 对所有 org 可见）
  */
 export async function findByIdAndOrg(id: string, orgId: string): Promise<McpServerRow | null> {
   const result = await sql`
-    SELECT * FROM mcp_servers WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+    SELECT * FROM mcp_servers WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
   `
 
   if (result.length === 0) {
@@ -135,6 +136,19 @@ export async function findByIdAndOrg(id: string, orgId: string): Promise<McpServ
   }
 
   return result[0] as unknown as McpServerRow
+}
+
+/**
+ * 获取所有系统级 MCP Servers
+ */
+export async function findSystemMcpServers(): Promise<McpServerRow[]> {
+  const result = await sql`
+    SELECT * FROM mcp_servers
+    WHERE is_system = true AND is_active = true AND deleted_at IS NULL
+    ORDER BY name
+  `
+
+  return result as unknown as McpServerRow[]
 }
 
 /**
@@ -149,7 +163,7 @@ export async function findAll(params: ListMcpServersParams): Promise<PaginatedRe
   logPaginationLimit('McpRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
   // 构建 WHERE 条件
-  let whereClause = sql`org_id = ${orgId} AND is_active = true AND deleted_at IS NULL`
+  let whereClause = sql`(org_id = ${orgId} OR is_system = true) AND is_active = true AND deleted_at IS NULL`
 
   if (search) {
     const searchPattern = `%${search}%`

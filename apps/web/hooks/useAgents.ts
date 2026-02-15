@@ -23,6 +23,7 @@ export interface Agent {
   version: number
   isActive: boolean
   isPublic: boolean
+  isSystem?: boolean
   createdAt: string
   updatedAt: string
 }

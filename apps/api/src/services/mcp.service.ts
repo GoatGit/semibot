@@ -25,7 +25,7 @@ import { mcpLogger } from '../lib/logger'
 
 export interface McpServer {
   id: string
-  orgId: string
+  orgId: string | null
   name: string
   description?: string
   endpoint: string
@@ -821,4 +821,38 @@ function parseJsonField(value: unknown): any {
     }
   }
   return null
+}
+
+/**
+ * 获取系统预装 MCP Servers（Runtime 格式）
+ * 用于合并到所有 Agent 的能力列表中
+ */
+export async function getSystemMcpServersForRuntime(): Promise<Array<{
+  id: string
+  name: string
+  endpoint: string
+  transport: string
+  is_connected: boolean
+  auth_config: McpAuthConfig | null
+  available_tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
+}>> {
+  const servers = await mcpRepository.findSystemMcpServers()
+
+  return servers.map((server) => {
+    const serverTools: McpTool[] = parseJsonField(server.tools) || []
+
+    return {
+      id: server.id,
+      name: server.name,
+      endpoint: server.endpoint,
+      transport: server.transport,
+      is_connected: true,
+      auth_config: parseJsonField(server.auth_config) || null,
+      available_tools: serverTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description || '',
+        parameters: tool.inputSchema || {},
+      })),
+    }
+  })
 }

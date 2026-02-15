@@ -69,6 +69,8 @@ export interface Agent {
   isActive: boolean;
   /** Whether agent is publicly accessible */
   isPublic: boolean;
+  /** Whether this is a system-level agent */
+  isSystem?: boolean;
   /** Creation timestamp */
   createdAt: string;
   /** Last update timestamp */

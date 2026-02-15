@@ -9,6 +9,7 @@ import {
   AGENT_NOT_FOUND,
   AGENT_INACTIVE,
   AGENT_LIMIT_EXCEEDED,
+  AGENT_SYSTEM_READONLY,
   LLM_UNAVAILABLE,
 } from '../constants/errorCodes'
 import { MAX_AGENTS_PER_ORG } from '../constants/config'
@@ -28,7 +29,7 @@ const agentLogger = createLogger('agent')
 
 export interface Agent {
   id: string
-  orgId: string
+  orgId: string | null
   name: string
   description?: string
   systemPrompt: string
@@ -38,6 +39,7 @@ export interface Agent {
   version: number
   isActive: boolean
   isPublic: boolean
+  isSystem: boolean
   createdAt: string
   updatedAt: string
 }
@@ -133,6 +135,7 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
     version: row.version,
     isActive: row.is_active,
     isPublic: row.is_public,
+    isSystem: row.is_system,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -209,6 +212,19 @@ export async function getAgent(orgId: string, agentId: string): Promise<Agent> {
 }
 
 /**
+ * 获取系统默认 Agent
+ */
+export async function getSystemDefaultAgent(): Promise<Agent> {
+  const row = await agentRepository.findSystemDefault()
+
+  if (!row) {
+    throw createError(AGENT_NOT_FOUND, '系统默认 Agent 未配置')
+  }
+
+  return rowToAgent(row)
+}
+
+/**
  * 获取 Agent (允许公开访问)
  */
 export async function getAgentPublic(agentId: string): Promise<Agent> {
@@ -257,6 +273,11 @@ export async function updateAgent(
   // 先获取现有 Agent
   const existing = await getAgent(orgId, agentId)
 
+  // 系统 Agent 不可修改
+  if (existing.isSystem) {
+    throw createError(AGENT_SYSTEM_READONLY)
+  }
+
   // 合并配置
   const config = input.config
     ? { ...existing.config, ...input.config }
@@ -284,6 +305,12 @@ export async function updateAgent(
  * 删除 Agent (软删除)
  */
 export async function deleteAgent(orgId: string, agentId: string): Promise<void> {
+  // 系统 Agent 不可删除
+  const agent = await getAgent(orgId, agentId)
+  if (agent.isSystem) {
+    throw createError(AGENT_SYSTEM_READONLY)
+  }
+
   const deleted = await agentRepository.softDelete(agentId, orgId)
 
   if (!deleted) {

@@ -401,15 +401,28 @@ async function handleChatWithRuntime(
       }
     }
 
-    // 加载 Agent 关联的 MCP Servers
+    // 加载 Agent 关联的 MCP Servers + 系统预装 MCP Servers
     try {
-      const mcpServers = await mcpService.getMcpServersForRuntime(agent.id)
-      if (mcpServers.length > 0) {
-        runtimeInput.available_mcp_servers = mcpServers
+      const [agentMcpServers, systemMcpServers] = await Promise.all([
+        mcpService.getMcpServersForRuntime(agent.id),
+        mcpService.getSystemMcpServersForRuntime(),
+      ])
+
+      // 合并并去重（Agent 自身配置优先于系统预装）
+      const agentServerIds = new Set(agentMcpServers.map((s) => s.id))
+      const mergedServers = [
+        ...agentMcpServers,
+        ...systemMcpServers.filter((s) => !agentServerIds.has(s.id)),
+      ]
+
+      if (mergedServers.length > 0) {
+        runtimeInput.available_mcp_servers = mergedServers
         chatLogger.info('已加载 MCP Servers', {
           agentId: agent.id,
-          serverCount: mcpServers.length,
-          toolCount: mcpServers.reduce((sum, s) => sum + s.available_tools.length, 0),
+          agentServerCount: agentMcpServers.length,
+          systemServerCount: systemMcpServers.length,
+          mergedCount: mergedServers.length,
+          toolCount: mergedServers.reduce((sum, s) => sum + s.available_tools.length, 0),
         })
       }
     } catch (err) {

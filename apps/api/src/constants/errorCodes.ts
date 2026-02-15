@@ -56,6 +56,7 @@ export const RESOURCE_DELETED = 'RESOURCE_DELETED'
 export const AGENT_NOT_FOUND = 'AGENT_NOT_FOUND'
 export const AGENT_INACTIVE = 'AGENT_INACTIVE'
 export const AGENT_LIMIT_EXCEEDED = 'AGENT_LIMIT_EXCEEDED'
+export const AGENT_SYSTEM_READONLY = 'AGENT_SYSTEM_READONLY'
 
 // Skill 相关
 export const SKILL_NOT_FOUND = 'SKILL_NOT_FOUND'
@@ -163,6 +164,7 @@ export const ERROR_HTTP_STATUS: Record<string, number> = {
   [AGENT_NOT_FOUND]: 404,
   [AGENT_INACTIVE]: 400,
   [AGENT_LIMIT_EXCEEDED]: 400,
+  [AGENT_SYSTEM_READONLY]: 403,
   [SKILL_NOT_FOUND]: 404,
   [SKILL_LIMIT_EXCEEDED]: 400,
   [SKILL_BUILTIN_READONLY]: 400,
@@ -249,6 +251,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [AGENT_NOT_FOUND]: 'Agent 不存在',
   [AGENT_INACTIVE]: 'Agent 未启用',
   [AGENT_LIMIT_EXCEEDED]: 'Agent 数量已达上限',
+  [AGENT_SYSTEM_READONLY]: '系统 Agent 不可修改或删除',
   [SKILL_NOT_FOUND]: 'Skill 不存在',
   [SKILL_LIMIT_EXCEEDED]: 'Skill 数量已达上限',
   [SKILL_BUILTIN_READONLY]: '内置 Skill 不可修改',

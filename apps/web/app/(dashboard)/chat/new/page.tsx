@@ -16,6 +16,7 @@ interface AgentOption {
   icon: React.ReactNode
   color: string
   isFallback?: boolean
+  isSystem?: boolean
 }
 
 // 默认 Agent 模板（当无法加载真实 Agent 列表时使用）
@@ -119,6 +120,7 @@ export default function NewChatPage() {
             icon: getAgentIcon(agent.name),
             color: getAgentColor(index),
             isFallback: false,
+            isSystem: agent.isSystem === true,
           }))
         if (agentOptions.length > 0) {
           setAgents(agentOptions)
@@ -267,7 +269,14 @@ export default function NewChatPage() {
                       )}
                     >
                       <div className={clsx('mb-3', colors.text)}>{agent.icon}</div>
-                      <h3 className="text-sm font-medium text-text-primary">{agent.name}</h3>
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-sm font-medium text-text-primary">{agent.name}</h3>
+                        {agent.isSystem && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary-500/20 text-primary-400 rounded">
+                            系统
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-text-secondary mt-1 line-clamp-2">
                         {agent.description}
                       </p>
