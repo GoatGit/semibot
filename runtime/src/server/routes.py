@@ -163,6 +163,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
                         endpoint=srv.endpoint,
                         transport=srv.transport,
                         is_connected=srv.is_connected,
+                        auth_config=srv.auth_config,
                         available_tools=[
                             {"name": t.name, "description": t.description, "parameters": t.parameters}
                             for t in srv.available_tools
@@ -206,6 +207,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
                                 endpoint=srv.endpoint,
                                 transport=srv.transport,
                                 is_connected=False,
+                                auth_config=srv.auth_config,
                                 available_tools=[
                                     {"name": t.name, "description": t.description, "parameters": t.parameters}
                                     for t in srv.available_tools

@@ -339,23 +339,24 @@ export async function getCandidateSubAgents(
   currentAgentId: string
 ): Promise<SubAgentConfigForRuntime[]> {
   const candidates = await agentRepository.findOtherActiveByOrg(orgId, currentAgentId)
-  const results: SubAgentConfigForRuntime[] = []
 
-  for (const row of candidates) {
+  const results = await Promise.all(candidates.map(async (row) => {
     const a = rowToAgent(row)
 
     // 加载候选 Agent 自己的 Skill 索引（注入 system_prompt）
     let systemPrompt = a.systemPrompt || `你是 ${a.name}，一个有帮助的 AI 助手。`
     if (a.skills && a.skills.length > 0) {
       try {
-        const skillPairs: Array<{ definition: skillDefinitionRepo.SkillDefinition; package: skillPackageRepo.SkillPackage }> = []
-        for (const skillDefId of a.skills) {
+        const pairResults = await Promise.all(a.skills.map(async (skillDefId) => {
           const def = await skillDefinitionRepo.findById(skillDefId)
-          if (!def || !def.isActive) continue
+          if (!def || !def.isActive) return null
           const pkg = await skillPackageRepo.findByDefinition(skillDefId)
-          if (!pkg) continue
-          skillPairs.push({ definition: def, package: pkg })
-        }
+          if (!pkg) return null
+          return { definition: def, package: pkg }
+        }))
+        const skillPairs = pairResults.filter(
+          (p): p is { definition: skillDefinitionRepo.SkillDefinition; package: skillPackageRepo.SkillPackage } => p !== null
+        )
         if (skillPairs.length > 0) {
           const skillIndexXml = await buildSkillIndex(skillPairs)
           if (skillIndexXml) {
@@ -379,7 +380,7 @@ export async function getCandidateSubAgents(
       })
     }
 
-    results.push({
+    return {
       id: a.id,
       name: a.name,
       description: a.description || '',
@@ -389,8 +390,8 @@ export async function getCandidateSubAgents(
       max_tokens: a.config?.maxTokens ?? 4096,
       skills: a.skills || [],
       mcp_servers: mcpServers,
-    })
-  }
+    }
+  }))
 
   return results
 }
