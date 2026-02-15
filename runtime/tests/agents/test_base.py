@@ -11,6 +11,7 @@ class TestAgentConfig:
     def test_create_config(self):
         """Test creating an agent config."""
         config = AgentConfig(
+            id="agent_test_001",
             name="test_agent",
             description="A test agent",
             system_prompt="You are helpful.",
@@ -22,12 +23,12 @@ class TestAgentConfig:
 
     def test_config_default_values(self):
         """Test default values."""
-        config = AgentConfig(name="simple")
+        config = AgentConfig(id="agent_simple", name="simple")
 
         assert config.description == ""
         assert config.system_prompt == ""
         assert config.skills == []
-        assert config.max_iterations == 10
+        assert config.temperature == 0.7
 
 
 class TestBaseAgent:
@@ -43,7 +44,7 @@ class TestBaseAgent:
         agent = TestAgent(config=sample_agent_config)
 
         assert agent.name == "test_agent"
-        assert agent.description == "A test agent"
+        assert agent.config.description == "A test agent"
 
     def test_agent_to_dict(self, sample_agent_config):
         """Test agent serialization."""
@@ -61,6 +62,7 @@ class TestBaseAgent:
     def test_has_skill(self, sample_agent_config):
         """Test skill checking."""
         config = AgentConfig(
+            id="agent_skilled",
             name="skilled_agent",
             skills=["search", "calculate"],
         )
@@ -77,6 +79,7 @@ class TestBaseAgent:
     def test_get_available_skills(self, sample_agent_config):
         """Test getting available skills."""
         config = AgentConfig(
+            id="agent_skilled",
             name="skilled_agent",
             skills=["search", "calculate"],
         )

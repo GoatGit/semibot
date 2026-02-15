@@ -11,6 +11,7 @@ from src.agents.base import AgentConfig
 def sample_agent_config():
     """Sample agent configuration."""
     return AgentConfig(
+        id="agent_test_001",
         name="test_agent",
         description="A test agent",
         system_prompt="You are a test agent.",
