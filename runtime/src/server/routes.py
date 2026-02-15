@@ -30,7 +30,7 @@ from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
 from src.server.event_emitter import EventEmitter
-from src.server.models import HealthResponse, McpServerInput, RuntimeInputState
+from src.server.models import HealthResponse, McpServerInput, MemoryHealthStatus, RuntimeInputState
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -49,6 +49,11 @@ def _get_skill_registry(request: Request):
 def _get_llm_provider(request: Request):
     """Retrieve the LLM provider stored in app state during lifespan."""
     return getattr(request.app.state, "llm_provider", None)
+
+
+def _get_memory_system(request: Request):
+    """Retrieve the MemorySystem stored in app state during lifespan."""
+    return getattr(request.app.state, "memory_system", None)
 
 
 async def _connect_single_mcp(
@@ -123,9 +128,27 @@ async def _setup_mcp_client(
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
-    """Health check endpoint."""
-    return HealthResponse(status="healthy")
+async def health_check(request: Request) -> HealthResponse:
+    """Health check endpoint with memory status."""
+    memory_system = _get_memory_system(request)
+    memory_status = None
+
+    if memory_system:
+        st_ok = None
+        lt_ok = None
+        if memory_system.short_term:
+            try:
+                st_ok = await memory_system.short_term.health_check()
+            except Exception:
+                st_ok = False
+        if memory_system.long_term:
+            try:
+                lt_ok = await memory_system.long_term.health_check()
+            except Exception:
+                lt_ok = False
+        memory_status = MemoryHealthStatus(short_term=st_ok, long_term=lt_ok)
+
+    return HealthResponse(status="healthy", memory=memory_status)
 
 
 @router.post("/api/v1/execute/stream")
@@ -134,6 +157,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
     emitter = EventEmitter()
     skill_registry = _get_skill_registry(request)
     llm_provider = _get_llm_provider(request)
+    memory_system = _get_memory_system(request)
 
     async def run_graph() -> None:
         """Background task that drives the LangGraph execution."""
@@ -231,6 +255,8 @@ async def execute_stream(body: RuntimeInputState, request: Request):
                 context["llm_provider"] = llm_provider
             if skill_registry:
                 context["skill_registry"] = skill_registry
+            if memory_system:
+                context["memory_system"] = memory_system
 
             # Setup MCP client — connections run in isolated tasks to prevent
             # anyio cancel-scope leaks from poisoning this task.

@@ -50,6 +50,95 @@ def _create_llm_provider():
     return provider
 
 
+async def _create_memory_system():
+    """Create MemorySystem with graceful degradation.
+
+    Returns None if Redis or PostgreSQL is unavailable so the runtime
+    can still serve requests without memory capabilities.
+    """
+    from src.memory import (
+        EmbeddingService,
+        LongTermMemory,
+        MemorySystem,
+        OpenAIEmbeddingProvider,
+        ShortTermMemory,
+    )
+
+    redis_url = os.getenv("REDIS_URL")
+    database_url = os.getenv("DATABASE_URL")
+    embedding_api_key = os.getenv("OPENAI_API_KEY") or os.getenv("CUSTOM_LLM_API_KEY")
+    embedding_base_url = os.getenv("OPENAI_API_BASE_URL") or os.getenv("CUSTOM_LLM_API_BASE_URL")
+
+    if not redis_url and not database_url:
+        logger.info("Memory system disabled: REDIS_URL and DATABASE_URL not configured")
+        return None
+
+    # --- Short-term memory (Redis) ---
+    short_term = None
+    if redis_url:
+        try:
+            short_term = ShortTermMemory(redis_url=redis_url)
+            await short_term.health_check()
+            logger.info("Short-term memory (Redis) initialized")
+        except Exception as e:
+            logger.warning("Short-term memory unavailable, continuing without it: %s", e)
+            short_term = None
+
+    # --- Embedding service (required for long-term memory) ---
+    embedding_service = None
+    if embedding_api_key:
+        kwargs: dict = {"api_key": embedding_api_key}
+        if embedding_base_url:
+            base = embedding_base_url.rstrip("/")
+            if not base.endswith("/v1"):
+                base += "/v1"
+            kwargs["base_url"] = base
+        embedding_service = EmbeddingService(
+            provider=OpenAIEmbeddingProvider(**kwargs),
+        )
+
+    # --- Long-term memory (PostgreSQL + pgvector) ---
+    long_term = None
+    if database_url and embedding_service:
+        try:
+            long_term = LongTermMemory(
+                database_url=database_url,
+                embedding_service=embedding_service,
+            )
+            await long_term.health_check()
+            logger.info("Long-term memory (pgvector) initialized")
+        except Exception as e:
+            logger.warning("Long-term memory unavailable, continuing without it: %s", e)
+            long_term = None
+    elif database_url and not embedding_service:
+        logger.info("Long-term memory disabled: no embedding API key configured")
+
+    if not short_term and not long_term:
+        logger.info("Memory system disabled: no backends available")
+        return None
+
+    memory = MemorySystem(short_term=short_term, long_term=long_term)
+    logger.info(
+        "Memory system initialized",
+        extra={"short_term": short_term is not None, "long_term": long_term is not None},
+    )
+    return memory
+
+
+async def _shutdown_memory_system(memory_system) -> None:
+    """Gracefully close memory system connections."""
+    if memory_system is None:
+        return
+    try:
+        if memory_system.short_term:
+            await memory_system.short_term.close()
+        if memory_system.long_term:
+            await memory_system.long_term.close()
+        logger.info("Memory system connections closed")
+    except Exception as e:
+        logger.warning("Error closing memory system: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown hooks."""
@@ -74,12 +163,16 @@ async def lifespan(app: FastAPI):
     app.state.file_manager = file_manager
     set_file_manager(file_manager)
 
+    # Initialize Memory System (graceful degradation: None if connections fail)
+    app.state.memory_system = await _create_memory_system()
+
     logger.info("Runtime server ready")
     yield
 
     # --- Shutdown ---
     logger.info("Runtime server shutting down")
     file_manager.stop_cleanup_loop()
+    await _shutdown_memory_system(app.state.memory_system)
 
 
 def create_app() -> FastAPI:

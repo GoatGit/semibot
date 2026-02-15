@@ -76,10 +76,18 @@ class RuntimeInputState(BaseModel):
     metadata: dict | None = None
 
 
+class MemoryHealthStatus(BaseModel):
+    """Memory subsystem health status."""
+
+    short_term: bool | None = None
+    long_term: bool | None = None
+
+
 class HealthResponse(BaseModel):
     """Response for GET /health."""
 
     status: str = "healthy"
+    memory: MemoryHealthStatus | None = None
 
 
 class RuntimeSSEEvent(BaseModel):
