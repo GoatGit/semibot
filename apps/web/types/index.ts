@@ -46,6 +46,8 @@ export type {
   ProgressData,
   ToolCallData,
   ToolResultData,
+  McpCallData,
+  McpResultData,
   ErrorData,
   ThinkingData,
   ReportData,

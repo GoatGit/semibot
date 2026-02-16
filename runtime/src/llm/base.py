@@ -192,6 +192,7 @@ IMPORTANT RULES:
 4. If the user asks to generate a report, analysis, or summary about a topic, you MUST FIRST search for relevant up-to-date information using available search/MCP tools, THEN generate the report based on the search results. Never generate reports purely from your own knowledge — always search first.
 5. Respond in the same language as the user's request. If the user writes in Chinese, your plan titles and the generated content should be in Chinese.
 6. For PDF generation with Chinese content, you MUST use the CJK font: pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc', uni=True). Do NOT use Helvetica/Times/Courier for Chinese text.
+7. DEPENDENCIES & ORDERING: Think about data flow between steps. A step that consumes output from earlier steps MUST come after them and MUST have "parallel": false. Only steps with no data dependencies on each other may run in parallel. Order steps so that data producers always precede data consumers.
 
 Available tools:
 {tools_text or "No tools available."}
@@ -274,30 +275,47 @@ DELEGATION RULES:
 
         # Parse JSON response — extract JSON from content which may contain
         # markdown fences or surrounding text from thinking models.
+        # We also capture the non-JSON text as "_thinking" so the caller
+        # can emit it as the LLM's reasoning process.
         import json
         import re
 
         text = response.content.strip()
+
+        def _extract_thinking(full_text: str, json_span: tuple[int, int]) -> str:
+            """Extract non-JSON text as thinking content."""
+            before = full_text[:json_span[0]].strip()
+            after = full_text[json_span[1]:].strip()
+            parts = [p for p in (before, after) if p]
+            return "\n\n".join(parts)
+
         # Try direct parse first
         try:
-            return json.loads(text)
+            result = json.loads(text)
+            # Entire text is JSON, no thinking content
+            result["_thinking"] = ""
+            return result
         except json.JSONDecodeError:
             pass
         # Try extracting from markdown code fence
         m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if m:
             try:
-                return json.loads(m.group(1))
+                result = json.loads(m.group(1))
+                result["_thinking"] = _extract_thinking(text, m.span())
+                return result
             except json.JSONDecodeError:
                 pass
         # Try finding first { ... } block
         m = re.search(r"\{.*\}", text, re.DOTALL)
         if m:
             try:
-                return json.loads(m.group(0))
+                result = json.loads(m.group(0))
+                result["_thinking"] = _extract_thinking(text, m.span())
+                return result
             except json.JSONDecodeError:
                 pass
-        return {"goal": "", "steps": [], "error": "Failed to parse plan"}
+        return {"goal": "", "steps": [], "error": "Failed to parse plan", "_thinking": ""}
 
     async def generate_response(
         self,

@@ -333,7 +333,14 @@ export default function AgentDetailPage() {
                       className="rounded border-border-default"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-text-primary truncate">{def.name}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium text-text-primary truncate">{def.name}</span>
+                        {def.isPublic && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500 shrink-0">
+                            内置
+                          </span>
+                        )}
+                      </div>
                       {def.description && (
                         <div className="text-xs text-text-tertiary truncate">{def.description}</div>
                       )}
@@ -383,7 +390,14 @@ export default function AgentDetailPage() {
                       className="rounded border-border-default"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-text-primary truncate">{server.name}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium text-text-primary truncate">{server.name}</span>
+                        {server.isSystem && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500 shrink-0">
+                            系统
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-text-tertiary truncate">
                         {server.transport} · {server.endpoint}
                       </div>

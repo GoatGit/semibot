@@ -25,6 +25,7 @@ export interface McpServer {
   status: 'disconnected' | 'connecting' | 'connected' | 'error'
   lastConnectedAt?: string
   isActive: boolean
+  isSystem?: boolean
   createdBy?: string
   createdAt: string
   updatedAt: string

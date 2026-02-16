@@ -32,7 +32,7 @@ export const SSE_HEARTBEAT_TIMEOUT_MS = 45000
 // ═══════════════════════════════════════════════════════════════
 
 /** 每分钟请求限制 (用户级) */
-export const RATE_LIMIT_PER_MINUTE_USER = 300
+export const RATE_LIMIT_PER_MINUTE_USER = 600
 
 /** 每分钟请求限制 (组织级) */
 export const RATE_LIMIT_PER_MINUTE_ORG = 3000

@@ -1,0 +1,65 @@
+{
+  "stories": [
+    {
+      "id": "CHAT-001",
+      "title": "MCP 搜索工具在 runtime 模式下正常连接和调用",
+      "description": "修复 streamable_http_client headers 参数问题后，tavily-search MCP 工具应能正常连接并被 LLM 调用",
+      "acceptance_criteria": [
+        {
+          "id": "CHAT-001-AC1",
+          "description": "runtime/src/mcp/client.py 中 streamable_http_client 通过 httpx.AsyncClient(headers=...) 传递 headers，而非直接传 headers 参数",
+          "status": "passing"
+        },
+        {
+          "id": "CHAT-001-AC2",
+          "description": "runtime 启动后 MCP 连接不报 'unexpected keyword argument headers' 错误",
+          "status": "pending"
+        },
+        {
+          "id": "CHAT-001-AC3",
+          "description": "发送聊天请求后，LLM plan 中包含搜索步骤且搜索工具被成功调用",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "CHAT-002",
+      "title": "PDF 生成完整链路：搜索 → 生成中文 PDF → 文件事件发送",
+      "description": "runtime 模式下，用户请求生成 PDF 报告时，应先搜索再生成中文 PDF，并通过 SSE 发送 file 事件",
+      "acceptance_criteria": [
+        {
+          "id": "CHAT-002-AC1",
+          "description": "SSE 流中包含 file 事件，且 file 事件在 done 事件之前发送",
+          "status": "pending"
+        },
+        {
+          "id": "CHAT-002-AC2",
+          "description": "生成的 PDF 文件可通过 runtime 的 /files/ API 下载（HTTP 200）",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "CHAT-003",
+      "title": "前端正确显示 PDF 文件下载卡片",
+      "description": "后端发送 file SSE 事件后，前端应在聊天界面显示文件下载卡片（FileDownload 组件）",
+      "acceptance_criteria": [
+        {
+          "id": "CHAT-003-AC1",
+          "description": "useChat.ts 的 handleMessage 正确将 file 类型消息传递给 onMessage 回调",
+          "status": "pending"
+        },
+        {
+          "id": "CHAT-003-AC2",
+          "description": "page.tsx 的 onMessage 回调收到 file 消息后，创建带 fileData 的 DisplayMessage 并添加到 displayMessages",
+          "status": "pending"
+        },
+        {
+          "id": "CHAT-003-AC3",
+          "description": "消息渲染逻辑中，fileData 存在时渲染 FileDownload 组件而非 MarkdownBlock",
+          "status": "pending"
+        }
+      ]
+    }
+  ]
+}

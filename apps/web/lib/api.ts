@@ -90,10 +90,10 @@ function delay(ms: number): Promise<void> {
 
 /**
  * 判断是否应该重试
+ * 注意：429 限流不重试，重试只会加剧限流形成恶性循环
  */
 function shouldRetry(status: number): boolean {
-  // 5xx 服务器错误和 429 限流可以重试
-  return status >= 500 || status === 429
+  return status >= 500
 }
 
 /**
@@ -194,23 +194,22 @@ async function request<T>(
         throw new Error('认证已过期')
       }
 
-      // 请求失败，抛出错误
+      // 请求失败：先判断是否可重试，再抛出错误
       if (!response.ok) {
+        if (retry && shouldRetry(response.status) && attempt < maxRetries) {
+          const retryDelay = getRetryDelay(attempt)
+          console.warn(
+            `[API] 请求失败，准备重试 - ${method} ${path}, 状态: ${response.status}, 第 ${attempt + 1}/${maxRetries} 次，延迟 ${retryDelay}ms`
+          )
+          await delay(retryDelay)
+          attempt++
+          continue
+        }
+
         const errorMessage = data?.error?.message || data?.message || response.statusText
         throw Object.assign(new Error(errorMessage), {
           response: { status: response.status, data }
         })
-      }
-
-      // 检查是否需要重试
-      if (!response.ok && retry && shouldRetry(response.status) && attempt < maxRetries) {
-        const retryDelay = getRetryDelay(attempt)
-        console.warn(
-          `[API] 请求失败，准备重试 - ${method} ${path}, 状态: ${response.status}, 第 ${attempt + 1}/${maxRetries} 次，延迟 ${retryDelay}ms`
-        )
-        await delay(retryDelay)
-        attempt++
-        continue
       }
 
       return data as T

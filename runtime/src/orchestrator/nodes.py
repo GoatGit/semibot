@@ -206,6 +206,11 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             model=agent_model,
         )
 
+        # Emit LLM's reasoning text (non-JSON portion of the response)
+        thinking_text = plan_response.pop("_thinking", "")
+        if event_emitter and thinking_text:
+            await event_emitter.emit_thinking(thinking_text, "planning")
+
         # Parse plan from response
         plan = parse_plan_response(plan_response)
 
@@ -295,7 +300,7 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         parallel_actions = [a for a in pending_actions if a.parallel]
         sequential_actions = [a for a in pending_actions if not a.parallel]
 
-        # Execute parallel actions
+        # Execute parallel actions first, then sequential actions in order
         if parallel_actions:
             import asyncio
             parallel_results = await asyncio.gather(

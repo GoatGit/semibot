@@ -401,28 +401,27 @@ async function handleChatWithRuntime(
       }
     }
 
-    // 加载 Agent 关联的 MCP Servers + 系统预装 MCP Servers
+    // 加载 Agent 关联的 MCP Servers（系统 Agent 额外合并系统预装 MCP Servers）
     try {
-      const [agentMcpServers, systemMcpServers] = await Promise.all([
-        mcpService.getMcpServersForRuntime(agent.id),
-        mcpService.getSystemMcpServersForRuntime(),
-      ])
+      const agentMcpServers = await mcpService.getMcpServersForRuntime(agent.id)
 
-      // 合并并去重（Agent 自身配置优先于系统预装）
-      const agentServerIds = new Set(agentMcpServers.map((s) => s.id))
-      const mergedServers = [
-        ...agentMcpServers,
-        ...systemMcpServers.filter((s) => !agentServerIds.has(s.id)),
-      ]
+      let mergedServers = agentMcpServers
+      if (agent.isSystem) {
+        const systemMcpServers = await mcpService.getSystemMcpServersForRuntime()
+        const agentServerIds = new Set(agentMcpServers.map((s: { id: string }) => s.id))
+        mergedServers = [
+          ...agentMcpServers,
+          ...systemMcpServers.filter((s) => !agentServerIds.has(s.id)),
+        ]
+      }
 
       if (mergedServers.length > 0) {
         runtimeInput.available_mcp_servers = mergedServers
         chatLogger.info('已加载 MCP Servers', {
           agentId: agent.id,
-          agentServerCount: agentMcpServers.length,
-          systemServerCount: systemMcpServers.length,
-          mergedCount: mergedServers.length,
-          toolCount: mergedServers.reduce((sum, s) => sum + s.available_tools.length, 0),
+          isSystem: agent.isSystem,
+          serverCount: mergedServers.length,
+          toolCount: mergedServers.reduce((sum: number, s: { available_tools: unknown[] }) => sum + s.available_tools.length, 0),
         })
       }
     } catch (err) {

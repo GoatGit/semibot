@@ -375,6 +375,7 @@ export default function ChatSessionPage() {
                       isThinking={agent2uiState.isThinking}
                       plan={agent2uiState.plan}
                       toolCalls={agent2uiState.toolCalls}
+                      messages={agent2uiState.messages}
                       className="max-w-3xl"
                     />
                   </div>
@@ -393,6 +394,7 @@ export default function ChatSessionPage() {
                 isThinking={agent2uiState.isThinking}
                 plan={agent2uiState.plan}
                 toolCalls={agent2uiState.toolCalls}
+                messages={agent2uiState.messages}
                 className="max-w-3xl"
               />
             </div>
