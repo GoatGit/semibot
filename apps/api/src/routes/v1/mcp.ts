@@ -28,6 +28,7 @@ const createMcpServerSchema = z.object({
       oauthClientSecret: z.string().max(200).optional(),
     })
     .optional(),
+  isSystem: z.boolean().optional(),
 })
 
 const updateMcpServerSchema = z.object({
@@ -92,6 +93,18 @@ router.post(
     const orgId = req.user!.orgId
     const userId = req.user!.userId
     const input = req.body
+
+    // isSystem=true 时需要 admin/owner 角色
+    if (input.isSystem) {
+      const role = req.user!.role
+      if (role !== 'admin' && role !== 'owner') {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: '仅管理员可创建系统 MCP Server' },
+        })
+        return
+      }
+    }
 
     const server = await mcpService.createMcpServer(orgId, userId, input)
 
@@ -160,6 +173,19 @@ router.put(
     const serverId = req.params.id
     const input = req.body
 
+    // 查目标 server，若为系统 MCP 则需要 admin/owner 角色
+    const existing = await mcpService.getMcpServer(orgId, serverId)
+    if (existing.isSystem) {
+      const role = req.user!.role
+      if (role !== 'admin' && role !== 'owner') {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: '仅管理员可编辑系统 MCP Server' },
+        })
+        return
+      }
+    }
+
     const server = await mcpService.updateMcpServer(orgId, serverId, input)
 
     res.json({
@@ -180,6 +206,19 @@ router.delete(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
     const serverId = req.params.id
+
+    // 查目标 server，若为系统 MCP 则需要 admin/owner 角色
+    const existing = await mcpService.getMcpServer(orgId, serverId)
+    if (existing.isSystem) {
+      const role = req.user!.role
+      if (role !== 'admin' && role !== 'owner') {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: '仅管理员可删除系统 MCP Server' },
+        })
+        return
+      }
+    }
 
     await mcpService.deleteMcpServer(orgId, serverId)
 

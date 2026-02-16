@@ -142,7 +142,7 @@ function getPermissionsByRole(role: string): string[] {
     case 'owner':
       return ['*']
     case 'admin':
-      return ['agents:*', 'sessions:*', 'chat:*', 'skills:*', 'tools:*', 'members:read']
+      return ['agents:*', 'sessions:*', 'chat:*', 'skills:*', 'tools:*', 'mcp:*', 'members:read']
     case 'member':
       return ['agents:read', 'sessions:*', 'chat:*']
     default:

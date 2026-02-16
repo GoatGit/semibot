@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
 import { apiClient } from '@/lib/api'
+import { useAuthStore } from '@/stores/authStore'
 
 interface ApiResponse<T> {
   success: boolean
@@ -54,6 +55,7 @@ interface McpServer {
   tools: McpTool[]
   resources?: McpResource[]
   lastConnectedAt?: string
+  isSystem?: boolean
 }
 type TransportType = 'stdio' | 'sse' | 'streamable_http'
 
@@ -126,6 +128,7 @@ function ServerFormModal({
   onSubmit,
   onCancel,
   submitLabel,
+  showIsSystem,
 }: {
   title: string
   saving: boolean
@@ -135,6 +138,7 @@ function ServerFormModal({
     endpoint: string
     transport: TransportType
     apiKey: string
+    isSystem: boolean
   }
   setFormState: React.Dispatch<
     React.SetStateAction<{
@@ -143,11 +147,13 @@ function ServerFormModal({
       endpoint: string
       transport: TransportType
       apiKey: string
+      isSystem: boolean
     }>
   >
   onSubmit: () => void
   onCancel: () => void
   submitLabel: string
+  showIsSystem?: boolean
 }) {
   const hints = TRANSPORT_HINTS[formState.transport]
 
@@ -234,6 +240,20 @@ function ServerFormModal({
             />
             <p className="mt-1.5 text-xs text-text-tertiary">{hints.apiKeyHint}</p>
           </div>
+        )}
+
+        {/* 系统 MCP 勾选 */}
+        {showIsSystem && (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={formState.isSystem}
+              onChange={(e) => setFormState((s) => ({ ...s, isSystem: e.target.checked }))}
+              disabled={saving}
+              className="rounded border-border-default"
+            />
+            <span className="text-sm text-text-secondary">设为系统 MCP（所有组织可见）</span>
+          </label>
         )}
 
         {/* 按钮 */}
@@ -328,7 +348,7 @@ function ToolsList({ tools: rawTools, resources: rawResources }: { tools: unknow
   )
 }
 
-const EMPTY_FORM = { name: '', description: '', endpoint: '', transport: 'stdio' as TransportType, apiKey: '' }
+const EMPTY_FORM = { name: '', description: '', endpoint: '', transport: 'stdio' as TransportType, apiKey: '', isSystem: false }
 
 export default function McpPage() {
   const [servers, setServers] = useState<McpServer[]>([])
@@ -341,6 +361,9 @@ export default function McpPage() {
   const [showEdit, setShowEdit] = useState(false)
   const [editingServerId, setEditingServerId] = useState<string | null>(null)
   const [formState, setFormState] = useState(EMPTY_FORM)
+
+  const user = useAuthStore((s) => s.user)
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner'
 
   const loadServers = useCallback(async () => {
     try {
@@ -366,13 +389,20 @@ export default function McpPage() {
 
   const filteredServers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
-    if (!query) return servers
-    return servers.filter((server) => {
-      return (
-        server.name.toLowerCase().includes(query) ||
-        (server.description || '').toLowerCase().includes(query) ||
-        server.endpoint.toLowerCase().includes(query)
-      )
+    const filtered = query
+      ? servers.filter((server) => {
+          return (
+            server.name.toLowerCase().includes(query) ||
+            (server.description || '').toLowerCase().includes(query) ||
+            server.endpoint.toLowerCase().includes(query)
+          )
+        })
+      : servers
+    // 系统 MCP 排在前面
+    return [...filtered].sort((a, b) => {
+      if (a.isSystem && !b.isSystem) return -1
+      if (!a.isSystem && b.isSystem) return 1
+      return 0
     })
   }, [servers, searchQuery])
 
@@ -388,6 +418,9 @@ export default function McpPage() {
     if (formState.apiKey.trim()) {
       payload.authType = 'api_key'
       payload.authConfig = { apiKey: formState.apiKey.trim() }
+    }
+    if (formState.isSystem) {
+      payload.isSystem = true
     }
     return payload
   }
@@ -442,6 +475,7 @@ export default function McpPage() {
       endpoint: server.endpoint,
       transport: server.transport,
       apiKey: server.authConfig?.apiKey || '',
+      isSystem: server.isSystem || false,
     })
     setShowEdit(true)
   }
@@ -536,7 +570,14 @@ export default function McpPage() {
                           {transportOpt?.icon || <Plug size={16} className="text-primary-400" />}
                         </div>
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-text-primary">{server.name}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-semibold text-text-primary">{server.name}</div>
+                            {server.isSystem && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium">
+                                系统
+                              </span>
+                            )}
+                          </div>
                           <div className="text-xs text-text-secondary mt-0.5">
                             {server.description || '无描述'}
                           </div>
@@ -554,27 +595,31 @@ export default function McpPage() {
                           </div>
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleDelete(server.id)}
-                        disabled={saving}
-                        className="p-1.5 text-text-tertiary hover:text-error-500 flex-shrink-0"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {(!server.isSystem || isAdmin) && (
+                        <button
+                          onClick={() => handleDelete(server.id)}
+                          disabled={saving}
+                          className="p-1.5 text-text-tertiary hover:text-error-500 flex-shrink-0"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
 
                     {/* 工具和资源列表 */}
                     <ToolsList tools={server.tools || []} resources={server.resources} />
 
                     <div className="mt-3 pt-3 border-t border-border-subtle flex items-center justify-end gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => openEditModal(server)}
-                        disabled={saving}
-                      >
-                        编辑
-                      </Button>
+                      {(!server.isSystem || isAdmin) && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openEditModal(server)}
+                          disabled={saving}
+                        >
+                          编辑
+                        </Button>
+                      )}
                       <Button
                         variant="secondary"
                         size="sm"
@@ -605,6 +650,7 @@ export default function McpPage() {
             setFormState(EMPTY_FORM)
           }}
           submitLabel="创建"
+          showIsSystem={isAdmin}
         />
       )}
 
@@ -621,6 +667,7 @@ export default function McpPage() {
             setFormState(EMPTY_FORM)
           }}
           submitLabel="保存"
+          showIsSystem={isAdmin}
         />
       )}
     </div>

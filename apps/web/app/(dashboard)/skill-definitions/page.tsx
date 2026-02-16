@@ -1,12 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Search, Plus, RefreshCw, AlertCircle, Package } from 'lucide-react'
+import { Search, Plus, RefreshCw, AlertCircle, Package, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { apiClient } from '@/lib/api'
+import { useAuthStore } from '@/stores/authStore'
 import type { SkillDefinition } from '@semibot/shared-types'
 
 interface ApiResponse<T> {
@@ -29,9 +30,17 @@ export default function SkillDefinitionsPage() {
   const [showInstallDialog, setShowInstallDialog] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
 
+  const user = useAuthStore((s) => s.user)
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner'
+
   // 安装表单状态
   const [installSourceType, setInstallSourceType] = useState<'anthropic' | 'git' | 'url'>('anthropic')
   const [installSourceUrl, setInstallSourceUrl] = useState('')
+
+  // 编辑 Modal 状态
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [editingDefinition, setEditingDefinition] = useState<SkillDefinition | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', description: '', isPublic: false })
 
   const loadDefinitions = useCallback(async () => {
     try {
@@ -84,12 +93,63 @@ export default function SkillDefinitionsPage() {
     }
   }
 
-  const filteredDefinitions = definitions.filter(
-    (def) =>
-      def.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      def.skillId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      def.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredDefinitions = definitions
+    .filter(
+      (def) =>
+        def.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        def.skillId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        def.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    .sort((a, b) => {
+      if (a.isPublic && !b.isPublic) return -1
+      if (!a.isPublic && b.isPublic) return 1
+      return 0
+    })
+
+  const handleDeleteDefinition = async (id: string) => {
+    try {
+      setActionLoading(true)
+      setError(null)
+      await apiClient.delete(`/skill-definitions/${id}`)
+      await loadDefinitions()
+    } catch (err: any) {
+      console.error('[SkillDefinitions] 删除失败:', err)
+      setError(err.response?.data?.error?.message || '删除失败')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const openEditDialog = (definition: SkillDefinition) => {
+    setEditingDefinition(definition)
+    setEditForm({
+      name: definition.name,
+      description: definition.description || '',
+      isPublic: definition.isPublic || false,
+    })
+    setShowEditDialog(true)
+  }
+
+  const handleUpdateDefinition = async () => {
+    if (!editingDefinition) return
+    try {
+      setActionLoading(true)
+      setError(null)
+      await apiClient.put(`/skill-definitions/${editingDefinition.id}`, {
+        name: editForm.name.trim(),
+        description: editForm.description.trim() || undefined,
+        isPublic: editForm.isPublic,
+      })
+      setShowEditDialog(false)
+      setEditingDefinition(null)
+      await loadDefinitions()
+    } catch (err: any) {
+      console.error('[SkillDefinitions] 更新失败:', err)
+      setError(err.response?.data?.error?.message || '更新失败')
+    } finally {
+      setActionLoading(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -152,7 +212,14 @@ export default function SkillDefinitionsPage() {
             <CardHeader>
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <CardTitle className="text-lg">{definition.name}</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-lg">{definition.name}</CardTitle>
+                    {definition.isPublic && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500">
+                        内置
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm text-gray-500 mt-1">{definition.skillId}</p>
                 </div>
                 {definition.isActive ? (
@@ -199,6 +266,26 @@ export default function SkillDefinitionsPage() {
                   <Package className="w-4 h-4 mr-1" />
                   安装
                 </Button>
+                {isAdmin && (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => openEditDialog(definition)}
+                      disabled={actionLoading}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleDeleteDefinition(definition.id)}
+                      disabled={actionLoading}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -253,6 +340,58 @@ export default function SkillDefinitionsPage() {
               </Button>
               <Button onClick={handleInstall} disabled={actionLoading}>
                 {actionLoading ? '安装中...' : '安装'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑对话框 */}
+      {showEditDialog && editingDefinition && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-lg w-full">
+            <div className="p-6 border-b">
+              <h2 className="text-xl font-bold">编辑技能定义</h2>
+              <p className="text-sm text-gray-600 mt-1">{editingDefinition.skillId}</p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">名称 *</label>
+                <Input
+                  type="text"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm((s) => ({ ...s, name: e.target.value }))}
+                  disabled={actionLoading}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                <Input
+                  type="text"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((s) => ({ ...s, description: e.target.value }))}
+                  disabled={actionLoading}
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editForm.isPublic}
+                  onChange={(e) => setEditForm((s) => ({ ...s, isPublic: e.target.checked }))}
+                  disabled={actionLoading}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-700">设为内置技能（所有组织可见）</span>
+              </label>
+            </div>
+
+            <div className="p-6 border-t flex justify-end space-x-3">
+              <Button variant="secondary" onClick={() => { setShowEditDialog(false); setEditingDefinition(null) }} disabled={actionLoading}>
+                取消
+              </Button>
+              <Button onClick={handleUpdateDefinition} disabled={actionLoading || !editForm.name.trim()}>
+                {actionLoading ? '保存中...' : '保存'}
               </Button>
             </div>
           </div>

@@ -37,6 +37,7 @@ export interface McpServer {
   status: 'disconnected' | 'connecting' | 'connected' | 'error'
   lastConnectedAt?: string
   isActive: boolean
+  isSystem: boolean
   createdBy?: string
   createdAt: string
   updatedAt: string
@@ -69,6 +70,7 @@ export interface CreateMcpServerInput {
   transport: 'stdio' | 'sse' | 'streamable_http'
   authType?: 'none' | 'api_key' | 'oauth'
   authConfig?: McpAuthConfig
+  isSystem?: boolean
 }
 
 export interface UpdateMcpServerInput {
@@ -120,6 +122,7 @@ function rowToMcpServer(row: mcpRepository.McpServerRow): McpServer {
     status: row.status as McpServer['status'],
     lastConnectedAt: row.last_connected_at ?? undefined,
     isActive: row.is_active,
+    isSystem: row.is_system,
     createdBy: row.created_by ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -138,20 +141,24 @@ export async function createMcpServer(
   userId: string,
   input: CreateMcpServerInput
 ): Promise<McpServer> {
-  // 检查配额
-  const count = await mcpRepository.countByOrg(orgId)
+  const isSystem = input.isSystem === true
 
-  if (count >= MAX_MCP_SERVERS_PER_ORG) {
-    mcpLogger.warn('MCP Server 数量已达上限', {
-      orgId,
-      current: count,
-      limit: MAX_MCP_SERVERS_PER_ORG,
-    })
-    throw createError(MCP_SERVER_LIMIT_EXCEEDED)
+  // 系统 MCP 不受组织配额限制
+  if (!isSystem) {
+    const count = await mcpRepository.countByOrg(orgId)
+
+    if (count >= MAX_MCP_SERVERS_PER_ORG) {
+      mcpLogger.warn('MCP Server 数量已达上限', {
+        orgId,
+        current: count,
+        limit: MAX_MCP_SERVERS_PER_ORG,
+      })
+      throw createError(MCP_SERVER_LIMIT_EXCEEDED)
+    }
   }
 
   const row = await mcpRepository.create({
-    orgId,
+    orgId: isSystem ? null : orgId,
     name: input.name,
     description: input.description,
     endpoint: input.endpoint,
@@ -159,6 +166,7 @@ export async function createMcpServer(
     authType: input.authType,
     authConfig: input.authConfig,
     createdBy: userId,
+    isSystem,
   })
 
   return rowToMcpServer(row)

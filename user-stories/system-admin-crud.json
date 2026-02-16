@@ -1,0 +1,151 @@
+{
+  "stories": [
+    {
+      "id": "SYS-MCP-001",
+      "title": "管理员创建系统 MCP Server（isSystem=true）",
+      "description": "admin/owner 角色用户可以通过 API 和前端页面创建 isSystem=true 的 MCP Server，创建后 org_id 为 null，不受组织配额限制",
+      "acceptance_criteria": [
+        {
+          "id": "SYS-MCP-001-AC1",
+          "description": "POST /api/v1/mcp 传入 isSystem=true 时，admin/owner 角色返回 201，创建的 server.isSystem=true 且 orgId=null",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-001-AC2",
+          "description": "POST /api/v1/mcp 传入 isSystem=true 时，member 角色返回 403 FORBIDDEN",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-001-AC3",
+          "description": "前端 MCP 页面，admin 用户点击「添加服务器」时可见「设为系统 MCP」勾选框",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "SYS-MCP-002",
+      "title": "系统 MCP Server 在列表中排在最前面并显示「系统」标签",
+      "description": "GET /api/v1/mcp 返回的列表中包含系统 MCP，前端按 isSystem 排序，系统 MCP 显示「系统」标签",
+      "acceptance_criteria": [
+        {
+          "id": "SYS-MCP-002-AC1",
+          "description": "GET /api/v1/mcp 返回数据中包含 isSystem=true 的系统 MCP Server",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-002-AC2",
+          "description": "前端 MCP 页面中，系统 MCP 卡片显示「系统」标签（span 包含文本「系统」）",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-002-AC3",
+          "description": "前端 MCP 页面中，系统 MCP 排在非系统 MCP 之前",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "SYS-MCP-003",
+      "title": "管理员编辑和删除系统 MCP Server",
+      "description": "admin/owner 角色可以编辑和删除系统 MCP Server，member 角色不能操作",
+      "acceptance_criteria": [
+        {
+          "id": "SYS-MCP-003-AC1",
+          "description": "PUT /api/v1/mcp/:id 更新系统 MCP 时，admin/owner 角色返回 200",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-003-AC2",
+          "description": "PUT /api/v1/mcp/:id 更新系统 MCP 时，member 角色返回 403",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-003-AC3",
+          "description": "DELETE /api/v1/mcp/:id 删除系统 MCP 时，admin/owner 角色返回 204",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-003-AC4",
+          "description": "DELETE /api/v1/mcp/:id 删除系统 MCP 时，member 角色返回 403",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-MCP-003-AC5",
+          "description": "前端 MCP 页面中，admin 用户可见系统 MCP 的「编辑」和删除按钮；member 用户不可见",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "SYS-SKILL-001",
+      "title": "管理员创建内置 Skill Definition（isPublic=true）",
+      "description": "admin/owner 角色用户可以通过 API 创建 isPublic=true 的 Skill Definition，所有组织可见",
+      "acceptance_criteria": [
+        {
+          "id": "SYS-SKILL-001-AC1",
+          "description": "POST /api/v1/skill-definitions 传入 isPublic=true 时，admin/owner 角色返回 201，创建的 definition.isPublic=true",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-SKILL-001-AC2",
+          "description": "POST /api/v1/skill-definitions 由 member 角色调用时返回 403（requirePermission('skills:write') 拦截）",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "SYS-SKILL-002",
+      "title": "内置 Skill Definition 在列表中排在最前面并显示「内置」标签",
+      "description": "GET /api/v1/skill-definitions 返回的列表中包含内置 Skill，前端按 isPublic 排序，内置 Skill 显示「内置」标签",
+      "acceptance_criteria": [
+        {
+          "id": "SYS-SKILL-002-AC1",
+          "description": "GET /api/v1/skill-definitions 返回数据中包含 isPublic=true 的内置 Skill Definition",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-SKILL-002-AC2",
+          "description": "前端 Skill 页面中，内置 Skill 卡片显示「内置」标签",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-SKILL-002-AC3",
+          "description": "前端 Skill 页面中，内置 Skill 排在非内置 Skill 之前",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "SYS-SKILL-003",
+      "title": "管理员编辑和删除内置 Skill Definition",
+      "description": "admin/owner 角色可以编辑和删除 Skill Definition（包括内置的），member 角色不能操作",
+      "acceptance_criteria": [
+        {
+          "id": "SYS-SKILL-003-AC1",
+          "description": "PUT /api/v1/skill-definitions/:id 更新 Skill Definition 时，admin/owner 角色返回 200",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-SKILL-003-AC2",
+          "description": "PUT /api/v1/skill-definitions/:id 由 member 角色调用时返回 403",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-SKILL-003-AC3",
+          "description": "DELETE /api/v1/skill-definitions/:id 由 admin/owner 角色调用时返回 200",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-SKILL-003-AC4",
+          "description": "DELETE /api/v1/skill-definitions/:id 由 member 角色调用时返回 403",
+          "status": "pending"
+        },
+        {
+          "id": "SYS-SKILL-003-AC5",
+          "description": "前端 Skill 页面中，admin 用户可见编辑（Pencil）和删除（Trash2）按钮；member 用户不可见",
+          "status": "pending"
+        }
+      ]
+    }
+  ]
+}

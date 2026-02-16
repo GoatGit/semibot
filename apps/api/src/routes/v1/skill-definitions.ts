@@ -35,6 +35,7 @@ const createSkillDefinitionSchema = z.object({
   protocol: z.enum(['anthropic', 'codex', 'semibot']).optional(),
   sourceType: z.enum(['anthropic', 'codex', 'url', 'local', 'git', 'registry', 'upload']).optional(),
   sourceUrl: z.string().url().optional(),
+  isPublic: z.boolean().optional(),
 })
 
 const updateSkillDefinitionSchema = z.object({
@@ -43,6 +44,7 @@ const updateSkillDefinitionSchema = z.object({
   triggerKeywords: z.array(z.string().max(50)).max(20).optional(),
   status: z.enum(['active', 'inactive', 'deprecated']).optional(),
   isActive: z.boolean().optional(),
+  isPublic: z.boolean().optional(),
 })
 
 const installSkillPackageSchema = z.object({
@@ -72,7 +74,7 @@ const installFromManifestSchema = z.object({
 router.post(
   '/upload-create',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   handleFileUpload,
   asyncHandler(async (req: UploadRequest & AuthRequest, res: Response) => {
@@ -123,7 +125,7 @@ router.post(
 router.post(
   '/install/anthropic',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   validate(installFromAnthropicSchema),
   asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -147,7 +149,7 @@ router.post(
 router.post(
   '/install/manifest',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   validate(installFromManifestSchema),
   asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -175,7 +177,7 @@ router.post(
 router.post(
   '/',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   validate(createSkillDefinitionSchema),
   asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -183,6 +185,7 @@ router.post(
 
     const definition = await skillDefinitionRepo.create({
       ...input,
+      isPublic: input.isPublic,
       status: 'active',
     })
 
@@ -265,7 +268,7 @@ router.get(
 router.put(
   '/:id',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   validate(updateSkillDefinitionSchema),
   asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -299,7 +302,7 @@ router.put(
 router.delete(
   '/:id',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const { id } = req.params
@@ -324,7 +327,7 @@ router.delete(
 router.post(
   '/:id/install',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   validate(installSkillPackageSchema),
   asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -362,7 +365,7 @@ router.post(
 router.post(
   '/:id/upload-install',
   authenticate,
-  requirePermission('admin'),
+  requirePermission('skills:write'),
   combinedRateLimit,
   handleFileUpload,
   asyncHandler(async (req: UploadRequest & AuthRequest, res: Response) => {

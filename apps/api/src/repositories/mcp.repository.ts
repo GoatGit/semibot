@@ -33,7 +33,7 @@ export interface McpServerRow {
 }
 
 export interface CreateMcpServerData {
-  orgId: string
+  orgId: string | null
   name: string
   description?: string
   endpoint: string
@@ -43,6 +43,7 @@ export interface CreateMcpServerData {
   tools?: unknown[]
   resources?: unknown[]
   createdBy?: string
+  isSystem?: boolean
 }
 
 export interface UpdateMcpServerData {
@@ -88,10 +89,10 @@ export async function create(data: CreateMcpServerData): Promise<McpServerRow> {
   const result = await sql`
     INSERT INTO mcp_servers (
       org_id, name, description, endpoint, transport,
-      auth_type, auth_config, tools, resources, created_by
+      auth_type, auth_config, tools, resources, created_by, is_system
     )
     VALUES (
-      ${data.orgId},
+      ${data.orgId ?? null},
       ${data.name},
       ${data.description ?? null},
       ${data.endpoint},
@@ -100,7 +101,8 @@ export async function create(data: CreateMcpServerData): Promise<McpServerRow> {
       ${data.authConfig ? sql.json(data.authConfig as any) : null},
       ${sql.json((data.tools ?? []) as any)},
       ${sql.json((data.resources ?? []) as any)},
-      ${data.createdBy ?? null}
+      ${data.createdBy ?? null},
+      ${data.isSystem ?? false}
     )
     RETURNING *
   `
@@ -239,7 +241,7 @@ export async function update(id: string, orgId: string, data: UpdateMcpServerDat
         last_connected_at = ${data.lastConnectedAt ?? server.last_connected_at},
         is_active = ${data.isActive ?? server.is_active},
         updated_at = NOW()
-    WHERE id = ${id} AND org_id = ${orgId}
+    WHERE id = ${id} AND ${server.is_system ? sql`is_system = true` : sql`org_id = ${orgId}`}
     RETURNING *
   `
 
@@ -329,13 +331,16 @@ export async function getAgentMcpServerIds(agentId: string): Promise<string[]> {
 // ═══════════════════════════════════════════════════════════════
 
 export async function softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
+  const server = await findByIdAndOrg(id, orgId)
+  if (!server) return false
+
   const result = await sql`
     UPDATE mcp_servers
     SET deleted_at = NOW(),
         deleted_by = ${deletedBy ?? null},
         is_active = false,
         updated_at = NOW()
-    WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+    WHERE id = ${id} AND ${server.is_system ? sql`is_system = true` : sql`org_id = ${orgId}`} AND deleted_at IS NULL
     RETURNING id
   `
 
