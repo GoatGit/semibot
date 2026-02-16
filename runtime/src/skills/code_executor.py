@@ -5,6 +5,7 @@ Provides safe code execution in isolated environments.
 
 import asyncio
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -78,10 +79,12 @@ class CodeExecutorTool(BaseTool):
             "Execute code in various programming languages. "
             "Supports Python, JavaScript (Node.js), and shell scripts. "
             "Returns stdout, stderr, and exit code. "
-            "Python environment has fpdf2 installed for PDF generation. "
-            "IMPORTANT: Any output files (PDF, CSV, images, etc.) MUST be saved "
+            "Python environment has these libraries pre-installed: "
+            "fpdf2 (PDF generation), openpyxl (Excel/XLSX generation), reportlab (advanced PDF). "
+            "Do NOT use pandas — it is NOT installed. Use openpyxl directly for spreadsheets. "
+            "IMPORTANT: Any output files (PDF, CSV, XLSX, images, etc.) MUST be saved "
             "to the current working directory using a relative path (e.g. "
-            "'report.pdf', NOT '/tmp/report.pdf'). Files saved to the current "
+            "'report.pdf', 'data.xlsx', NOT '/tmp/report.pdf'). Files saved to the current "
             "directory will be automatically collected and made available for download. "
             "NOTE for PDF: fpdf2's built-in fonts (Helvetica, Times, Courier) do NOT "
             "support CJK characters. For Chinese/Japanese/Korean text, you MUST use: "
@@ -167,7 +170,7 @@ class CodeExecutorTool(BaseTool):
             script_path.write_text(code)
 
             result = await self._run_process(
-                ["python3", str(script_path)],
+                [sys.executable, str(script_path)],
                 stdin=stdin,
                 cwd=tmpdir,
             )

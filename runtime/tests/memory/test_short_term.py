@@ -57,6 +57,7 @@ def mock_redis():
     client.delete = AsyncMock(return_value=1)
     client.expire = AsyncMock(return_value=True)
     client.ping = AsyncMock(return_value=True)
+    client.eval = AsyncMock(return_value=0)
 
     return client
 
@@ -122,15 +123,15 @@ class TestShortTermMemorySave:
     @pytest.mark.asyncio
     async def test_save_trims_entries_at_limit(self, short_term_memory, mock_redis):
         """Test that entries are trimmed when limit is reached."""
-        mock_redis.zcard.return_value = MAX_SESSION_ENTRIES + 10
+        mock_redis.eval.return_value = 10  # Lua script returns trimmed count
 
         await short_term_memory.save(
             session_id="sess_123",
             content="Test content",
         )
 
-        # Verify the save completed successfully
-        assert mock_redis.zcard.called
+        # Verify the Lua script was called for atomic add+trim
+        assert mock_redis.eval.called
 
 
 class TestShortTermMemoryGetSessionContext:

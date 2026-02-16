@@ -1,0 +1,41 @@
+{
+  "id": "memory-system-integration",
+  "title": "Memory 系统集成：Runtime 启动时初始化 MemorySystem 并注入 Orchestrator",
+  "description": "Memory 系统代码已完整实现（短期/长期记忆、嵌入服务、测试），但未在 Runtime 启动时初始化，导致整个系统不可用。需要在 app.py lifespan 中初始化 MemorySystem，在 routes.py 中注入到 Orchestrator context，并确保连接失败时优雅降级。",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "app.py lifespan 中初始化 MemorySystem（ShortTermMemory + LongTermMemory + EmbeddingService），赋值到 app.state.memory_system",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "Redis 或 PostgreSQL 连接失败时 app.state.memory_system 为 None，Runtime 仍能正常启动和处理请求",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "routes.py execute_stream 中将 memory_system 注入到 graph context dict",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "/health 端点返回 memory 连接状态（short_term/long_term 各自的健康状态）",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "shutdown 时正确关闭 MemorySystem 连接（Redis + PostgreSQL pool）",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "现有 runtime/tests/memory/ 测试全部通过，无回归",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["memory", "runtime", "integration", "redis", "pgvector", "graceful-degradation"]
+}

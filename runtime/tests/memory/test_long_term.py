@@ -141,9 +141,10 @@ class TestLongTermMemorySave:
         )
 
         assert entry_id is not None
-        # Verify execute was called with metadata
+        # Verify execute was called with metadata (serialized as JSON string)
         call_args = conn.execute.call_args[0]
-        assert metadata in call_args
+        import json
+        assert json.dumps(metadata) in call_args
 
     @pytest.mark.asyncio
     async def test_save_clamps_importance(self, long_term_memory):

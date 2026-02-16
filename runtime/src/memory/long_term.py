@@ -10,11 +10,14 @@ Used for:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
+from pgvector.asyncpg import register_vector
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.constants import (
@@ -138,11 +141,15 @@ class LongTermMemory(LongTermMemoryInterface):
         """Get or create connection pool with retry logic."""
         if self._pool is None:
             try:
+                async def _init_connection(conn):
+                    await register_vector(conn)
+
                 self._pool = await asyncpg.create_pool(
                     self.database_url,
                     min_size=PG_POOL_MIN_SIZE,
                     max_size=PG_POOL_MAX_SIZE,
                     command_timeout=PG_POOL_ACQUIRE_TIMEOUT,
+                    init=_init_connection,
                 )
                 logger.info(
                     "database_pool_created",
@@ -223,7 +230,7 @@ class LongTermMemory(LongTermMemoryInterface):
                 ) VALUES (
                     $1, $2, $3, $4, $5,
                     $6, $7, $8, $9,
-                    $10, $11
+                    $10::jsonb, $11
                 )
                 """,
                 uuid.UUID(entry_id),
@@ -235,7 +242,7 @@ class LongTermMemory(LongTermMemoryInterface):
                 embedding,
                 memory_type,
                 importance,
-                metadata or {},
+                json.dumps(metadata or {}),
                 datetime.now(timezone.utc),
             )
 
