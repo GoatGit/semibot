@@ -1,0 +1,56 @@
+{
+  "id": "US-004",
+  "title": "聊天流程中通过 code_executor 生成 XLSX 文件（真实 E2E）",
+  "description": "用户在聊天中选择具备 code_executor 技能的 Agent，发送消息要求生成 Excel 文件，验证 agent 正确调用 code_executor 技能执行 Python 代码生成 xlsx 文件，并通过 FileManager 持久化后返回可下载的文件卡片。此测试对接真实运行的服务，不使用 mock。",
+  "actor": "已登录用户",
+  "preconditions": [
+    "用户已登录系统（12611171@qq.com / test123）",
+    "后端服务 (api + runtime) 正常运行",
+    "数据库中存在具备 code_executor 技能的 Agent",
+    "Runtime 环境已安装 openpyxl"
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "action": "通过 API 登录获取 token",
+      "expected": "登录成功，获取有效 auth_token"
+    },
+    {
+      "step": 2,
+      "action": "访问 /chat/new 页面",
+      "expected": "页面加载成功，显示可用 agent 列表"
+    },
+    {
+      "step": 3,
+      "action": "选择具备 code_executor 技能的 Agent",
+      "expected": "agent 被选中"
+    },
+    {
+      "step": 4,
+      "action": "输入消息要求生成 Excel 文件并发送",
+      "expected": "创建新会话，跳转到 /chat/{sessionId} 页面"
+    },
+    {
+      "step": 5,
+      "action": "等待 agent 响应完成",
+      "expected": "SSE 流正常推送，agent 调用 code_executor 生成 xlsx"
+    },
+    {
+      "step": 6,
+      "action": "观察聊天界面中的文件卡片",
+      "expected": "FileDownload 组件正确渲染，显示 .xlsx 文件名"
+    }
+  ],
+  "acceptance_criteria": [
+    "AC-1: 登录成功并获取有效 token",
+    "AC-2: /chat/new 页面正确加载并显示 Agent 列表",
+    "AC-3: 选择 Agent 后可输入消息并开始对话",
+    "AC-4: SSE 流正常推送，agent 响应包含 code_executor 调用",
+    "AC-5: 生成的 XLSX 文件卡片正确渲染（文件名含 .xlsx）",
+    "AC-6: 文件下载链接有效"
+  ],
+  "passes": true,
+  "test_type": "e2e",
+  "priority": "high",
+  "tags": ["chat", "xlsx", "code_executor", "file_generation", "real_e2e"]
+}

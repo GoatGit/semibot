@@ -40,10 +40,12 @@ def _create_llm_provider():
         base_url = base_url.rstrip("/") + "/v1"
 
     # OpenAI-compatible provider works for DeepSeek, ChatAnywhere, etc.
+    timeout = int(os.getenv("LLM_TIMEOUT", "120"))
     config = LLMConfig(
         model=model,
         api_key=api_key,
         base_url=base_url if base_url else None,
+        timeout=timeout,
     )
     provider = OpenAIProvider(config)
     logger.info("LLM provider initialized", extra={"model": model, "base_url": base_url})
