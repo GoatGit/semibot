@@ -8,6 +8,7 @@
 import * as path from 'path'
 import fs from 'fs-extra'
 import { createError } from '../middleware/errorHandler'
+import { SKILL_STORAGE_PATH } from '../constants/config'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import * as skillPackageRepo from '../repositories/skill-package.repository'
 import * as skillInstallLogRepo from '../repositories/skill-install-log.repository'
@@ -26,12 +27,6 @@ export interface InstallSkillPackageInput {
   sourceUrl?: string
   localPath?: string
 }
-
-// ═══════════════════════════════════════════════════════════════
-// 配置
-// ═══════════════════════════════════════════════════════════════
-
-const SKILL_STORAGE_PATH = process.env.SKILL_STORAGE_PATH || '/var/lib/semibot/skills'
 
 // ═══════════════════════════════════════════════════════════════
 // 核心安装流程

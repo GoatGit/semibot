@@ -703,6 +703,17 @@ sequenceDiagram
                      └───────┬───────┘
                              ▼
                         ┌─────────┐
+                        │ REFLECT │
+                        └────┬────┘
+                             │
+                             ▼
+                        ┌─────────┐
+                        │ EVOLVE  │ (async)
+                        │(进化)   │
+                        └────┬────┘
+                             │
+                             ▼
+                        ┌─────────┐
                         │   END   │
                         └─────────┘
 ```
@@ -718,6 +729,7 @@ SkillRegistry
 ├── code_executor   # 代码执行
 ├── data_query      # 数据查询
 ├── file_manager    # 文件管理
+├── evolved_skills  # 进化技能（Agent 自动生成）
 └── custom_skills   # 用户自定义技能
 ```
 

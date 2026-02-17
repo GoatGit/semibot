@@ -87,6 +87,11 @@ export const SESSION_LIMIT_EXCEEDED = 'SESSION_LIMIT_EXCEEDED'
 export const MESSAGE_NOT_FOUND = 'MESSAGE_NOT_FOUND'
 export const MESSAGE_LIMIT_EXCEEDED = 'MESSAGE_LIMIT_EXCEEDED'
 
+// 进化技能相关
+export const EVOLVED_SKILL_NOT_FOUND = 'EVOLVED_SKILL_NOT_FOUND'
+export const EVOLVED_SKILL_INVALID_STATUS = 'EVOLVED_SKILL_INVALID_STATUS'
+export const EVOLVED_SKILL_REVIEW_FAILED = 'EVOLVED_SKILL_REVIEW_FAILED'
+
 // ═══════════════════════════════════════════════════════════════
 // 限流错误
 // ═══════════════════════════════════════════════════════════════
@@ -184,6 +189,9 @@ export const ERROR_HTTP_STATUS: Record<string, number> = {
   [SESSION_LIMIT_EXCEEDED]: 400,
   [MESSAGE_NOT_FOUND]: 404,
   [MESSAGE_LIMIT_EXCEEDED]: 400,
+  [EVOLVED_SKILL_NOT_FOUND]: 404,
+  [EVOLVED_SKILL_INVALID_STATUS]: 400,
+  [EVOLVED_SKILL_REVIEW_FAILED]: 400,
 
   // 限流错误 -> 429
   [RATE_LIMIT_EXCEEDED]: 429,
@@ -271,6 +279,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [SESSION_LIMIT_EXCEEDED]: '会话数量已达上限',
   [MESSAGE_NOT_FOUND]: '消息不存在',
   [MESSAGE_LIMIT_EXCEEDED]: '消息数量已达上限',
+  [EVOLVED_SKILL_NOT_FOUND]: '进化技能不存在',
+  [EVOLVED_SKILL_INVALID_STATUS]: '进化技能状态不允许此操作',
+  [EVOLVED_SKILL_REVIEW_FAILED]: '进化技能审核失败',
 
   // 限流错误
   [RATE_LIMIT_EXCEEDED]: '请求过于频繁，请稍后重试',

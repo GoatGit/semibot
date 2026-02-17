@@ -196,10 +196,45 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
                 for sa in runtime_context.available_sub_agents
             ]
 
+        # Retrieve evolved skills for context injection
+        evolved_skills_context = ""
+        try:
+            agent_config_meta = {}
+            if runtime_context and hasattr(runtime_context, "agent_config") and runtime_context.agent_config:
+                agent_config_meta = runtime_context.agent_config.metadata if hasattr(runtime_context.agent_config, "metadata") else {}
+            evolution_config = agent_config_meta.get("evolution", {}) if isinstance(agent_config_meta, dict) else {}
+            if evolution_config.get("enabled", False) and context.get("memory_system") and context.get("db_pool"):
+                from src.evolution.retriever import EvolvedSkillRetriever
+                from src.evolution.formatter import format_skills_for_prompt
+
+                retriever = EvolvedSkillRetriever(
+                    memory_system=context["memory_system"],
+                    db_pool=context["db_pool"],
+                )
+                user_intent = messages[-1]["content"] if messages else ""
+                relevant_skills = await retriever.search(
+                    query=user_intent,
+                    org_id=state["org_id"],
+                    limit=5,
+                )
+                if relevant_skills:
+                    evolved_skills_context = format_skills_for_prompt(relevant_skills)
+                    logger.info(
+                        f"[Evolution] 检索到 {len(relevant_skills)} 个相关进化技能",
+                        extra={"session_id": state["session_id"]},
+                    )
+        except Exception as e:
+            logger.warning(f"[Evolution] 技能检索异常（不影响规划）: {e}")
+
+        # Inject evolved skills into memory context
+        effective_memory = memory_context
+        if evolved_skills_context:
+            effective_memory = f"{memory_context}\n\n{evolved_skills_context}" if memory_context else evolved_skills_context
+
         # Call LLM to generate plan
         plan_response = await llm_provider.generate_plan(
             messages=messages,
-            memory=memory_context,
+            memory=effective_memory,
             available_tools=available_skills,
             available_sub_agents=sub_agents_for_planner or None,
             agent_system_prompt=agent_system_prompt,
@@ -669,6 +704,34 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
     }
 
 
+async def _update_evolved_skill_reuse_counts(state: AgentState, context: dict[str, Any]) -> None:
+    """Update use/success counts for evolved skills referenced in this execution."""
+    evolved_skill_refs = state.get("evolved_skill_refs", [])
+    if not evolved_skill_refs:
+        return
+
+    db_pool = context.get("db_pool")
+    if not db_pool:
+        return
+
+    tool_results = state.get("tool_results", [])
+    has_success = any(r.success for r in tool_results) if tool_results else False
+
+    for skill_ref in evolved_skill_refs:
+        skill_id = skill_ref.get("id")
+        if not skill_id:
+            continue
+        try:
+            if has_success:
+                await db_pool.execute(
+                    "UPDATE evolved_skills SET success_count = success_count + 1, updated_at = NOW() WHERE id = $1",
+                    skill_id,
+                )
+                logger.info(f"[Evolution] 进化技能复用成功 (id={skill_id})")
+        except Exception as e:
+            logger.warning(f"[Evolution] 更新成功计数失败: {e}")
+
+
 async def reflect_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
     """
     REFLECT node: Summarize execution and extract learnings.
@@ -738,9 +801,48 @@ async def reflect_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         except Exception as e:
             logger.warning(f"Failed to save to long-term memory: {e}")
 
+    # Async evolution trigger (fire-and-forget, never blocks main flow)
+    evolution_triggered = False
+    try:
+        from src.evolution.engine import EvolutionEngine
+
+        evolution_engine_deps = {
+            "llm": context.get("llm_provider"),
+            "memory": context.get("memory_system"),
+            "registry": context.get("skill_registry"),
+            "db": context.get("db_pool"),
+        }
+        if all(evolution_engine_deps.values()):
+            evolution_engine = EvolutionEngine(
+                llm=evolution_engine_deps["llm"],
+                memory_system=evolution_engine_deps["memory"],
+                skill_registry=evolution_engine_deps["registry"],
+                db_pool=evolution_engine_deps["db"],
+            )
+            # Build evolution-compatible state
+            runtime_ctx = state.get("context")
+            agent_config = {}
+            if runtime_ctx and hasattr(runtime_ctx, "agent_config") and runtime_ctx.agent_config:
+                agent_config = runtime_ctx.agent_config.metadata if hasattr(runtime_ctx.agent_config, "metadata") else {}
+            evolution_state = {
+                "reflection": {"success": reflection.worth_remembering, "summary": reflection.summary},
+                "tool_results": state.get("tool_results", []),
+                "agent_config": agent_config,
+                "agent_id": state["agent_id"],
+                "org_id": state["org_id"],
+                "session_id": state["session_id"],
+                "messages": state.get("messages", []),
+                "plan": state.get("plan"),
+            }
+            await evolution_engine.maybe_evolve(evolution_state)
+            evolution_triggered = True
+    except Exception as e:
+        logger.warning(f"[Evolution] 触发进化异常（不影响主流程）: {e}")
+
     return {
         "reflection": reflection,
         "current_step": "respond",
+        "evolution_triggered": evolution_triggered,
     }
 
 

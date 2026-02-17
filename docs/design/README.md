@@ -22,6 +22,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 | **MCP 兼容** | 完整支持 Model Context Protocol，兼容 Claude MCP |
 | **多 SubAgent** | 父子 Agent 编排，任务分发与结果汇总 |
 | **多 Skills/Tools** | 可组合的能力单元，支持自定义扩展 |
+| **自我进化** | Agent 自动从成功任务中提炼技能，持续积累能力 |
 
 ## 核心概念
 
@@ -34,6 +35,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 | **MCP Server** | Model Context Protocol 服务器，提供标准化工具接口 |
 | **Memory** | 短期(对话) + 长期(向量) 记忆系统 |
 | **Session** | 一次完整的用户交互会话 |
+| **Evolution** | Agent 自我进化机制，从实践中自动提炼可复用技能 |
 
 ## 文档目录
 
@@ -41,6 +43,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 - [数据模型](./DATA_MODEL.md) - 数据库设计
 - [API 设计](./API_DESIGN.md) - 接口规范
 - [Agent Runtime](./AGENT_RUNTIME.md) - Python 执行引擎
+- [进化系统](./EVOLUTION.md) - Agent 自我进化与技能自生成
 - [Design System](./DESIGN_SYSTEM.md) - 前端设计系统规范
 - [错误码规范](./ERROR_CODES.md) - 错误码定义
 - [测试框架](./TESTING.md) - 测试策略与规范

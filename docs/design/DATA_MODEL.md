@@ -72,6 +72,22 @@
 │  │ result       │    │ period       │                                       │
 │  └──────────────┘    └──────────────┘                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              进化层                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐    ┌──────────────┐                                       │
+│  │evolved_skills│    │evolution_logs│                                       │
+│  ├──────────────┤    ├──────────────┤                                       │
+│  │ id (PK)      │    │ id (PK)      │                                       │
+│  │ org_id       │───►│ org_id       │───►organizations                      │
+│  │ agent_id     │───►│ agent_id     │───►agents                             │
+│  │ session_id   │───►│ session_id   │───►sessions                           │
+│  │ embedding    │    │ stage        │                                       │
+│  │ status       │    │ evolved_skill_id│──►evolved_skills                   │
+│  └──────────────┘    └──────────────┘                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
 
 注：箭头表示逻辑外键关系，在应用层代码中维护数据一致性
 ```
@@ -839,6 +855,145 @@ COMMENT ON COLUMN usage_logs.agent_id IS '逻辑外键，关联 agents.id';
 }
 ```
 
+---
+
+## 2.8 进化层
+
+### 2.8.1 evolved_skills - 进化技能
+
+```sql
+CREATE TABLE evolved_skills (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,                    -- 所属组织（逻辑外键 -> organizations.id）
+    agent_id UUID NOT NULL,                  -- 产生此技能的 Agent（逻辑外键 -> agents.id）
+    session_id UUID NOT NULL,                -- 产生此技能的会话（逻辑外键 -> sessions.id）
+
+    -- 技能定义
+    name VARCHAR(200) NOT NULL,              -- 技能名称
+    description TEXT NOT NULL,               -- 技能描述
+    trigger_keywords TEXT[] DEFAULT '{}',    -- 触发关键词
+    steps JSONB NOT NULL,                    -- 执行步骤序列
+    tools_used TEXT[] DEFAULT '{}',          -- 使用的工具列表
+    parameters JSONB DEFAULT '{}',           -- 可参数化的变量
+    preconditions JSONB DEFAULT '{}',        -- 前置条件
+    expected_outcome TEXT,                   -- 预期结果
+
+    -- 向量索引
+    embedding VECTOR(1536),                  -- 技能描述的向量表示
+
+    -- 质量与状态
+    quality_score FLOAT DEFAULT 0,           -- 质量评分 (0-1)
+    reusability_score FLOAT DEFAULT 0,       -- 复用价值评分 (0-1)
+    status VARCHAR(20) DEFAULT 'pending_review'
+        CHECK (status IN ('pending_review', 'approved', 'rejected', 'auto_approved', 'deprecated')),
+
+    -- 使用统计
+    use_count INTEGER DEFAULT 0,             -- 被复用次数
+    success_count INTEGER DEFAULT 0,         -- 复用成功次数
+    last_used_at TIMESTAMPTZ,                -- 最后使用时间
+
+    -- 审核
+    reviewed_by UUID,                        -- 审核人（逻辑外键 -> users.id）
+    reviewed_at TIMESTAMPTZ,                 -- 审核时间
+    review_comment TEXT,                     -- 审核意见
+
+    -- 时间戳
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 索引
+CREATE INDEX idx_evolved_skills_org ON evolved_skills(org_id);
+CREATE INDEX idx_evolved_skills_agent ON evolved_skills(agent_id);
+CREATE INDEX idx_evolved_skills_status ON evolved_skills(status);
+CREATE INDEX idx_evolved_skills_quality ON evolved_skills(quality_score DESC);
+CREATE INDEX idx_evolved_skills_embedding ON evolved_skills
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX idx_evolved_skills_use_count ON evolved_skills(use_count DESC);
+
+-- 更新触发器
+CREATE TRIGGER evolved_skills_updated_at
+    BEFORE UPDATE ON evolved_skills
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+COMMENT ON TABLE evolved_skills IS '进化技能表，存储 Agent 自动提炼的可复用技能';
+COMMENT ON COLUMN evolved_skills.org_id IS '逻辑外键，关联 organizations.id';
+COMMENT ON COLUMN evolved_skills.agent_id IS '逻辑外键，关联 agents.id';
+COMMENT ON COLUMN evolved_skills.session_id IS '逻辑外键，关联 sessions.id';
+COMMENT ON COLUMN evolved_skills.reviewed_by IS '逻辑外键，关联 users.id';
+```
+
+**steps 结构**:
+
+```json
+[
+    {
+        "order": 1,
+        "action": "搜索相关信息",
+        "tool": "web_search",
+        "params_template": {"query": "{{keyword}}"}
+    },
+    {
+        "order": 2,
+        "action": "提取页面内容",
+        "tool": "fetch_page",
+        "params_template": {"url": "{{result_url}}"}
+    }
+]
+```
+
+**parameters 结构**:
+
+```json
+{
+    "keyword": {"type": "string", "description": "搜索关键词", "required": true},
+    "result_url": {"type": "string", "description": "结果页面URL", "required": false}
+}
+```
+
+### 2.8.2 evolution_logs - 进化日志
+
+```sql
+CREATE TABLE evolution_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,                    -- 所属组织（逻辑外键 -> organizations.id）
+    agent_id UUID NOT NULL,                  -- Agent ID（逻辑外键 -> agents.id）
+    session_id UUID NOT NULL,                -- 会话 ID（逻辑外键 -> sessions.id）
+
+    -- 进化过程
+    stage VARCHAR(20) NOT NULL               -- 进化阶段
+        CHECK (stage IN ('extract', 'validate', 'register', 'index')),
+    status VARCHAR(20) NOT NULL              -- 阶段状态
+        CHECK (status IN ('started', 'completed', 'failed', 'skipped')),
+
+    -- 结果
+    evolved_skill_id UUID,                   -- 产生的技能ID（逻辑外键 -> evolved_skills.id）
+    input_data JSONB,                        -- 输入数据
+    output_data JSONB,                       -- 输出数据
+    error_message TEXT,                      -- 错误信息
+
+    -- 指标
+    duration_ms INTEGER,                     -- 耗时（毫秒）
+    tokens_used INTEGER DEFAULT 0,           -- Token 消耗
+
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 索引
+CREATE INDEX idx_evolution_logs_org ON evolution_logs(org_id);
+CREATE INDEX idx_evolution_logs_agent ON evolution_logs(agent_id);
+CREATE INDEX idx_evolution_logs_session ON evolution_logs(session_id);
+CREATE INDEX idx_evolution_logs_stage ON evolution_logs(stage);
+CREATE INDEX idx_evolution_logs_skill ON evolution_logs(evolved_skill_id) WHERE evolved_skill_id IS NOT NULL;
+
+COMMENT ON TABLE evolution_logs IS '进化日志表，记录进化流程各阶段的执行情况';
+COMMENT ON COLUMN evolution_logs.org_id IS '逻辑外键，关联 organizations.id';
+COMMENT ON COLUMN evolution_logs.agent_id IS '逻辑外键，关联 agents.id';
+COMMENT ON COLUMN evolution_logs.session_id IS '逻辑外键，关联 sessions.id';
+COMMENT ON COLUMN evolution_logs.evolved_skill_id IS '逻辑外键，关联 evolved_skills.id';
+```
+
 ## 3. 查询示例
 
 ### 3.1 获取 Agent 完整配置
@@ -906,7 +1061,9 @@ migrations/
 ├── 010_messages.sql           # messages 表
 ├── 011_memories.sql           # memories 表
 ├── 012_execution_logs.sql     # execution_logs 表
-└── 013_usage_logs.sql         # usage_logs 表
+├── 013_usage_logs.sql         # usage_logs 表
+├── 014_evolved_skills.sql    # evolved_skills 表
+└── 015_evolution_logs.sql    # evolution_logs 表
 ```
 
 **迁移执行顺序说明**：
@@ -918,3 +1075,4 @@ migrations/
 5. `005-008` - Agent 核心层表，按依赖顺序执行
 6. `009-011` - 会话与消息层表
 7. `012-013` - 日志与计量层表
+8. `014-015` - 进化层表

@@ -37,7 +37,8 @@ stateDiagram-v2
     OBSERVE --> REFLECT : "任务完成"
     
     REFLECT --> RESPOND : "总结输出"
-    
+    REFLECT --> EVOLVE : async (条件触发)
+
     RESPOND --> [*]
 ```
 
@@ -92,6 +93,7 @@ flowchart TD
 | **DELEGATE** | 执行步骤与工具调用 | 委派给 SubAgent 处理子任务 |
 | **OBSERVE** | 观察结果与反馈 | 结果检查、错误检测、反馈修正 |
 | **REFLECT** | 自我优化与学习 | 任务反思、经验总结、记忆存储 |
+| **EVOLVE** | 自我进化与技能生成 | 异步提取可复用技能、验证、注册到技能库（详见 [EVOLUTION.md](./EVOLUTION.md)） |
 | **RESPOND** | - | 生成最终响应给用户 |
 
 ### 2.3 并行执行支持
@@ -200,6 +202,11 @@ def create_agent_graph(agent_config: dict) -> StateGraph:
     )
     
     graph.add_edge("reflect", "respond")
+
+    # EVOLVE: 异步进化（不阻塞主流程）
+    # 在 reflect_node 内部通过 EvolutionEngine.maybe_evolve() 触发
+    # 详见 EVOLUTION.md
+
     graph.add_edge("respond", END)
     
     return graph.compile()
@@ -215,9 +222,17 @@ async def start_node(state: AgentState) -> AgentState:
 
 async def plan_node(state: AgentState) -> AgentState:
     """意图解析与计划生成"""
+    # 检索进化技能库（详见 EVOLUTION.md）
+    evolved_skills = await search_evolved_skills(
+        query=state["messages"][-1]["content"],
+        agent_id=state.get("agent_id"),
+        limit=5
+    )
+
     plan = await llm.generate_plan(
         messages=state["messages"],
-        memory=state["memory_context"]
+        memory=state["memory_context"],
+        available_evolved_skills=evolved_skills
     )
     # plan 结构: {"goal": "...", "steps": [...], "parallel_actions": [...]}
     return {**state, "plan": plan, "pending_actions": plan.get("steps", [])}
@@ -271,6 +286,10 @@ async def reflect_node(state: AgentState) -> AgentState:
             content=reflection["summary"],
             importance=reflection["importance"]
         )
+
+    # 触发异步进化（条件判断在 EvolutionEngine 内部）
+    evolution_engine = EvolutionEngine(llm, memory_system, skill_registry, db_pool)
+    await evolution_engine.maybe_evolve(state)
     
     return {**state, "reflection": reflection["summary"]}
 

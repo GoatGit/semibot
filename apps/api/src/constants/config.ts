@@ -6,6 +6,8 @@
  * 注意：前后端共享的常量从 @semibot/shared-config 导入
  */
 
+import * as path from 'path'
+
 // 从共享配置包导入前后端通用常量
 export {
   // SSE 配置
@@ -110,7 +112,7 @@ export const ANTHROPIC_SKILLS_CATALOG_URL = process.env.ANTHROPIC_SKILLS_CATALOG
 // ═══════════════════════════════════════════════════════════════
 
 /** Skill 包存储路径 */
-export const SKILL_STORAGE_PATH = process.env.SKILL_STORAGE_PATH ?? '/var/lib/semibot/skills'
+export const SKILL_STORAGE_PATH = process.env.SKILL_STORAGE_PATH ?? path.join(process.cwd(), '.data', 'skills')
 
 /** Skill 包最大大小 (MB) */
 export const SKILL_MAX_SIZE_MB = process.env.SKILL_MAX_SIZE_MB ? parseInt(process.env.SKILL_MAX_SIZE_MB, 10) : 100
