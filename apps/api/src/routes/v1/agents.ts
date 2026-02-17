@@ -9,6 +9,7 @@ import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
 import * as agentService from '../../services/agent.service'
 import * as mcpService from '../../services/mcp.service'
+import * as evolvedSkillService from '../../services/evolved-skill.service'
 
 const router: Router = Router()
 
@@ -187,6 +188,21 @@ router.delete(
     await agentService.deleteAgent(orgId, agentId)
 
     res.status(204).send()
+  })
+)
+
+/**
+ * GET /agents/:id/evolution/stats - 获取 Agent 进化统计
+ */
+router.get(
+  '/:id/evolution/stats',
+  authenticate,
+  combinedRateLimit,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const orgId = req.user!.orgId
+    const agentId = req.params.id
+    const stats = await evolvedSkillService.getStats(agentId, orgId)
+    res.json({ success: true, data: stats })
   })
 )
 

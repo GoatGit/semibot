@@ -1438,6 +1438,10 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 | tool.error | 工具调用错误 |
 | quota.warning | 配额使用达到 80% |
 | quota.exceeded | 配额超限 |
+| evolution.triggered | 进化流程触发 |
+| evolution.skill_created | 新进化技能产生 |
+| evolution.skill_approved | 进化技能审核通过 |
+| evolution.skill_promoted | 进化技能提升为正式技能 |
 
 ### 10.7 Webhook 回调格式
 
@@ -1517,6 +1521,7 @@ GET /health
 | /tools | 100 requests/minute |
 | /sessions | 100 requests/minute |
 | /memories | 100 requests/minute |
+| /evolved-skills | 100 requests/minute |
 
 超出限制时返回:
 
@@ -1720,7 +1725,145 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 ---
 
-## 16. 通用约定
+## 16. Evolution API (进化)
+
+### 16.1 列出进化技能
+
+```http
+GET /evolved-skills?status=pending_review&agent_id=xxx&limit=20
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+**Query Parameters**:
+
+| 参数 | 类型 | 默认值 | 说明 |
+| ---- | ---- | ------ | ---- |
+| status | string | - | 按状态过滤: pending_review/approved/rejected/auto_approved/deprecated |
+| agent_id | string | - | 按 Agent 过滤 |
+| limit | integer | 20 | 每页数量 (max: 100) |
+| cursor | string | - | 分页游标 |
+
+**Response**:
+
+```json
+{
+    "success": true,
+    "data": [
+        {
+            "id": "es_abc123",
+            "name": "查询订单状态",
+            "description": "通过订单号查询订单的当前状态和物流信息",
+            "trigger_keywords": ["订单", "查询", "物流"],
+            "quality_score": 0.85,
+            "status": "approved",
+            "use_count": 34,
+            "success_count": 31,
+            "agent_id": "agent_xyz789",
+            "created_at": "2024-01-01T00:00:00Z"
+        }
+    ],
+    "meta": {
+        "next_cursor": "xxx"
+    }
+}
+```
+
+### 16.2 获取进化技能详情
+
+```http
+GET /evolved-skills/:id
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+### 16.3 审核进化技能
+
+```http
+POST /evolved-skills/:id/review
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+Content-Type: application/json
+
+{
+    "action": "approve",
+    "comment": "技能定义清晰，步骤合理"
+}
+```
+
+**Response**:
+
+```json
+{
+    "success": true,
+    "data": {
+        "id": "es_abc123",
+        "status": "approved",
+        "reviewed_by": "user_abc123",
+        "reviewed_at": "2024-01-02T00:00:00Z"
+    }
+}
+```
+
+### 16.4 删除/废弃进化技能
+
+```http
+DELETE /evolved-skills/:id
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+软删除，将 status 设为 `deprecated`。
+
+### 16.5 提升为正式技能
+
+```http
+POST /evolved-skills/:id/promote
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+将进化技能转换为 `skills` 表中的正式技能。
+
+### 16.6 获取 Agent 进化统计
+
+```http
+GET /agents/:agent_id/evolution/stats
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+**Response**:
+
+```json
+{
+    "success": true,
+    "data": {
+        "total_evolved": 42,
+        "approved_count": 28,
+        "rejected_count": 5,
+        "pending_count": 9,
+        "approval_rate": 0.85,
+        "total_reuse_count": 156,
+        "avg_quality_score": 0.73,
+        "top_skills": [
+            {"id": "es_abc123", "name": "查询订单状态", "use_count": 34, "success_rate": 0.91}
+        ]
+    }
+}
+```
+
+### 16.7 更新 Agent 进化配置
+
+```http
+PUT /agents/:id/evolution
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+Content-Type: application/json
+
+{
+    "enabled": true,
+    "auto_approve": false,
+    "min_quality_score": 0.6,
+    "max_evolve_per_hour": 5,
+    "cooldown_minutes": 10
+}
+```
+
+## 17. 通用约定
 
 ### 15.1 分页
 

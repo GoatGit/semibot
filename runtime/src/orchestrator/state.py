@@ -129,6 +129,10 @@ class AgentState(TypedDict):
     # Metadata
     metadata: dict[str, Any]
 
+    # Evolution state
+    evolved_skill_refs: list[dict]
+    evolution_triggered: bool
+
 
 def create_initial_state(
     session_id: str,
@@ -167,4 +171,6 @@ def create_initial_state(
         iteration=0,
         error=None,
         metadata=metadata or {},
+        evolved_skill_refs=[],
+        evolution_triggered=False,
     )
