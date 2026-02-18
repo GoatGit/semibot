@@ -52,16 +52,16 @@ INSERT INTO organizations (id, name, slug, owner_id, plan, quota, settings) VALU
 -- 2. 创建示例用户
 -- ----------------------------------------------------------------------------
 -- 密码哈希说明：
--- - 大部分示例账号哈希对应密码 "password123"（仅供开发测试）
--- - 账号 12611171@qq.com 对应密码 "admin123"
--- 实际使用时应通过 bcrypt 或 argon2 生成
+-- - 大部分示例账号密码为 "password123"（仅供开发测试）
+-- - 账号 12611171@qq.com 密码为 "admin123"
+-- 哈希由 bcryptjs (cost=10) 生成
 
 INSERT INTO users (id, email, password_hash, name, org_id, role, email_verified) VALUES
 -- Semibot Dev Team 用户
 (
     '22222222-2222-2222-2222-222222222222',
     'admin@semibot.dev',
-    '$2b$10$rQZ8K.Xq5H8H8H8H8H8H8e8H8H8H8H8H8H8H8H8H8H8H8H8H8H8',
+    '$2a$10$8fh1qNsY4cCQuk1WPzs0C.NGLJilvBsB6m.xVvoxvn34Ny9jGhqVa',
     'Admin User',
     '11111111-1111-1111-1111-111111111111',
     'owner',
@@ -70,7 +70,7 @@ INSERT INTO users (id, email, password_hash, name, org_id, role, email_verified)
 (
     '55555555-5555-5555-5555-555555555555',
     'developer@semibot.dev',
-    '$2b$10$rQZ8K.Xq5H8H8H8H8H8H8e8H8H8H8H8H8H8H8H8H8H8H8H8H8H8',
+    '$2a$10$8fh1qNsY4cCQuk1WPzs0C.NGLJilvBsB6m.xVvoxvn34Ny9jGhqVa',
     'Developer User',
     '11111111-1111-1111-1111-111111111111',
     'admin',
@@ -79,7 +79,7 @@ INSERT INTO users (id, email, password_hash, name, org_id, role, email_verified)
 (
     '66666666-6666-6666-6666-666666666666',
     'tester@semibot.dev',
-    '$2b$10$rQZ8K.Xq5H8H8H8H8H8H8e8H8H8H8H8H8H8H8H8H8H8H8H8H8H8',
+    '$2a$10$8fh1qNsY4cCQuk1WPzs0C.NGLJilvBsB6m.xVvoxvn34Ny9jGhqVa',
     'Tester User',
     '11111111-1111-1111-1111-111111111111',
     'member',
@@ -89,7 +89,7 @@ INSERT INTO users (id, email, password_hash, name, org_id, role, email_verified)
 (
     '44444444-4444-4444-4444-444444444444',
     'demo@example.com',
-    '$2b$10$rQZ8K.Xq5H8H8H8H8H8H8e8H8H8H8H8H8H8H8H8H8H8H8H8H8H8',
+    '$2a$10$8fh1qNsY4cCQuk1WPzs0C.NGLJilvBsB6m.xVvoxvn34Ny9jGhqVa',
     'Demo User',
     '33333333-3333-3333-3333-333333333333',
     'owner',
@@ -98,7 +98,7 @@ INSERT INTO users (id, email, password_hash, name, org_id, role, email_verified)
 (
     '77777777-7777-7777-7777-777777777777',
     '12611171@qq.com',
-    '$2a$10$Invd7eYxqUtluU1DJ.WeCeyquaR2GBrEBUwiX6TBLFf0WZBXRYlFe',
+    '$2a$10$kibfaS2wUeykxiHKfOxb7uNdfal6FZWq.4TMY18pC3FqvcvrlmAPa',
     'QQ Test User',
     '11111111-1111-1111-1111-111111111111',
     'member',

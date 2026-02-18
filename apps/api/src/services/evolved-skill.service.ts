@@ -30,13 +30,6 @@ interface ReviewInput {
   comment?: string
 }
 
-interface EvolutionConfigInput {
-  enabled?: boolean
-  autoApprove?: boolean
-  minQualityScore?: number
-  maxEvolvePerHour?: number
-  cooldownMinutes?: number
-}
 
 // ═══════════════════════════════════════════════════════════════
 // Service 方法

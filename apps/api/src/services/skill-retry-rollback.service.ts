@@ -27,7 +27,7 @@ export interface RetryOptions {
 /**
  * 判断错误是否可重试
  */
-function isRetryableError(error: any): boolean {
+function isRetryableError(error: { code?: string; message?: string }): boolean {
   const retryableCodes = [
     'ECONNRESET',
     'ETIMEDOUT',
@@ -53,15 +53,15 @@ export async function installWithRetry(
   input: skillInstallService.InstallSkillPackageInput,
   maxRetries: number = SKILL_DEFAULT_MAX_RETRIES
 ): Promise<string> {
-  let lastError: any
+  let lastError: Error | undefined
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await skillInstallService.installSkillPackage(input)
-    } catch (error: any) {
-      lastError = error
+    } catch (error: unknown) {
+      lastError = error as Error
 
-      if (!isRetryableError(error)) {
+      if (!isRetryableError(error as { code?: string; message?: string })) {
         throw error
       }
 

@@ -396,6 +396,7 @@ export function formatValidationResult(result: CompleteValidationResult): string
 /**
  * CLI 入口
  */
+/* eslint-disable no-console -- CLI 入口 */
 export async function main() {
   const packagePath = process.argv[2]
 
