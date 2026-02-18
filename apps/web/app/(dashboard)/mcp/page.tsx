@@ -20,6 +20,8 @@ import {
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
+import { Modal } from '@/components/ui/Modal'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { apiClient } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -158,10 +160,22 @@ function ServerFormModal({
   const hints = TRANSPORT_HINTS[formState.transport]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-lg bg-bg-surface border border-border-default p-6 space-y-5">
-        <h3 className="text-lg font-semibold text-text-primary">{title}</h3>
-
+    <Modal
+      open={true}
+      onClose={onCancel}
+      title={title}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={saving}>
+            取消
+          </Button>
+          <Button onClick={onSubmit} loading={saving} disabled={!formState.name.trim() || !formState.endpoint.trim()}>
+            {submitLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
         {/* 传输类型选择 */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">传输类型</label>
@@ -255,18 +269,8 @@ function ServerFormModal({
             <span className="text-sm text-text-secondary">设为系统 MCP（所有组织可见）</span>
           </label>
         )}
-
-        {/* 按钮 */}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onCancel} disabled={saving}>
-            取消
-          </Button>
-          <Button onClick={onSubmit} loading={saving} disabled={!formState.name.trim() || !formState.endpoint.trim()}>
-            {submitLabel}
-          </Button>
-        </div>
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -543,17 +547,27 @@ export default function McpPage() {
         )}
 
         {loading ? (
-          <div className="h-40 flex items-center justify-center text-text-secondary">
-            <Loader2 size={18} className="animate-spin mr-2" />
-            加载中...
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
           </div>
         ) : filteredServers.length === 0 ? (
-          <div className="h-40 flex flex-col items-center justify-center text-text-secondary gap-2">
-            <Plug size={24} className="text-text-tertiary" />
-            <span>暂无 MCP 服务</span>
-            <Button size="sm" variant="secondary" onClick={() => setShowCreate(true)}>
-              添加第一个服务器
-            </Button>
+          <div className="flex flex-col items-center justify-center h-full py-12">
+            <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-4">
+              <Plug size={32} className="text-text-tertiary" />
+            </div>
+            {searchQuery ? (
+              <>
+                <h3 className="text-lg font-medium text-text-primary">未找到匹配的服务</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">尝试调整搜索条件</p>
+                <Button variant="secondary" onClick={() => setSearchQuery('')}>清除搜索</Button>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-medium text-text-primary">暂无 MCP 服务</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">添加您的第一个 MCP 服务器开始使用</p>
+                <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>添加服务器</Button>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -596,13 +610,15 @@ export default function McpPage() {
                         </div>
                       </div>
                       {(!server.isSystem || isAdmin) && (
-                        <button
-                          onClick={() => handleDelete(server.id)}
-                          disabled={saving}
-                          className="p-1.5 text-text-tertiary hover:text-error-500 flex-shrink-0"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <Tooltip content="删除">
+                          <button
+                            onClick={() => handleDelete(server.id)}
+                            disabled={saving}
+                            className="p-1.5 text-text-tertiary hover:text-error-500 flex-shrink-0"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </Tooltip>
                       )}
                     </div>
 
