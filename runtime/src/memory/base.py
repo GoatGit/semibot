@@ -234,6 +234,7 @@ class MemorySystem:
         content: str,
         importance: float = 0.5,
         metadata: dict[str, Any] | None = None,
+        org_id: str | None = None,
     ) -> str:
         """
         Save to long-term memory.
@@ -243,6 +244,7 @@ class MemorySystem:
             content: Content to store
             importance: Importance score (0-1)
             metadata: Optional metadata
+            org_id: Organization identifier for tenant isolation
 
         Returns:
             Memory entry ID
@@ -255,6 +257,7 @@ class MemorySystem:
             content=content,
             importance=importance,
             metadata=metadata,
+            org_id=org_id,
         )
 
     async def clear_session(self, session_id: str) -> None:

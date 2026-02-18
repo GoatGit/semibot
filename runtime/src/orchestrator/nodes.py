@@ -74,6 +74,7 @@ async def start_node(state: AgentState, context: dict[str, Any]) -> dict[str, An
                 agent_id=state["agent_id"],
                 query=user_message,
                 limit=5,
+                org_id=state["org_id"],
             )
 
             # Combine into context string
@@ -797,6 +798,7 @@ async def reflect_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                 agent_id=state["agent_id"],
                 content=reflection.summary,
                 importance=reflection.importance,
+                org_id=state["org_id"],
             )
         except Exception as e:
             logger.warning(f"Failed to save to long-term memory: {e}")
@@ -933,6 +935,28 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         name=None,
         tool_call_id=None,
     )
+
+    # Save conversation turn to short-term memory for future context
+    memory_system = context.get("memory_system")
+    if memory_system:
+        try:
+            # Save user message
+            user_message = state["messages"][-1]["content"] if state["messages"] else ""
+            if user_message:
+                await memory_system.save_short_term(
+                    session_id=state["session_id"],
+                    content=f"[user] {user_message}",
+                    agent_id=state["agent_id"],
+                )
+            # Save assistant response
+            if response_content:
+                await memory_system.save_short_term(
+                    session_id=state["session_id"],
+                    content=f"[assistant] {response_content}",
+                    agent_id=state["agent_id"],
+                )
+        except Exception as e:
+            logger.warning(f"Failed to save short-term memory: {e}")
 
     return {"messages": [response_message]}
 

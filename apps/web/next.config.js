@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ['@semibot/shared-types', '@semibot/ui'],
+  transpilePackages: ['@semibot/shared-types'],
   images: {
     domains: [],
   },

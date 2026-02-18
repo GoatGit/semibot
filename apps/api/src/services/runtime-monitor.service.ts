@@ -35,7 +35,7 @@ export type RuntimeErrorType = 'transient' | 'permanent' | 'timeout'
 export interface ExecutionRecord {
   sessionId: string
   orgId: string
-  mode: 'direct_llm' | 'runtime_orchestrator'
+  mode: 'runtime_orchestrator'
   success: boolean
   error?: string
   errorType?: RuntimeErrorType
@@ -78,7 +78,7 @@ class RuntimeMonitorService {
   /**
    * 获取指定时间窗口内的指标
    */
-  getMetrics(mode: 'direct_llm' | 'runtime_orchestrator', windowMs?: number): ExecutionMetrics {
+  getMetrics(mode: 'runtime_orchestrator', windowMs?: number): ExecutionMetrics {
     const window = windowMs ?? this.windowMs
     const now = Date.now()
     const cutoff = now - window
@@ -255,13 +255,11 @@ class RuntimeMonitorService {
    * 获取所有模式的指标摘要
    */
   getSummary(): {
-    direct: ExecutionMetrics
     runtime: ExecutionMetrics
     fallbackEnabled: boolean
     fallbackReason: string
   } {
     return {
-      direct: this.getMetrics('direct_llm'),
       runtime: this.getMetrics('runtime_orchestrator'),
       fallbackEnabled: this.fallbackEnabled,
       fallbackReason: this.fallbackReason,
@@ -280,7 +278,7 @@ class RuntimeMonitorService {
   /**
    * 获取按组织分组的指标
    */
-  getMetricsByOrg(orgId: string, mode: 'direct_llm' | 'runtime_orchestrator'): ExecutionMetrics {
+  getMetricsByOrg(orgId: string, mode: 'runtime_orchestrator'): ExecutionMetrics {
     const now = Date.now()
     const cutoff = now - this.windowMs
 

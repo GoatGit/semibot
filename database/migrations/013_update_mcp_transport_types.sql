@@ -1,4 +1,4 @@
--- 012_update_mcp_transport_types.sql
+-- 013_update_mcp_transport_types.sql
 -- 将 MCP 传输类型对齐 MCP SDK 规范：http -> sse, websocket -> streamable_http
 
 -- 1. 先删除旧的 CHECK 约束（否则 UPDATE 会违反约束）

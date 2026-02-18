@@ -8,12 +8,9 @@ import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
 import * as agentService from './agent.service'
 import * as mcpService from './mcp.service'
-import * as llmService from './llm.service'
 import { buildSkillIndex } from './skill-prompt-builder'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import * as skillPackageRepo from '../repositories/skill-package.repository'
-import type { LLMMessage, LLMStreamChunk } from './llm.service'
-import type { ToolCall } from './llm/index'
 import {
   VALIDATION_MESSAGE_TOO_LONG,
   SSE_STREAM_ERROR,
@@ -25,11 +22,8 @@ import {
   MAX_MESSAGE_LENGTH,
   MAX_SSE_CONNECTIONS_PER_USER,
   MAX_SSE_CONNECTIONS_PER_ORG,
-  CHAT_EXECUTION_MODE,
-  CHAT_RUNTIME_ENABLED_ORGS,
   MAX_HISTORY_MESSAGES,
   MAX_SESSION_TITLE_LENGTH,
-  type ChatExecutionMode,
 } from '../constants/config'
 import {
   getRuntimeAdapter,
@@ -38,8 +32,7 @@ import {
   type RuntimeExecutionResult,
 } from '../adapters/runtime.adapter'
 import { getRuntimeMonitor } from './runtime-monitor.service'
-import type { RuntimeErrorType } from './runtime-monitor.service'
-import type { Agent2UIMessage, Agent2UIType, Agent2UIData, McpCallData } from '@semibot/shared-types'
+import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/shared-types'
 import { chatLogger } from '../lib/logger'
 import type { Agent } from './agent.service'
 import type { Session } from './session.service'
@@ -217,7 +210,7 @@ export function sendAgent2UIMessage(
 /**
  * 根据错误信息分类错误类型
  */
-function classifyRuntimeError(error: string | undefined): RuntimeErrorType {
+function classifyRuntimeError(error: string | undefined): 'transient' | 'permanent' | 'timeout' {
   if (!error) return 'permanent'
   const lower = error.toLowerCase()
   if (lower.includes('timeout') || lower.includes('timed out')) return 'timeout'
@@ -235,28 +228,8 @@ function classifyRuntimeError(error: string | undefined): RuntimeErrorType {
 }
 
 /**
- * 决定使用哪种执行模式
- */
-function determineExecutionMode(orgId: string): ChatExecutionMode {
-  const monitor = getRuntimeMonitor()
-
-  // 检查是否触发自动回退
-  if (monitor.shouldFallback()) {
-    chatLogger.warn('自动回退到 direct 模式', { reason: monitor.getFallbackReason() })
-    return 'direct_llm'
-  }
-
-  // 检查是否在白名���中
-  if (CHAT_RUNTIME_ENABLED_ORGS.includes(orgId)) {
-    return 'runtime_orchestrator'
-  }
-
-  // 使用默认模式
-  return CHAT_EXECUTION_MODE
-}
-
-/**
  * 处理聊天消息 (SSE 流式响应)
+ * 统一使用 Runtime Orchestrator 模式
  */
 export async function handleChat(
   orgId: string,
@@ -280,17 +253,9 @@ export async function handleChat(
   // 获取 Agent
   const agent = await agentService.getAgent(orgId, session.agentId)
 
-  // 决定执行模式
-  const executionMode = determineExecutionMode(orgId)
+  chatLogger.info('使用 Runtime Orchestrator 模式', { sessionId, orgId })
 
-  chatLogger.info('执行模式已确定', { executionMode, sessionId, orgId })
-
-  // 根据模式选择执行路径
-  if (executionMode === 'runtime_orchestrator') {
-    await handleChatWithRuntime(orgId, userId, sessionId, input, res, agent, session)
-  } else {
-    await handleChatDirect(orgId, userId, sessionId, input, res, agent, session)
-  }
+  await handleChatWithRuntime(orgId, userId, sessionId, input, res, agent, session)
 }
 
 /**
@@ -303,7 +268,7 @@ async function handleChatWithRuntime(
   input: ChatInput,
   res: Response,
   agent: Agent,
-  session: Session
+  _session: Session
 ): Promise<void> {
   const startTime = Date.now()
   const monitor = getRuntimeMonitor()
@@ -311,7 +276,7 @@ async function handleChatWithRuntime(
   // 检查 Runtime 是否可用（在创建 SSE 连接之前）
   const runtimeReady = await isRuntimeAvailable()
   if (!runtimeReady) {
-    chatLogger.warn('Runtime 不可用，回退到 direct 模式')
+    chatLogger.error('Runtime 不可用')
 
     // 记录失败
     monitor.recordExecution({
@@ -325,8 +290,7 @@ async function handleChatWithRuntime(
       timestamp: Date.now(),
     })
 
-    await handleChatDirect(orgId, userId, sessionId, input, res, agent, session)
-    return
+    throw createError(LLM_UNAVAILABLE, 'Runtime Orchestrator 服务不可用，请检查 Runtime 是否已启动')
   }
 
   // 创建 SSE 连接（确认使用 runtime 模式后再创建）
@@ -530,347 +494,6 @@ async function handleChatWithRuntime(
     sendSSEEvent(connection, 'error', {
       code: SSE_STREAM_ERROR,
       message: runtimeError,
-    })
-  } finally {
-    // 关闭连接
-    closeSSEConnection(connection.id)
-    res.end()
-  }
-}
-
-/**
- * 使用 Direct LLM 处理聊天（原有逻辑）
- */
-async function handleChatDirect(
-  orgId: string,
-  userId: string,
-  sessionId: string,
-  input: ChatInput,
-  res: Response,
-  agent: Agent,
-  _session: Session
-): Promise<void> {
-  const startTime = Date.now()
-  const monitor = getRuntimeMonitor()
-
-  // 加载 Agent 关联的 MCP 工具
-  let mcpTools: mcpService.McpToolForLLM[] = []
-  const mcpToolMap = new Map<string, mcpService.McpToolForLLM>()
-  try {
-    mcpTools = await mcpService.getMcpToolsForAgent(agent.id)
-    for (const tool of mcpTools) {
-      mcpToolMap.set(tool.function.name, tool)
-    }
-  } catch (err) {
-    chatLogger.warn('加载 MCP 工具失败，继续无工具模式', { agentId: agent.id, error: (err as Error).message })
-  }
-
-  // 构建 tools 参数（MCP 工具，不含 _mcpMeta）
-  const toolDefinitions = mcpTools.map(({ _mcpMeta: _, ...rest }) => rest)
-
-  // 创建 SSE 连接
-  const connection = createSSEConnection(res, sessionId, userId, orgId)
-
-  try {
-    // 保存用户消息
-    await sessionService.addMessage(orgId, sessionId, {
-      role: 'user',
-      content: input.message,
-      parentId: input.parentMessageId,
-    })
-
-    // 发送思考状态
-    sendAgent2UIMessage(connection, 'thinking', {
-      content: '正在分析您的问题...',
-    })
-
-    // 获取历史消息
-    const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
-
-    // 截断历史消息（保留最近 N 条）
-    if (historyMessages.length > MAX_HISTORY_MESSAGES) {
-      chatLogger.warn('历史消息截断', {
-        total: historyMessages.length,
-        kept: MAX_HISTORY_MESSAGES,
-        dropped: historyMessages.length - MAX_HISTORY_MESSAGES,
-      })
-    }
-
-    // 构建 LLM 消息
-    const llmMessages: LLMMessage[] = [
-      {
-        role: 'system',
-        content: agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`,
-      },
-      ...historyMessages.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-      })),
-    ]
-
-    // 发送计划状态
-    sendAgent2UIMessage(connection, 'plan', {
-      steps: [
-        { id: '1', title: '理解问题', status: 'completed' },
-        { id: '2', title: '生成回答', status: 'running' },
-      ],
-      currentStep: '2',
-    })
-
-    // 检查 LLM 服务是否可用
-    if (!llmService.isLLMAvailable()) {
-      chatLogger.warn('LLM 服务不可用，终止本次请求')
-
-      monitor.recordExecution({
-        sessionId,
-        orgId,
-        mode: 'direct_llm',
-        success: false,
-        error: 'LLM service unavailable',
-        latencyMs: Date.now() - startTime,
-        timestamp: Date.now(),
-      })
-
-      sendSSEEvent(connection, 'error', {
-        code: LLM_UNAVAILABLE,
-        message: '当前没有可用的 LLM Provider，请先完成模型服务配置',
-      })
-      return
-    }
-
-    const llmConfig = {
-      model: agent.config?.model ?? undefined,
-      temperature: agent.config?.temperature ?? 0.7,
-      maxTokens: agent.config?.maxTokens ?? 4096,
-      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-      toolChoice: toolDefinitions.length > 0 ? 'auto' as const : undefined,
-    }
-
-    // 调用 LLM 流式生成
-    let fullContent = ''
-    let totalTokens = 0
-    const pendingToolCalls: ToolCall[] = []
-
-    await llmService.generateStream(
-      llmMessages,
-      llmConfig,
-      (chunk: LLMStreamChunk) => {
-        if (!connection.isActive) return
-
-        switch (chunk.type) {
-          case 'text':
-            if (chunk.content) {
-              fullContent += chunk.content
-              sendAgent2UIMessage(connection, 'text', { content: chunk.content })
-            }
-            break
-
-          case 'tool_call':
-            if (chunk.toolCall) {
-              pendingToolCalls.push(chunk.toolCall)
-              sendAgent2UIMessage(connection, 'tool_call', {
-                toolName: chunk.toolCall.function.name,
-                arguments: JSON.parse(chunk.toolCall.function.arguments || '{}'),
-                status: 'calling',
-              })
-            }
-            break
-
-          case 'done':
-            if (chunk.usage) {
-              totalTokens += chunk.usage.totalTokens
-            }
-            break
-
-          case 'error':
-            sendSSEEvent(connection, 'error', {
-              code: chunk.error?.code ?? SSE_STREAM_ERROR,
-              message: chunk.error?.message ?? '生成失败',
-            })
-            break
-        }
-      }
-    )
-
-    // MCP 工具调用循环（最多 10 轮）
-    const MAX_TOOL_ROUNDS = 10
-    let toolRound = 0
-
-    while (pendingToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS && connection.isActive) {
-      toolRound++
-      chatLogger.info('执行 MCP 工具调用', { round: toolRound, toolCount: pendingToolCalls.length })
-
-      // 将 assistant 的 tool_calls 消息加入上下文
-      const assistantMsg: LLMMessage = {
-        role: 'assistant',
-        content: fullContent || '',
-        toolCalls: [...pendingToolCalls],
-      }
-      llmMessages.push(assistantMsg)
-
-      // 执行每个工具调用
-      for (const toolCall of pendingToolCalls) {
-        const mcpTool = mcpToolMap.get(toolCall.function.name)
-        let toolResult: string
-
-        if (mcpTool) {
-          try {
-            const toolArgs = JSON.parse(toolCall.function.arguments || '{}')
-
-            sendAgent2UIMessage(connection, 'mcp_call', {
-              serverId: mcpTool._mcpMeta.serverId,
-              toolName: toolCall.function.name,
-              arguments: toolArgs,
-              status: 'calling',
-            } as McpCallData)
-
-            const result = await mcpService.callMcpTool(
-              mcpTool._mcpMeta.serverId,
-              orgId,
-              mcpTool._mcpMeta.originalToolName,
-              toolArgs
-            )
-            toolResult = typeof result === 'string' ? result : JSON.stringify(result)
-
-            sendAgent2UIMessage(connection, 'mcp_call', {
-              serverId: mcpTool._mcpMeta.serverId,
-              toolName: toolCall.function.name,
-              arguments: toolArgs,
-              result: toolResult,
-              status: 'success',
-            } as McpCallData)
-          } catch (err) {
-            toolResult = `工具调用失败: ${(err as Error).message}`
-            chatLogger.error('MCP 工具调用失败', err as Error, {
-              toolName: toolCall.function.name,
-              serverId: mcpTool._mcpMeta.serverId,
-            })
-
-            sendAgent2UIMessage(connection, 'mcp_call', {
-              serverId: mcpTool._mcpMeta.serverId,
-              toolName: toolCall.function.name,
-              arguments: JSON.parse(toolCall.function.arguments || '{}'),
-              error: (err as Error).message,
-              status: 'error',
-            } as McpCallData)
-          }
-        } else {
-          toolResult = `未知工具: ${toolCall.function.name}`
-        }
-
-        // 将工具结果加入上下文
-        llmMessages.push({
-          role: 'tool',
-          content: toolResult,
-          toolCallId: toolCall.id,
-        })
-      }
-
-      // 清空待处理工具调用，准备下一轮
-      pendingToolCalls.length = 0
-      fullContent = ''
-
-      // 用工具结果继续调用 LLM
-      sendAgent2UIMessage(connection, 'thinking', {
-        content: '正在根据工具结果生成回答...',
-      })
-
-      await llmService.generateStream(
-        llmMessages,
-        llmConfig,
-        (chunk: LLMStreamChunk) => {
-          if (!connection.isActive) return
-
-          switch (chunk.type) {
-            case 'text':
-              if (chunk.content) {
-                fullContent += chunk.content
-                sendAgent2UIMessage(connection, 'text', { content: chunk.content })
-              }
-              break
-
-            case 'tool_call':
-              if (chunk.toolCall) {
-                pendingToolCalls.push(chunk.toolCall)
-                sendAgent2UIMessage(connection, 'tool_call', {
-                  toolName: chunk.toolCall.function.name,
-                  arguments: JSON.parse(chunk.toolCall.function.arguments || '{}'),
-                  status: 'calling',
-                })
-              }
-              break
-
-            case 'done':
-              if (chunk.usage) {
-                totalTokens += chunk.usage.totalTokens
-              }
-              break
-
-            case 'error':
-              sendSSEEvent(connection, 'error', {
-                code: chunk.error?.code ?? SSE_STREAM_ERROR,
-                message: chunk.error?.message ?? '生成失败',
-              })
-              break
-          }
-        }
-      )
-    }
-
-    const latencyMs = Date.now() - startTime
-
-    // 完成计划
-    sendAgent2UIMessage(connection, 'plan', {
-      steps: [
-        { id: '1', title: '理解问题', status: 'completed' },
-        { id: '2', title: '生成回答', status: 'completed' },
-      ],
-      currentStep: '2',
-    })
-
-    // 保存助手消息
-    const assistantMessage = await sessionService.addMessage(orgId, sessionId, {
-      role: 'assistant',
-      content: fullContent,
-      tokensUsed: totalTokens,
-      latencyMs,
-    })
-
-    // 记录成功
-    monitor.recordExecution({
-      sessionId,
-      orgId,
-      mode: 'direct_llm',
-      success: true,
-      latencyMs,
-      timestamp: Date.now(),
-    })
-
-    // 发送完成事件
-    sendSSEEvent(connection, 'done', {
-      sessionId,
-      messageId: assistantMessage.id,
-      usage: { tokens: totalTokens, latencyMs },
-      executionMode: 'direct_llm',
-    })
-  } catch (error) {
-    const latencyMs = Date.now() - startTime
-    chatLogger.error('处理失败', error as Error, { sessionId, userId, agentId: agent.id, latencyMs })
-
-    // 记录失败
-    monitor.recordExecution({
-      sessionId,
-      orgId,
-      mode: 'direct_llm',
-      success: false,
-      error: error instanceof Error ? error.message : '未知错误',
-      latencyMs,
-      timestamp: Date.now(),
-    })
-
-    sendSSEEvent(connection, 'error', {
-      code: SSE_STREAM_ERROR,
-      message: error instanceof Error ? error.message : '处理失败',
     })
   } finally {
     // 关闭连接

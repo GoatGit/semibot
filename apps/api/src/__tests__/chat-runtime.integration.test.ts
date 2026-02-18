@@ -38,18 +38,13 @@ describe.skipIf(SKIP_INTEGRATION_TESTS)('Chat Runtime Integration', () => {
     monitor.clear()
   })
 
-  describe('执行模式切换', () => {
-    it('应该默认使用 direct_llm 模式', async () => {
+    describe('执行模式', () => {
+    it('应该统一使用 runtime_orchestrator 模式', async () => {
       // 这个测试需要实际的 API 调用
       // 暂时跳过，需要完整的测试环境
     })
 
-    it('应该在白名单组织中使用 runtime_orchestrator 模式', async () => {
-      // 这个测试需要实际的 API 调用
-      // 暂时跳过，需要完整的测试环境
-    })
-
-    it('应该在 Runtime 不可用时自动回退到 direct 模式', async () => {
+    it('应该在 Runtime 不可用时返回错误', async () => {
       // 这个测试需要实际的 API 调用
       // 暂时跳过，需要完整的测试环境
     })

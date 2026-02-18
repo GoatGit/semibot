@@ -32,7 +32,6 @@ vi.mock('../../lib/logger', () => ({
 import { sql } from '../../lib/db'
 import * as agentRepository from '../../repositories/agent.repository'
 import * as sessionRepository from '../../repositories/session.repository'
-import * as skillRepository from '../../repositories/skill.repository'
 
 describe('软删除测试', () => {
   const mockSql = sql as unknown as ReturnType<typeof vi.fn>
@@ -108,44 +107,6 @@ describe('软删除测试', () => {
       const result = await sessionRepository.findById(uuid())
 
       expect(result).toBeNull()
-    })
-  })
-
-  describe('Skill 软删除', () => {
-    it('softDelete 应该成功', async () => {
-      const skillId = uuid()
-
-      // hasSkillsDeletedAtColumn 查询 + softDelete 查询
-      mockSql.mockResolvedValueOnce([{ '1': 1 }])
-      mockSql.mockResolvedValueOnce([{ id: skillId }])
-
-      const result = await skillRepository.softDelete(skillId)
-
-      expect(result).toBe(true)
-    })
-
-    it('findById 应该过滤已软删除的记录', async () => {
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await skillRepository.findById(uuid())
-
-      expect(result).toBeNull()
-    })
-
-    it('findAll 应该过滤已软删除的记录', async () => {
-      const mockSkills = [
-        { id: uuid(), name: 'Active Skill', deleted_at: null },
-      ]
-
-      // sql 片段构建调用（whereClause：deleted_at）
-      mockSql.mockReturnValueOnce([])
-      // 实际查询：COUNT + SELECT
-      mockSql.mockResolvedValueOnce([{ total: '1' }])
-      mockSql.mockResolvedValueOnce(mockSkills)
-
-      const result = await skillRepository.findAll({})
-
-      expect(result.data).toHaveLength(1)
     })
   })
 
