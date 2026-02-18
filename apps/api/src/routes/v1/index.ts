@@ -17,7 +17,6 @@ import llmProvidersRouter from './llm-providers'
 import usersRouter from './users'
 import runtimeRouter from './runtime'
 import skillDefinitionsRouter from './skill-definitions'
-import skillsRouter from './skills'
 import evolvedSkillsRouter from './evolved-skills'
 
 const router: Router = Router()
@@ -51,7 +50,6 @@ router.use('/llm-providers', llmProvidersRouter)
 router.use('/users', usersRouter)
 router.use('/runtime', runtimeRouter)
 router.use('/skill-definitions', skillDefinitionsRouter)
-router.use('/skills', skillsRouter)
 router.use('/evolved-skills', evolvedSkillsRouter)
 
 export default router

@@ -1,4 +1,4 @@
--- 011_fix_unique_indexes_soft_delete.sql
+-- 012_fix_unique_indexes_soft_delete.sql
 -- 修复唯一索引与软删除的冲突：已删除的记录不应阻止创建同名新记录
 
 -- mcp_servers: 允许已删除的 MCP 服务器名称被重新使用

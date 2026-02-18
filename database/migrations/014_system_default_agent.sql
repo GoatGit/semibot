@@ -1,5 +1,6 @@
 -- ═══════════════════════════════════════════════════════════════
--- Migration 013: 系统默认 Agent + 系统预装能力
+-- 014_system_default_agent.sql
+-- Migration 014: 系统默认 Agent + 系统预装能力
 --
 -- 引入系统级 Agent 和 MCP Server 概念：
 -- 1. agents 表新增 is_system 列，org_id 改为 nullable

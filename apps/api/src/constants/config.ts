@@ -154,23 +154,10 @@ export const RUNTIME_STALL_TIMEOUT_MS = 30000
 export const RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES = 5
 
 // ═══════════════════════════════════════════════════════════════
-// Chat 执行模式配置
+// Runtime 配置
 // ═══════════════════════════════════════════════════════════════
 
-/** Chat 执行模式：direct_llm (直接调用) | runtime_orchestrator (Runtime 编排) */
-export type ChatExecutionMode = 'direct_llm' | 'runtime_orchestrator'
-
-/** 默认 Chat 执行模式 */
-export const CHAT_EXECUTION_MODE: ChatExecutionMode =
-  (process.env.CHAT_EXECUTION_MODE as ChatExecutionMode) ?? 'direct_llm'
-
-/** Runtime 灰度白名单组织 ID (逗号分隔) */
-export const CHAT_RUNTIME_ENABLED_ORGS = process.env.CHAT_RUNTIME_ENABLED_ORGS?.split(',').filter(Boolean) ?? []
-
-/** Runtime 影子流量比例 (0-100) */
-export const CHAT_RUNTIME_SHADOW_PERCENT = parseInt(process.env.CHAT_RUNTIME_SHADOW_PERCENT ?? '0', 10)
-
-/** Runtime 超时阈值 (毫秒) - 超过此值自动回退 */
+/** Runtime 超时阈值 (毫秒) - 超过此值触发告警 */
 export const CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS = parseInt(
   process.env.CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS ?? String(RUNTIME_EXECUTION_TIMEOUT_MS),
   10

@@ -33,7 +33,6 @@ import { sql } from '../../lib/db'
 import * as agentRepository from '../../repositories/agent.repository'
 import * as sessionRepository from '../../repositories/session.repository'
 import * as messageRepository from '../../repositories/message.repository'
-import * as skillRepository from '../../repositories/skill.repository'
 import * as toolRepository from '../../repositories/tool.repository'
 
 describe('多租户隔离测试', () => {
@@ -140,69 +139,6 @@ describe('多租户隔离测试', () => {
       const result = await messageRepository.findByIdAndOrg(messageId, orgA)
 
       expect(result).toBeNull()
-    })
-  })
-
-  describe('Skill 隔离', () => {
-    it('findByIdAndOrg 应该支持内置 Skill 跨组织访问', async () => {
-      const skillId = uuid()
-      const mockSkill = {
-        id: skillId,
-        org_id: null,
-        name: 'Builtin Skill',
-        is_builtin: true,
-      }
-
-      // hasSkillsDeletedAtColumn 查询 + findByIdAndOrg 查询
-      mockSql.mockResolvedValueOnce([{ '1': 1 }])
-      mockSql.mockResolvedValueOnce([mockSkill])
-
-      const result = await skillRepository.findByIdAndOrg(skillId, orgA)
-
-      expect(result).toBeDefined()
-      expect(result?.is_builtin).toBe(true)
-    })
-
-    it('findAll 应该包含内置 Skill', async () => {
-      const mockSkills = [
-        { id: uuid(), org_id: orgA, name: 'Custom Skill', is_builtin: false },
-        { id: uuid(), org_id: null, name: 'Builtin Skill', is_builtin: true },
-      ]
-
-      // sql 片段构建调用（whereClause 拼接：deleted_at + orgId）
-      mockSql.mockReturnValueOnce([])
-      mockSql.mockReturnValueOnce([])
-      // 实际查询：COUNT + SELECT
-      mockSql.mockResolvedValueOnce([{ total: '2' }])
-      mockSql.mockResolvedValueOnce(mockSkills)
-
-      const result = await skillRepository.findAll({
-        orgId: orgA,
-        includeBuiltin: true,
-      })
-
-      expect(result.data).toHaveLength(2)
-    })
-
-    it('findAll 应该可以排除内置 Skill', async () => {
-      const mockSkills = [
-        { id: uuid(), org_id: orgA, name: 'Custom Skill', is_builtin: false },
-      ]
-
-      // sql 片段构建调用（whereClause 拼接：deleted_at + orgId）
-      mockSql.mockReturnValueOnce([])
-      mockSql.mockReturnValueOnce([])
-      // 实际查询：COUNT + SELECT
-      mockSql.mockResolvedValueOnce([{ total: '1' }])
-      mockSql.mockResolvedValueOnce(mockSkills)
-
-      const result = await skillRepository.findAll({
-        orgId: orgA,
-        includeBuiltin: false,
-      })
-
-      expect(result.data).toHaveLength(1)
-      expect(result.data[0].is_builtin).toBe(false)
     })
   })
 

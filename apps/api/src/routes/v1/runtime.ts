@@ -50,14 +50,12 @@ router.get(
 
     const monitor = getRuntimeMonitor()
 
-    const directMetrics = monitor.getMetricsByOrg(orgId, 'direct_llm')
     const runtimeMetrics = monitor.getMetricsByOrg(orgId, 'runtime_orchestrator')
 
     res.json({
       success: true,
       data: {
         orgId,
-        direct: directMetrics,
         runtime: runtimeMetrics,
       },
     })
