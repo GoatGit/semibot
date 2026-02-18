@@ -140,11 +140,11 @@ export async function installSkillPackage(
     })
 
     return pkg.id
-  } catch (error: any) {
+  } catch (error: unknown) {
     // 安装失败，更新状态
     await skillInstallLogRepo.update(log.id, {
       status: 'failed',
-      errorMessage: error.message,
+      errorMessage: (error as Error).message,
       completedAt: new Date(),
     })
 
@@ -252,10 +252,10 @@ export async function uninstallSkillPackage(
       status: 'success',
       completedAt: new Date(),
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     await skillInstallLogRepo.update(log.id, {
       status: 'failed',
-      errorMessage: error.message,
+      errorMessage: (error as Error).message,
       completedAt: new Date(),
     })
 

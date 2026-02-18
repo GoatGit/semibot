@@ -98,9 +98,9 @@ export async function create(data: CreateMcpServerData): Promise<McpServerRow> {
       ${data.endpoint},
       ${data.transport},
       ${data.authType ?? null},
-      ${data.authConfig ? sql.json(data.authConfig as any) : null},
-      ${sql.json((data.tools ?? []) as any)},
-      ${sql.json((data.resources ?? []) as any)},
+      ${data.authConfig ? sql.json(data.authConfig as Parameters<typeof sql.json>[0]) : null},
+      ${sql.json((data.tools ?? []) as unknown as Parameters<typeof sql.json>[0])},
+      ${sql.json((data.resources ?? []) as unknown as Parameters<typeof sql.json>[0])},
       ${data.createdBy ?? null},
       ${data.isSystem ?? false}
     )

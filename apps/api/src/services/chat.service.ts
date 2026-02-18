@@ -41,6 +41,8 @@ import { getRuntimeMonitor } from './runtime-monitor.service'
 import type { RuntimeErrorType } from './runtime-monitor.service'
 import type { Agent2UIMessage, Agent2UIType, Agent2UIData, McpCallData } from '@semibot/shared-types'
 import { chatLogger } from '../lib/logger'
+import type { Agent } from './agent.service'
+import type { Session } from './session.service'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -300,8 +302,8 @@ async function handleChatWithRuntime(
   sessionId: string,
   input: ChatInput,
   res: Response,
-  agent: any,
-  session: any
+  agent: Agent,
+  session: Session
 ): Promise<void> {
   const startTime = Date.now()
   const monitor = getRuntimeMonitor()
@@ -545,8 +547,8 @@ async function handleChatDirect(
   sessionId: string,
   input: ChatInput,
   res: Response,
-  agent: any,
-  _session: any
+  agent: Agent,
+  _session: Session
 ): Promise<void> {
   const startTime = Date.now()
   const monitor = getRuntimeMonitor()
