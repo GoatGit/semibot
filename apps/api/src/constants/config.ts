@@ -250,6 +250,25 @@ export const MAX_TOOLS_PER_ORG = 100
 /** 每个组织最大 MCP Server 数量 */
 export const MAX_MCP_SERVERS_PER_ORG = 20
 
+/** 每个组织最大 Webhook 数量 */
+export const MAX_WEBHOOKS_PER_ORG = 20
+
+// ═══════════════════════════════════════════════════════════════
+// Webhook 配置
+// ═══════════════════════════════════════════════════════════════
+
+/** Webhook 推送最大重试次数 */
+export const WEBHOOK_MAX_RETRIES = 3
+
+/** Webhook 单次请求超时 (毫秒) */
+export const WEBHOOK_TIMEOUT_MS = 10000
+
+/** Webhook 连续失败自动禁用阈值 */
+export const WEBHOOK_MAX_FAILURE_COUNT = 10
+
+/** Webhook 重试基础延迟 (毫秒) */
+export const WEBHOOK_RETRY_BASE_DELAY_MS = 1000
+
 // ═══════════════════════════════════════════════════════════════
 // 密码重置配置
 // ═══════════════════════════════════════════════════════════════

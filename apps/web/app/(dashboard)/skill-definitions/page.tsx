@@ -10,16 +10,6 @@ import { apiClient } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import type { SkillDefinition } from '@semibot/shared-types'
 
-interface ApiError extends Error {
-  response?: { status: number; data?: { error?: { message?: string } } }
-}
-
-interface InstallPayload {
-  sourceType: 'anthropic' | 'git' | 'url'
-  enableRetry: boolean
-  sourceUrl?: string
-}
-
 interface ApiResponse<T> {
   success: boolean
   data: T
@@ -81,7 +71,7 @@ export default function SkillDefinitionsPage() {
       setActionLoading(true)
       setError(null)
 
-      const payload: InstallPayload = {
+      const payload: any = {
         sourceType: installSourceType,
         enableRetry: true,
       }
@@ -95,10 +85,9 @@ export default function SkillDefinitionsPage() {
       setShowInstallDialog(false)
       setInstallSourceUrl('')
       await loadDefinitions()
-    } catch (err) {
-      const apiErr = err as ApiError
+    } catch (err: any) {
       console.error('[SkillDefinitions] 安装失败:', err)
-      setError(apiErr.response?.data?.error?.message || '安装失败')
+      setError(err.response?.data?.error?.message || '安装失败')
     } finally {
       setActionLoading(false)
     }
@@ -123,10 +112,9 @@ export default function SkillDefinitionsPage() {
       setError(null)
       await apiClient.delete(`/skill-definitions/${id}`)
       await loadDefinitions()
-    } catch (err) {
-      const apiErr = err as ApiError
+    } catch (err: any) {
       console.error('[SkillDefinitions] 删除失败:', err)
-      setError(apiErr.response?.data?.error?.message || '删除失败')
+      setError(err.response?.data?.error?.message || '删除失败')
     } finally {
       setActionLoading(false)
     }
@@ -155,10 +143,9 @@ export default function SkillDefinitionsPage() {
       setShowEditDialog(false)
       setEditingDefinition(null)
       await loadDefinitions()
-    } catch (err) {
-      const apiErr = err as ApiError
+    } catch (err: any) {
       console.error('[SkillDefinitions] 更新失败:', err)
-      setError(apiErr.response?.data?.error?.message || '更新失败')
+      setError(err.response?.data?.error?.message || '更新失败')
     } finally {
       setActionLoading(false)
     }
@@ -326,7 +313,7 @@ export default function SkillDefinitionsPage() {
                 <select
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   value={installSourceType}
-                  onChange={(e) => setInstallSourceType(e.target.value as typeof installSourceType)}
+                  onChange={(e) => setInstallSourceType(e.target.value as any)}
                 >
                   <option value="anthropic">Anthropic</option>
                   <option value="git">Git</option>

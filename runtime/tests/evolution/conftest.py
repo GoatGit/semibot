@@ -39,8 +39,8 @@ def mock_db():
 @pytest.fixture
 def engine(mock_llm, mock_memory, mock_registry, mock_db):
     eng = EvolutionEngine(mock_llm, mock_memory, mock_registry, mock_db)
-    eng._check_cooldown = Mock(return_value=True)
-    eng._check_rate_limit = Mock(return_value=True)
+    eng._check_cooldown = AsyncMock(return_value=True)
+    eng._check_rate_limit = AsyncMock(return_value=True)
     return eng
 
 

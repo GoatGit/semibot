@@ -1,7 +1,7 @@
 """EvolutionEngine._should_evolve trigger condition tests."""
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from src.evolution.engine import EvolutionEngine
 from tests.evolution.conftest import make_state
 
@@ -15,52 +15,63 @@ class TestShouldEvolve:
             llm=Mock(), memory_system=Mock(),
             skill_registry=Mock(), db_pool=Mock(),
         )
-        eng._check_cooldown = Mock(return_value=True)
-        eng._check_rate_limit = Mock(return_value=True)
+        eng._check_cooldown = AsyncMock(return_value=True)
+        eng._check_rate_limit = AsyncMock(return_value=True)
         return eng
 
-    def test_should_evolve_all_conditions_met(self, engine):
+    @pytest.mark.asyncio
+    async def test_should_evolve_all_conditions_met(self, engine):
         state = make_state()
-        assert engine._should_evolve(state) is True
+        assert await engine._should_evolve(state) is True
 
-    def test_skip_when_task_failed(self, engine):
+    @pytest.mark.asyncio
+    async def test_skip_when_task_failed(self, engine):
         state = make_state(reflection={"success": False})
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False
 
-    def test_skip_when_reflection_missing_success(self, engine):
+    @pytest.mark.asyncio
+    async def test_skip_when_reflection_missing_success(self, engine):
         state = make_state(reflection={})
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False
 
-    def test_skip_when_steps_insufficient(self, engine):
+    @pytest.mark.asyncio
+    async def test_skip_when_steps_insufficient(self, engine):
         state = make_state(tool_results=[{"r": 1}, {"r": 2}])
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False
 
-    def test_skip_when_evolution_disabled(self, engine):
+    @pytest.mark.asyncio
+    async def test_skip_when_evolution_disabled(self, engine):
         state = make_state(agent_config={"evolution": {"enabled": False}})
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False
 
-    def test_skip_when_no_evolution_config(self, engine):
+    @pytest.mark.asyncio
+    async def test_skip_when_no_evolution_config(self, engine):
         state = make_state(agent_config={})
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False
 
-    def test_skip_when_cooldown_active(self, engine):
-        engine._check_cooldown = Mock(return_value=False)
+    @pytest.mark.asyncio
+    async def test_skip_when_cooldown_active(self, engine):
+        engine._check_cooldown = AsyncMock(return_value=False)
         state = make_state()
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False
 
-    def test_skip_when_rate_limited(self, engine):
-        engine._check_rate_limit = Mock(return_value=False)
+    @pytest.mark.asyncio
+    async def test_skip_when_rate_limited(self, engine):
+        engine._check_rate_limit = AsyncMock(return_value=False)
         state = make_state()
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False
 
-    def test_boundary_exactly_3_steps(self, engine):
+    @pytest.mark.asyncio
+    async def test_boundary_exactly_3_steps(self, engine):
         state = make_state(tool_results=[{"r": 1}, {"r": 2}, {"r": 3}])
-        assert engine._should_evolve(state) is True
+        assert await engine._should_evolve(state) is True
 
-    def test_boundary_more_than_3_steps(self, engine):
+    @pytest.mark.asyncio
+    async def test_boundary_more_than_3_steps(self, engine):
         state = make_state(tool_results=[{"r": i} for i in range(10)])
-        assert engine._should_evolve(state) is True
+        assert await engine._should_evolve(state) is True
 
-    def test_empty_tool_results(self, engine):
+    @pytest.mark.asyncio
+    async def test_empty_tool_results(self, engine):
         state = make_state(tool_results=[])
-        assert engine._should_evolve(state) is False
+        assert await engine._should_evolve(state) is False

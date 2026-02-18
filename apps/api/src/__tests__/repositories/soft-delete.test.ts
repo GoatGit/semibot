@@ -158,6 +158,7 @@ describe('软删除测试', () => {
       await agentRepository.softDelete(agentId, testOrgId, testUserId)
 
       // 验证 SQL 使用 UPDATE 而非 DELETE
+      const lastCall = mockSql.mock.calls[mockSql.mock.calls.length - 1]
       // 确保没有使用 DELETE 语句
       expect(mockSql).toHaveBeenCalled()
     })

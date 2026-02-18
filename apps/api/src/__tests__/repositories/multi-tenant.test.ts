@@ -41,6 +41,7 @@ describe('多租户隔离测试', () => {
   const orgA = uuid()
   const orgB = uuid()
   const userA = uuid()
+  const userB = uuid()
 
   beforeEach(() => {
     vi.clearAllMocks()

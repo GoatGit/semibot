@@ -97,7 +97,7 @@ export async function extractZip(archivePath: string, destDir: string): Promise<
       entryCount: entries.length,
     })
   } catch (error) {
-    if ((error as { code?: string })?.code === SKILL_UPLOAD_EXTRACT_FAILED) {
+    if ((error as any)?.code === SKILL_UPLOAD_EXTRACT_FAILED) {
       throw error
     }
     extractLogger.error('ZIP 解压失败', error as Error)

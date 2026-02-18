@@ -61,7 +61,6 @@ export default function ChatSessionPage() {
   } = useChat({
     sessionId,
     onMessage: (message) => {
-      // eslint-disable-next-line no-console
       console.log('[Chat] onMessage 收到消息:', message.type, message.data)
       // 处理文件消息
       if (message.type === 'file') {

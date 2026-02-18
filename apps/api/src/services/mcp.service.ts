@@ -817,7 +817,6 @@ export async function getMcpServersForRuntime(agentId: string): Promise<Array<{
   })
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 通用 JSON 解析，调用方自行断言类型
 function parseJsonField(value: unknown): any {
   if (value === null || value === undefined) return null
   if (Array.isArray(value)) return value

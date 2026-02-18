@@ -160,9 +160,6 @@ pnpm format     # 代码格式化
 pnpm --filter api dev    # API 服务
 pnpm --filter web dev    # Web 应用
 
-# 管理员
-pnpm --filter @semibot/api create-admin  # 创建超级管理员
-
 # Runtime 测试
 cd runtime && pytest
 ```
@@ -175,7 +172,6 @@ cd runtime && pytest
 - [数据模型](docs/design/DATA_MODEL.md)
 - [部署指南](docs/design/DEPLOYMENT.md)
 - [测试指南](docs/design/TESTING.md)
-- [管理员账号指南](docs/admin-guide.md)
 
 ### 开发规范
 - [编码规范](.claude/rules/coding-standards.md)

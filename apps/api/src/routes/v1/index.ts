@@ -19,6 +19,7 @@ import runtimeRouter from './runtime'
 import skillDefinitionsRouter from './skill-definitions'
 import skillsRouter from './skills'
 import evolvedSkillsRouter from './evolved-skills'
+import webhooksRouter from './webhooks'
 
 const router: Router = Router()
 
@@ -53,5 +54,6 @@ router.use('/runtime', runtimeRouter)
 router.use('/skill-definitions', skillDefinitionsRouter)
 router.use('/skills', skillsRouter)
 router.use('/evolved-skills', evolvedSkillsRouter)
+router.use('/webhooks', webhooksRouter)
 
 export default router

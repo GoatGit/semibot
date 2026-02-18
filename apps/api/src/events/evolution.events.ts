@@ -5,6 +5,7 @@
  */
 
 import { createLogger } from '../lib/logger'
+import * as WebhookService from '../services/webhook.service'
 
 const logger = createLogger('evolution-events')
 
@@ -67,12 +68,16 @@ export class EvolutionEventEmitter {
       skillId: data.skillId,
     })
 
-    // TODO: 发送到 Webhook 订阅者
-    // try {
-    //   await WebhookService.dispatch(orgId, event)
-    // } catch (error) {
-    //   logger.error('[Evolution] Webhook 发送失败', { type, error })
-    // }
+    try {
+      await WebhookService.dispatch(orgId, {
+        type: event.type,
+        timestamp: event.timestamp,
+        orgId: event.orgId,
+        data: event.data as unknown as Record<string, unknown>,
+      })
+    } catch (error) {
+      logger.error('[Evolution] Webhook 分发失败', { type, error })
+    }
   }
 
   static async emitSkillCreated(orgId: string, skill: {

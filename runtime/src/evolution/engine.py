@@ -7,6 +7,9 @@ Pipeline: EXTRACT → VALIDATE → REGISTER → INDEX
 import asyncio
 import json
 import time
+import uuid
+
+import redis.asyncio as redis
 
 from src.utils.logging import get_logger
 from src.evolution.models import SkillDraft
@@ -25,20 +28,50 @@ EVOLUTION_AUTO_APPROVE_THRESHOLD = 0.8
 EVOLUTION_DEFAULT_MIN_QUALITY = 0.6
 EVOLUTION_RECENT_MESSAGES_LIMIT = 10
 
+# 冷却期默认配置
+EVOLUTION_DEFAULT_COOLDOWN_WINDOW = 3600  # 1 小时（秒）
+EVOLUTION_DEFAULT_MAX_PER_WINDOW = 5      # 每窗口最大进化次数
+
+# Redis Lua 脚本：原子性检查冷却期并记录进化
+EVOLUTION_COOLDOWN_SCRIPT = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local max_count = tonumber(ARGV[3])
+local entry_id = ARGV[4]
+
+-- 清理窗口外的过期记录
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+
+-- 检查当前窗口内的次数
+local count = redis.call('ZCARD', key)
+if count >= max_count then
+    return 0
+end
+
+-- 记录本次进化
+redis.call('ZADD', key, now, entry_id)
+redis.call('EXPIRE', key, window)
+return 1
+"""
+
 
 class EvolutionEngine:
     """进化引擎 — REFLECT 之后异步执行"""
 
-    def __init__(self, llm, memory_system, skill_registry, db_pool):
+    def __init__(self, llm, memory_system, skill_registry, db_pool,
+                 redis_client: redis.Redis | None = None):
         self.llm = llm
         self.memory = memory_system
         self.skill_registry = skill_registry
         self.db = db_pool
         self.safety_checker = SafetyChecker()
+        self._redis = redis_client
+        self._cooldown_script_sha: str | None = None
 
     async def maybe_evolve(self, state: dict) -> None:
         """条件判断 + 异步触发进化（fire-and-forget）"""
-        if not self._should_evolve(state):
+        if not await self._should_evolve(state):
             return
 
         asyncio.create_task(self._safe_evolve(state))
@@ -50,7 +83,7 @@ class EvolutionEngine:
         except Exception as e:
             logger.error(f"[Evolution] 异步进化异常: {e}")
 
-    def _should_evolve(self, state: dict) -> bool:
+    async def _should_evolve(self, state: dict) -> bool:
         """判断是否触发进化"""
         reflection = state.get("reflection", {})
 
@@ -75,15 +108,15 @@ class EvolutionEngine:
             return False
 
         # 4. 冷却检查
-        if not self._check_cooldown(state.get("agent_id", ""), evolution_config):
-            logger.warning(
+        if not await self._check_cooldown(state.get("agent_id", ""), evolution_config):
+            logger.debug(
                 f"[Evolution] 跳过：冷却期内 (agent_id={state.get('agent_id')})"
             )
             return False
 
         # 5. 频率限制
-        if not self._check_rate_limit(state.get("agent_id", ""), evolution_config):
-            logger.warning(
+        if not await self._check_rate_limit(state.get("agent_id", ""), evolution_config):
+            logger.debug(
                 f"[Evolution] 跳过：频率超限 (agent_id={state.get('agent_id')})"
             )
             return False
@@ -291,15 +324,63 @@ class EvolutionEngine:
             logger.error(f"[Evolution] 质量评估失败: {e}")
             return {"score": 0.5, "reusability": 0.5}
 
-    def _check_cooldown(self, agent_id: str, config: dict) -> bool:
-        """检查冷却时间（预留 Redis 实现）"""
-        # TODO: 从 Redis 获取上次进化时间戳
-        return True
+    async def _check_cooldown(self, agent_id: str, config: dict) -> bool:
+        """检查冷却时间 — Redis ZSET + Lua 脚本原子操作"""
+        if self._redis is None:
+            logger.warning("[Evolution] Redis 不可用，冷却期检查降级为允许")
+            return True
 
-    def _check_rate_limit(self, agent_id: str, config: dict) -> bool:
-        """检查频率限制（预留 Redis 实现）"""
-        # TODO: 从 Redis 获取当前小时进化次数
-        return True
+        window = config.get("cooldown_window", EVOLUTION_DEFAULT_COOLDOWN_WINDOW)
+        max_count = config.get("max_per_window", EVOLUTION_DEFAULT_MAX_PER_WINDOW)
+        key = f"evolution:cooldown:{agent_id}"
+        now = time.time()
+        entry_id = str(uuid.uuid4())
+
+        try:
+            result = await self._redis.eval(
+                EVOLUTION_COOLDOWN_SCRIPT,
+                1,
+                key,
+                str(now),
+                str(window),
+                str(max_count),
+                entry_id,
+            )
+            allowed = int(result) == 1
+            if not allowed:
+                logger.warning(
+                    f"[Evolution] 冷却期内，拒绝进化 "
+                    f"(agent_id={agent_id}, window={window}s, max={max_count})"
+                )
+            return allowed
+        except Exception as e:
+            logger.warning(f"[Evolution] Redis 冷却期检查异常，降级为允许: {e}")
+            return True
+
+    async def _check_rate_limit(self, agent_id: str, config: dict) -> bool:
+        """检查频率限制 — 复用冷却期 ZSET，仅做只读检查"""
+        if self._redis is None:
+            logger.warning("[Evolution] Redis 不可用，频率限制检查降级为允许")
+            return True
+
+        window = config.get("cooldown_window", EVOLUTION_DEFAULT_COOLDOWN_WINDOW)
+        max_count = config.get("max_per_window", EVOLUTION_DEFAULT_MAX_PER_WINDOW)
+        key = f"evolution:cooldown:{agent_id}"
+        now = time.time()
+
+        try:
+            # 只读检查：统计窗口内的记录数
+            count = await self._redis.zcount(key, now - window, "+inf")
+            allowed = count < max_count
+            if not allowed:
+                logger.warning(
+                    f"[Evolution] 频率超限 "
+                    f"(agent_id={agent_id}, current={count}, max={max_count})"
+                )
+            return allowed
+        except Exception as e:
+            logger.warning(f"[Evolution] Redis 频率限制检查异常，降级为允许: {e}")
+            return True
 
     async def _log_stage(
         self,

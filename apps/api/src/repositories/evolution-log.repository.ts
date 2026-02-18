@@ -6,7 +6,9 @@
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
-import { logPaginationLimit } from '../lib/logger'
+import { logPaginationLimit, createLogger } from '../lib/logger'
+
+const logger = createLogger('evolution-log-repository')
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义

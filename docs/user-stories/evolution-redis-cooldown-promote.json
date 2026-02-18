@@ -1,0 +1,56 @@
+{
+  "id": "evolution-redis-cooldown-promote",
+  "title": "进化系统补全：Redis 冷却期 + 技能提升闭环",
+  "description": "进化引擎 _check_cooldown/_check_rate_limit 方法为占位符（直接返回 True），需接入 Redis ZSET 实现原子性冷却期和频率限制。evolved-skill.service.ts 的 promote 方法仅有 TODO 注释，需实现将进化技能写入 skills 表的完整转换逻辑。",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "engine.py _check_cooldown 使用 Redis ZSET 存储进化时间戳，通过 Lua 脚本原子性检查冷却期（默认每 Agent 每小时最多 5 次）",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "engine.py _check_rate_limit 使用同一 Redis ZSET，原子性检查当前窗口内进化次数是否超限",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "冷却期和频率限制的窗口大小、最大次数从 config 参数读取，不硬编码",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "Redis 不可用时 _check_cooldown/_check_rate_limit 降级为允许（返回 True），并打印 WARN 日志",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "evolved-skill.service.ts promote 方法将进化技能写入 skills 表（name, description, config, source_type='evolved', source_id=evolved_skill.id）",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "promote 后更新 evolved_skills 表状态为 'promoted'，记录 promoted_skill_id 关联",
+      "passes": true
+    },
+    {
+      "id": "AC-7",
+      "description": "promote 操作在事务中执行：skills 写入失败时 evolved_skills 状态不变",
+      "passes": true
+    },
+    {
+      "id": "AC-8",
+      "description": "冷却期 Lua 脚本单元测试：验证窗口内超限返回 0、窗口外允许返回 1、过期记录被清理",
+      "passes": true
+    },
+    {
+      "id": "AC-9",
+      "description": "promote 单元测试：验证正常提升、状态不合法拒绝、skills 表写入内容正确",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["evolution", "redis", "cooldown", "promote", "lua-script", "atomic"]
+}

@@ -1,0 +1,86 @@
+{
+  "id": "idempotency-sse-buffer-i18n",
+  "title": "工程化能力补全：幂等性 + SSE 消息缓冲 + 国际化",
+  "description": "三项工程化能力补全：(1) 请求幂等性中间件，基于 X-Request-ID + Redis 防止重复执行；(2) SSE 消息缓冲，支持断线重连后消息重放；(3) 国际化基础框架，前端 LocaleProvider + 后端错误消息多语言。",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "创建 apps/api/src/middleware/idempotency.ts，从请求头读取 X-Request-ID，使用 Redis SET NX + 5 分钟 TTL 存储",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "相同 X-Request-ID 的重复请求返回缓存的响应结果（HTTP 状态码和 body 一致），不重新执行业务逻辑",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "未携带 X-Request-ID 的请求正常通过，不受幂等性中间件影响",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "Redis 不可用时幂等性中间件降级为直接放行，打印 WARN 日志",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "chat 路由接入幂等性中间件（POST /chat/sessions/:sessionId 和 POST /chat/start）",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "chat.service.ts 中 SSE 连接维护有界消息缓冲（最近 100 条），每条消息携带递增的 eventId（通过 SSE id: 字段发送）",
+      "passes": true
+    },
+    {
+      "id": "AC-7",
+      "description": "客户端重连时通过 Last-Event-ID header 告知服务端上次收到的 eventId，服务端从缓冲中重放丢失的消息",
+      "passes": true
+    },
+    {
+      "id": "AC-8",
+      "description": "前端 useSSE.ts 重连时自动携带 Last-Event-ID header（从最后收到的 eventId 获取）",
+      "passes": true
+    },
+    {
+      "id": "AC-9",
+      "description": "创建 apps/web/messages/zh-CN.json 和 apps/web/messages/en-US.json 翻译文件，覆盖通用 UI 文本（导航、按钮、错误提示、表单标签）",
+      "passes": true
+    },
+    {
+      "id": "AC-10",
+      "description": "创建 apps/web/lib/i18n.ts 国际化配置，使用 next-intl 或等效方案，支持 zh-CN 和 en-US",
+      "passes": true
+    },
+    {
+      "id": "AC-11",
+      "description": "apps/web/app/layout.tsx 中 html lang 属性根据用户语言偏好动态设置，接入 i18n Provider",
+      "passes": true
+    },
+    {
+      "id": "AC-12",
+      "description": "后端 errorCodes.ts 的 ERROR_MESSAGES 支持多语言映射（根据请求 Accept-Language header 返回对应语言的错误消息）",
+      "passes": true
+    },
+    {
+      "id": "AC-13",
+      "description": "幂等性中间件单元测试：首次请求正常执行、重复请求返回缓存、无 header 放行、Redis 降级",
+      "passes": true
+    },
+    {
+      "id": "AC-14",
+      "description": "SSE 消息缓冲单元测试：缓冲写入和读取、Last-Event-ID 重放、缓冲溢出丢弃最旧消息",
+      "passes": true
+    },
+    {
+      "id": "AC-15",
+      "description": "国际化测试：前端语言切换后 UI 文本变化、后端 Accept-Language 返回对应语言错误消息",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit",
+  "priority": "medium",
+  "tags": ["idempotency", "sse", "buffer", "i18n", "middleware", "redis", "next-intl"]
+}
