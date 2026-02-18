@@ -1,0 +1,56 @@
+{
+  "id": "US-R03",
+  "title": "SSE 通信层抽取 — SSEManager 独立模块",
+  "description": "将 chat.service.ts 中散落的 SSE 实现（连接管理、心跳、事件分发、连接限制）抽取为独立的 SSEManager 类，职责单一，为后续消息缓冲和断线重连铺路。",
+  "actor": "开发者",
+  "preconditions": [
+    "SSE 逻辑当前耦合在 chat.service.ts 中",
+    "前端 useSSE.ts 通过标准 SSE 协议通信"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "新增 apps/api/src/lib/sse-manager.ts，导出 SSEManager 类",
+      "passes": false
+    },
+    {
+      "id": "AC-2",
+      "description": "SSEManager 包含 createConnection、closeConnection、send 方法",
+      "passes": false
+    },
+    {
+      "id": "AC-3",
+      "description": "SSEManager 包含心跳管理（startHeartbeat / stopHeartbeat）",
+      "passes": false
+    },
+    {
+      "id": "AC-4",
+      "description": "SSEManager 包含连接限制检查（checkConnectionLimit）",
+      "passes": false
+    },
+    {
+      "id": "AC-5",
+      "description": "chat.service.ts 重构为使用 SSEManager，移除内联 SSE 逻辑",
+      "passes": false
+    },
+    {
+      "id": "AC-6",
+      "description": "前端 SSE 通信不受影响（协议兼容）",
+      "passes": false
+    },
+    {
+      "id": "AC-7",
+      "description": "所有现有测试通过",
+      "passes": false
+    },
+    {
+      "id": "AC-8",
+      "description": "TypeScript 类型检查通过",
+      "passes": false
+    }
+  ],
+  "passes": false,
+  "test_type": "unit",
+  "priority": "medium",
+  "tags": ["refactor", "sse", "chat", "batch-2"]
+}

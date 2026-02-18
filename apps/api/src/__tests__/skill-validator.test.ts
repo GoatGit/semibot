@@ -43,7 +43,7 @@ describe('Skill Validator', () => {
 
     it('应该拒绝缺少必需字段的 frontmatter', () => {
       const frontmatter = {
-        name: 'Test Skill',
+        skill_id: 'test-skill',
       }
 
       expect(() => SkillMdFrontmatterSchema.parse(frontmatter)).toThrow()

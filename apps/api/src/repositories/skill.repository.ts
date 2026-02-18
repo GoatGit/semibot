@@ -2,11 +2,14 @@
  * Skill Repository
  *
  * 处理 Skill 的数据库 CRUD 操作
+ * 继承 BaseRepository 获取通用 CRUD 方法
  */
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
 import { logPaginationLimit, createLogger } from '../lib/logger'
+import { BaseRepository } from './base.repository'
+import type { PaginatedResult } from './base.repository'
 
 const skillLogger = createLogger('skill-repository')
 
@@ -59,15 +62,25 @@ export interface ListSkillsParams {
   search?: string
 }
 
-export interface PaginatedResult<T> {
-  data: T[]
-  meta: {
-    total: number
-    page: number
-    limit: number
-    totalPages: number
+export { PaginatedResult }
+
+// ═══════════════════════════════════════════════════════════════
+// Repository 类（继承 BaseRepository）
+// ═══════════════════════════════════════════════════════════════
+
+export class SkillRepositoryImpl extends BaseRepository<SkillRow> {
+  constructor() {
+    super('skills')
+  }
+
+  protected toEntity(row: SkillRow): SkillRow {
+    return row
   }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// 内部辅助
+// ═══════════════════════════════════════════════════════════════
 
 let skillsDeletedAtColumnExists: boolean | null = null
 
@@ -89,7 +102,7 @@ async function hasSkillsDeletedAtColumn(): Promise<boolean> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Repository 方法
+// 导出函数（保持向后兼容的函数式接口）
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -118,7 +131,7 @@ export async function create(data: CreateSkillData): Promise<SkillRow> {
 }
 
 /**
- * 根据 ID 获取 Skill
+ * 根��� ID 获取 Skill
  * @deprecated 使用 findByIdAndOrg 代替，以确保多租户隔离
  * @internal 仅供内部使用
  */
@@ -130,10 +143,7 @@ export async function findById(id: string): Promise<SkillRow | null> {
     ? await sql`SELECT * FROM skills WHERE id = ${id} AND deleted_at IS NULL`
     : await sql`SELECT * FROM skills WHERE id = ${id}`
 
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SkillRow
 }
 
@@ -155,10 +165,7 @@ export async function findByIdAndOrg(id: string, orgId: string): Promise<SkillRo
         AND (org_id = ${orgId} OR is_builtin = true)
       `
 
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SkillRow
 }
 
@@ -170,10 +177,8 @@ export async function findAll(params: ListSkillsParams): Promise<PaginatedResult
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
-  // 记录分页限制日志
   logPaginationLimit('SkillRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
-  // 构建 WHERE 条件
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   let whereClause = useDeletedAt ? sql`deleted_at IS NULL` : sql`1 = 1`
 
@@ -190,13 +195,11 @@ export async function findAll(params: ListSkillsParams): Promise<PaginatedResult
     whereClause = sql`${whereClause} AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})`
   }
 
-  // 获取总数
   const countResult = await sql`
     SELECT COUNT(*) as total FROM skills WHERE ${whereClause}
   `
   const total = parseInt((countResult[0] as { total: string }).total, 10)
 
-  // 获取分页数据
   const dataResult = await sql`
     SELECT * FROM skills
     WHERE ${whereClause}
@@ -219,10 +222,6 @@ export async function findAll(params: ListSkillsParams): Promise<PaginatedResult
 
 /**
  * 更新 Skill（带审计字段和租户隔离）
- * @param id Skill ID
- * @param orgId 组织 ID
- * @param data 更新数据
- * @param updatedBy 更新者用户 ID
  */
 export async function updateByOrg(
   id: string,
@@ -233,7 +232,6 @@ export async function updateByOrg(
   const skill = await findByIdAndOrg(id, orgId)
   if (!skill) return null
 
-  // 内置 Skill 不允许修改
   if (skill.is_builtin) {
     skillLogger.warn('[Security] 尝试修改内置 Skill', { id, orgId })
     return null
@@ -252,20 +250,13 @@ export async function updateByOrg(
     WHERE id = ${id} AND org_id = ${orgId}
     RETURNING *
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SkillRow
 }
 
 /**
  * 更新 Skill（带审计字段）
  * @deprecated 使用 updateByOrg 代替，以确保多租户隔离
- * @param id Skill ID
- * @param data 更新数据
- * @param updatedBy 更新者用户 ID
  */
 export async function update(id: string, data: UpdateSkillData, updatedBy?: string): Promise<SkillRow | null> {
   skillLogger.warn('[Security] update 被调用，请使用 updateByOrg 确保租户隔离', { id })
@@ -286,25 +277,17 @@ export async function update(id: string, data: UpdateSkillData, updatedBy?: stri
     WHERE id = ${id}
     RETURNING *
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SkillRow
 }
 
 /**
  * 软删除 Skill（带审计字段和租户隔离）
- * @param id Skill ID
- * @param orgId 组织 ID
- * @param deletedBy 删除者用户 ID
  */
 export async function softDeleteByOrg(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
   const skill = await findByIdAndOrg(id, orgId)
   if (!skill) return false
 
-  // 内置 Skill 不允许删除
   if (skill.is_builtin) {
     skillLogger.warn('[Security] 尝试删除内置 Skill', { id, orgId })
     return false
@@ -334,8 +317,6 @@ export async function softDeleteByOrg(id: string, orgId: string, deletedBy?: str
 /**
  * 软删除 Skill（带审计字段）
  * @deprecated 使用 softDeleteByOrg 代替，以确保多租户隔离
- * @param id Skill ID
- * @param deletedBy 删除者用户 ID
  */
 export async function softDelete(id: string, deletedBy?: string): Promise<boolean> {
   skillLogger.warn('[Security] softDelete 被调用，请使用 softDeleteByOrg 确保租户隔离', { id })
@@ -363,13 +344,9 @@ export async function softDelete(id: string, deletedBy?: string): Promise<boolea
 
 /**
  * 批量查询 Skill（避免 N+1 问题）
- * @param ids Skill ID 数组
- * @returns Skill 数组
  */
 export async function findByIds(ids: string[]): Promise<SkillRow[]> {
-  if (ids.length === 0) {
-    return []
-  }
+  if (ids.length === 0) return []
 
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   const result = useDeletedAt
@@ -388,17 +365,12 @@ export async function findByIds(ids: string[]): Promise<SkillRow[]> {
 
 /**
  * 批量查询指定组织的活跃 Skill（包括内置）
- * @param ids Skill ID 数组
- * @param orgId 组织 ID
- * @returns 活跃的 Skill 数组
  */
 export async function findActiveByIdsAndOrg(
   ids: string[],
   orgId: string
 ): Promise<SkillRow[]> {
-  if (ids.length === 0) {
-    return []
-  }
+  if (ids.length === 0) return []
 
   const useDeletedAt = await hasSkillsDeletedAtColumn()
   const result = useDeletedAt
