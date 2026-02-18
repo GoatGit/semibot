@@ -8,7 +8,11 @@ import { Bot, Plus, Search, Settings, Trash2, Loader2, Power } from 'lucide-reac
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
+import { Modal } from '@/components/ui/Modal'
+import { Select, type SelectGroup } from '@/components/ui/Select'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { apiClient } from '@/lib/api'
+import { toast } from '@/stores/toastStore'
 import type { ApiResponse, Agent } from '@/types'
 import { useLLMModels, type LLMModel } from '@/hooks/useLLMModels'
 
@@ -31,7 +35,6 @@ export default function AgentsPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isToggling, setIsToggling] = useState(false)
   const [pageIndex, setPageIndex] = useState(1)
-  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
   // 获取 LLM 模型列表
   const { models: llmModels, loading: modelsLoading, error: modelsError } = useLLMModels()
@@ -46,7 +49,7 @@ export default function AgentsPage() {
       }
     } catch (err) {
       console.error('[Agents] 加载失败:', err)
-      setStatusMessage({ type: 'error', text: '加载失败，请重试' })
+      toast.error('加载失败，请重试')
     } finally {
       setIsLoading(false)
     }
@@ -88,7 +91,6 @@ export default function AgentsPage() {
   )
 
   const openCreateForm = () => {
-    setStatusMessage(null)
     const defaultModel = llmModels.length > 0 ? llmModels[0].modelId : ''
     setFormValues({ name: '', description: '', model: defaultModel, systemPrompt: '' })
     setFormErrors({})
@@ -100,7 +102,6 @@ export default function AgentsPage() {
   }
 
   const handleSave = async () => {
-    setStatusMessage(null)
     const errors: Record<string, string> = {}
     if (!formValues.name.trim()) {
       errors.name = '名称不能为空'
@@ -126,12 +127,12 @@ export default function AgentsPage() {
       if (response.success && response.data) {
         const newAgent = response.data
         setAgents((prev) => [newAgent, ...prev])
-        setStatusMessage({ type: 'success', text: '创建成功' })
+        toast.success('创建成功')
         setShowForm(false)
       }
     } catch (err) {
       console.error('[Agents] 保存失败:', err)
-      setStatusMessage({ type: 'error', text: '保存失败，请重试' })
+      toast.error('保存失败，请重试')
     } finally {
       setIsSubmitting(false)
     }
@@ -149,7 +150,7 @@ export default function AgentsPage() {
       setAgents((prev) => prev.map((a) => a.id === agent.id ? { ...a, isActive: !a.isActive } : a))
     } catch (err) {
       console.error('[Agents] 切换状态失败:', err)
-      setStatusMessage({ type: 'error', text: '切换状态失败' })
+      toast.error('切换状态失败')
     } finally {
       setIsToggling(false)
     }
@@ -166,11 +167,11 @@ export default function AgentsPage() {
     try {
       await apiClient.delete(`/agents/${confirmDelete.id}`)
       setAgents((prev) => prev.filter((agent) => agent.id !== confirmDelete.id))
-      setStatusMessage({ type: 'success', text: '已删除' })
+      toast.success('已删除')
       setConfirmDelete(null)
     } catch (err) {
       console.error('[Agents] 删除失败:', err)
-      setStatusMessage({ type: 'error', text: '删除失败，请重试' })
+      toast.error('删除失败，请重试')
     } finally {
       setIsDeleting(false)
     }
@@ -196,16 +197,6 @@ export default function AgentsPage() {
           </Button>
         </div>
 
-        {statusMessage && (
-          <div className={clsx(
-            "mt-3 rounded-md px-3 py-2 border",
-            statusMessage.type === 'success'
-              ? "bg-success-500/10 border-success-500/20 text-success-500"
-              : "bg-error-500/10 border-error-500/20 text-error-500"
-          )}>
-            <p className="text-sm">{statusMessage.text}</p>
-          </div>
-        )}
 
         {/* 搜索和筛选 */}
         <div className="flex items-center gap-4 mt-4">
@@ -379,58 +370,64 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
             </div>
             {!isSystem && (
               <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  data-testid="toggle-agent-btn"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onToggleActive()
-                  }}
-                  disabled={isToggling}
-                  className={clsx(
-                    'p-1.5 rounded-md',
-                    'transition-colors duration-fast',
-                    isToggling
-                      ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:bg-interactive-hover',
-                    isActive ? 'text-success-500' : 'text-text-tertiary hover:text-text-primary'
-                  )}
-                >
-                  <Power size={16} />
-                </button>
-                <button
-                  type="button"
-                  data-testid="edit-agent-btn"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onEdit()
-                  }}
-                  className={clsx(
-                    'p-1.5 rounded-md',
-                    'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
-                    'transition-colors duration-fast'
-                  )}
-                >
-                  <Settings size={16} />
-                </button>
-                <button
-                  type="button"
-                  data-testid="delete-agent-btn"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onDelete()
-                  }}
-                  className={clsx(
-                    'p-1.5 rounded-md',
-                    'text-text-tertiary hover:text-error-500 hover:bg-error-500/10',
-                    'transition-colors duration-fast'
-                  )}
-                >
-                  <Trash2 size={16} />
-                </button>
+                <Tooltip content={isActive ? '停用' : '启用'}>
+                  <button
+                    type="button"
+                    data-testid="toggle-agent-btn"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onToggleActive()
+                    }}
+                    disabled={isToggling}
+                    className={clsx(
+                      'p-1.5 rounded-md',
+                      'transition-colors duration-fast',
+                      isToggling
+                        ? 'opacity-50 cursor-not-allowed'
+                        : 'hover:bg-interactive-hover',
+                      isActive ? 'text-success-500' : 'text-text-tertiary hover:text-text-primary'
+                    )}
+                  >
+                    <Power size={16} />
+                  </button>
+                </Tooltip>
+                <Tooltip content="编辑">
+                  <button
+                    type="button"
+                    data-testid="edit-agent-btn"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onEdit()
+                    }}
+                    className={clsx(
+                      'p-1.5 rounded-md',
+                      'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
+                      'transition-colors duration-fast'
+                    )}
+                  >
+                    <Settings size={16} />
+                  </button>
+                </Tooltip>
+                <Tooltip content="删除">
+                  <button
+                    type="button"
+                    data-testid="delete-agent-btn"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onDelete()
+                    }}
+                    className={clsx(
+                      'p-1.5 rounded-md',
+                      'text-text-tertiary hover:text-error-500 hover:bg-error-500/10',
+                      'transition-colors duration-fast'
+                    )}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </Tooltip>
               </div>
             )}
           </div>
@@ -543,137 +540,126 @@ function AgentFormModal({
     acc[provider].push(model)
     return acc
   }, {})
+
+  const modelOptions: SelectGroup[] = Object.entries(groupedModels).map(([providerName, providerModels]) => ({
+    label: providerName,
+    options: providerModels.map((model) => ({
+      value: model.modelId,
+      label: model.displayName,
+    })),
+  }))
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div
-        className="w-full max-w-lg rounded-lg bg-bg-surface border border-border-default p-6 space-y-4"
-      >
-        <h2 className="text-lg font-semibold text-text-primary">
-          {mode === 'create' ? '创建代理' : '编辑代理'}
-        </h2>
-
-        <div className="space-y-4">
-          <div>
-            <label
-              htmlFor="agent-name"
-              className="block text-sm font-medium text-text-secondary mb-1.5"
-            >
-              名称
-            </label>
-            <Input
-              id="agent-name"
-              placeholder="代理名称"
-              value={values.name}
-              onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))}
-              className={errors.name ? 'border-error-500' : ''}
-              disabled={isSubmitting}
-            />
-            {errors.name && (
-              <p className="text-xs text-error-500 mt-1">{errors.name}</p>
-            )}
-          </div>
-
-          <div>
-            <label
-              htmlFor="agent-description"
-              className="block text-sm font-medium text-text-secondary mb-1.5"
-            >
-              描述
-            </label>
-            <textarea
-              id="agent-description"
-              placeholder="描述"
-              value={values.description}
-              onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
-              disabled={isSubmitting}
-              className={clsx(
-                'w-full h-24 px-3 py-2 rounded-md resize-none',
-                'bg-bg-surface border border-border-default',
-                'text-text-primary placeholder:text-text-tertiary',
-                'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
-                'transition-all duration-fast'
-              )}
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="agent-model"
-              className="block text-sm font-medium text-text-secondary mb-1.5"
-            >
-              模型
-            </label>
-            <select
-              id="agent-model"
-              data-testid="model-select"
-              value={values.model}
-              onChange={(e) => onChange((prev) => ({ ...prev, model: e.target.value }))}
-              disabled={isSubmitting || modelsLoading || models.length === 0}
-              className={clsx(
-                'w-full px-3 py-2 rounded-md',
-                'bg-bg-surface border border-border-default',
-                'text-text-primary',
-                'focus:outline-none focus:border-primary-500',
-                'transition-all duration-fast'
-              )}
-            >
-              {modelsLoading ? (
-                <option value="">加载中...</option>
-              ) : modelsError ? (
-                <option value="">模型列表加载失败，请检查后端接口</option>
-              ) : models.length === 0 ? (
-                <option value="">暂无可用模型，请检查 LLM Provider 配置</option>
-              ) : (
-                Object.entries(groupedModels).map(([providerName, providerModels]) => (
-                  <optgroup key={providerName} label={providerName}>
-                    {providerModels.map((model) => (
-                      <option key={model.modelId} value={model.modelId}>
-                        {model.displayName}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))
-              )}
-            </select>
-            {errors.model && (
-              <p className="text-xs text-error-500 mt-1">{errors.model}</p>
-            )}
-          </div>
-
-          <div>
-            <label
-              htmlFor="agent-system-prompt"
-              className="block text-sm font-medium text-text-secondary mb-1.5"
-            >
-              系统提示词
-            </label>
-            <textarea
-              id="agent-system-prompt"
-              placeholder="系统提示"
-              value={values.systemPrompt}
-              onChange={(e) => onChange((prev) => ({ ...prev, systemPrompt: e.target.value }))}
-              disabled={isSubmitting}
-              className={clsx(
-                'w-full h-24 px-3 py-2 rounded-md resize-none',
-                'bg-bg-surface border border-border-default',
-                'text-text-primary placeholder:text-text-tertiary',
-                'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
-                'transition-all duration-fast'
-              )}
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 pt-2">
+    <Modal
+      open={true}
+      onClose={onCancel}
+      title={mode === 'create' ? '创建代理' : '编辑代理'}
+      footer={
+        <>
           <Button variant="secondary" type="button" onClick={onCancel} disabled={isSubmitting}>
             取消
           </Button>
           <Button type="button" onClick={onSave} loading={isSubmitting}>
             {mode === 'create' ? '创建' : '保存'}
           </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <label
+            htmlFor="agent-name"
+            className="block text-sm font-medium text-text-secondary mb-1.5"
+          >
+            名称
+          </label>
+          <Input
+            id="agent-name"
+            placeholder="代理名称"
+            value={values.name}
+            onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))}
+            className={errors.name ? 'border-error-500' : ''}
+            disabled={isSubmitting}
+          />
+          {errors.name && (
+            <p className="text-xs text-error-500 mt-1">{errors.name}</p>
+          )}
+        </div>
+
+        <div>
+          <label
+            htmlFor="agent-description"
+            className="block text-sm font-medium text-text-secondary mb-1.5"
+          >
+            描述
+          </label>
+          <textarea
+            id="agent-description"
+            placeholder="描述"
+            value={values.description}
+            onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
+            disabled={isSubmitting}
+            className={clsx(
+              'w-full h-24 px-3 py-2 rounded-md resize-none',
+              'bg-bg-surface border border-border-default',
+              'text-text-primary placeholder:text-text-tertiary',
+              'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
+              'transition-all duration-fast'
+            )}
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="agent-model"
+            className="block text-sm font-medium text-text-secondary mb-1.5"
+          >
+            模型
+          </label>
+          <Select
+            id="agent-model"
+            data-testid="model-select"
+            value={values.model}
+            onChange={(val) => onChange((prev) => ({ ...prev, model: val }))}
+            disabled={isSubmitting || modelsLoading || models.length === 0}
+            options={modelOptions}
+            placeholder={
+              modelsLoading
+                ? '加载中...'
+                : modelsError
+                  ? '模型列表加载失败，请检查后端接口'
+                  : models.length === 0
+                    ? '暂无可用模型，请检查 LLM Provider 配置'
+                    : '请选择模型'
+            }
+            error={!!errors.model}
+            errorMessage={errors.model}
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="agent-system-prompt"
+            className="block text-sm font-medium text-text-secondary mb-1.5"
+          >
+            系统提示词
+          </label>
+          <textarea
+            id="agent-system-prompt"
+            placeholder="系统提示"
+            value={values.systemPrompt}
+            onChange={(e) => onChange((prev) => ({ ...prev, systemPrompt: e.target.value }))}
+            disabled={isSubmitting}
+            className={clsx(
+              'w-full h-24 px-3 py-2 rounded-md resize-none',
+              'bg-bg-surface border border-border-default',
+              'text-text-primary placeholder:text-text-tertiary',
+              'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
+              'transition-all duration-fast'
+            )}
+          />
         </div>
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -686,21 +672,25 @@ interface ConfirmDeleteModalProps {
 
 function ConfirmDeleteModal({ agentName, isDeleting, onConfirm, onCancel }: ConfirmDeleteModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-sm rounded-lg bg-bg-surface border border-border-default p-6 space-y-4">
-        <h3 className="text-lg font-semibold text-text-primary">删除代理</h3>
-        <p className="text-sm text-text-secondary">
-          删除“{agentName}”后无法恢复。
-        </p>
-        <div className="flex items-center justify-end gap-2">
+    <Modal
+      open={true}
+      onClose={onCancel}
+      title="删除代理"
+      maxWidth="sm"
+      footer={
+        <>
           <Button variant="secondary" type="button" onClick={onCancel} disabled={isDeleting}>
             取消
           </Button>
           <Button variant="destructive" type="button" onClick={onConfirm} loading={isDeleting}>
             确认
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="text-sm text-text-secondary">
+        删除&ldquo;{agentName}&rdquo;后无法恢复。
+      </p>
+    </Modal>
   )
 }

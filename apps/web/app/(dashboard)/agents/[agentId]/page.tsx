@@ -8,6 +8,7 @@ import { ArrowLeft, Save, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardHeader, CardDescription, CardContent } from '@/components/ui/Card'
+import { Select, type SelectGroup } from '@/components/ui/Select'
 import { apiClient } from '@/lib/api'
 import { useLLMModels } from '@/hooks/useLLMModels'
 import { useSkillDefinitions } from '@/hooks/useSkillDefinitions'
@@ -66,6 +67,24 @@ export default function AgentDetailPage() {
       return acc
     }, {})
   }, [models])
+
+  const modelOptions: SelectGroup[] = useMemo(() => {
+    const groups = Object.entries(groupedModels).map(([providerName, providerModels]) => ({
+      label: providerName,
+      options: providerModels.map((model) => ({
+        value: model.modelId,
+        label: model.displayName,
+      })),
+    }))
+    // If current value is not in the list, add it as a standalone option
+    if (values.model && !models.some((m) => m.modelId === values.model)) {
+      groups.unshift({
+        label: '当前',
+        options: [{ value: values.model, label: `${values.model}（不在可用列表中）` }],
+      })
+    }
+    return groups
+  }, [groupedModels, models, values.model])
 
   // 新建时：等 models 加载完后设置默认模型
   useEffect(() => {
@@ -241,38 +260,19 @@ export default function AgentDetailPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-text-primary mb-1.5">模型</label>
-                  <select
+                  <Select
                     value={values.model}
-                    onChange={(e) => setValues((prev) => ({ ...prev, model: e.target.value }))}
+                    onChange={(val) => setValues((prev) => ({ ...prev, model: val }))}
                     disabled={isSaving || modelsLoading || models.length === 0}
-                    className={clsx(
-                      'w-full px-3 py-2 rounded-md',
-                      'bg-bg-surface border border-border-default text-text-primary',
-                      'focus:outline-none focus:border-primary-500'
-                    )}
-                  >
-                    {modelsLoading ? (
-                      <option value="">加载中...</option>
-                    ) : models.length === 0 ? (
-                      <option value="">暂无可用模型</option>
-                    ) : (
-                      <>
-                        <option value="">请选择模型</option>
-                        {values.model && !models.some((m) => m.modelId === values.model) && (
-                          <option value={values.model}>{values.model}（不在可用列表中）</option>
-                        )}
-                        {Object.entries(groupedModels).map(([providerName, providerModels]) => (
-                          <optgroup key={providerName} label={providerName}>
-                            {providerModels.map((model) => (
-                              <option key={model.modelId} value={model.modelId}>
-                                {model.displayName}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </>
-                    )}
-                  </select>
+                    options={modelOptions}
+                    placeholder={
+                      modelsLoading
+                        ? '加载中...'
+                        : models.length === 0
+                          ? '暂无可用模型'
+                          : '请选择模型'
+                    }
+                  />
                 </div>
 
                 <div>

@@ -1,11 +1,15 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Search, Plus, RefreshCw, AlertCircle, Package, Pencil, Trash2 } from 'lucide-react'
+import clsx from 'clsx'
+import { Search, Plus, RefreshCw, Package, Pencil, Trash2, Loader2, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { Modal } from '@/components/ui/Modal'
+import { Select } from '@/components/ui/Select'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { apiClient } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import type { SkillDefinition } from '@semibot/shared-types'
@@ -164,252 +168,259 @@ export default function SkillDefinitionsPage() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">加载中...</p>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
       {/* 头部 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">技能管理</h1>
-          <p className="text-gray-600 mt-1">管理平台技能定义</p>
-        </div>
-        <Button onClick={() => window.location.href = '/skill-definitions/new'}>
-          <Plus className="w-4 h-4 mr-2" />
-          创建技能
-        </Button>
-      </div>
-
-      {/* 错误提示 */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start">
-          <AlertCircle className="w-5 h-5 text-red-600 mr-3 flex-shrink-0 mt-0.5" />
+      <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
+        <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-medium text-red-800">错误</h3>
-            <p className="text-sm text-red-700 mt-1">{error}</p>
+            <h1 className="text-xl font-semibold text-text-primary">技能管理</h1>
+            <p className="text-sm text-text-secondary mt-1">
+              管理平台技能定义，共 {definitions.length} 个
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={loadDefinitions}>
+              刷新
+            </Button>
+            <Button leftIcon={<Plus size={16} />} onClick={() => window.location.href = '/skill-definitions/new'}>
+              创建技能
+            </Button>
           </div>
         </div>
-      )}
 
-      {/* 搜索栏 */}
-      <div className="flex items-center space-x-4">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+        {/* 错误提示 */}
+        {error && (
+          <div className="mt-3 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500 flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-error-500/60 hover:text-error-500 text-xs">
+              关闭
+            </button>
+          </div>
+        )}
+
+        {/* 搜索栏 */}
+        <div className="mt-4 max-w-md">
           <Input
-            type="text"
             placeholder="搜索技能名称、ID 或描述..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
+            leftIcon={<Search size={16} />}
           />
         </div>
-        <Button variant="secondary" onClick={loadDefinitions}>
-          <RefreshCw className="w-4 h-4 mr-2" />
-          刷新
-        </Button>
-      </div>
+      </header>
 
-      {/* 技能列表 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredDefinitions.map((definition) => (
-          <Card key={definition.id} className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <CardTitle className="text-lg">{definition.name}</CardTitle>
-                    {definition.isPublic && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500">
-                        内置
-                      </span>
+      {/* 内容区 */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {loading ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+          </div>
+        ) : filteredDefinitions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full py-12">
+            <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-4">
+              <Zap size={32} className="text-text-tertiary" />
+            </div>
+            {searchQuery ? (
+              <>
+                <h3 className="text-lg font-medium text-text-primary">未找到匹配的技能</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">尝试调整搜索条件</p>
+                <Button variant="secondary" onClick={() => setSearchQuery('')}>清除搜索</Button>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-medium text-text-primary">暂无技能定义</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">创建您的第一个技能定义开始使用</p>
+                <Button leftIcon={<Plus size={16} />} onClick={() => window.location.href = '/skill-definitions/new'}>创建技能</Button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredDefinitions.map((definition) => (
+              <Card key={definition.id} className="hover:shadow-lg transition-shadow">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <CardTitle className="text-lg">{definition.name}</CardTitle>
+                        {definition.isPublic && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500">
+                            内置
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-text-tertiary mt-1">{definition.skillId}</p>
+                    </div>
+                    {definition.isActive ? (
+                      <Badge variant="success">已启用</Badge>
+                    ) : (
+                      <Badge variant="default">已禁用</Badge>
                     )}
                   </div>
-                  <p className="text-sm text-gray-500 mt-1">{definition.skillId}</p>
-                </div>
-                {definition.isActive ? (
-                  <Badge variant="success">已启用</Badge>
-                ) : (
-                  <Badge variant="default">已禁用</Badge>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-gray-600 line-clamp-2">
-                {definition.description || '暂无描述'}
-              </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-text-secondary line-clamp-2">
+                    {definition.description || '暂无描述'}
+                  </p>
 
-              {/* 分类和标签 */}
-              {definition.category && (
-                <div className="flex items-center text-sm">
-                  <span className="text-gray-500 mr-2">分类:</span>
-                  <Badge variant="default">{definition.category}</Badge>
-                </div>
-              )}
+                  {/* 分类和标签 */}
+                  {definition.category && (
+                    <div className="flex items-center text-sm">
+                      <span className="text-text-tertiary mr-2">分类:</span>
+                      <Badge variant="default">{definition.category}</Badge>
+                    </div>
+                  )}
 
-              {definition.tags && definition.tags.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {definition.tags.map((tag: string, idx: number) => (
-                    <Badge key={idx} variant="outline" className="text-xs">
-                      {tag}
-                    </Badge>
-                  ))}
-                </div>
-              )}
+                  {definition.tags && definition.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {definition.tags.map((tag: string, idx: number) => (
+                        <Badge key={idx} variant="outline" className="text-xs">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
 
-              {/* 操作按钮 */}
-              <div className="flex space-x-2 pt-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setSelectedDefinition(definition)
-                    setShowInstallDialog(true)
-                  }}
-                  className="flex-1"
-                >
-                  <Package className="w-4 h-4 mr-1" />
-                  安装
-                </Button>
-                {isAdmin && (
-                  <>
+                  {/* 操作按钮 */}
+                  <div className="flex space-x-2 pt-2">
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => openEditDialog(definition)}
-                      disabled={actionLoading}
+                      onClick={() => {
+                        setSelectedDefinition(definition)
+                        setShowInstallDialog(true)
+                      }}
+                      className="flex-1"
+                      leftIcon={<Package size={14} />}
                     >
-                      <Pencil className="w-4 h-4" />
+                      安装
                     </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => handleDeleteDefinition(definition.id)}
-                      disabled={actionLoading}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                    {isAdmin && (
+                      <>
+                        <Tooltip content="编辑">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => openEditDialog(definition)}
+                            disabled={actionLoading}
+                          >
+                            <Pencil size={14} />
+                          </Button>
+                        </Tooltip>
+                        <Tooltip content="删除">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleDeleteDefinition(definition.id)}
+                            disabled={actionLoading}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </Tooltip>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
 
-      {filteredDefinitions.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500">没有找到技能定义</p>
-        </div>
-      )}
-
       {/* 安装对话框 */}
-      {showInstallDialog && selectedDefinition && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-lg w-full">
-            <div className="p-6 border-b">
-              <h2 className="text-xl font-bold">安装技能</h2>
-              <p className="text-sm text-gray-600 mt-1">{selectedDefinition.name}</p>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">来源类型 *</label>
-                <select
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                  value={installSourceType}
-                  onChange={(e) => setInstallSourceType(e.target.value as typeof installSourceType)}
-                >
-                  <option value="anthropic">Anthropic</option>
-                  <option value="git">Git</option>
-                  <option value="url">URL</option>
-                </select>
-              </div>
-
-              {(installSourceType === 'git' || installSourceType === 'url') && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">来源 URL *</label>
-                  <Input
-                    type="text"
-                    placeholder="https://..."
-                    value={installSourceUrl}
-                    onChange={(e) => setInstallSourceUrl(e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="p-6 border-t flex justify-end space-x-3">
-              <Button variant="secondary" onClick={() => setShowInstallDialog(false)} disabled={actionLoading}>
-                取消
-              </Button>
-              <Button onClick={handleInstall} disabled={actionLoading}>
-                {actionLoading ? '安装中...' : '安装'}
-              </Button>
-            </div>
+      <Modal
+        open={showInstallDialog && !!selectedDefinition}
+        onClose={() => setShowInstallDialog(false)}
+        title="安装技能"
+        description={selectedDefinition?.name}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowInstallDialog(false)} disabled={actionLoading}>
+              取消
+            </Button>
+            <Button onClick={handleInstall} loading={actionLoading}>
+              安装
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1.5">来源类型 *</label>
+            <Select
+              value={installSourceType}
+              onChange={(val) => setInstallSourceType(val as typeof installSourceType)}
+              options={[
+                { value: 'anthropic', label: 'Anthropic' },
+                { value: 'git', label: 'Git' },
+                { value: 'url', label: 'URL' },
+              ]}
+            />
           </div>
+
+          {(installSourceType === 'git' || installSourceType === 'url') && (
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">来源 URL *</label>
+              <Input
+                type="text"
+                placeholder="https://..."
+                value={installSourceUrl}
+                onChange={(e) => setInstallSourceUrl(e.target.value)}
+              />
+            </div>
+          )}
         </div>
-      )}
+      </Modal>
 
       {/* 编辑对话框 */}
-      {showEditDialog && editingDefinition && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-lg w-full">
-            <div className="p-6 border-b">
-              <h2 className="text-xl font-bold">编辑技能定义</h2>
-              <p className="text-sm text-gray-600 mt-1">{editingDefinition.skillId}</p>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">名称 *</label>
-                <Input
-                  type="text"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm((s) => ({ ...s, name: e.target.value }))}
-                  disabled={actionLoading}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">描述</label>
-                <Input
-                  type="text"
-                  value={editForm.description}
-                  onChange={(e) => setEditForm((s) => ({ ...s, description: e.target.value }))}
-                  disabled={actionLoading}
-                />
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={editForm.isPublic}
-                  onChange={(e) => setEditForm((s) => ({ ...s, isPublic: e.target.checked }))}
-                  disabled={actionLoading}
-                  className="rounded border-gray-300"
-                />
-                <span className="text-sm text-gray-700">设为内置技能（所有组织可见）</span>
-              </label>
-            </div>
-
-            <div className="p-6 border-t flex justify-end space-x-3">
-              <Button variant="secondary" onClick={() => { setShowEditDialog(false); setEditingDefinition(null) }} disabled={actionLoading}>
-                取消
-              </Button>
-              <Button onClick={handleUpdateDefinition} disabled={actionLoading || !editForm.name.trim()}>
-                {actionLoading ? '保存中...' : '保存'}
-              </Button>
-            </div>
+      <Modal
+        open={showEditDialog && !!editingDefinition}
+        onClose={() => { setShowEditDialog(false); setEditingDefinition(null) }}
+        title="编辑技能定义"
+        description={editingDefinition?.skillId}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => { setShowEditDialog(false); setEditingDefinition(null) }} disabled={actionLoading}>
+              取消
+            </Button>
+            <Button onClick={handleUpdateDefinition} loading={actionLoading} disabled={!editForm.name.trim()}>
+              保存
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1.5">名称 *</label>
+            <Input
+              type="text"
+              value={editForm.name}
+              onChange={(e) => setEditForm((s) => ({ ...s, name: e.target.value }))}
+              disabled={actionLoading}
+            />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1.5">描述</label>
+            <Input
+              type="text"
+              value={editForm.description}
+              onChange={(e) => setEditForm((s) => ({ ...s, description: e.target.value }))}
+              disabled={actionLoading}
+            />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={editForm.isPublic}
+              onChange={(e) => setEditForm((s) => ({ ...s, isPublic: e.target.checked }))}
+              disabled={actionLoading}
+              className="rounded border-border-default"
+            />
+            <span className="text-sm text-text-secondary">设为内置技能（所有组织可见）</span>
+          </label>
         </div>
-      )}
+      </Modal>
     </div>
   )
 }
