@@ -36,7 +36,7 @@ function isRetryableError(error: { code?: string; message?: string }): boolean {
     'EAI_AGAIN',
   ]
 
-  return retryableCodes.includes(error.code) || error.message?.includes('network')
+  return retryableCodes.includes(error.code ?? '') || (error.message?.includes('network') ?? false)
 }
 
 /**
@@ -68,7 +68,7 @@ export async function installWithRetry(
       if (attempt >= maxRetries) {
         throw createError(
           'INSTALL_FAILED_AFTER_RETRIES',
-          `安装失败，已重试 ${maxRetries} 次: ${error.message}`
+          `安装失败，已重试 ${maxRetries} 次: ${(error as Error).message}`
         )
       }
 

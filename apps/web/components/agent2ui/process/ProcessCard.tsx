@@ -52,9 +52,8 @@ const TIMELINE_TYPES = new Set<Agent2UIType>([
 
 /**
  * 去重时序消息：
- * - tool_call calling 与 plan_step running 重复，只保留 plan_step
- * - tool_call success/error 与 tool_result 重复，只保留 tool_result
- * - mcp_call 同理
+ * - Runtime 模式：有 plan_step + tool_result/mcp_result，跳过 tool_call/mcp_call 避免重复
+ * - Direct 模式：没有 plan_step/tool_result/mcp_result，保留 tool_call/mcp_call
  * - 连续多条 thinking 合并为一条
  * - 同一 stepId 的 plan_step 只保留最新状态
  */
@@ -62,6 +61,11 @@ function deduplicateTimeline(messages: Agent2UIMessage[]): Agent2UIMessage[] {
   const result: Agent2UIMessage[] = []
   let lastThinking: Agent2UIMessage | null = null
   let mergedThinkingContent = ''
+
+  // 检测是否为 runtime 模式（有 plan_step 或 tool_result/mcp_result 事件）
+  const hasRuntimeEvents = messages.some(
+    (m) => m.type === 'plan_step' || m.type === 'tool_result' || m.type === 'mcp_result'
+  )
 
   // 第一遍：收集每个 stepId 的最新 plan_step 状态
   const latestPlanStepData = new Map<string, PlanStepData>()
@@ -97,10 +101,12 @@ function deduplicateTimeline(messages: Agent2UIMessage[]): Agent2UIMessage[] {
       mergedThinkingContent = ''
     }
 
-    // 跳过 tool_call（plan_step + tool_result 已经覆盖了）
-    if (msg.type === 'tool_call') continue
-    // 跳过 mcp_call（mcp_result 已经覆盖了）
-    if (msg.type === 'mcp_call') continue
+    // Runtime 模式下跳过 tool_call/mcp_call（plan_step + tool_result/mcp_result 已覆盖）
+    // Direct 模式下保留它们（是唯一的工具调用可见性来源）
+    if (hasRuntimeEvents) {
+      if (msg.type === 'tool_call') continue
+      if (msg.type === 'mcp_call') continue
+    }
 
     // plan_step 按 stepId 去重，保留首次出现的时间戳但用最新状态
     if (msg.type === 'plan_step') {

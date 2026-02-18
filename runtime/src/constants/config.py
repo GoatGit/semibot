@@ -176,6 +176,9 @@ DEFAULT_FALLBACK_MODEL = "gpt-4o-mini"
 MAX_REPLAN_ATTEMPTS = 3
 """Maximum number of replan attempts after all actions fail."""
 
+REPLAN_RESULT_MAX_CHARS = 80000
+"""Maximum characters per tool result when injecting into replan context."""
+
 DEFAULT_MAX_ITERATIONS = 10
 """Default maximum iterations for agent execution."""
 

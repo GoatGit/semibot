@@ -72,6 +72,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
   // 用于中止正在进行的 SSE 请求
   const abortRef = useRef<AbortController | null>(null)
+  // 请求轮次 ID，用于隔离不同轮次的 SSE 消息
+  const requestIdRef = useRef<number>(0)
 
   // 组件卸载时中止进行中的 SSE 请求，防止会话间数据泄漏
   useEffect(() => {
@@ -191,6 +193,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       return
     }
 
+    // 先中止上一轮请求，防止旧流数据继续进入
+    abortRef.current?.abort()
+    abortRef.current = null
+
+    // 递增请求轮次 ID，后续 SSE 回调用此值过滤过期消息
+    requestIdRef.current += 1
+    const currentRequestId = requestIdRef.current
+
     // 保存消息用于重试
     setLastMessage(message)
     setLastParentMessageId(parentMessageId)
@@ -289,6 +299,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
               try {
                 const data = JSON.parse(rawData)
 
+                // 丢弃过期轮次的消息（用户已发送新请求）
+                if (currentRequestId !== requestIdRef.current) {
+                  console.log('[useChat] 丢弃过期轮次消息:', currentEvent, data.type)
+                  break
+                }
+
                 switch (currentEvent) {
                   case 'message':
                     console.log('[useChat] SSE message event:', data.type, data.id)
@@ -335,6 +351,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
    * 停止生成
    */
   const stopGeneration = useCallback(() => {
+    requestIdRef.current += 1  // 使进行中的 SSE 回调失效
     abortRef.current?.abort()
     abortRef.current = null
     setIsSending(false)
@@ -354,6 +371,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
    * 重置状态
    */
   const reset = useCallback(() => {
+    requestIdRef.current += 1  // 使进行中的 SSE 回调失效
     abortRef.current?.abort()
     abortRef.current = null
     agent2ui.reset()

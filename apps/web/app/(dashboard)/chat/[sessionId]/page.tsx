@@ -6,6 +6,7 @@ import clsx from 'clsx'
 import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
+import { CitationList } from '@/components/agent2ui/text/CitationList'
 import { ProcessCard } from '@/components/agent2ui/process/ProcessCard'
 import { FileDownload } from '@/components/agent2ui/media/FileDownload'
 import { useChat } from '@/hooks/useChat'
@@ -263,6 +264,11 @@ export default function ChatSessionPage() {
     setInputValue('')
 
     try {
+      // 清理上一轮残留的 isStreaming 标记，防止新消息追加到旧板块
+      setDisplayMessages((prev) =>
+        prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m))
+      )
+
       // 标记用户消息为已发送
       setDisplayMessages((prev) =>
         prev.map((m) =>
@@ -540,6 +546,9 @@ function MessageBubble({ message }: MessageBubbleProps) {
             <MarkdownBlock data={{ content: message.content }} />
             {message.isStreaming && (
               <span className="inline-block w-2 h-4 bg-primary-400 animate-pulse ml-1" />
+            )}
+            {!message.isStreaming && message.content && (
+              <CitationList content={message.content} />
             )}
           </div>
         )}

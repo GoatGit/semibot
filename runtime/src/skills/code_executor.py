@@ -86,14 +86,25 @@ class CodeExecutorTool(BaseTool):
             "to the current working directory using a relative path (e.g. "
             "'report.pdf', 'data.xlsx', NOT '/tmp/report.pdf'). Files saved to the current "
             "directory will be automatically collected and made available for download. "
-            "NOTE for PDF: fpdf2's built-in fonts (Helvetica, Times, Courier) do NOT "
-            "support CJK characters. For Chinese/Japanese/Korean text, you MUST use: "
-            "pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc', uni=True) "
+            "DATA PASSING: When your code needs data from previous steps (e.g. search results), "
+            "use the 'context_data' parameter to pass a JSON string. The data will be written "
+            "to 'context.json' in the working directory. Read it in code with: "
+            "import json; data = json.load(open('context.json', encoding='utf-8')). "
+            "This is the PREFERRED way to pass large data — do NOT embed large data as "
+            "string literals in the code. "
+            "NOTE for PDF (fpdf2 v2.8+): "
+            "Built-in fonts (Helvetica, Times, Courier) do NOT support CJK characters. "
+            "For Chinese/Japanese/Korean text, you MUST use: "
+            "pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc') "
             "and then pdf.set_font('HiraginoGB', size=...). "
+            "Do NOT pass uni=True to add_font (deprecated). "
+            "Do NOT use style='B' or style='I' with custom fonts unless you register "
+            "a separate bold/italic font file — use font size to create visual hierarchy instead. "
+            "Use new_x/new_y parameters instead of deprecated ln parameter: "
+            "pdf.cell(200, 10, text='Title', new_x='LMARGIN', new_y='NEXT', align='C'). "
             "ALWAYS use Chinese fonts and write content in Chinese when the user's request is in Chinese. "
             "Each code execution runs in an isolated environment — you cannot reference "
-            "variables or results from previous steps. Include all necessary data and "
-            "logic within a single code block."
+            "variables or results from previous steps. Use 'context_data' parameter to pass data between steps."
         )
 
     @property
@@ -114,6 +125,15 @@ class CodeExecutorTool(BaseTool):
                     "type": "string",
                     "description": "Optional input to provide to the program",
                 },
+                "context_data": {
+                    "type": "string",
+                    "description": (
+                        "Optional JSON string written to 'context.json' in the working "
+                        "directory before execution. Use this to pass data from previous "
+                        "steps (e.g. search results) so the code can read it with: "
+                        "import json; data = json.load(open('context.json', encoding='utf-8'))"
+                    ),
+                },
             },
             "required": ["language", "code"],
         }
@@ -123,6 +143,7 @@ class CodeExecutorTool(BaseTool):
         language: str,
         code: str,
         stdin: str | None = None,
+        context_data: str | None = None,
         **kwargs: Any,
     ) -> ToolResult:
         """
@@ -132,10 +153,18 @@ class CodeExecutorTool(BaseTool):
             language: Programming language
             code: Code to execute
             stdin: Optional input
+            context_data: Optional JSON string written to context.json before execution
 
         Returns:
             ToolResult with stdout, stderr, and exit code
         """
+        # LLMs sometimes produce code with literal escaped newlines (\\n)
+        # instead of real newline characters, causing SyntaxError.
+        # Detect and fix: if the code has no real newlines but contains \\n,
+        # it's a single-line string that needs unescaping.
+        if "\n" not in code and "\\n" in code:
+            code = code.replace("\\n", "\n").replace("\\t", "\t")
+
         if language not in self.allowed_languages:
             return ToolResult.error_result(
                 f"Language '{language}' not allowed. Allowed: {self.allowed_languages}"
@@ -143,11 +172,11 @@ class CodeExecutorTool(BaseTool):
 
         try:
             if language == "python":
-                return await self._execute_python(code, stdin)
+                return await self._execute_python(code, stdin, context_data)
             elif language == "javascript":
-                return await self._execute_javascript(code, stdin)
+                return await self._execute_javascript(code, stdin, context_data)
             elif language == "shell":
-                return await self._execute_shell(code, stdin)
+                return await self._execute_shell(code, stdin, context_data)
             else:
                 return ToolResult.error_result(f"Unknown language: {language}")
 
@@ -159,15 +188,46 @@ class CodeExecutorTool(BaseTool):
             logger.error(f"Code execution failed: {e}")
             return ToolResult.error_result(f"Execution failed: {str(e)}")
 
+    # Preamble injected before user code to patch common fpdf2 issues.
+    # Registers bold/italic variants of the Chinese font so style='B'/'I' won't crash.
+    _PYTHON_PREAMBLE = '''\
+try:
+    import fpdf as _fpdf_orig
+    _OrigFPDF = _fpdf_orig.FPDF
+    class _PatchedFPDF(_OrigFPDF):
+        _cjk_font_registered = set()
+        def add_font(self, family="", style="", fname="", *a, **kw):
+            super().add_font(family, style, fname, *a, **kw)
+            key = family.lower()
+            if fname and fname.endswith((".ttc", ".ttf")) and key not in self._cjk_font_registered:
+                self._cjk_font_registered.add(key)
+                for s in ("B", "I", "BI"):
+                    try:
+                        super().add_font(family, s, fname)
+                    except Exception:
+                        pass
+    _fpdf_orig.FPDF = _PatchedFPDF
+except ImportError:
+    pass
+'''
+
     async def _execute_python(
         self,
         code: str,
         stdin: str | None = None,
+        context_data: str | None = None,
     ) -> ToolResult:
         """Execute Python code."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Write context data file if provided
+            if context_data:
+                context_path = Path(tmpdir) / "context.json"
+                context_path.write_text(context_data, encoding="utf-8")
+
+            # Inject preamble to patch common fpdf2 issues
+            full_code = self._PYTHON_PREAMBLE + code
             script_path = Path(tmpdir) / "script.py"
-            script_path.write_text(code)
+            script_path.write_text(full_code)
 
             result = await self._run_process(
                 [sys.executable, str(script_path)],
@@ -175,7 +235,15 @@ class CodeExecutorTool(BaseTool):
                 cwd=tmpdir,
             )
 
-            generated_files = self._collect_output_files(tmpdir, {"script.py"})
+            if not result.success:
+                logger.error(
+                    "Python execution failed (exit_code=%s)\n--- CODE ---\n%s\n--- STDERR ---\n%s",
+                    result.result.get("exit_code") if isinstance(result.result, dict) else "?",
+                    code,
+                    result.result.get("stderr", "") if isinstance(result.result, dict) else "",
+                )
+
+            generated_files = self._collect_output_files(tmpdir, {"script.py", "context.json"})
             if generated_files:
                 result.metadata["generated_files"] = generated_files
 
@@ -185,9 +253,14 @@ class CodeExecutorTool(BaseTool):
         self,
         code: str,
         stdin: str | None = None,
+        context_data: str | None = None,
     ) -> ToolResult:
         """Execute JavaScript code with Node.js."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            if context_data:
+                context_path = Path(tmpdir) / "context.json"
+                context_path.write_text(context_data, encoding="utf-8")
+
             script_path = Path(tmpdir) / "script.js"
             script_path.write_text(code)
 
@@ -197,7 +270,7 @@ class CodeExecutorTool(BaseTool):
                 cwd=tmpdir,
             )
 
-            generated_files = self._collect_output_files(tmpdir, {"script.js"})
+            generated_files = self._collect_output_files(tmpdir, {"script.js", "context.json"})
             if generated_files:
                 result.metadata["generated_files"] = generated_files
 
@@ -207,9 +280,14 @@ class CodeExecutorTool(BaseTool):
         self,
         code: str,
         stdin: str | None = None,
+        context_data: str | None = None,
     ) -> ToolResult:
         """Execute shell script."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            if context_data:
+                context_path = Path(tmpdir) / "context.json"
+                context_path.write_text(context_data, encoding="utf-8")
+
             script_path = Path(tmpdir) / "script.sh"
             script_path.write_text(code)
             script_path.chmod(0o755)
@@ -220,7 +298,7 @@ class CodeExecutorTool(BaseTool):
                 cwd=tmpdir,
             )
 
-            generated_files = self._collect_output_files(tmpdir, {"script.sh"})
+            generated_files = self._collect_output_files(tmpdir, {"script.sh", "context.json"})
             if generated_files:
                 result.metadata["generated_files"] = generated_files
 

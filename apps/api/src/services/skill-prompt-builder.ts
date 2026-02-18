@@ -117,8 +117,11 @@ export function buildSkillIndexXml(entries: SkillIndexEntry[]): string {
 ${skillTags.join('\n')}
 </available_skills>
 
-当任务匹配某个技能时，先用 read_skill_file 工具读取对应的 SKILL.md 获取完整指南。
-如需执行技能中的脚本，使用 bash 工具运行。脚本位于技能目录的 scripts/ 下。`
+技能使用说明：
+- 上述技能不是独立的工具，不能直接作为工具名调用。
+- 要使用某个技能，必须通过 "code_executor" 工具执行技能目录下 scripts/ 中的 Python 脚本。
+- 示例：若要使用 xlsx 技能，在 code_executor 中编写 Python 代码，用 subprocess 运行技能脚本，或直接用 openpyxl 等库实现。
+- 切记：plan 中的 tool 字段只能填写 Available tools 列表中的工具名（如 "code_executor"、"tavily-search" 等）。`
 }
 
 /**

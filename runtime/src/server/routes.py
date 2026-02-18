@@ -3,6 +3,7 @@
 Endpoints:
 - GET  /health                  → health check
 - POST /api/v1/execute/stream   → SSE execution stream
+- POST /api/v1/execute/cancel   → cancel running execution
 - GET  /api/v1/files/{file_id}  → download generated file
 """
 
@@ -39,6 +40,9 @@ router = APIRouter()
 
 # MCP connection timeout (seconds)
 MCP_CONNECT_TIMEOUT = 15
+
+# Active task registry: session_id → asyncio.Task
+_active_tasks: dict[str, asyncio.Task] = {}
 
 
 def _get_skill_registry(request: Request):
@@ -149,6 +153,26 @@ async def health_check(request: Request) -> HealthResponse:
         memory_status = MemoryHealthStatus(short_term=st_ok, long_term=lt_ok)
 
     return HealthResponse(status="healthy", memory=memory_status)
+
+
+@router.post("/api/v1/execute/cancel")
+async def cancel_execution(request: Request):
+    """Cancel a running execution by session_id."""
+    from fastapi.responses import JSONResponse
+
+    body = await request.json()
+    session_id = body.get("session_id")
+    if not session_id:
+        return JSONResponse(status_code=400, content={"error": "session_id required"})
+
+    task = _active_tasks.get(session_id)
+    if task and not task.done():
+        task.cancel()
+        logger.info("Execution cancelled by user", extra={"session_id": session_id})
+        return JSONResponse(content={"cancelled": True, "session_id": session_id})
+
+    logger.info("No active task to cancel", extra={"session_id": session_id})
+    return JSONResponse(content={"cancelled": False, "session_id": session_id})
 
 
 @router.post("/api/v1/execute/stream")
@@ -317,6 +341,11 @@ async def execute_stream(body: RuntimeInputState, request: Request):
 
             await emitter.emit_execution_complete(final_response)
 
+        except asyncio.CancelledError:
+            logger.info("Execution cancelled by user", extra={
+                "session_id": body.session_id,
+            })
+            await emitter.emit_execution_error("Execution cancelled by user")
         except asyncio.TimeoutError:
             logger.error("Execution timed out", extra={
                 "session_id": body.session_id,
@@ -330,6 +359,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
             })
             await emitter.emit_execution_error(str(e))
         finally:
+            _active_tasks.pop(body.session_id, None)
             if mcp_client:
                 try:
                     await mcp_client.close_all()
@@ -348,7 +378,8 @@ async def execute_stream(body: RuntimeInputState, request: Request):
             pass
 
     # Launch graph execution and ping keepalive in background
-    asyncio.create_task(run_graph())
+    graph_task = asyncio.create_task(run_graph())
+    _active_tasks[body.session_id] = graph_task
     ping_task = asyncio.create_task(ping_keepalive())
 
     async def event_generator():
@@ -359,6 +390,13 @@ async def execute_stream(body: RuntimeInputState, request: Request):
             yield {"data": "[DONE]"}
         finally:
             ping_task.cancel()
+            # Safety net: cancel graph task if still running (e.g. client disconnected)
+            if not graph_task.done():
+                graph_task.cancel()
+                logger.info("graph_task cancelled by event_generator safety net", extra={
+                    "session_id": body.session_id,
+                })
+            _active_tasks.pop(body.session_id, None)
 
     return EventSourceResponse(event_generator())
 

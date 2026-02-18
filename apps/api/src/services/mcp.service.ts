@@ -865,3 +865,37 @@ export async function getSystemMcpServersForRuntime(): Promise<Array<{
     }
   })
 }
+
+/**
+ * 获取组织下所有活跃的 MCP Servers（Runtime 格式）
+ * 用于系统 Agent 自动继承组织的 MCP 能力
+ */
+export async function getOrgMcpServersForRuntime(orgId: string): Promise<Array<{
+  id: string
+  name: string
+  endpoint: string
+  transport: string
+  is_connected: boolean
+  auth_config: McpAuthConfig | null
+  available_tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
+}>> {
+  const servers = await mcpRepository.findActiveByOrg(orgId)
+
+  return servers.map((server) => {
+    const serverTools: McpTool[] = parseJsonField(server.tools) || []
+
+    return {
+      id: server.id,
+      name: server.name,
+      endpoint: server.endpoint,
+      transport: server.transport,
+      is_connected: true,
+      auth_config: parseJsonField(server.auth_config) || null,
+      available_tools: serverTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description || '',
+        parameters: tool.inputSchema || {},
+      })),
+    }
+  })
+}

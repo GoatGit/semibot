@@ -46,8 +46,15 @@ app.use(cors({
   exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
 }))
 
-// 压缩
-app.use(compression())
+// 压缩（SSE 响应跳过压缩，避免缓冲导致事件无法实时推送）
+app.use(compression({
+  filter: (req, res) => {
+    if (res.getHeader('Content-Type') === 'text/event-stream') {
+      return false
+    }
+    return compression.filter(req, res)
+  },
+}))
 
 // JSON 解析
 app.use(express.json({ limit: '10mb' }))

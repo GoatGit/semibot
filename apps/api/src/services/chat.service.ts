@@ -297,6 +297,10 @@ async function handleChatWithRuntime(
   const connection = createSSEConnection(res, sessionId, userId, orgId)
 
   try {
+    // 立即发送初始 thinking，消除 Runtime 启动延迟期间的空白感
+    sendAgent2UIMessage(connection, 'thinking', {
+      content: '正在连接执行引擎...',
+    })
 
     // 保存用户消息
     await sessionService.addMessage(orgId, sessionId, {
@@ -328,7 +332,12 @@ async function handleChatWithRuntime(
         content: msg.content,
       })),
       agent_config: {
-        system_prompt: agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`,
+        system_prompt: (() => {
+          const n = new Date()
+          const d = `${n.getFullYear()}年${n.getMonth() + 1}月${n.getDate()}日`
+          const base = agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`
+          return `${base}\n\n当前日期: ${d}`
+        })(),
         model: agent.config?.model,
         temperature: agent.config?.temperature ?? 0.7,
         max_tokens: agent.config?.maxTokens ?? 4096,
@@ -367,17 +376,19 @@ async function handleChatWithRuntime(
       }
     }
 
-    // 加载 Agent 关联的 MCP Servers（系统 Agent 额外合并系统预装 MCP Servers）
+    // 加载 Agent 关联的 MCP Servers（系统 Agent 额外合并系统预装 MCP Servers + 组织 MCP Servers）
     try {
       const agentMcpServers = await mcpService.getMcpServersForRuntime(agent.id)
 
       let mergedServers = agentMcpServers
       if (agent.isSystem) {
         const systemMcpServers = await mcpService.getSystemMcpServersForRuntime()
-        const agentServerIds = new Set(agentMcpServers.map((s: { id: string }) => s.id))
+        const orgMcpServers = await mcpService.getOrgMcpServersForRuntime(orgId)
+        const existingIds = new Set(agentMcpServers.map((s: { id: string }) => s.id))
         mergedServers = [
           ...agentMcpServers,
-          ...systemMcpServers.filter((s) => !agentServerIds.has(s.id)),
+          ...systemMcpServers.filter((s) => !existingIds.has(s.id)),
+          ...orgMcpServers.filter((s) => !existingIds.has(s.id) && !systemMcpServers.some((sys) => sys.id === s.id)),
         ]
       }
 
@@ -416,6 +427,14 @@ async function handleChatWithRuntime(
 
     // 执行 Runtime 编排
     const adapter = getRuntimeAdapter()
+
+    // 客户端断开时触发取消
+    res.on('close', () => {
+      if (!connection.isActive) {
+        adapter.cancelExecution(runtimeInput.session_id).catch(() => {})
+      }
+    })
+
     let fullContent = ''
     let totalTokens = 0
     let latencyMs = 0

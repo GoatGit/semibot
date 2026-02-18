@@ -32,6 +32,7 @@ export {
 export { TextBlock, type TextBlockProps } from './text/TextBlock'
 export { MarkdownBlock, type MarkdownBlockProps } from './text/MarkdownBlock'
 export { CodeBlock, type CodeBlockProps } from './text/CodeBlock'
+export { CitationList, type CitationListProps, extractCitations } from './text/CitationList'
 
 // ═══════════════════════════════════════════════════════════════
 // 数据类组件

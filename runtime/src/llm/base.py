@@ -183,16 +183,22 @@ class LLMProvider(ABC):
                 tool_lines.append(f"- {name}: {desc}")
             tools_text = "\n".join(tool_lines)
 
+        from datetime import datetime
+        today_str = datetime.now().strftime("%Y年%m月%d日")
+
         planning_prompt = f"""You are a task planner. Analyze the user's request and create an execution plan that uses the available tools.
+
+Current date: {today_str}
 
 IMPORTANT RULES:
 1. You MUST use tools whenever the task requires actions beyond simple text answers.
-2. If the user asks to generate, create, or produce a file (PDF, CSV, image, etc.), you MUST include a step that calls the "code_executor" tool with the appropriate code.
+2. If the user asks to generate, create, or produce a file (PDF, CSV, Excel, image, etc.), check the "Available tools" list above for a specialized tool matching that file type (e.g., a tool with "xlsx" or "pdf" in its name). If such a tool exists in the list, prefer it. Otherwise, use the "code_executor" tool. IMPORTANT: Only use tool names that appear in the "Available tools" list — never invent tool names from system prompt context or skill descriptions.
 3. Only return an empty steps array if the request is a simple question that needs no tool usage.
 4. If the user asks to generate a report, analysis, or summary about a topic, you MUST FIRST search for relevant up-to-date information using available search/MCP tools, THEN generate the report based on the search results. Never generate reports purely from your own knowledge — always search first.
 5. Respond in the same language as the user's request. If the user writes in Chinese, your plan titles and the generated content should be in Chinese.
-6. For PDF generation with Chinese content, you MUST use the CJK font: pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc', uni=True). Do NOT use Helvetica/Times/Courier for Chinese text.
+6. For PDF generation with Chinese content, you MUST use the CJK font: pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc') (do NOT pass uni=True — it is deprecated). Then use pdf.set_font('HiraginoGB', size=...). Do NOT use style='B'/'I' with custom fonts unless a separate bold/italic font file is registered. Use font size for visual hierarchy. Use new_x/new_y instead of deprecated ln parameter: pdf.cell(200, 10, text='Title', new_x='LMARGIN', new_y='NEXT', align='C').
 7. DEPENDENCIES & ORDERING: Think about data flow between steps. A step that consumes output from earlier steps MUST come after them and MUST have "parallel": false. Only steps with no data dependencies on each other may run in parallel. Order steps so that data producers always precede data consumers.
+8. DATA PASSING BETWEEN STEPS: When a code_executor step needs data from a previous step (e.g. search results for report generation), you MUST pass that data via the "context_data" parameter (a JSON string). The data will be written to "context.json" in the working directory. The code should read it with: import json; data = json.load(open('context.json', encoding='utf-8')). DO NOT embed large data as string literals in the code — always use context_data. Structure context_data as: {{"results": [{{"title": "...", "url": "...", "content": "..."}},...]}}.9. SOURCE URLS: When search results contain URLs, preserve them. In PDF reports, include a "参考来源" section listing source URLs. In XLSX files, include a "来源链接" column.
 
 Available tools:
 {tools_text or "No tools available."}
@@ -215,14 +221,20 @@ Example — user asks "生成一份关于AI趋势的PDF报告" (assuming "tavily
         # preventing the LLM from seeing garbled escape sequences and generating
         # code with mismatched quotes (e.g. 'HiraginoGB").
         example_code = (
+            "import json\n"
             "from fpdf import FPDF\n"
+            "data = json.load(open('context.json', encoding='utf-8'))\n"
             "pdf = FPDF()\n"
             "pdf.add_page()\n"
-            "pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc', uni=True)\n"
+            "pdf.add_font('HiraginoGB', '', '/System/Library/Fonts/Hiragino Sans GB.ttc')\n"
             "pdf.set_font('HiraginoGB', size=18)\n"
             "pdf.cell(200, 10, text='AI趋势报告', new_x='LMARGIN', new_y='NEXT', align='C')\n"
             "pdf.set_font('HiraginoGB', size=12)\n"
-            "pdf.multi_cell(0, 8, text='根据搜索结果整理的AI趋势...')\n"
+            "for item in data['results']:\n"
+            "    pdf.set_font('HiraginoGB', size=14)\n"
+            "    pdf.cell(0, 10, text=item['title'], new_x='LMARGIN', new_y='NEXT')\n"
+            "    pdf.set_font('HiraginoGB', size=11)\n"
+            "    pdf.multi_cell(0, 7, text=item['content'][:500])\n"
             "pdf.output('ai_trends_report.pdf')\n"
             "print('PDF generated')"
         )
@@ -233,7 +245,8 @@ Example — user asks "生成一份关于AI趋势的PDF报告" (assuming "tavily
                 {"id": "1", "title": "搜索最新AI趋势信息", "tool": "tavily-search",
                  "params": {"query": "2024 2025 AI trends latest developments"}, "parallel": False},
                 {"id": "2", "title": "使用code_executor生成中文PDF报告", "tool": "code_executor",
-                 "params": {"language": "python", "code": example_code}, "parallel": False},
+                 "params": {"language": "python", "code": example_code,
+                            "context_data": '{"results": [{"title": "...", "url": "...", "content": "..."}]}'}, "parallel": False},
             ],
             "requires_delegation": False,
             "delegate_to": None,
@@ -339,10 +352,13 @@ DELEGATION RULES:
         # Build context with results
         context_parts = []
         if results:
-            results_text = "\n".join(
-                f"- {r.tool_name}: {r.result if r.success else r.error}"
-                for r in results
-            )
+            result_lines = []
+            for r in results:
+                text = r.result if r.success else r.error
+                if isinstance(text, str) and len(text) > 2000:
+                    text = text[:2000] + "... (truncated)"
+                result_lines.append(f"- {r.tool_name}: {text}")
+            results_text = "\n".join(result_lines)
             context_parts.append(f"Execution results:\n{results_text}")
 
         if reflection:
@@ -361,11 +377,20 @@ Generate a helpful response to the user based on the execution results.
 
 {context}
 
-Be concise but informative. If there were errors, explain what happened and suggest alternatives.
+IMPORTANT RULES:
+1. Respond in the SAME LANGUAGE as the user's request. If the user writes in Chinese, you MUST respond entirely in Chinese.
+2. Be detailed and informative — provide a comprehensive summary of the findings, not just a brief overview.
+3. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
+4. If there were errors, explain what happened and suggest alternatives.
+5. If PDF/XLSX files were generated, mention them and briefly describe their contents.
 """,
         }
 
-        all_messages = [system_message] + messages
+        # Only keep user messages to avoid sending huge tool results in history.
+        # The execution results are already summarized in the system prompt.
+        user_messages = [m for m in messages if m.get("role") == "user"]
+        trimmed = user_messages[-3:] if len(user_messages) > 3 else user_messages
+        all_messages = [system_message] + trimmed
 
         response = await self.chat(messages=all_messages, temperature=0.7, model=model)
         return response.content
@@ -392,10 +417,13 @@ Be concise but informative. If there were errors, explain what happened and sugg
         # Build context with results (same as generate_response)
         context_parts = []
         if results:
-            results_text = "\n".join(
-                f"- {r.tool_name}: {r.result if r.success else r.error}"
-                for r in results
-            )
+            result_lines = []
+            for r in results:
+                text = r.result if r.success else r.error
+                if isinstance(text, str) and len(text) > 2000:
+                    text = text[:2000] + "... (truncated)"
+                result_lines.append(f"- {r.tool_name}: {text}")
+            results_text = "\n".join(result_lines)
             context_parts.append(f"Execution results:\n{results_text}")
 
         if reflection:
@@ -414,11 +442,21 @@ Generate a helpful response to the user based on the execution results.
 
 {context}
 
-Be concise but informative. If there were errors, explain what happened and suggest alternatives.
+IMPORTANT RULES:
+1. Respond in the SAME LANGUAGE as the user's request. If the user writes in Chinese, you MUST respond entirely in Chinese.
+2. Be detailed and informative — provide a comprehensive summary of the findings, not just a brief overview.
+3. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
+4. If there were errors, explain what happened and suggest alternatives.
+5. If PDF/XLSX files were generated, mention them and briefly describe their contents.
 """,
         }
 
-        all_messages = [system_message] + messages
+        # Only keep user messages to avoid sending huge tool results in history.
+        # The execution results are already summarized in the system prompt.
+        user_messages = [m for m in messages if m.get("role") == "user"]
+        # Keep at most the last 3 user messages for context
+        trimmed = user_messages[-3:] if len(user_messages) > 3 else user_messages
+        all_messages = [system_message] + trimmed
 
         async for chunk in self.chat_stream(messages=all_messages, temperature=0.7, model=model):
             yield chunk

@@ -154,6 +154,19 @@ export async function findSystemMcpServers(): Promise<McpServerRow[]> {
 }
 
 /**
+ * 获取组织下所有活跃的 MCP Servers（用于系统 Agent 自动继承）
+ */
+export async function findActiveByOrg(orgId: string): Promise<McpServerRow[]> {
+  const result = await sql`
+    SELECT * FROM mcp_servers
+    WHERE org_id = ${orgId} AND is_active = true AND deleted_at IS NULL
+    ORDER BY name
+  `
+
+  return result as unknown as McpServerRow[]
+}
+
+/**
  * 列出 MCP Servers（分页）
  */
 export async function findAll(params: ListMcpServersParams): Promise<PaginatedResult<McpServerRow>> {

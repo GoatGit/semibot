@@ -12,10 +12,11 @@ an updated state. These nodes implement the core Agent execution logic:
 - RESPOND: Generate final response
 """
 
+import json
 import time
 from typing import Any
 
-from src.constants import MAX_REPLAN_ATTEMPTS
+from src.constants import MAX_REPLAN_ATTEMPTS, REPLAN_RESULT_MAX_CHARS
 from src.orchestrator.execution import (
     execute_parallel,
     execute_single,
@@ -33,6 +34,85 @@ from src.orchestrator.state import (
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+import re as _re
+
+
+def _extract_search_results(tool_results: list[ToolCallResult]) -> list[dict[str, Any]]:
+    """Extract structured search results from prior tool call results.
+
+    Handles:
+    - JSON dict results with "results" or "data" keys
+    - Plain text tavily-style results (Title: / URL: / Content: blocks)
+    - Generic text results wrapped as single items
+    """
+    search_results: list[dict[str, Any]] = []
+    for tr in tool_results:
+        if tr.tool_name == "code_executor" or not tr.success:
+            continue
+        result_data = tr.result
+        if isinstance(result_data, str):
+            try:
+                result_data = json.loads(result_data)
+            except (json.JSONDecodeError, TypeError):
+                if "Title:" in result_data and "URL:" in result_data:
+                    blocks = _re.split(r'\n\s*Title:\s*', result_data)
+                    for block in blocks:
+                        block = block.strip()
+                        if not block:
+                            continue
+                        title_match = _re.match(r'^(.+?)(?:\n|$)', block)
+                        url_match = _re.search(r'URL:\s*(\S+)', block)
+                        content_match = _re.search(r'Content:\s*(.+)', block, _re.DOTALL)
+                        if title_match:
+                            search_results.append({
+                                "title": title_match.group(1).strip(),
+                                "url": url_match.group(1).strip() if url_match else "",
+                                "content": content_match.group(1).strip()[:2000] if content_match else "",
+                            })
+                else:
+                    search_results.append({
+                        "tool": tr.tool_name,
+                        "content": result_data[:3000],
+                    })
+                continue
+        if isinstance(result_data, dict):
+            items = result_data.get("results") or result_data.get("data")
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        search_results.append(item)
+            else:
+                search_results.append(result_data)
+        elif isinstance(result_data, list):
+            for item in result_data:
+                if isinstance(item, dict):
+                    search_results.append(item)
+    return search_results
+
+
+def _inject_context_data(
+    action: PlanStep,
+    search_results: list[dict[str, Any]],
+    session_id: str,
+) -> None:
+    """Inject search results as context_data into a code_executor action."""
+    if action.tool != "code_executor" or not search_results:
+        return
+    context_json = json.dumps({"results": search_results}, ensure_ascii=False)
+    existing = action.params.get("context_data", "")
+    action.params["context_data"] = context_json
+    logger.info(
+        "Auto-injected context_data into code_executor step",
+        extra={
+            "session_id": session_id,
+            "step_id": action.id,
+            "context_data_len": len(context_json),
+            "search_results_count": len(search_results),
+            "had_existing": bool(existing),
+        },
+    )
 
 
 async def start_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
@@ -445,8 +525,12 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         parallel_results = await execute_parallel(parallel_actions, action_executor)
         results.extend(parallel_results)
 
-    # Execute sequential actions
+    # Execute sequential actions, injecting context_data from prior results
     for action in sequential_actions:
+        # Before each code_executor step, inject accumulated search results
+        if action.tool == "code_executor" and results:
+            search_results = _extract_search_results(results)
+            _inject_context_data(action, search_results, state["session_id"])
         result = await execute_single(action, action_executor)
         results.append(result)
 
@@ -682,7 +766,113 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
     # Check if there are more pending steps in the plan
     plan = state["plan"]
     if plan and plan.steps and plan.current_step_index < len(plan.steps) - 1:
-        # Get next batch of actions
+        successful_results = [r for r in tool_results if r.success and r.result]
+        remaining_steps = plan.steps[plan.current_step_index + 1:]
+
+        # If we have successful results and remaining steps, ask LLM whether
+        # the next step can proceed as-is or needs replanning with actual data.
+        if (
+            successful_results
+            and remaining_steps
+            and llm_provider
+            and current_iteration < MAX_REPLAN_ATTEMPTS
+        ):
+            decision = await _llm_observe_decision(
+                llm_provider=llm_provider,
+                plan=plan,
+                completed_results=successful_results,
+                remaining_steps=remaining_steps,
+                session_id=state["session_id"],
+            )
+
+            if decision["action"] == "replan":
+                logger.info(
+                    "LLM observe decision: replan",
+                    extra={
+                        "session_id": state["session_id"],
+                        "reason": decision.get("reason", ""),
+                    },
+                )
+                if event_emitter:
+                    await event_emitter.emit_thinking(
+                        decision.get("reason", "需要基于已有结果重新规划后续步骤..."),
+                        "planning",
+                    )
+
+                # Build replan context message with completed results
+                results_summary = []
+                for r in successful_results:
+                    result_str = r.result if isinstance(r.result, str) else str(r.result)
+                    if len(result_str) > REPLAN_RESULT_MAX_CHARS:
+                        result_str = result_str[:REPLAN_RESULT_MAX_CHARS] + "...(truncated)"
+                    results_summary.append(f"[{r.tool_name}] result:\n{result_str}")
+
+                completed_titles = [
+                    f"- {s.title} (tool: {s.tool})"
+                    for s in plan.steps[: plan.current_step_index + 1]
+                ]
+                remaining_titles = [
+                    f"- {s.title} (tool: {s.tool})" for s in remaining_steps
+                ]
+
+                context_msg = Message(
+                    role="user",
+                    content=(
+                        f"[SYSTEM] REPLAN — the observer decided that remaining steps "
+                        f"need to be re-generated based on actual execution results.\n\n"
+                        f"Reason: {decision.get('reason', 'N/A')}\n\n"
+                        f"COMPLETED STEPS and their results:\n"
+                        + "\n".join(completed_titles)
+                        + "\n\n"
+                        + "\n\n".join(results_summary)
+                        + f"\n\nORIGINAL REMAINING STEPS:\n"
+                        + "\n".join(remaining_titles)
+                        + f"\n\nINSTRUCTIONS:\n"
+                        f"- Generate a new plan for the remaining work.\n"
+                        f"- You have access to the actual results above. Use them.\n"
+                        f"- CRITICAL — DATA PASSING via context_data:\n"
+                        f"  When a code_executor step needs data from previous steps (e.g. search results),\n"
+                        f"  you MUST pass that data using the 'context_data' parameter (a JSON string).\n"
+                        f"  The data will be written to 'context.json' in the working directory.\n"
+                        f"  The code should read it with:\n"
+                        f"    import json\n"
+                        f"    data = json.load(open('context.json', encoding='utf-8'))\n"
+                        f"  Then use the data to build the report content.\n"
+                        f"  DO NOT embed large data as string literals in the code — use context_data instead.\n"
+                        f"- Structure the context_data as a JSON object with the search results, e.g.:\n"
+                        f'  {{"results": [{{"title": "...", "url": "...", "content": "..."}},...]}}\n'
+                        f"- For PDF/XLSX generation: the code MUST read from context.json and produce\n"
+                        f"  DETAILED, COMPREHENSIVE content with real titles, descriptions, dates, analysis,\n"
+                        f"  and source URLs from the search results.\n"
+                        f"- You may decide to re-run a completed tool if you judge the result "
+                        f"was insufficient, but avoid unnecessary repetition.\n"
+                        f"- Overall goal: {plan.goal}"
+                    ),
+                    name=None,
+                    tool_call_id=None,
+                )
+                return {
+                    "iteration": current_iteration,
+                    "messages": [context_msg],
+                    "current_step": "plan",
+                }
+
+            elif decision["action"] == "done":
+                logger.info(
+                    "LLM observe decision: done (skip remaining steps)",
+                    extra={
+                        "session_id": state["session_id"],
+                        "reason": decision.get("reason", ""),
+                    },
+                )
+                return {
+                    "iteration": current_iteration,
+                    "current_step": "reflect",
+                }
+
+            # decision["action"] == "continue" — fall through to normal path
+
+        # Normal path: proceed to next step
         next_actions = plan.steps[plan.current_step_index + 1 :]
         updated_plan = ExecutionPlan(
             goal=plan.goal,
@@ -703,6 +893,80 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         "iteration": current_iteration,
         "current_step": "reflect",
     }
+
+
+async def _llm_observe_decision(
+    llm_provider: Any,
+    plan: ExecutionPlan,
+    completed_results: list[ToolCallResult],
+    remaining_steps: list[PlanStep],
+    session_id: str,
+) -> dict[str, str]:
+    """Ask LLM to decide whether remaining steps can proceed as-is or need replanning.
+
+    Returns:
+        {"action": "continue"|"replan"|"done", "reason": "..."}
+    """
+    import json as _json
+
+    # Build a concise summary of what happened and what's next
+    completed_summary = []
+    for r in completed_results:
+        result_preview = r.result if isinstance(r.result, str) else str(r.result)
+        if len(result_preview) > 500:
+            result_preview = result_preview[:500] + "..."
+        completed_summary.append(
+            f"- Tool: {r.tool_name}, Success: {r.success}, Result preview: {result_preview}"
+        )
+
+    remaining_summary = []
+    for s in remaining_steps:
+        params_preview = str(s.params)
+        if len(params_preview) > 300:
+            params_preview = params_preview[:300] + "..."
+        remaining_summary.append(
+            f"- Step: {s.title}, Tool: {s.tool}, Params preview: {params_preview}"
+        )
+
+    prompt = (
+        "You are an execution observer in an AI agent system. "
+        "A multi-step plan is being executed. Some steps have completed and produced results. "
+        "You need to decide what to do with the remaining steps.\n\n"
+        f"Overall goal: {plan.goal}\n\n"
+        f"COMPLETED steps and results:\n"
+        + "\n".join(completed_summary)
+        + f"\n\nREMAINING steps (not yet executed):\n"
+        + "\n".join(remaining_summary)
+        + "\n\nDecide ONE of the following:\n"
+        '1. "continue" — The remaining steps can proceed as planned. '
+        "Their parameters/code do NOT depend on the actual data from completed steps, "
+        "or they are already correctly configured.\n"
+        '2. "replan" — The remaining steps need to be re-generated because '
+        "their parameters or code reference data that should come from the completed steps' "
+        "actual results (e.g., code that generates a report should use real search data, "
+        "not placeholder content).\n"
+        '3. "done" — The completed results already fulfill the overall goal. '
+        "The remaining steps are unnecessary.\n\n"
+        "Respond in JSON: {\"action\": \"continue|replan|done\", \"reason\": \"brief explanation\"}"
+    )
+
+    try:
+        response = await llm_provider.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        result = _json.loads(response.content)
+        action = result.get("action", "continue")
+        if action not in ("continue", "replan", "done"):
+            action = "continue"
+        return {"action": action, "reason": result.get("reason", "")}
+    except Exception as e:
+        logger.warning(
+            f"LLM observe decision failed, defaulting to continue: {e}",
+            extra={"session_id": session_id},
+        )
+        return {"action": "continue", "reason": f"LLM decision failed: {e}"}
 
 
 async def _update_evolved_skill_reuse_counts(state: AgentState, context: dict[str, Any]) -> None:

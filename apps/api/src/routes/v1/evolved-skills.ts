@@ -42,7 +42,7 @@ router.get(
   combinedRateLimit,
   validate(listEvolvedSkillsQuerySchema, 'query'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId } = req.auth!
+    const { orgId } = req.user!
     const { status, agentId, limit, page } = req.query as Record<string, string>
     const result = await evolvedSkillService.list(orgId, {
       status,
@@ -60,7 +60,7 @@ router.get(
   authenticate,
   combinedRateLimit,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId } = req.auth!
+    const { orgId } = req.user!
     const skill = await evolvedSkillService.getById(req.params.id, orgId)
     res.json({ success: true, data: skill })
   })
@@ -73,7 +73,7 @@ router.post(
   combinedRateLimit,
   validate(reviewEvolvedSkillSchema),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId, userId } = req.auth!
+    const { orgId, userId } = req.user!
     const skill = await evolvedSkillService.review(
       req.params.id, orgId, userId, req.body
     )
@@ -87,7 +87,7 @@ router.delete(
   authenticate,
   combinedRateLimit,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId, userId } = req.auth!
+    const { orgId, userId } = req.user!
     await evolvedSkillService.deprecate(req.params.id, orgId, userId)
     res.json({ success: true, data: null })
   })
@@ -99,7 +99,7 @@ router.post(
   authenticate,
   combinedRateLimit,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId, userId } = req.auth!
+    const { orgId, userId } = req.user!
     const skill = await evolvedSkillService.promote(req.params.id, orgId, userId)
     res.json({ success: true, data: skill })
   })

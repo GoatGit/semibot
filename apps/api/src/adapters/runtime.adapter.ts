@@ -218,6 +218,18 @@ export class RuntimeAdapter {
   }
 
   /**
+   * 取消正在执行的 Runtime 任务
+   */
+  async cancelExecution(sessionId: string): Promise<void> {
+    try {
+      await this.client.post('/api/v1/execute/cancel', { session_id: sessionId }, { timeout: 5000 })
+      runtimeLogger.info('取消请求已发送', { sessionId })
+    } catch (error) {
+      runtimeLogger.warn('取消请求失败', { sessionId, error: (error as Error).message })
+    }
+  }
+
+  /**
    * 执行 Runtime 编排并流式返回事件
    */
   async executeWithStreaming(
@@ -284,6 +296,12 @@ export class RuntimeAdapter {
       // 等待流完成后再返回，防止函数提前 resolve 导致 Express 关闭响应
       await new Promise<void>((resolve, _reject) => {
         stream.on('data', (chunk: Buffer) => {
+          // 检查客户端是否已断开连接
+          if (!connection.isActive) {
+            runtimeLogger.info('客户端已断开，销毁 stream', { sessionId: input.session_id })
+            stream.destroy()
+            return
+          }
           resetStallTimer()
           chunkCount++
           const chunkStr = chunk.toString()
