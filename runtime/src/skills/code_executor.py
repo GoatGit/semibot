@@ -206,6 +206,13 @@ try:
                         super().add_font(family, s, fname)
                     except Exception:
                         pass
+        def multi_cell(self, w=0, h=None, text="", *a, **kw):
+            # Safety: if w=0 and remaining horizontal space is too narrow, wrap to next line
+            if w == 0:
+                if self.w - self.r_margin - self.x < 10:
+                    self.ln()
+                    self.x = self.l_margin
+            super().multi_cell(w, h, text=text, *a, **kw)
     _fpdf_orig.FPDF = _PatchedFPDF
 except ImportError:
     pass
