@@ -10,7 +10,6 @@ import {
   EVOLVED_SKILL_INVALID_STATUS,
 } from '../constants/errorCodes'
 import * as EvolvedSkillRepo from '../repositories/evolved-skill.repository'
-import * as SkillRepo from '../repositories/skill.repository'
 import { sql } from '../lib/db'
 import { createLogger } from '../lib/logger'
 
@@ -120,7 +119,7 @@ export async function promote(id: string, orgId: string, userId: string) {
   }
 
   // 事务：写入 skills 表 + 更新 evolved_skills 状态
-  const [newSkill] = await sql.begin(async (tx) => {
+  const [newSkill] = await sql.begin(async (tx: any) => {
     // 1. 创建正式技能
     const skillResult = await tx`
       INSERT INTO skills (
@@ -132,15 +131,15 @@ export async function promote(id: string, orgId: string, userId: string) {
         ${evolvedSkill.name},
         ${evolvedSkill.description},
         ${evolvedSkill.trigger_keywords ?? []},
-        ${tx.json((evolvedSkill.tools_used ?? []) as Parameters<typeof tx.json>[0])},
-        ${tx.json({
+        ${sql.json((evolvedSkill.tools_used ?? []) as Parameters<typeof sql.json>[0])},
+        ${sql.json({
           source_type: 'evolved',
           source_id: evolvedSkill.id,
           parameters: evolvedSkill.parameters,
           preconditions: evolvedSkill.preconditions,
           expected_outcome: evolvedSkill.expected_outcome,
           quality_score: evolvedSkill.quality_score,
-        } as Parameters<typeof tx.json>[0])},
+        } as Parameters<typeof sql.json>[0])},
         ${false},
         ${userId}
       )
