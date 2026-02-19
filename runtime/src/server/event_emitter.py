@@ -178,8 +178,25 @@ class EventEmitter:
     async def emit_execution_complete(self, final_response: str) -> None:
         await self.emit("execution_complete", {"final_response": final_response})
 
-    async def emit_execution_error(self, error: str) -> None:
-        await self.emit("execution_error", {"error": error})
+    async def emit_execution_error(
+        self,
+        error: str,
+        *,
+        code: str | None = None,
+        http_status: int | None = None,
+        details: dict | list | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        data: dict[str, Any] = {"error": error}
+        if code is not None:
+            data["code"] = code
+        if http_status is not None:
+            data["httpStatus"] = http_status
+        if details is not None:
+            data["details"] = details
+        if trace_id is not None:
+            data["traceId"] = trace_id
+        await self.emit("execution_error", data)
 
     async def emit_file_created(
         self,

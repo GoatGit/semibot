@@ -235,15 +235,25 @@ export class RuntimeAdapter {
   async executeWithStreaming(
     connection: SSEConnection,
     input: RuntimeInputState,
-    onComplete?: (result: RuntimeExecutionResult) => void
+    onComplete?: (result: RuntimeExecutionResult) => void | Promise<void>
   ): Promise<void> {
+    let completionSent = false
+    const finalizeSafely = async (result: RuntimeExecutionResult): Promise<void> => {
+      if (completionSent) return
+      completionSent = true
+      if (!onComplete) return
+      try {
+        await Promise.resolve(onComplete(result))
+      } catch (error) {
+        runtimeLogger.error('onComplete 回调失败', error as Error, { sessionId: input.session_id })
+      }
+    }
+
     // 输入验证
     const parseResult = runtimeInputStateSchema.safeParse(input)
     if (!parseResult.success) {
       runtimeLogger.error('RuntimeInputState 验证失败', undefined, { errors: parseResult.error.issues })
-      if (onComplete) {
-        onComplete({ success: false, error: `输入验证失败: ${parseResult.error.message}` })
-      }
+      await finalizeSafely({ success: false, error: `输入验证失败: ${parseResult.error.message}` })
       return
     }
 
@@ -377,17 +387,15 @@ export class RuntimeAdapter {
           const latencyMs = Date.now() - startTime
           runtimeLogger.info('执行完成', { sessionId: input.session_id, latencyMs })
 
-          if (onComplete) {
-            await onComplete({
-              success: !hasError,
-              final_response: fullResponse,
-              error: hasError ? errorMessage : undefined,
-              usage: {
-                total_tokens: totalTokens,
-                latency_ms: latencyMs,
-              },
-            })
-          }
+          await finalizeSafely({
+            success: !hasError,
+            final_response: fullResponse,
+            error: hasError ? errorMessage : undefined,
+            usage: {
+              total_tokens: totalTokens,
+              latency_ms: latencyMs,
+            },
+          })
           resolve()
         })
 
@@ -402,13 +410,12 @@ export class RuntimeAdapter {
             message: `Runtime 执行失败: ${err.message}`,
           })
 
-          if (onComplete) {
-            onComplete({
+          void finalizeSafely({
               success: false,
               error: err.message,
+            }).finally(() => {
+              resolve() // resolve 而非 reject，因为错误已通过 SSE 发送给客户端
             })
-          }
-          resolve() // resolve 而非 reject，因为错误已通过 SSE 发送给客户端
         })
       })
     } catch (error) {
@@ -422,16 +429,14 @@ export class RuntimeAdapter {
         message: `Runtime 执行失败: ${errorMsg}`,
       })
 
-      if (onComplete) {
-        onComplete({
-          success: false,
-          error: errorMsg,
-          usage: {
-            total_tokens: 0,
-            latency_ms: latencyMs,
-          },
-        })
-      }
+      await finalizeSafely({
+        success: false,
+        error: errorMsg,
+        usage: {
+          total_tokens: 0,
+          latency_ms: latencyMs,
+        },
+      })
     }
   }
 
@@ -657,11 +662,14 @@ export class RuntimeAdapter {
   }
 
   private handleExecutionError(event: RuntimeEvent, connection: SSEConnection): void {
-    const { error, code } = event.data
+    const { error, code, httpStatus, details, traceId } = event.data
 
     sendSSEEvent(connection, 'error', {
-      code: code || SSE_STREAM_ERROR,
+      code: (code as string) || SSE_STREAM_ERROR,
       message: error as string,
+      ...(httpStatus != null && { httpStatus }),
+      ...(details != null && { details }),
+      ...(traceId != null && { traceId }),
     })
   }
 

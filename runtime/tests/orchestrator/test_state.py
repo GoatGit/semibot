@@ -179,19 +179,25 @@ class TestCreateInitialState:
             agent_config=AgentConfig(id="agent_456", name="Test Agent"),
         )
 
-        # Note: message_history is no longer supported in create_initial_state
-        # Messages should be added after state creation
+        history_messages = [
+            {"role": "user", "content": "第一轮问题"},
+            {"role": "assistant", "content": "第一轮回答"},
+            {"role": "user", "content": "第二轮问题"},
+        ]
+
         state = create_initial_state(
             session_id="sess_123",
             agent_id="agent_456",
             org_id="org_789",
             user_message="Second message",
             context=runtime_context,
+            history_messages=history_messages,
         )
 
-        # Only the current message should be in the state
-        assert len(state["messages"]) == 1
-        assert state["messages"][0]["content"] == "Second message"
+        assert len(state["messages"]) == 3
+        assert state["messages"][0]["content"] == "第一轮问题"
+        assert state["messages"][1]["role"] == "assistant"
+        assert state["messages"][2]["content"] == "第二轮问题"
 
     def test_create_initial_state_with_metadata(self):
         """Test creating initial state with metadata."""

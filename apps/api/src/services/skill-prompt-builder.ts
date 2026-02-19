@@ -119,9 +119,9 @@ ${skillTags.join('\n')}
 
 技能使用说明：
 - 上述技能不是独立的工具，不能直接作为工具名调用。
-- 要使用某个技能，必须通过 "code_executor" 工具执行技能目录下 scripts/ 中的 Python 脚本。
-- 示例：若要使用 xlsx 技能，在 code_executor 中编写 Python 代码，用 subprocess 运行技能脚本，或直接用 openpyxl 等库实现。
-- 切记：plan 中的 tool 字段只能填写 Available tools 列表中的工具名（如 "code_executor"、"tavily-search" 等）。`
+- 第一步先用 "read_skill_file" 读取该技能的 SKILL.md，理解其使用规则与约束。
+- 读取 SKILL.md 后，再根据其中要求决定是否调用 "code_executor" 执行代码（例如运行 scripts/ 中脚本）。
+- 切记：plan 中的 tool 字段只能填写 Available tools 列表中的工具名（如 "read_skill_file"、"code_executor"、"tavily-search" 等）。`
 }
 
 /**

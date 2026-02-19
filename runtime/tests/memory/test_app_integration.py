@@ -70,6 +70,22 @@ class TestCreateMemorySystem:
             assert result.long_term is None
 
     @pytest.mark.asyncio
+    async def test_returns_none_when_redis_health_check_is_false(self):
+        """Memory system is None when Redis health check returns False."""
+        from src.server.app import _create_memory_system
+
+        def fake_getenv(key, default=None):
+            return {"REDIS_URL": "redis://localhost:6379"}.get(key, default)
+
+        mock_st = AsyncMock()
+        mock_st.health_check = AsyncMock(return_value=False)
+
+        with patch("src.server.app.os.getenv", side_effect=fake_getenv), \
+             patch("src.memory.ShortTermMemory", return_value=mock_st):
+            result = await _create_memory_system()
+            assert result is None
+
+    @pytest.mark.asyncio
     async def test_graceful_degradation_all_backends_fail(self):
         """Runtime starts even when all memory backends fail."""
         from src.server.app import _create_memory_system
@@ -123,6 +139,35 @@ class TestCreateMemorySystem:
             assert result is not None
             assert result.short_term is not None
             assert result.long_term is not None
+
+    @pytest.mark.asyncio
+    async def test_creates_short_term_only_when_long_term_health_check_is_false(self):
+        """Long-term backend should be dropped when health check returns False."""
+        from src.server.app import _create_memory_system
+
+        def fake_getenv(key, default=None):
+            env = {
+                "REDIS_URL": "redis://localhost:6379",
+                "DATABASE_URL": "postgresql://localhost:5432/db",
+                "OPENAI_API_KEY": "sk-test",
+            }
+            return env.get(key, default)
+
+        mock_st = AsyncMock()
+        mock_st.health_check = AsyncMock(return_value=True)
+        mock_lt = AsyncMock()
+        mock_lt.health_check = AsyncMock(return_value=False)
+
+        with patch("src.server.app.os.getenv", side_effect=fake_getenv), \
+             patch("src.memory.ShortTermMemory", return_value=mock_st), \
+             patch("src.memory.LongTermMemory", return_value=mock_lt), \
+             patch("src.memory.OpenAIEmbeddingProvider"), \
+             patch("src.memory.EmbeddingService", return_value=MagicMock()):
+            result = await _create_memory_system()
+
+            assert result is not None
+            assert result.short_term is not None
+            assert result.long_term is None
 
 
 # ---------------------------------------------------------------------------

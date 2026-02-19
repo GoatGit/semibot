@@ -30,6 +30,7 @@ from src.orchestrator.context import (
 from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
+from src.server.errors import UnifiedError
 from src.server.event_emitter import EventEmitter
 from src.server.models import HealthResponse, McpServerInput, MemoryHealthStatus, RuntimeInputState
 from src.utils.logging import get_logger
@@ -186,6 +187,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
     async def run_graph() -> None:
         """Background task that drives the LangGraph execution."""
         mcp_client: McpClient | None = None
+        trace_id = getattr(request.state, "trace_id", None)
         try:
             # Build AgentConfig from input
             agent_cfg_input = body.agent_config
@@ -320,6 +322,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
                 org_id=body.org_id,
                 user_message=body.user_message,
                 context=runtime_context,
+                history_messages=[msg.model_dump() for msg in body.history_messages] if body.history_messages else None,
                 metadata=body.metadata,
             )
 
@@ -345,19 +348,46 @@ async def execute_stream(body: RuntimeInputState, request: Request):
             logger.info("Execution cancelled by user", extra={
                 "session_id": body.session_id,
             })
-            await emitter.emit_execution_error("Execution cancelled by user")
+            await emitter.emit_execution_error(
+                "Execution cancelled by user",
+                code="EXECUTION_CANCELLED",
+                http_status=499,
+                trace_id=trace_id,
+            )
         except asyncio.TimeoutError:
             logger.error("Execution timed out", extra={
                 "session_id": body.session_id,
                 "timeout": EXECUTION_STREAM_TIMEOUT,
             })
-            await emitter.emit_execution_error("Execution timed out")
+            await emitter.emit_execution_error(
+                "Execution timed out",
+                code="EXTERNAL_TOOL_TIMEOUT",
+                http_status=504,
+                trace_id=trace_id,
+            )
+        except UnifiedError as e:
+            logger.error("Execution failed (UnifiedError): %s", str(e), extra={
+                "session_id": body.session_id,
+                "error_code": e.code,
+            })
+            await emitter.emit_execution_error(
+                e.message,
+                code=e.code,
+                http_status=e.http_status,
+                details=e.details,
+                trace_id=trace_id or e.trace_id,
+            )
         except BaseException as e:
             logger.error("Execution failed: %s\n%s", str(e), traceback.format_exc(), extra={
                 "session_id": body.session_id,
                 "error": str(e),
             })
-            await emitter.emit_execution_error(str(e))
+            await emitter.emit_execution_error(
+                str(e),
+                code="INTERNAL_ERROR",
+                http_status=500,
+                trace_id=trace_id,
+            )
         finally:
             _active_tasks.pop(body.session_id, None)
             if mcp_client:

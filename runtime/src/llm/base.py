@@ -305,12 +305,23 @@ DELEGATION RULES:
             parts = [p for p in (before, after) if p]
             return "\n\n".join(parts)
 
+        def _normalize_plan_result(parsed: Any, thinking: str) -> dict[str, Any]:
+            """Normalize parsed JSON into a planner object shape."""
+            if isinstance(parsed, dict):
+                parsed["_thinking"] = thinking
+                return parsed
+            return {
+                "goal": "",
+                "steps": [],
+                "error": f"Plan must be a JSON object, got {type(parsed).__name__}",
+                "_thinking": thinking,
+            }
+
         # Try direct parse first
         try:
             result = json.loads(text)
-            # Entire text is JSON, no thinking content
-            result["_thinking"] = ""
-            return result
+            # Entire text is JSON, no thinking content.
+            return _normalize_plan_result(result, "")
         except json.JSONDecodeError:
             pass
         # Try extracting from markdown code fence
@@ -318,8 +329,7 @@ DELEGATION RULES:
         if m:
             try:
                 result = json.loads(m.group(1))
-                result["_thinking"] = _extract_thinking(text, m.span())
-                return result
+                return _normalize_plan_result(result, _extract_thinking(text, m.span()))
             except json.JSONDecodeError:
                 pass
         # Try finding first { ... } block
@@ -327,8 +337,7 @@ DELEGATION RULES:
         if m:
             try:
                 result = json.loads(m.group(0))
-                result["_thinking"] = _extract_thinking(text, m.span())
-                return result
+                return _normalize_plan_result(result, _extract_thinking(text, m.span()))
             except json.JSONDecodeError:
                 pass
         return {"goal": "", "steps": [], "error": "Failed to parse plan", "_thinking": ""}

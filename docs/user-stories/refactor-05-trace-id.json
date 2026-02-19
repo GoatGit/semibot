@@ -12,45 +12,45 @@
     {
       "id": "AC-1",
       "description": "新增 apps/api/src/middleware/tracing.ts，导出 tracing 中间件",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-2",
       "description": "tracing 中间件从 X-Request-ID header 读取或生成 UUID，设置到 req.traceId 和响应 header",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-3",
       "description": "tracing 中间件创建 childLogger 并注入到 req.logger",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-4",
       "description": "app.ts 中注册 tracing 中间件（在路由之前）",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-5",
       "description": "调用 Runtime 的 HTTP 请求透传 X-Request-ID header",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-6",
       "description": "Runtime 侧新增中间件接收 X-Request-ID 并注入到日志上下文",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-7",
       "description": "所有现有测试通过",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-8",
       "description": "TypeScript 类型检查通过",
-      "passes": false
+      "passes": true
     }
   ],
-  "passes": false,
+  "passes": true,
   "test_type": "unit",
   "priority": "high",
   "tags": ["refactor", "tracing", "observability", "middleware", "batch-1"]

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { loginByApi } from './helpers/auth'
 
 /**
  * US-001: 聊天流程中通过 code_executor 生成 xlsx 文件
@@ -12,21 +13,6 @@ const TEST_MESSAGE_ID = 'e2e-xlsx-msg-001'
 const TEST_FILE_ID = 'abc123def456'
 const TEST_AGENT_ID = '00000000-0000-0000-0000-000000000099'
 const TEST_AGENT_NAME = '测试xslx的代理'
-
-/** 注入 auth token，跳过登录流程 */
-async function seedAuth(page: import('@playwright/test').Page) {
-  await page.context().addCookies([
-    {
-      name: 'auth_token',
-      value: 'test-token',
-      domain: 'localhost',
-      path: '/',
-    },
-  ])
-  await page.addInitScript(() => {
-    localStorage.setItem('auth_token', 'test-token')
-  })
-}
 
 /**
  * 构建 SSE 响应体，模拟 runtime 完整事件流：
@@ -136,7 +122,7 @@ function buildSSEStream(): string {
 
 test.describe('US-001: Chat XLSX Skill', () => {
   test.beforeEach(async ({ page }) => {
-    await seedAuth(page)
+    await loginByApi(page)
   })
 
   test('agent 选择页面正确加载并显示「测试xslx的代理」', async ({ page }) => {

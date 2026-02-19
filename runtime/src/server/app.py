@@ -81,7 +81,8 @@ async def _create_memory_system():
     if redis_url:
         try:
             short_term = ShortTermMemory(redis_url=redis_url)
-            await short_term.health_check()
+            if not await short_term.health_check():
+                raise RuntimeError("Short-term memory health check failed")
             logger.info("Short-term memory (Redis) initialized")
         except Exception as e:
             logger.warning("Short-term memory unavailable, continuing without it: %s", e)
@@ -108,7 +109,8 @@ async def _create_memory_system():
                 database_url=database_url,
                 embedding_service=embedding_service,
             )
-            await long_term.health_check()
+            if not await long_term.health_check():
+                raise RuntimeError("Long-term memory health check failed")
             logger.info("Long-term memory (pgvector) initialized")
         except Exception as e:
             logger.warning("Long-term memory unavailable, continuing without it: %s", e)

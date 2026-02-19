@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { loginByApi } from './helpers/auth'
 
 const agentsResponse = {
   success: true,
@@ -24,21 +25,6 @@ const agentsResponse = {
   ],
 }
 
-async function seedAuth(page: import('@playwright/test').Page) {
-  await page.context().addCookies([
-    {
-      name: 'auth_token',
-      value: 'test-token',
-      domain: 'localhost',
-      path: '/',
-    },
-  ])
-
-  await page.addInitScript(() => {
-    localStorage.setItem('auth_token', 'test-token')
-  })
-}
-
 async function mockAgents(page: import('@playwright/test').Page, responseBody = agentsResponse) {
   await page.route('**/api/v1/agents**', async (route) => {
     await route.fulfill({
@@ -51,7 +37,7 @@ async function mockAgents(page: import('@playwright/test').Page, responseBody = 
 
 test.describe('/chat/new', () => {
   test.beforeEach(async ({ page }) => {
-    await seedAuth(page)
+    await loginByApi(page)
   })
 
   test('renders agents from API and allows selection', async ({ page }) => {
@@ -99,16 +85,62 @@ test.describe('/chat/new', () => {
   test('start button enables when agent selected and uses default message', async ({ page }) => {
     await mockAgents(page)
 
-    let startPayload: { agentId?: string; message?: string } = {}
+    let createPayload: { agentId?: string; title?: string } = {}
 
-    await page.route('**/api/v1/chat/start**', async (route, request) => {
-      startPayload = JSON.parse(request.postData() ?? '{}')
+    await page.route('**/api/v1/sessions', async (route, request) => {
+      if (request.method() !== 'POST') {
+        await route.continue()
+        return
+      }
+
+      createPayload = JSON.parse(request.postData() ?? '{}')
       await route.fulfill({
         status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-        },
-        body: 'data: {"sessionId":"sess-123"}\n\n',
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: { id: 'sess-123' },
+        }),
+      })
+    })
+
+    await page.route('**/api/v1/sessions/sess-123', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: 'sess-123',
+            agentId: '00000000-0000-0000-0000-000000000001',
+            title: '你好，请介绍一下你自己',
+            status: 'active',
+            createdAt: new Date().toISOString(),
+          },
+        }),
+      })
+    })
+
+    await page.route('**/api/v1/sessions/sess-123/messages', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] }),
+      })
+    })
+
+    await page.route('**/api/v1/chat/sessions/sess-123', async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+        body: [
+          'event: message',
+          'data: {"id":"m1","type":"text","data":{"content":"你好"}}',
+          '',
+          'event: done',
+          'data: {"sessionId":"sess-123","messageId":"m2","usage":{"tokens":1,"latencyMs":1}}',
+          '',
+        ].join('\n'),
       })
     })
 
@@ -125,20 +157,23 @@ test.describe('/chat/new', () => {
       startButton.click(),
     ])
 
-    expect(startPayload.agentId).toBe('00000000-0000-0000-0000-000000000001')
-    expect(startPayload.message).toBe('你好，请介绍一下你自己')
+    expect(createPayload.agentId).toBe('00000000-0000-0000-0000-000000000001')
+    expect(createPayload.title).toBe('你好，请介绍一下你自己')
   })
 
   test('shows error when session id is missing', async ({ page }) => {
     await mockAgents(page)
 
-    await page.route('**/api/v1/chat/start**', async (route) => {
+    await page.route('**/api/v1/sessions', async (route, request) => {
+      if (request.method() !== 'POST') {
+        await route.continue()
+        return
+      }
+
       await route.fulfill({
         status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-        },
-        body: 'data: {"foo":"bar"}\n\n',
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: null }),
       })
     })
 
@@ -147,6 +182,6 @@ test.describe('/chat/new', () => {
     await page.getByRole('button', { name: /通用助手/i }).click()
     await page.getByRole('button', { name: /开始对话/i }).click()
 
-    await expect(page.getByText(/无法获取会话 ID/i)).toBeVisible()
+    await expect(page.getByText(/创建会话失败/i)).toBeVisible()
   })
 })

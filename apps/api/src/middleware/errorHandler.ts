@@ -29,7 +29,8 @@ const errorLogger = createLogger('error')
  * 从 Accept-Language header 解析 locale
  */
 function parseLocale(req: Request): string {
-  const acceptLang = req.headers['accept-language'] || ''
+  const rawAcceptLang = req.headers?.['accept-language']
+  const acceptLang = Array.isArray(rawAcceptLang) ? rawAcceptLang.join(',') : (rawAcceptLang ?? '')
   if (acceptLang.includes('en')) return 'en-US'
   return 'zh-CN'
 }

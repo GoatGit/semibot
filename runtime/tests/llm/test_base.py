@@ -186,3 +186,48 @@ class TestLLMProviderValidation:
         # Message with tool_calls should be valid
         messages = [{"role": "assistant", "tool_calls": []}]
         provider._validate_messages(messages)
+
+
+class TestGeneratePlanParsing:
+    """Tests for robust generate_plan parsing behavior."""
+
+    @pytest.mark.asyncio
+    async def test_generate_plan_handles_non_object_json(self, sample_llm_config):
+        """Should not crash when model returns valid JSON but not an object."""
+
+        class TestProvider(LLMProvider):
+            async def chat(self, messages, **kwargs):
+                return LLMResponse(content="703", model=self.model)
+
+            async def chat_stream(self, messages, **kwargs):
+                if False:
+                    yield ""
+
+        provider = TestProvider(sample_llm_config)
+        result = await provider.generate_plan(messages=[{"role": "user", "content": "37*19"}])
+
+        assert isinstance(result, dict)
+        assert result["steps"] == []
+        assert "Plan must be a JSON object" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_generate_plan_parses_object_inside_fence(self, sample_llm_config):
+        """Should parse fenced JSON object and keep thinking text."""
+
+        class TestProvider(LLMProvider):
+            async def chat(self, messages, **kwargs):
+                return LLMResponse(
+                    content='思考中...\n```json\n{"goal":"计算","steps":[],"requires_delegation":false,"delegate_to":null}\n```',
+                    model=self.model,
+                )
+
+            async def chat_stream(self, messages, **kwargs):
+                if False:
+                    yield ""
+
+        provider = TestProvider(sample_llm_config)
+        result = await provider.generate_plan(messages=[{"role": "user", "content": "2+2"}])
+
+        assert result["goal"] == "计算"
+        assert result["steps"] == []
+        assert "思考中" in result["_thinking"]

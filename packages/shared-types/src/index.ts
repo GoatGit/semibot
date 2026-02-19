@@ -13,3 +13,4 @@ export * from './agent2ui';
 export * from './dto';
 export * from './evolution';
 export * from './webhook';
+export * from './error';

@@ -140,6 +140,7 @@ def create_initial_state(
     org_id: str,
     user_message: str,
     context: "RuntimeSessionContext",
+    history_messages: list[dict[str, str]] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentState:
     """
@@ -151,17 +152,33 @@ def create_initial_state(
         org_id: Organization ID
         user_message: The user's input message
         context: Runtime session context with agent config and capabilities
+        history_messages: Optional full conversation history from API layer
         metadata: Optional additional metadata
 
     Returns:
         A properly initialized AgentState
     """
+    if history_messages:
+        normalized_messages: list[Message] = []
+        for msg in history_messages:
+            role = msg.get("role")
+            content = msg.get("content")
+            if role in ("user", "assistant", "system") and isinstance(content, str):
+                normalized_messages.append(
+                    Message(role=role, content=content, name=None, tool_call_id=None)
+                )
+        initial_messages = normalized_messages or [
+            Message(role="user", content=user_message, name=None, tool_call_id=None)
+        ]
+    else:
+        initial_messages = [Message(role="user", content=user_message, name=None, tool_call_id=None)]
+
     return AgentState(
         session_id=session_id,
         agent_id=agent_id,
         org_id=org_id,
         context=context,
-        messages=[Message(role="user", content=user_message, name=None, tool_call_id=None)],
+        messages=initial_messages,
         current_step="start",
         plan=None,
         pending_actions=[],

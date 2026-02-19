@@ -1,11 +1,13 @@
 /**
  * Repository 泛型基类
  *
- * 提供 findById、findByIdAndOrg、countByOrg、softDelete、findByIds 等通用方法。
+ * 提供 findById、findByIdAndOrg、findByOrg、countByOrg、softDelete、findByIds 等通用方法。
  * 子类只需定义表名和 toEntity 转换，以及特殊查询。
  */
 
 import { sql } from '../lib/db'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { logPaginationLimit } from '../lib/logger'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -61,6 +63,41 @@ export abstract class BaseRepository<TRow, TEntity = TRow> {
 
     if (rows.length === 0) return null
     return this.toEntity(rows[0] as TRow)
+  }
+
+  /**
+   * 按 org_id 分页查询
+   */
+  async findByOrg(orgId: string, page = 1, limit = DEFAULT_PAGE_SIZE): Promise<PaginatedResult<TEntity>> {
+    const actualPage = Math.max(page, 1)
+    const safeLimit = Math.max(limit, 1)
+    const actualLimit = Math.min(safeLimit, MAX_PAGE_SIZE)
+    const offset = (actualPage - 1) * actualLimit
+
+    logPaginationLimit(this.tableName, limit, actualLimit, MAX_PAGE_SIZE)
+
+    const countResult = await sql`
+      SELECT COUNT(*) as count FROM ${sql(this.tableName)}
+      WHERE org_id = ${orgId} AND deleted_at IS NULL
+    `
+    const total = parseInt((countResult[0] as { count: string }).count, 10)
+
+    const rows = await sql`
+      SELECT * FROM ${sql(this.tableName)}
+      WHERE org_id = ${orgId} AND deleted_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ${actualLimit} OFFSET ${offset}
+    `
+
+    return {
+      data: rows.map((row) => this.toEntity(row as TRow)),
+      meta: {
+        total,
+        page: actualPage,
+        limit: actualLimit,
+        totalPages: Math.ceil(total / actualLimit),
+      },
+    }
   }
 
   /**

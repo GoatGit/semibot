@@ -7,13 +7,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Mock 依赖模块
 const mockFindByIdAndOrg = vi.fn()
 const mockSqlBegin = vi.fn()
+const mockSqlJson = vi.fn((val: unknown) => val)
 
 vi.mock('../repositories/evolved-skill.repository', () => ({
   findByIdAndOrg: (...args: unknown[]) => mockFindByIdAndOrg(...args),
 }))
 
 vi.mock('../lib/db', () => ({
-  sql: { begin: (...args: unknown[]) => mockSqlBegin(...args) },
+  sql: {
+    begin: (...args: unknown[]) => mockSqlBegin(...args),
+    json: (...args: unknown[]) => mockSqlJson(...args),
+  },
 }))
 
 vi.mock('../lib/logger', () => ({

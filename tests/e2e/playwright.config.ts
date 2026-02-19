@@ -5,6 +5,10 @@ import { defineConfig, devices } from '@playwright/test'
  * @see https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
+  // 优先使用环境变量中的应用地址，便于与 .env.local 对齐
+  // 例如 NEXT_PUBLIC_APP_URL=http://localhost:3100
+  // 若未设置则回退到 3000
+  // 仅用于测试配置，不影响业务代码
   // 测试文件目录
   testDir: '.',
 
@@ -95,7 +99,7 @@ export default defineConfig({
   // 开发服务器配置
   webServer: {
     command: 'pnpm --filter @semibot/web dev',
-    url: 'http://localhost:3000',
+    url: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
     cwd: '../..',

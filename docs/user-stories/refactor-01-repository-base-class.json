@@ -12,60 +12,60 @@
     {
       "id": "AC-1",
       "description": "新增 apps/api/src/repositories/base.repository.ts，导出 BaseRepository 泛型基类",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-2",
       "description": "BaseRepository 包含 findById、findByIdAndOrg、findByOrg、countByOrg、softDelete、findByIds 通用方法",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-3",
       "description": "BaseRepository 定义 abstract toEntity(row: TRow): TEntity 方法供子类实现",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-4",
       "description": "agent.repository.ts 继承 BaseRepository，移除重复方法，仅保留 findSystemDefault、findOtherActiveByOrg 等特殊方法",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-5",
       "description": "session.repository.ts 继承 BaseRepository，移除重复方法",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-6",
       "description": "skill.repository.ts 继承 BaseRepository，移除重复方法",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-7",
       "description": "mcp.repository.ts 继承 BaseRepository，移除重复方法",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-8",
       "description": "其余 Repository（tool、memory、message、logs、evolution-log、evolved-skill、skill-definition、skill-package、skill-install-log、llm）视适用性继承或保持原样",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-9",
       "description": "所有现有单元测试通过（pnpm --filter @semibot/api test）",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-10",
       "description": "TypeScript 类型检查通过（pnpm --filter @semibot/api type-check）",
-      "passes": false
+      "passes": true
     },
     {
       "id": "AC-11",
       "description": "ESLint 检查通过（pnpm lint 无新增 warning）",
-      "passes": false
+      "passes": true
     }
   ],
-  "passes": false,
+  "passes": true,
   "test_type": "unit",
   "priority": "high",
   "tags": ["refactor", "repository", "base-class", "dedup", "batch-1"]

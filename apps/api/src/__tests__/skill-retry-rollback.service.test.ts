@@ -118,8 +118,8 @@ describe('Skill Retry Service', () => {
 
       const duration = Date.now() - startTime
 
-      // 应该至少等待 1 秒（第一次重试的退避时间）
-      expect(duration).toBeGreaterThanOrEqual(1000)
+      // 允许少量调度抖动，验证确实发生了约 1 秒级退避
+      expect(duration).toBeGreaterThanOrEqual(950)
     }, 10000)
   })
 })

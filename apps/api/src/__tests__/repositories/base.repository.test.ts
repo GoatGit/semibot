@@ -131,6 +131,51 @@ describe('BaseRepository', () => {
     })
   })
 
+  describe('findByOrg', () => {
+    it('应该返回分页结果', async () => {
+      const id1 = uuid()
+      const id2 = uuid()
+      const mockRows: TestRow[] = [
+        { id: id1, org_id: testOrgId, name: 'Test 1', deleted_at: null },
+        { id: id2, org_id: testOrgId, name: 'Test 2', deleted_at: null },
+      ]
+      // countByOrg query
+      mockSql.mockResolvedValueOnce([{ count: '2' }])
+      // data query
+      mockSql.mockResolvedValueOnce(mockRows)
+
+      const result = await repo.findByOrg(testOrgId, 1, 10)
+
+      expect(result.data).toHaveLength(2)
+      expect(result.data[0].name).toBe('Test 1')
+      expect(result.meta.total).toBe(2)
+      expect(result.meta.page).toBe(1)
+      expect(result.meta.totalPages).toBe(1)
+    })
+
+    it('应该返回空分页结果', async () => {
+      mockSql.mockResolvedValueOnce([{ count: '0' }])
+      mockSql.mockResolvedValueOnce([])
+
+      const result = await repo.findByOrg(testOrgId)
+
+      expect(result.data).toEqual([])
+      expect(result.meta.total).toBe(0)
+    })
+
+    it('应该对 page 和 limit 进行下界保护', async () => {
+      const mockRows: TestRow[] = []
+      mockSql.mockResolvedValueOnce([{ count: '0' }])
+      mockSql.mockResolvedValueOnce(mockRows)
+
+      const result = await repo.findByOrg(testOrgId, 0, 0)
+
+      expect(result.meta.page).toBe(1)
+      expect(result.meta.limit).toBe(1)
+      expect(result.meta.totalPages).toBe(0)
+    })
+  })
+
   describe('countByOrg', () => {
     it('应该返回组织的记录数量', async () => {
       mockSql.mockResolvedValueOnce([{ count: '42' }])

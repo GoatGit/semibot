@@ -119,6 +119,58 @@ describe('RuntimeAdapter', () => {
         })
       )
     })
+
+    it('onComplete 抛错时不应导致 executeWithStreaming 抛出异常（catch 分支）', async () => {
+      const input: RuntimeInputState = {
+        session_id: 'test-session',
+        agent_id: 'test-agent',
+        org_id: 'test-org',
+        user_message: 'Hello',
+      }
+
+      const mockAxios = axios as any
+      mockAxios.create.mockReturnValue({
+        post: vi.fn().mockRejectedValue(new Error('Network error')),
+      })
+
+      adapter = new RuntimeAdapter()
+
+      const onComplete = vi.fn().mockRejectedValue(new Error('onComplete failed'))
+      await expect(adapter.executeWithStreaming(mockConnection, input, onComplete)).resolves.toBeUndefined()
+      expect(onComplete).toHaveBeenCalled()
+    })
+
+    it('onComplete 抛错时不应导致 executeWithStreaming 抛出异常（stream error 分支）', async () => {
+      const input: RuntimeInputState = {
+        session_id: 'test-session',
+        agent_id: 'test-agent',
+        org_id: 'test-org',
+        user_message: 'Hello',
+      }
+
+      const mockStream = {
+        on: vi.fn((event, handler) => {
+          if (event === 'error') {
+            setTimeout(() => handler(new Error('socket hang up')), 10)
+          }
+        }),
+      }
+
+      const mockAxios = axios as any
+      mockAxios.create.mockReturnValue({
+        post: vi.fn().mockResolvedValue({ data: mockStream }),
+      })
+
+      adapter = new RuntimeAdapter()
+
+      const onComplete = vi.fn().mockRejectedValue(new Error('onComplete failed'))
+      await expect(adapter.executeWithStreaming(mockConnection, input, onComplete)).resolves.toBeUndefined()
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({
+        success: false,
+        error: 'socket hang up',
+      }))
+    })
   })
 
   describe('事件映射', () => {

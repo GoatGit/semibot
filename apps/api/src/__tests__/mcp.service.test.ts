@@ -8,6 +8,22 @@ import * as mcpRepository from '../repositories/mcp.repository'
 
 // Mock repository
 vi.mock('../repositories/mcp.repository')
+vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: class MockClient {
+    async connect() {
+      throw new Error('mock connection failure')
+    }
+    async listTools() {
+      return { tools: [] }
+    }
+    async listResources() {
+      return { resources: [] }
+    }
+    async close() {
+      return undefined
+    }
+  },
+}))
 
 const mockMcpRepository = mcpRepository as typeof mcpRepository & {
   countByOrg: ReturnType<typeof vi.fn>
@@ -184,14 +200,18 @@ describe('MCP Service', () => {
 
   describe('testConnection', () => {
     it('should update status to connecting when testing', async () => {
-      mockMcpRepository.findByIdAndOrg.mockResolvedValue(mockServerRow)
-      mockMcpRepository.update.mockResolvedValue({
+      const httpServerRow = {
         ...mockServerRow,
+        transport: 'streamable_http' as const,
+        endpoint: 'http://invalid-server-12345.example.com/mcp',
+      }
+      mockMcpRepository.findByIdAndOrg.mockResolvedValue(httpServerRow)
+      mockMcpRepository.update.mockResolvedValue({
+        ...httpServerRow,
         status: 'connecting',
       })
 
-      // testConnection 会尝试真实连接，这里只验证状态更新逻辑
-      // 由于 stdio 连接需要真实进程，预期会失败
+      // 连接会失败，但应该先把状态设置为 connecting
       try {
         await mcpService.testConnection(mockOrgId, mockServerId)
       } catch {

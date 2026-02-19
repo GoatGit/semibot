@@ -21,8 +21,16 @@ const mockEvolvedSkillRepo = {
   findStaleSkills: vi.fn(),
   findByIds: vi.fn(),
 }
+const mockSqlBegin = vi.fn()
+const mockSqlJson = vi.fn((val: unknown) => val)
 
 vi.mock('../repositories/evolved-skill.repository', () => mockEvolvedSkillRepo)
+vi.mock('../lib/db', () => ({
+  sql: {
+    begin: (...args: unknown[]) => mockSqlBegin(...args),
+    json: (...args: unknown[]) => mockSqlJson(...args),
+  },
+}))
 
 vi.mock('../middleware/errorHandler', () => ({
   createError: vi.fn((code: string, msg?: string) => {
@@ -71,6 +79,10 @@ describe('evolved-skill.service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
+    mockSqlBegin.mockImplementation(async (cb: (tx: unknown) => Promise<unknown> | unknown) => {
+      const tx = () => [{ id: 'skill-promoted-1', name: 'promoted-skill' }]
+      return cb(tx)
+    })
   })
 
   describe('list', () => {
@@ -226,7 +238,8 @@ describe('evolved-skill.service', () => {
       const { promote } = await import('../services/evolved-skill.service')
 
       const result = await promote(testSkillId, testOrgId, testUserId)
-      expect(result.status).toBe('approved')
+      expect(result.evolvedSkill.status).toBe('promoted')
+      expect(result.skill.id).toBe('skill-promoted-1')
     })
 
     it('非 approved/auto_approved 状态时抛出错误', async () => {
