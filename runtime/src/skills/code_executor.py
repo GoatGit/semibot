@@ -222,7 +222,17 @@ except ImportError:
             # Write context data file if provided
             if context_data:
                 context_path = Path(tmpdir) / "context.json"
-                context_path.write_text(context_data, encoding="utf-8")
+                # Validate and re-serialize JSON to fix control characters
+                try:
+                    import json as _json
+                    parsed = _json.loads(context_data)
+                    context_path.write_text(
+                        _json.dumps(parsed, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except (ValueError, TypeError):
+                    # If not valid JSON, write as-is (best effort)
+                    context_path.write_text(context_data, encoding="utf-8")
 
             # Inject preamble to patch common fpdf2 issues
             full_code = self._PYTHON_PREAMBLE + code
@@ -259,7 +269,17 @@ except ImportError:
         with tempfile.TemporaryDirectory() as tmpdir:
             if context_data:
                 context_path = Path(tmpdir) / "context.json"
-                context_path.write_text(context_data, encoding="utf-8")
+                # Validate and re-serialize JSON to fix control characters
+                try:
+                    import json as _json
+                    parsed = _json.loads(context_data)
+                    context_path.write_text(
+                        _json.dumps(parsed, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except (ValueError, TypeError):
+                    # If not valid JSON, write as-is (best effort)
+                    context_path.write_text(context_data, encoding="utf-8")
 
             script_path = Path(tmpdir) / "script.js"
             script_path.write_text(code)
@@ -286,7 +306,17 @@ except ImportError:
         with tempfile.TemporaryDirectory() as tmpdir:
             if context_data:
                 context_path = Path(tmpdir) / "context.json"
-                context_path.write_text(context_data, encoding="utf-8")
+                # Validate and re-serialize JSON to fix control characters
+                try:
+                    import json as _json
+                    parsed = _json.loads(context_data)
+                    context_path.write_text(
+                        _json.dumps(parsed, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except (ValueError, TypeError):
+                    # If not valid JSON, write as-is (best effort)
+                    context_path.write_text(context_data, encoding="utf-8")
 
             script_path = Path(tmpdir) / "script.sh"
             script_path.write_text(code)

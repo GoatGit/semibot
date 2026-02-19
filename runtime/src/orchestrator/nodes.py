@@ -416,6 +416,16 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         parallel_actions = [a for a in pending_actions if a.parallel]
         sequential_actions = [a for a in pending_actions if not a.parallel]
 
+        # Force sequential if mix of search + code_executor (data dependency)
+        has_search = any(
+            a.tool in ["tavily-search", "tavily_search", "bailian_web_search", "exa_search"]
+            for a in pending_actions
+        )
+        has_code = any(a.tool == "code_executor" for a in pending_actions)
+        if has_search and has_code:
+            sequential_actions = pending_actions
+            parallel_actions = []
+
         # Execute parallel actions first, then sequential actions in order
         if parallel_actions:
             import asyncio
@@ -437,9 +447,14 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
                 else:
                     results.append(result)
 
-        # Execute sequential actions
+        # Execute sequential actions (with context_data injection for code_executor)
         for action in sequential_actions:
             try:
+                # Inject search results into code_executor steps
+                if action.tool == "code_executor" and results:
+                    search_results = _extract_search_results(results)
+                    _inject_context_data(action, search_results, state["session_id"])
+
                 result = await _execute_with_events(unified_executor, action, event_emitter)
                 results.append(result)
             except Exception as e:
@@ -453,11 +468,26 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
                     )
                 )
 
-        return {
+        # Update current_step_index to last step so observe_node knows all steps are done
+        plan = state.get("plan")
+        updated_plan = None
+        if plan and plan.steps:
+            updated_plan = ExecutionPlan(
+                goal=plan.goal,
+                steps=plan.steps,
+                current_step_index=len(plan.steps) - 1,
+                requires_delegation=plan.requires_delegation,
+                delegate_to=plan.delegate_to,
+            )
+
+        result_state = {
             "tool_results": results,
             "pending_actions": [],
             "current_step": "observe",
         }
+        if updated_plan:
+            result_state["plan"] = updated_plan
+        return result_state
 
     # Legacy path: use action_executor with manual validation
     logger.warning(
@@ -515,8 +545,19 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         }
 
     # Separate parallel and sequential actions
-    parallel_actions = [a for a in validated_actions if a.parallel]
-    sequential_actions = [a for a in validated_actions if not a.parallel]
+    # If mix of search + code_executor, force all sequential to preserve data flow
+    has_search = any(a.tool not in ("code_executor",) for a in validated_actions)
+    has_code = any(a.tool == "code_executor" for a in validated_actions)
+    force_sequential = has_search and has_code
+
+    if force_sequential:
+        parallel_actions = []
+        sequential_actions = validated_actions
+        logger.info("Forcing sequential execution: search + code_executor detected",
+                     extra={"session_id": state["session_id"]})
+    else:
+        parallel_actions = [a for a in validated_actions if a.parallel]
+        sequential_actions = [a for a in validated_actions if not a.parallel]
 
     results: list[ToolCallResult] = []
 
