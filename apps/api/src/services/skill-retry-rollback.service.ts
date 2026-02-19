@@ -36,7 +36,7 @@ function isRetryableError(error: any): boolean {
     'EAI_AGAIN',
   ]
 
-  return retryableCodes.includes(error.code ?? '') || (error.message?.includes('network') ?? false)
+  return (!!error.code && retryableCodes.includes(error.code)) || (error.message?.includes('network') ?? false)
 }
 
 /**

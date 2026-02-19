@@ -1,0 +1,42 @@
+{
+  "id": "US-R02",
+  "title": "LLM Provider 去重 — API 层统一通过 Runtime 调用",
+  "description": "API 层不再直接调用 LLM API，所有 LLM 推理调用统一通过 Runtime HTTP 接口。API 层的 LLM provider 仅保留模型列表查询和健康检查等管理功能，消除 API 层与 Runtime 层的 LLM 适配重复代码。",
+  "actor": "开发者",
+  "preconditions": [
+    "API 层 apps/api/src/services/llm/ 存在 LLM provider 实现",
+    "Runtime 层 runtime/src/llm/ 存在独立的 LLM provider 实现",
+    "chat.service.ts 中存在直接 LLM 调用路径"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "chat.service.ts 中的 handleChatDirect 路径移除直接 LLM 调用，统一走 Runtime HTTP API",
+      "passes": false
+    },
+    {
+      "id": "AC-2",
+      "description": "apps/api/src/services/llm/ 下的 provider 仅保留管理功能（模型列表、健康检查），移除推理调用",
+      "passes": false
+    },
+    {
+      "id": "AC-3",
+      "description": "Runtime 的 LLM 调用接口覆盖流式和非流式场景",
+      "passes": false
+    },
+    {
+      "id": "AC-4",
+      "description": "所有现有测试通过",
+      "passes": false
+    },
+    {
+      "id": "AC-5",
+      "description": "TypeScript 类型检查通过",
+      "passes": false
+    }
+  ],
+  "passes": false,
+  "test_type": "integration",
+  "priority": "high",
+  "tags": ["refactor", "llm", "dedup", "runtime", "batch-3"]
+}

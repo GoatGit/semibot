@@ -1,0 +1,47 @@
+{
+  "id": "US-R04",
+  "title": "跨层错误协议统一",
+  "description": "定义跨层统一的 UnifiedError JSON 协议（code、message、httpStatus、details、traceId），API 层和 Runtime 层统一使用此格式，前端只需处理一种错误结构。",
+  "actor": "开发者",
+  "preconditions": [
+    "API 层使用 createError() + errorCodes",
+    "Runtime 层使用 Python 异常",
+    "前端需要处理两种不同的错误结构"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "packages/shared-types/src/ 中新增 UnifiedError 接口定义（code, message, httpStatus, details?, traceId?）",
+      "passes": false
+    },
+    {
+      "id": "AC-2",
+      "description": "Runtime 层新增 runtime/src/server/errors.py，定义 UnifiedError 异常类及 to_dict 方法",
+      "passes": false
+    },
+    {
+      "id": "AC-3",
+      "description": "API 层调用 Runtime 时，将 Runtime 返回的错误转换为 API 层的 createError()",
+      "passes": false
+    },
+    {
+      "id": "AC-4",
+      "description": "Runtime 各模块的异常抛出逐步迁移到 UnifiedError",
+      "passes": false
+    },
+    {
+      "id": "AC-5",
+      "description": "所有现有测试通过",
+      "passes": false
+    },
+    {
+      "id": "AC-6",
+      "description": "TypeScript 和 Python 类型检查通过",
+      "passes": false
+    }
+  ],
+  "passes": false,
+  "test_type": "integration",
+  "priority": "medium",
+  "tags": ["refactor", "error-handling", "cross-layer", "batch-2"]
+}

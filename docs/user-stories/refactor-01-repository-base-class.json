@@ -1,0 +1,72 @@
+{
+  "id": "US-R01",
+  "title": "Repository 泛型基类抽取",
+  "description": "抽取 BaseRepository<TRow, TEntity> 泛型基类，将 14 个 Repository 中重复的 findById、findByIdAndOrg、findByOrg、create、update、softDelete、countByOrg、findByIds 等方法统一到基类，子类只需定义表名、列映射和特殊查询。预计减少约 60% 的 Repository 层代码。",
+  "actor": "开发者",
+  "preconditions": [
+    "apps/api/src/repositories/ 下有 14 个 Repository 文件",
+    "现有测试全部通过",
+    "postgres.js 作为数据库客户端"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "新增 apps/api/src/repositories/base.repository.ts，导出 BaseRepository 泛型基类",
+      "passes": false
+    },
+    {
+      "id": "AC-2",
+      "description": "BaseRepository 包含 findById、findByIdAndOrg、findByOrg、countByOrg、softDelete、findByIds 通用方法",
+      "passes": false
+    },
+    {
+      "id": "AC-3",
+      "description": "BaseRepository 定义 abstract toEntity(row: TRow): TEntity 方法供子类实现",
+      "passes": false
+    },
+    {
+      "id": "AC-4",
+      "description": "agent.repository.ts 继承 BaseRepository，移除重复方法，仅保留 findSystemDefault、findOtherActiveByOrg 等特殊方法",
+      "passes": false
+    },
+    {
+      "id": "AC-5",
+      "description": "session.repository.ts 继承 BaseRepository，移除重复方法",
+      "passes": false
+    },
+    {
+      "id": "AC-6",
+      "description": "skill.repository.ts 继承 BaseRepository，移除重复方法",
+      "passes": false
+    },
+    {
+      "id": "AC-7",
+      "description": "mcp.repository.ts 继承 BaseRepository，移除重复方法",
+      "passes": false
+    },
+    {
+      "id": "AC-8",
+      "description": "其余 Repository（tool、memory、message、logs、evolution-log、evolved-skill、skill-definition、skill-package、skill-install-log、llm）视适用性继承或保持原样",
+      "passes": false
+    },
+    {
+      "id": "AC-9",
+      "description": "所有现有单元测试通过（pnpm --filter @semibot/api test）",
+      "passes": false
+    },
+    {
+      "id": "AC-10",
+      "description": "TypeScript 类型检查通过（pnpm --filter @semibot/api type-check）",
+      "passes": false
+    },
+    {
+      "id": "AC-11",
+      "description": "ESLint 检查通过（pnpm lint 无新增 warning）",
+      "passes": false
+    }
+  ],
+  "passes": false,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["refactor", "repository", "base-class", "dedup", "batch-1"]
+}

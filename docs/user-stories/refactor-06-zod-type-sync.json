@@ -1,0 +1,47 @@
+{
+  "id": "US-R06",
+  "title": "前后端类型自动同步 — Zod Schema 为单一来源",
+  "description": "以 Zod Schema 为单一来源，自动推导 TypeScript 类型（z.infer），路由层直接引用 shared-types 的 Schema 进行验证，消除手动维护类型定义与 Zod Schema 不同步的问题。",
+  "actor": "开发者",
+  "preconditions": [
+    "packages/shared-types 手动维护 TypeScript 类型",
+    "路由层有独立的 Zod Schema 定义",
+    "前端从 shared-types 导入类型"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "packages/shared-types/src/ 中至少一个模块（如 agent）以 Zod Schema 为基础，类型通过 z.infer 推导",
+      "passes": false
+    },
+    {
+      "id": "AC-2",
+      "description": "对应的路由层（apps/api/src/routes/v1/agents.ts）引用 shared-types 的 Schema 进行请求验证",
+      "passes": false
+    },
+    {
+      "id": "AC-3",
+      "description": "前端仍可从 @semibot/shared-types 正常导入类型（向后兼容）",
+      "passes": false
+    },
+    {
+      "id": "AC-4",
+      "description": "shared-types 构建成功（pnpm --filter @semibot/shared-types build）",
+      "passes": false
+    },
+    {
+      "id": "AC-5",
+      "description": "所有现有测试通过",
+      "passes": false
+    },
+    {
+      "id": "AC-6",
+      "description": "TypeScript 类型检查通过",
+      "passes": false
+    }
+  ],
+  "passes": false,
+  "test_type": "unit",
+  "priority": "medium",
+  "tags": ["refactor", "types", "zod", "shared-types", "batch-3"]
+}

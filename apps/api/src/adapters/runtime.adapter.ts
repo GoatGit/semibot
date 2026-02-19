@@ -256,10 +256,12 @@ export class RuntimeAdapter {
     try {
       runtimeLogger.info('开始执行', { sessionId: input.session_id, agentId: input.agent_id })
 
-      // 调用 Runtime API (SSE 流式)
+      // 调用 Runtime API (SSE 流式)，透传 X-Request-ID
+      const traceId = connection.res.req?.traceId
       const response = await this.client.post('/api/v1/execute/stream', input, {
         responseType: 'stream',
         timeout: this.timeoutMs,
+        headers: traceId ? { 'X-Request-ID': traceId } : undefined,
       })
 
       runtimeLogger.info('Runtime 响应已收到', { status: response.status })

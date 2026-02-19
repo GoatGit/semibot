@@ -2,11 +2,14 @@
  * Session Repository
  *
  * 处理 Session 的数据库 CRUD 操作
+ * 继承 BaseRepository 获取通用 CRUD 方法
  */
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
 import { logPaginationLimit } from '../lib/logger'
+import { BaseRepository } from './base.repository'
+import type { PaginatedResult } from './base.repository'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -44,18 +47,40 @@ export interface ListSessionsParams {
   status?: SessionStatus
 }
 
-export interface PaginatedResult<T> {
-  data: T[]
-  meta: {
-    total: number
-    page: number
-    limit: number
-    totalPages: number
+export { PaginatedResult }
+
+// ═══════════════════════════════════════════════════════════════
+// Repository 类（继承 BaseRepository）
+// ═══════════════════════════════════════════════════════════════
+
+export class SessionRepositoryImpl extends BaseRepository<SessionRow> {
+  constructor() {
+    super('sessions')
+  }
+
+  protected toEntity(row: SessionRow): SessionRow {
+    return row
+  }
+
+  /**
+   * 软删除 Session（同时更新状态和结束时间）
+   */
+  override async softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
+    const result = await sql`
+      UPDATE sessions
+      SET deleted_at = NOW(),
+          deleted_by = ${deletedBy ?? null},
+          status = 'completed',
+          ended_at = COALESCE(ended_at, NOW())
+      WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
+      RETURNING id
+    `
+    return result.length > 0
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Repository 方法
+// 导出函数（保持向后兼容的函数式接口）
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -84,11 +109,7 @@ export async function findById(id: string): Promise<SessionRow | null> {
   const result = await sql`
     SELECT * FROM sessions WHERE id = ${id} AND deleted_at IS NULL
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SessionRow
 }
 
@@ -99,11 +120,7 @@ export async function findByIdAndOrg(id: string, orgId: string): Promise<Session
   const result = await sql`
     SELECT * FROM sessions WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SessionRow
 }
 
@@ -115,10 +132,8 @@ export async function findByUserAndOrg(params: ListSessionsParams): Promise<Pagi
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
-  // 记录分页限制日志
   logPaginationLimit('SessionRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
-  // 构建基础条件
   let whereClause = sql`org_id = ${orgId} AND user_id = ${userId}`
 
   if (agentId) {
@@ -129,13 +144,11 @@ export async function findByUserAndOrg(params: ListSessionsParams): Promise<Pagi
     whereClause = sql`${whereClause} AND status = ${status}`
   }
 
-  // 获取总数
   const countResult = await sql`
     SELECT COUNT(*) as total FROM sessions WHERE ${whereClause}
   `
   const total = parseInt((countResult[0] as { total: string }).total, 10)
 
-  // 获取分页数据
   const dataResult = await sql`
     SELECT * FROM sessions
     WHERE ${whereClause}
@@ -173,11 +186,7 @@ export async function updateStatus(
     WHERE id = ${id} AND org_id = ${orgId}
     RETURNING *
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SessionRow
 }
 
@@ -195,11 +204,7 @@ export async function updateTitle(
     WHERE id = ${id} AND org_id = ${orgId}
     RETURNING *
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as SessionRow
 }
 
@@ -216,6 +221,5 @@ export async function softDelete(id: string, orgId: string, deletedBy?: string):
     WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
     RETURNING id
   `
-
   return result.length > 0
 }

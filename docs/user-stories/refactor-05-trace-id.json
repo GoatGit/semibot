@@ -1,0 +1,57 @@
+{
+  "id": "US-R05",
+  "title": "请求追踪中间件（Trace ID）",
+  "description": "添加请求追踪中间件，为每个请求生成或透传 X-Request-ID，注入到 logger 上下文，调用 Runtime 时透传，Runtime 侧接收并注入日志，实现全链路追踪。",
+  "actor": "开发者",
+  "preconditions": [
+    "API 层使用 Express 中间件",
+    "Runtime 层使用 FastAPI 中间件",
+    "日志使用 pino（API）和 Python logging（Runtime）"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "新增 apps/api/src/middleware/tracing.ts，导出 tracing 中间件",
+      "passes": false
+    },
+    {
+      "id": "AC-2",
+      "description": "tracing 中间件从 X-Request-ID header 读取或生成 UUID，设置到 req.traceId 和响应 header",
+      "passes": false
+    },
+    {
+      "id": "AC-3",
+      "description": "tracing 中间件创建 childLogger 并注入到 req.logger",
+      "passes": false
+    },
+    {
+      "id": "AC-4",
+      "description": "app.ts 中注册 tracing 中间件（在路由之前）",
+      "passes": false
+    },
+    {
+      "id": "AC-5",
+      "description": "调用 Runtime 的 HTTP 请求透传 X-Request-ID header",
+      "passes": false
+    },
+    {
+      "id": "AC-6",
+      "description": "Runtime 侧新增中间件接收 X-Request-ID 并注入到日志上下文",
+      "passes": false
+    },
+    {
+      "id": "AC-7",
+      "description": "所有现有测试通过",
+      "passes": false
+    },
+    {
+      "id": "AC-8",
+      "description": "TypeScript 类型检查通过",
+      "passes": false
+    }
+  ],
+  "passes": false,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["refactor", "tracing", "observability", "middleware", "batch-1"]
+}

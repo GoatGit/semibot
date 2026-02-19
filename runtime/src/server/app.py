@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.server.routes import router
+from src.server.middleware import TraceMiddleware
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -194,6 +195,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 请求追踪（X-Request-ID 透传）
+    app.add_middleware(TraceMiddleware)
 
     # Mount routes
     app.include_router(router)

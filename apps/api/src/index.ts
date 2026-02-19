@@ -11,6 +11,7 @@ import helmet from 'helmet'
 import compression from 'compression'
 import { errorHandler, notFoundHandler } from './middleware/errorHandler'
 import { generalRateLimit } from './middleware/rateLimit'
+import { tracing } from './middleware/tracing'
 import v1Router from './routes/v1/index'
 import {
   SERVER_PORT,
@@ -43,7 +44,7 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
-  exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+  exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'X-Request-ID'],
 }))
 
 // 压缩（SSE 响应跳过压缩，避免缓冲导致事件无法实时推送）
@@ -59,6 +60,9 @@ app.use(compression({
 // JSON 解析
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
+
+// 请求追踪（生成/透传 X-Request-ID）
+app.use(tracing)
 
 // 请求日志
 if (ENABLE_REQUEST_LOGGING) {

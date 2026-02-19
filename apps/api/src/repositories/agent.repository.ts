@@ -2,11 +2,14 @@
  * Agent Repository
  *
  * 处理 Agent 的数据库 CRUD 操作
+ * 继承 BaseRepository 获取通用 CRUD 方法，覆盖有特殊逻辑的方法
  */
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
 import { logPaginationLimit } from '../lib/logger'
+import { BaseRepository } from './base.repository'
+import type { PaginatedResult } from './base.repository'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -59,18 +62,51 @@ export interface ListAgentsParams {
   search?: string
 }
 
-export interface PaginatedResult<T> {
-  data: T[]
-  meta: {
-    total: number
-    page: number
-    limit: number
-    totalPages: number
+export { PaginatedResult }
+
+// ═══════════════════════════════════════════════════════════════
+// Repository 类（继承 BaseRepository）
+// ═══════════════════════════════════════════════════════════════
+
+export class AgentRepositoryImpl extends BaseRepository<AgentRow> {
+  constructor() {
+    super('agents')
+  }
+
+  protected toEntity(row: AgentRow): AgentRow {
+    return row
+  }
+
+  /**
+   * 按 ID + org_id 查询（系统 Agent 对所有 org 可见）
+   */
+  override async findByIdAndOrg(id: string, orgId: string): Promise<AgentRow | null> {
+    const result = await sql`
+      SELECT * FROM agents WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
+    `
+    if (result.length === 0) return null
+    return result[0] as unknown as AgentRow
+  }
+
+  /**
+   * 软删除 Agent（系统 Agent 不可删除）
+   */
+  override async softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
+    const result = await sql`
+      UPDATE agents
+      SET deleted_at = NOW(),
+          deleted_by = ${deletedBy ?? null},
+          is_active = false,
+          updated_at = NOW()
+      WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL AND is_system = false
+      RETURNING id
+    `
+    return result.length > 0
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Repository 方法
+// 导出函数（保持向后兼容的函数式接口）
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -106,11 +142,7 @@ export async function findById(id: string): Promise<AgentRow | null> {
   const result = await sql`
     SELECT * FROM agents WHERE id = ${id} AND deleted_at IS NULL
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as AgentRow
 }
 
@@ -121,11 +153,7 @@ export async function findSystemDefault(): Promise<AgentRow | null> {
   const result = await sql`
     SELECT * FROM agents WHERE is_system = true AND deleted_at IS NULL LIMIT 1
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as AgentRow
 }
 
@@ -136,11 +164,7 @@ export async function findByIdAndOrg(id: string, orgId: string): Promise<AgentRo
   const result = await sql`
     SELECT * FROM agents WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as AgentRow
 }
 
@@ -152,10 +176,8 @@ export async function findByOrg(params: ListAgentsParams): Promise<PaginatedResu
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
-  // 记录分页限制日志
   logPaginationLimit('AgentRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
-  // 根据条件选择不同的查询
   let countResult
   let dataResult
 
@@ -231,17 +253,11 @@ export async function countByOrg(orgId: string): Promise<number> {
   const result = await sql`
     SELECT COUNT(*) as count FROM agents WHERE org_id = ${orgId} AND deleted_at IS NULL
   `
-
   return parseInt((result[0] as { count: string }).count, 10)
 }
 
 /**
  * 更新 Agent（带审计字段和乐观锁）
- * @param id Agent ID
- * @param orgId 组织 ID
- * @param data 更新数据
- * @param updatedBy 更新者用户 ID
- * @param expectedVersion 期望的版本号（用于乐观锁检查，可选）
  */
 export async function update(
   id: string,
@@ -250,16 +266,11 @@ export async function update(
   updatedBy?: string,
   expectedVersion?: number
 ): Promise<AgentRow | null> {
-  // 获取当前 Agent
   const agent = await findByIdAndOrg(id, orgId)
   if (!agent) return null
-
-  // 系统 Agent 不可修改
   if (agent.is_system) return null
-
-  // 如果提供了期望版本，检查版本冲突
   if (expectedVersion !== undefined && agent.version !== expectedVersion) {
-    return null // 版本冲突
+    return null
   }
 
   const result = await sql`
@@ -278,11 +289,7 @@ export async function update(
     WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL
     RETURNING *
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as AgentRow
 }
 
@@ -303,7 +310,6 @@ export async function findOtherActiveByOrg(
     ORDER BY created_at DESC
     LIMIT ${limit}
   `
-
   return result as unknown as AgentRow[]
 }
 
@@ -320,6 +326,5 @@ export async function softDelete(id: string, orgId: string, deletedBy?: string):
     WHERE id = ${id} AND org_id = ${orgId} AND deleted_at IS NULL AND is_system = false
     RETURNING id
   `
-
   return result.length > 0
 }

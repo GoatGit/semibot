@@ -2,11 +2,14 @@
  * MCP Server Repository
  *
  * 处理 MCP Server 的数据库 CRUD 操作
+ * 继承 BaseRepository 获取通用 CRUD 方法
  */
 
 import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
 import { logPaginationLimit } from '../lib/logger'
+import { BaseRepository } from './base.repository'
+import type { PaginatedResult } from './base.repository'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -68,18 +71,46 @@ export interface ListMcpServersParams {
   status?: string
 }
 
-export interface PaginatedResult<T> {
-  data: T[]
-  meta: {
-    total: number
-    page: number
-    limit: number
-    totalPages: number
+export interface AgentMcpServerRow {
+  id: string
+  agent_id: string
+  mcp_server_id: string
+  enabled_tools: string[]
+  enabled_resources: string[]
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export { PaginatedResult }
+
+// ═══════════════════════════════════════════════════════════════
+// Repository 类（继承 BaseRepository）
+// ═══════════════════════════════════════════════════════════════
+
+export class McpRepositoryImpl extends BaseRepository<McpServerRow> {
+  constructor() {
+    super('mcp_servers')
+  }
+
+  protected toEntity(row: McpServerRow): McpServerRow {
+    return row
+  }
+
+  /**
+   * 按 ID + org_id 查询（系统 MCP 对所有 org 可见）
+   */
+  override async findByIdAndOrg(id: string, orgId: string): Promise<McpServerRow | null> {
+    const result = await sql`
+      SELECT * FROM mcp_servers WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
+    `
+    if (result.length === 0) return null
+    return result[0] as unknown as McpServerRow
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Repository 方法
+// 导出函数（保持向后兼容的函数式接口）
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -117,11 +148,7 @@ export async function findById(id: string): Promise<McpServerRow | null> {
   const result = await sql`
     SELECT * FROM mcp_servers WHERE id = ${id} AND deleted_at IS NULL
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as McpServerRow
 }
 
@@ -132,11 +159,7 @@ export async function findByIdAndOrg(id: string, orgId: string): Promise<McpServ
   const result = await sql`
     SELECT * FROM mcp_servers WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as McpServerRow
 }
 
@@ -149,7 +172,6 @@ export async function findSystemMcpServers(): Promise<McpServerRow[]> {
     WHERE is_system = true AND is_active = true AND deleted_at IS NULL
     ORDER BY name
   `
-
   return result as unknown as McpServerRow[]
 }
 
@@ -174,10 +196,8 @@ export async function findAll(params: ListMcpServersParams): Promise<PaginatedRe
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
   const offset = (page - 1) * actualLimit
 
-  // 记录分页限制日志
   logPaginationLimit('McpRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
-  // 构建 WHERE 条件
   let whereClause = sql`(org_id = ${orgId} OR is_system = true) AND is_active = true AND deleted_at IS NULL`
 
   if (search) {
@@ -189,13 +209,11 @@ export async function findAll(params: ListMcpServersParams): Promise<PaginatedRe
     whereClause = sql`${whereClause} AND status = ${status}`
   }
 
-  // 获取总数
   const countResult = await sql`
     SELECT COUNT(*) as total FROM mcp_servers WHERE ${whereClause}
   `
   const total = parseInt((countResult[0] as { total: string }).total, 10)
 
-  // 获取分页数据
   const dataResult = await sql`
     SELECT * FROM mcp_servers
     WHERE ${whereClause}
@@ -257,31 +275,13 @@ export async function update(id: string, orgId: string, data: UpdateMcpServerDat
     WHERE id = ${id} AND ${server.is_system ? sql`is_system = true` : sql`org_id = ${orgId}`}
     RETURNING *
   `
-
-  if (result.length === 0) {
-    return null
-  }
-
+  if (result.length === 0) return null
   return result[0] as unknown as McpServerRow
 }
 
-/**
- * 软删除 MCP Server
- */
 // ═══════════════════════════════════════════════════════════════
 // Agent-MCP 关联查询
 // ═══════════════════════════════════════════════════════════════
-
-export interface AgentMcpServerRow {
-  id: string
-  agent_id: string
-  mcp_server_id: string
-  enabled_tools: string[]
-  enabled_resources: string[]
-  is_active: boolean
-  created_at: string
-  updated_at: string
-}
 
 /**
  * 查询 Agent 关联的 MCP Servers（含服务器详情）
@@ -297,7 +297,6 @@ export async function findByAgentId(agentId: string): Promise<(McpServerRow & { 
       AND ms.deleted_at IS NULL
     ORDER BY ms.name
   `
-
   return result as unknown as (McpServerRow & { enabled_tools: string[]; enabled_resources: string[] })[]
 }
 
@@ -308,12 +307,10 @@ export async function setAgentMcpServers(
   agentId: string,
   mcpServerIds: string[]
 ): Promise<void> {
-  // 先删除旧关联
   await sql`
     DELETE FROM agent_mcp_servers WHERE agent_id = ${agentId}
   `
 
-  // 插入新关联
   if (mcpServerIds.length > 0) {
     const values = mcpServerIds.map((serverId) => ({
       agent_id: agentId,
@@ -335,7 +332,6 @@ export async function getAgentMcpServerIds(agentId: string): Promise<string[]> {
     SELECT mcp_server_id FROM agent_mcp_servers
     WHERE agent_id = ${agentId} AND is_active = true
   `
-
   return result.map((row) => (row as Record<string, string>).mcp_server_id)
 }
 
@@ -356,6 +352,5 @@ export async function softDelete(id: string, orgId: string, deletedBy?: string):
     WHERE id = ${id} AND ${server.is_system ? sql`is_system = true` : sql`org_id = ${orgId}`} AND deleted_at IS NULL
     RETURNING id
   `
-
   return result.length > 0
 }
