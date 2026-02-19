@@ -349,6 +349,7 @@ DELEGATION RULES:
         reflection: Any = None,
         agent_system_prompt: str = "",
         model: str | None = None,
+        memory_context: str = "",
     ) -> str:
         """
         Generate a final response to the user.
@@ -357,12 +358,17 @@ DELEGATION RULES:
             messages: Conversation messages
             results: Tool execution results
             reflection: Reflection summary
+            memory_context: Memory context from start_node (short-term + long-term)
 
         Returns:
             Response text
         """
         # Build context with results
         context_parts = []
+
+        if memory_context:
+            context_parts.append(f"Conversation memory:\n{memory_context}")
+
         if results:
             result_lines = []
             for r in results:
@@ -385,7 +391,7 @@ DELEGATION RULES:
 
 ---
 
-Generate a helpful response to the user based on the execution results.
+Generate a helpful response to the user based on the conversation history and execution results.
 
 {context}
 
@@ -395,13 +401,14 @@ IMPORTANT RULES:
 3. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
 4. If there were errors, explain what happened and suggest alternatives.
 5. If PDF/XLSX files were generated, mention them and briefly describe their contents.
+6. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
 """,
         }
 
-        # Only keep user messages to avoid sending huge tool results in history.
-        # The execution results are already summarized in the system prompt.
-        user_messages = [m for m in messages if m.get("role") == "user"]
-        trimmed = user_messages[-3:] if len(user_messages) > 3 else user_messages
+        # Keep recent user+assistant message pairs for conversation continuity.
+        # Filter out system/tool messages; keep the last 6 messages (3 turns).
+        conversation = [m for m in messages if m.get("role") in ("user", "assistant")]
+        trimmed = conversation[-6:] if len(conversation) > 6 else conversation
         all_messages = [system_message] + trimmed
 
         response = await self.chat(messages=all_messages, temperature=0.7, model=model)
@@ -414,6 +421,7 @@ IMPORTANT RULES:
         reflection: Any = None,
         agent_system_prompt: str = "",
         model: str | None = None,
+        memory_context: str = "",
     ) -> AsyncIterator[str]:
         """
         Generate a final response to the user, streaming token by token.
@@ -422,12 +430,17 @@ IMPORTANT RULES:
             messages: Conversation messages
             results: Tool execution results
             reflection: Reflection summary
+            memory_context: Memory context from start_node (short-term + long-term)
 
         Yields:
             String chunks of the response
         """
         # Build context with results (same as generate_response)
         context_parts = []
+
+        if memory_context:
+            context_parts.append(f"Conversation memory:\n{memory_context}")
+
         if results:
             result_lines = []
             for r in results:
@@ -450,7 +463,7 @@ IMPORTANT RULES:
 
 ---
 
-Generate a helpful response to the user based on the execution results.
+Generate a helpful response to the user based on the conversation history and execution results.
 
 {context}
 
@@ -460,14 +473,14 @@ IMPORTANT RULES:
 3. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
 4. If there were errors, explain what happened and suggest alternatives.
 5. If PDF/XLSX files were generated, mention them and briefly describe their contents.
+6. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
 """,
         }
 
-        # Only keep user messages to avoid sending huge tool results in history.
-        # The execution results are already summarized in the system prompt.
-        user_messages = [m for m in messages if m.get("role") == "user"]
-        # Keep at most the last 3 user messages for context
-        trimmed = user_messages[-3:] if len(user_messages) > 3 else user_messages
+        # Keep recent user+assistant message pairs for conversation continuity.
+        # Filter out system/tool messages; keep the last 6 messages (3 turns).
+        conversation = [m for m in messages if m.get("role") in ("user", "assistant")]
+        trimmed = conversation[-6:] if len(conversation) > 6 else conversation
         all_messages = [system_message] + trimmed
 
         async for chunk in self.chat_stream(messages=all_messages, temperature=0.7, model=model):

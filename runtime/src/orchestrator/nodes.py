@@ -1202,6 +1202,9 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                 agent_system_prompt = runtime_context.agent_config.system_prompt or ""
                 agent_model = runtime_context.agent_config.model
 
+            # Pass memory_context so LLM can maintain multi-turn context
+            memory_ctx = state.get("memory_context", "")
+
             # Use streaming to emit text chunks incrementally
             if event_emitter and hasattr(llm_provider, 'generate_response_stream'):
                 chunks = []
@@ -1211,6 +1214,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                     reflection=state.get("reflection"),
                     agent_system_prompt=agent_system_prompt,
                     model=agent_model,
+                    memory_context=memory_ctx,
                 ):
                     chunks.append(chunk)
                     await event_emitter.emit_text_chunk(chunk)
@@ -1222,6 +1226,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                     reflection=state.get("reflection"),
                     agent_system_prompt=agent_system_prompt,
                     model=agent_model,
+                    memory_context=memory_ctx,
                 )
                 if event_emitter:
                     await event_emitter.emit_text_chunk(response_content)

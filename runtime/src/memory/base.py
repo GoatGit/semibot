@@ -168,7 +168,7 @@ class MemorySystem:
         content: str,
         agent_id: str = "",
         metadata: dict[str, Any] | None = None,
-        ttl_seconds: int = 3600,
+        ttl_seconds: int = 0,
     ) -> None:
         """
         Save to short-term memory.
@@ -296,7 +296,7 @@ class ShortTermMemoryInterface(ABC):
         content: str,
         agent_id: str = "",
         metadata: dict[str, Any] | None = None,
-        ttl_seconds: int = 3600,
+        ttl_seconds: int = 0,
     ) -> str:
         """Save a memory entry."""
         pass

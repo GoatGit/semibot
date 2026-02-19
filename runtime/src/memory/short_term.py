@@ -57,8 +57,10 @@ if count > max_entries then
     redis.call('ZREMRANGEBYRANK', key, 0, trimmed - 1)
 end
 
--- Set TTL
-redis.call('EXPIRE', key, ttl)
+-- Set TTL only if > 0 (0 means no expiration, rely on max_entries window)
+if ttl > 0 then
+    redis.call('EXPIRE', key, ttl)
+end
 
 return trimmed
 """
@@ -196,9 +198,11 @@ class ShortTermMemory(ShortTermMemoryInterface):
         if not session_id or not session_id.strip():
             raise InvalidInputError("session_id cannot be empty")
         content = validate_content(content, min_length=1)
-        ttl_seconds = validate_positive_int(
-            ttl_seconds, "ttl_seconds", DEFAULT_TTL_SECONDS
-        )
+        # ttl_seconds=0 means no expiration (rely on MAX_SESSION_ENTRIES window)
+        if ttl_seconds != 0:
+            ttl_seconds = validate_positive_int(
+                ttl_seconds, "ttl_seconds", DEFAULT_TTL_SECONDS
+            )
 
         client = await self._get_client()
         entry_id = str(uuid.uuid4())

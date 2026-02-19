@@ -62,11 +62,11 @@ QUEUE_LENGTH_WARNING_THRESHOLD = 5000
 # Short-term Memory (Redis)
 # =============================================================================
 
-DEFAULT_TTL_SECONDS = 3600
-"""Default TTL for short-term memory entries (1 hour)."""
+DEFAULT_TTL_SECONDS = 0
+"""Default TTL for short-term memory entries. 0 = no expiration (rely on MAX_SESSION_ENTRIES window)."""
 
 MAX_SESSION_ENTRIES = 100
-"""Maximum number of entries per session in short-term memory."""
+"""Maximum number of entries per session in short-term memory (sliding window)."""
 
 REDIS_KEY_PREFIX = "semibot:memory:short_term"
 """Redis key prefix for short-term memory."""
