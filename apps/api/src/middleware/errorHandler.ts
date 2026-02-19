@@ -19,10 +19,20 @@ import {
   MCP_SERVER_NOT_FOUND,
   RESOURCE_CONFLICT,
   RATE_LIMIT_EXCEEDED,
+  getErrorMessage,
 } from '../constants/errorCodes'
 import { createLogger } from '../lib/logger'
 
 const errorLogger = createLogger('error')
+
+/**
+ * 从 Accept-Language header 解析 locale
+ */
+function parseLocale(req: Request): string {
+  const acceptLang = req.headers['accept-language'] || ''
+  if (acceptLang.includes('en')) return 'en-US'
+  return 'zh-CN'
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 自定义错误类
@@ -108,7 +118,7 @@ interface ErrorResponse {
 /**
  * 格式化 Zod 验证错误
  */
-function formatZodError(error: ZodError): ErrorResponse {
+function formatZodError(error: ZodError, locale?: string): ErrorResponse {
   const details = error.errors.map((e) => ({
     path: e.path.join('.'),
     message: e.message,
@@ -118,7 +128,7 @@ function formatZodError(error: ZodError): ErrorResponse {
     success: false,
     error: {
       code: VALIDATION_FAILED,
-      message: ERROR_MESSAGES[VALIDATION_FAILED],
+      message: getErrorMessage(VALIDATION_FAILED, locale),
       details,
     },
   }
@@ -127,12 +137,14 @@ function formatZodError(error: ZodError): ErrorResponse {
 /**
  * 格式化 AppError
  */
-function formatAppError(error: AppError): ErrorResponse {
+function formatAppError(error: AppError, locale?: string): ErrorResponse {
   return {
     success: false,
     error: {
       code: error.code,
-      message: error.message,
+      message: error.message !== ERROR_MESSAGES[error.code]
+        ? error.message  // 保留自定义消息
+        : getErrorMessage(error.code, locale),
       details: error.details,
     },
   }
@@ -141,7 +153,7 @@ function formatAppError(error: AppError): ErrorResponse {
 /**
  * 格式化通用错误
  */
-function formatGenericError(error: Error): ErrorResponse {
+function formatGenericError(error: Error, locale?: string): ErrorResponse {
   // 生产环境不暴露内部错误详情
   const isProduction = process.env.NODE_ENV === 'production'
 
@@ -149,7 +161,7 @@ function formatGenericError(error: Error): ErrorResponse {
     success: false,
     error: {
       code: INTERNAL_ERROR,
-      message: isProduction ? ERROR_MESSAGES[INTERNAL_ERROR] : error.message,
+      message: isProduction ? getErrorMessage(INTERNAL_ERROR, locale) : error.message,
       details: isProduction ? undefined : error.stack,
     },
   }
@@ -168,6 +180,8 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
+  const locale = parseLocale(req)
+
   // 记录错误日志
   errorLogger.error('请求处理错误', error, {
     method: req.method,
@@ -178,20 +192,20 @@ export function errorHandler(
 
   // Zod 验证错误
   if (error instanceof ZodError) {
-    const response = formatZodError(error)
+    const response = formatZodError(error, locale)
     res.status(400).json(response)
     return
   }
 
   // 业务错误
   if (error instanceof AppError) {
-    const response = formatAppError(error)
+    const response = formatAppError(error, locale)
     res.status(error.statusCode).json(response)
     return
   }
 
   // 其他错误
-  const response = formatGenericError(error)
+  const response = formatGenericError(error, locale)
   res.status(500).json(response)
 }
 
@@ -199,11 +213,15 @@ export function errorHandler(
  * 404 处理中间件
  */
 export function notFoundHandler(req: Request, res: Response): void {
+  const locale = parseLocale(req)
+  const isEnglish = locale === 'en-US'
   res.status(404).json({
     success: false,
     error: {
       code: 'RESOURCE_NOT_FOUND',
-      message: `路由不存在: ${req.method} ${req.path}`,
+      message: isEnglish
+        ? `Route not found: ${req.method} ${req.path}`
+        : `路由不存在: ${req.method} ${req.path}`,
     },
   })
 }

@@ -10,8 +10,7 @@
     "lint": "eslint src --ext .ts",
     "type-check": "tsc --noEmit",
     "test": "vitest",
-    "test:coverage": "vitest --coverage",
-    "create-admin": "tsx src/scripts/create-admin.ts"
+    "test:coverage": "vitest --coverage"
   },
   "dependencies": {
     "@ai-sdk/mcp": "^1.0.19",

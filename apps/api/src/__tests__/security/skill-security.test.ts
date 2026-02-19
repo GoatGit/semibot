@@ -50,7 +50,7 @@ name: Test
         expect(stats.isSymbolicLink()).toBe(true)
 
         // 校验工具应该检测到这个问题
-        await validatePackageStructure(tempDir)
+        const result = await validatePackageStructure(tempDir)
         // 根据实际实现，可能需要添加符号链接检测
       } catch (err) {
         // 某些系统可能不允许创建符号链接

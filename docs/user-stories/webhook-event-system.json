@@ -1,0 +1,86 @@
+{
+  "id": "webhook-event-system",
+  "title": "Webhook 事件分发系统",
+  "description": "实现完整的 Webhook 订阅管理和事件异步分发系统。包括 Webhook CRUD API、HMAC-SHA256 签名验证、指数退避重试、连续失败自动禁用、推送日志记录。接入 evolution.events.ts 已预留的 Webhook 分发位置。",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "创建 docs/sql/016_webhooks.sql 迁移脚本，包含 webhooks 表（id, org_id, url, secret, events[], is_active, failure_count, version, 审计字段, 软删除字段）和 webhook_logs 表（id, webhook_id, event_type, payload, response_status, response_body, attempt, status, created_at）",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "创建 packages/shared-types/src/webhook.ts 定义 Webhook、WebhookLog、CreateWebhookInput、UpdateWebhookInput 类型，并在 index.ts 中导出",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "创建 webhook.repository.ts 实现标准 Repository 方法（findByIdAndOrg, findByOrg, create, update, softDelete）+ findActiveByOrgAndEvent 方法",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "创建 webhook.service.ts 实现 CRUD + dispatch 方法：异步推送事件到所有匹配的 Webhook URL",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "dispatch 使用 HMAC-SHA256 签名（X-Webhook-Signature header），签名内容为 JSON payload",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "dispatch 失败时指数退避重试（1s/2s/4s），最多 3 次，单次请求 10s 超时",
+      "passes": true
+    },
+    {
+      "id": "AC-7",
+      "description": "Webhook 连续失败 10 次后自动设置 is_active=false，并打印 WARN 日志",
+      "passes": true
+    },
+    {
+      "id": "AC-8",
+      "description": "每次推送记录到 webhook_logs 表（请求/响应/状态/重试次数）",
+      "passes": true
+    },
+    {
+      "id": "AC-9",
+      "description": "创建 webhooks 路由：POST/GET/PUT/DELETE /api/v1/webhooks + GET /:id/logs + POST /:id/test，在 index.ts 中注册",
+      "passes": true
+    },
+    {
+      "id": "AC-10",
+      "description": "在 constants/config.ts 中定义 Webhook 常量（WEBHOOK_MAX_RETRIES, WEBHOOK_TIMEOUT_MS, WEBHOOK_MAX_FAILURE_COUNT, WEBHOOK_MAX_PER_ORG）",
+      "passes": true
+    },
+    {
+      "id": "AC-11",
+      "description": "在 constants/errorCodes.ts 中定义 Webhook 错误码（WEBHOOK_NOT_FOUND, WEBHOOK_LIMIT_EXCEEDED, WEBHOOK_DISABLED）",
+      "passes": true
+    },
+    {
+      "id": "AC-12",
+      "description": "修改 evolution.events.ts 第 70 行 TODO 处，接入 WebhookService.dispatch 分发进化事件",
+      "passes": true
+    },
+    {
+      "id": "AC-13",
+      "description": "Webhook CRUD 单元测试：创建/查询/更新/删除/列表分页",
+      "passes": true
+    },
+    {
+      "id": "AC-14",
+      "description": "Webhook dispatch 单元测试：签名验证、重试机制、自动禁用、日志记录",
+      "passes": true
+    },
+    {
+      "id": "AC-15",
+      "description": "POST /:id/test 端点发送测试事件（event_type='webhook.test'），验证 Webhook URL 可达",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["webhook", "events", "hmac", "retry", "api", "repository", "service"]
+}

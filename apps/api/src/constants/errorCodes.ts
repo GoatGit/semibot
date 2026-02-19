@@ -92,6 +92,11 @@ export const EVOLVED_SKILL_NOT_FOUND = 'EVOLVED_SKILL_NOT_FOUND'
 export const EVOLVED_SKILL_INVALID_STATUS = 'EVOLVED_SKILL_INVALID_STATUS'
 export const EVOLVED_SKILL_REVIEW_FAILED = 'EVOLVED_SKILL_REVIEW_FAILED'
 
+// Webhook 相关
+export const WEBHOOK_NOT_FOUND = 'WEBHOOK_NOT_FOUND'
+export const WEBHOOK_LIMIT_EXCEEDED = 'WEBHOOK_LIMIT_EXCEEDED'
+export const WEBHOOK_DISABLED = 'WEBHOOK_DISABLED'
+
 // ═══════════════════════════════════════════════════════════════
 // 限流错误
 // ═══════════════════════════════════════════════════════════════
@@ -192,6 +197,9 @@ export const ERROR_HTTP_STATUS: Record<string, number> = {
   [EVOLVED_SKILL_NOT_FOUND]: 404,
   [EVOLVED_SKILL_INVALID_STATUS]: 400,
   [EVOLVED_SKILL_REVIEW_FAILED]: 400,
+  [WEBHOOK_NOT_FOUND]: 404,
+  [WEBHOOK_LIMIT_EXCEEDED]: 400,
+  [WEBHOOK_DISABLED]: 400,
 
   // 限流错误 -> 429
   [RATE_LIMIT_EXCEEDED]: 429,
@@ -282,6 +290,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [EVOLVED_SKILL_NOT_FOUND]: '进化技能不存在',
   [EVOLVED_SKILL_INVALID_STATUS]: '进化技能状态不允许此操作',
   [EVOLVED_SKILL_REVIEW_FAILED]: '进化技能审核失败',
+  [WEBHOOK_NOT_FOUND]: 'Webhook 不存在',
+  [WEBHOOK_LIMIT_EXCEEDED]: 'Webhook 数量已达上限',
+  [WEBHOOK_DISABLED]: 'Webhook 已被禁用',
 
   // 限流错误
   [RATE_LIMIT_EXCEEDED]: '请求过于频繁，请稍后重试',
@@ -308,4 +319,110 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [SSE_CONNECTION_FAILED]: 'SSE 连接失败',
   [SSE_CONNECTION_LIMIT]: 'SSE 连接数已达上限',
   [SSE_STREAM_ERROR]: 'SSE 流传输错误',
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 多语言错误消息映射
+// ═══════════════════════════════════════════════════════════════
+
+export type SupportedLocale = 'zh-CN' | 'en-US'
+
+export const ERROR_MESSAGES_I18N: Record<SupportedLocale, Record<string, string>> = {
+  'zh-CN': ERROR_MESSAGES,
+  'en-US': {
+    // 认证错误
+    [AUTH_TOKEN_MISSING]: 'Authentication token is missing',
+    [AUTH_TOKEN_INVALID]: 'Invalid authentication token',
+    [AUTH_TOKEN_EXPIRED]: 'Authentication token has expired',
+    [AUTH_API_KEY_INVALID]: 'Invalid API key',
+    [AUTH_API_KEY_REVOKED]: 'API key has been revoked',
+    [AUTH_API_KEY_EXPIRED]: 'API key has expired',
+    [AUTH_PERMISSION_DENIED]: 'Permission denied',
+    [AUTH_ORG_ACCESS_DENIED]: 'Access denied to this organization',
+    [AUTH_USER_NOT_FOUND]: 'User not found',
+    [AUTH_INVALID_PASSWORD]: 'Invalid password',
+    [AUTH_EMAIL_EXISTS]: 'Email already registered',
+    [AUTH_REFRESH_TOKEN_INVALID]: 'Invalid refresh token',
+    [AUTH_REFRESH_TOKEN_EXPIRED]: 'Refresh token has expired',
+    [AUTH_RESET_TOKEN_INVALID]: 'Invalid reset token',
+    [AUTH_RESET_TOKEN_EXPIRED]: 'Reset token has expired',
+    [AUTH_ORG_NOT_FOUND]: 'Organization not found',
+    [AUTH_USER_INACTIVE]: 'User account is disabled',
+
+    // 校验错误
+    [VALIDATION_FAILED]: 'Validation failed',
+    [VALIDATION_REQUIRED_FIELD]: 'Required field is missing',
+    [VALIDATION_INVALID_FORMAT]: 'Invalid data format',
+    [VALIDATION_OUT_OF_RANGE]: 'Value out of range',
+    [VALIDATION_MESSAGE_TOO_LONG]: 'Message content is too long',
+
+    // 资源错误
+    [RESOURCE_NOT_FOUND]: 'Resource not found',
+    [RESOURCE_ALREADY_EXISTS]: 'Resource already exists',
+    [RESOURCE_CONFLICT]: 'Resource conflict',
+    [RESOURCE_DELETED]: 'Resource has been deleted',
+    [AGENT_NOT_FOUND]: 'Agent not found',
+    [AGENT_INACTIVE]: 'Agent is inactive',
+    [AGENT_LIMIT_EXCEEDED]: 'Agent limit exceeded',
+    [AGENT_SYSTEM_READONLY]: 'System agent cannot be modified or deleted',
+    [SKILL_NOT_FOUND]: 'Skill not found',
+    [SKILL_LIMIT_EXCEEDED]: 'Skill limit exceeded',
+    [SKILL_BUILTIN_READONLY]: 'Built-in skill is read-only',
+    [SKILL_UPLOAD_TOO_LARGE]: 'Upload file exceeds size limit',
+    [SKILL_UPLOAD_INVALID_TYPE]: 'Unsupported file type, only .zip/.tar.gz/.tgz allowed',
+    [SKILL_UPLOAD_EXTRACT_FAILED]: 'Failed to extract file',
+    [SKILL_UPLOAD_NO_FILE]: 'No file uploaded',
+    [TOOL_NOT_FOUND]: 'Tool not found',
+    [TOOL_LIMIT_EXCEEDED]: 'Tool limit exceeded',
+    [TOOL_EXECUTION_FAILED]: 'Tool execution failed',
+    [MCP_SERVER_NOT_FOUND]: 'MCP server not found',
+    [MCP_SERVER_LIMIT_EXCEEDED]: 'MCP server limit exceeded',
+    [MCP_CONNECTION_FAILED]: 'MCP server connection failed',
+    [MCP_TOOL_CALL_FAILED]: 'MCP tool call failed',
+    [SESSION_NOT_FOUND]: 'Session not found',
+    [SESSION_ALREADY_COMPLETED]: 'Session has already ended',
+    [SESSION_LIMIT_EXCEEDED]: 'Session limit exceeded',
+    [MESSAGE_NOT_FOUND]: 'Message not found',
+    [MESSAGE_LIMIT_EXCEEDED]: 'Message limit exceeded',
+    [EVOLVED_SKILL_NOT_FOUND]: 'Evolved skill not found',
+    [EVOLVED_SKILL_INVALID_STATUS]: 'Evolved skill status does not allow this operation',
+    [EVOLVED_SKILL_REVIEW_FAILED]: 'Evolved skill review failed',
+    [WEBHOOK_NOT_FOUND]: 'Webhook not found',
+    [WEBHOOK_LIMIT_EXCEEDED]: 'Webhook limit exceeded',
+    [WEBHOOK_DISABLED]: 'Webhook is disabled',
+
+    // 限流错误
+    [RATE_LIMIT_EXCEEDED]: 'Too many requests, please try again later',
+    [RATE_LIMIT_USER]: 'User rate limit exceeded',
+    [RATE_LIMIT_ORG]: 'Organization rate limit exceeded',
+    [QUOTA_EXCEEDED]: 'Quota exhausted',
+    [TOKEN_LIMIT_EXCEEDED]: 'Token usage limit exceeded',
+
+    // 内部错误
+    [INTERNAL_ERROR]: 'Internal server error',
+    [DATABASE_ERROR]: 'Database error',
+    [CACHE_ERROR]: 'Cache service error',
+    [QUEUE_ERROR]: 'Queue service error',
+
+    // 外部服务错误
+    [EXTERNAL_LLM_ERROR]: 'LLM service call failed',
+    [EXTERNAL_LLM_TIMEOUT]: 'LLM service response timeout',
+    [LLM_UNAVAILABLE]: 'No available model service',
+    [EXTERNAL_TOOL_ERROR]: 'Tool call failed',
+    [EXTERNAL_TOOL_TIMEOUT]: 'Tool call timeout',
+    [EXTERNAL_SERVICE_UNAVAILABLE]: 'External service unavailable',
+
+    // SSE 错误
+    [SSE_CONNECTION_FAILED]: 'SSE connection failed',
+    [SSE_CONNECTION_LIMIT]: 'SSE connection limit reached',
+    [SSE_STREAM_ERROR]: 'SSE stream error',
+  },
+}
+
+/**
+ * 根据 locale 获取错误消息
+ */
+export function getErrorMessage(code: string, locale?: string): string {
+  const resolvedLocale = (locale === 'en-US' ? 'en-US' : 'zh-CN') as SupportedLocale
+  return ERROR_MESSAGES_I18N[resolvedLocale]?.[code] ?? ERROR_MESSAGES[code] ?? '未知错误'
 }

@@ -34,6 +34,7 @@ import {
 import { getRuntimeMonitor } from './runtime-monitor.service'
 import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/shared-types'
 import { chatLogger } from '../lib/logger'
+import { pushMessage, getMessagesSince } from '../lib/sse-buffer'
 import type { Agent } from './agent.service'
 import type { Session } from './session.service'
 
@@ -115,6 +116,25 @@ export function createSSEConnection(
   res.setHeader('X-Accel-Buffering', 'no')
   res.flushHeaders()
 
+  // Last-Event-ID 重放：断线重连时补发丢失的消息
+  const lastEventIdHeader = res.req?.headers['last-event-id'] as string | undefined
+  if (lastEventIdHeader) {
+    const lastEventId = parseInt(lastEventIdHeader, 10)
+    if (!isNaN(lastEventId)) {
+      const missed = getMessagesSince(sessionId, lastEventId)
+      for (const msg of missed) {
+        res.write(`id: ${msg.eventId}\n`)
+        res.write(`event: ${msg.event}\n`)
+        res.write(`data: ${msg.data}\n\n`)
+      }
+      chatLogger.info('SSE 重放消息', {
+        sessionId,
+        lastEventId,
+        replayed: missed.length,
+      })
+    }
+  }
+
   // 启动心跳
   connection.heartbeatTimer = setInterval(() => {
     if (connection.isActive) {
@@ -173,6 +193,8 @@ export function sendSSEEvent(
   }
 
   try {
+    const eventId = pushMessage(connection.sessionId, event, data)
+    connection.res.write(`id: ${eventId}\n`)
     connection.res.write(`event: ${event}\n`)
     connection.res.write(`data: ${JSON.stringify(data)}\n\n`)
     return true

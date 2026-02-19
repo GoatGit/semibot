@@ -10,7 +10,6 @@ const DATABASE_URL = process.env.DATABASE_URL
 const SKIP_INTEGRATION_TESTS = !DATABASE_URL || DATABASE_URL.includes('localhost:5432')
 
 // 条件导入
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- 集成测试条件导入
 const getTestDependencies = async () => {
   if (SKIP_INTEGRATION_TESTS) {
     return null
@@ -22,6 +21,11 @@ const getTestDependencies = async () => {
 }
 
 describe.skipIf(SKIP_INTEGRATION_TESTS)('Chat Runtime Integration', () => {
+  let authToken: string
+  let orgId: string
+  let userId: string
+  let agentId: string
+  let sessionId: string
 
   beforeAll(async () => {
     // 设置测试环境

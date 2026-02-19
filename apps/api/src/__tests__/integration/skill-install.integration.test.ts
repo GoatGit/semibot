@@ -21,7 +21,7 @@ const getTestDependencies = async () => {
   if (SKIP_INTEGRATION_TESTS) {
     return null
   }
-  const { closeDatabaseConnection } = await import('../../lib/db')
+  const { sql, closeDatabaseConnection } = await import('../../lib/db')
   const skillInstallService = await import('../../services/skill-install.service')
   const skillRetryRollbackService = await import('../../services/skill-retry-rollback.service')
   const skillDefinitionRepo = await import('../../repositories/skill-definition.repository')
@@ -119,7 +119,7 @@ description: Integration test
 `
       )
 
-      await skillInstallService.installSkillPackage(input)
+      const packageId = await skillInstallService.installSkillPackage(input)
 
       // 验证包已创建
       const pkg = await skillPackageRepo.findByDefinition(testDefinitionId)

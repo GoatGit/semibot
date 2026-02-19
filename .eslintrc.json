@@ -29,7 +29,7 @@
   "rules": {
     "react/react-in-jsx-scope": "off",
     "react/prop-types": "off",
-    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }],
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
     "@typescript-eslint/no-explicit-any": "warn",
     "@typescript-eslint/explicit-function-return-type": "off",
     "no-console": ["warn", { "allow": ["warn", "error"] }]
@@ -41,14 +41,5 @@
     ".turbo",
     "*.js",
     "*.mjs"
-  ],
-  "overrides": [
-    {
-      "files": ["**/__tests__/**/*.ts", "**/*.test.ts", "**/*.spec.ts"],
-      "rules": {
-        "@typescript-eslint/no-explicit-any": "off",
-        "no-console": "off"
-      }
-    }
   ]
 }

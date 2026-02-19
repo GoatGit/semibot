@@ -91,6 +91,7 @@ export function useSSE(config: SSEConfig): UseSSEReturn {
   const heartbeatTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const retryCountRef = useRef(0)
+  const lastEventIdRef = useRef<string | null>(null)
 
   /**
    * 更新状态并触发回调
@@ -191,6 +192,10 @@ export function useSSE(config: SSEConfig): UseSSEReturn {
         headers['Authorization'] = `Bearer ${token}`
       }
 
+      if (lastEventIdRef.current) {
+        headers['Last-Event-ID'] = lastEventIdRef.current
+      }
+
       if (method === 'POST' && body) {
         headers['Content-Type'] = 'application/json'
       }
@@ -240,9 +245,12 @@ export function useSSE(config: SSEConfig): UseSSEReturn {
 
         let currentEvent = ''
         let currentData = ''
+        let currentId = ''
 
         for (const line of lines) {
-          if (line.startsWith('event:')) {
+          if (line.startsWith('id:')) {
+            currentId = line.slice(3).trim()
+          } else if (line.startsWith('event:')) {
             currentEvent = line.slice(6).trim()
           } else if (line.startsWith('data:')) {
             currentData = line.slice(5).trim()
@@ -276,6 +284,10 @@ export function useSSE(config: SSEConfig): UseSSEReturn {
 
             currentEvent = ''
             currentData = ''
+            if (currentId) {
+              lastEventIdRef.current = currentId
+              currentId = ''
+            }
           }
         }
       }

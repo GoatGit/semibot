@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
+import { idempotency } from '../../middleware/idempotency'
 import * as chatService from '../../services/chat.service'
 
 const router: Router = Router()
@@ -42,6 +43,7 @@ router.post(
   '/sessions/:sessionId',
   authenticate,
   combinedRateLimit,
+  idempotency(),
   requirePermission('chat:write'),
   validate(chatMessageSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -65,6 +67,7 @@ router.post(
   '/start',
   authenticate,
   combinedRateLimit,
+  idempotency(),
   requirePermission('chat:write', 'sessions:write'),
   validate(startChatSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {

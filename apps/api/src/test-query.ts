@@ -1,4 +1,3 @@
-/* eslint-disable no-console -- 调试脚本 */
 import { sql } from './lib/db';
 
 async function test() {

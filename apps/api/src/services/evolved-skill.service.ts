@@ -10,6 +10,8 @@ import {
   EVOLVED_SKILL_INVALID_STATUS,
 } from '../constants/errorCodes'
 import * as EvolvedSkillRepo from '../repositories/evolved-skill.repository'
+import * as SkillRepo from '../repositories/skill.repository'
+import { sql } from '../lib/db'
 import { createLogger } from '../lib/logger'
 
 const logger = createLogger('evolved-skill-service')
@@ -107,20 +109,66 @@ export async function deprecate(id: string, orgId: string, userId: string) {
 /**
  * 提升为正式技能
  */
-export async function promote(id: string, orgId: string, _userId: string) {
-  const skill = await getById(id, orgId)
+export async function promote(id: string, orgId: string, userId: string) {
+  const evolvedSkill = await getById(id, orgId)
 
-  if (!['approved', 'auto_approved'].includes(skill.status)) {
+  if (!['approved', 'auto_approved'].includes(evolvedSkill.status)) {
     throw createError(
       EVOLVED_SKILL_INVALID_STATUS,
-      `当前状态 ${skill.status} 不可提升，仅 approved/auto_approved 可提升`
+      `当前状态 ${evolvedSkill.status} 不可提升，仅 approved/auto_approved 可提升`
     )
   }
 
-  // TODO: 转换为正式技能（写入 skills 表，source_type = 'evolved'）
-  logger.info('[EvolvedSkill] 已提升为正式技能', { evolvedSkillId: id })
+  // 事务：写入 skills 表 + 更新 evolved_skills 状态
+  const [newSkill] = await sql.begin(async (tx) => {
+    // 1. 创建正式技能
+    const skillResult = await tx`
+      INSERT INTO skills (
+        org_id, name, description, trigger_keywords,
+        tools, config, is_builtin, created_by
+      )
+      VALUES (
+        ${orgId},
+        ${evolvedSkill.name},
+        ${evolvedSkill.description},
+        ${evolvedSkill.trigger_keywords ?? []},
+        ${tx.json((evolvedSkill.tools_used ?? []) as Parameters<typeof tx.json>[0])},
+        ${tx.json({
+          source_type: 'evolved',
+          source_id: evolvedSkill.id,
+          parameters: evolvedSkill.parameters,
+          preconditions: evolvedSkill.preconditions,
+          expected_outcome: evolvedSkill.expected_outcome,
+          quality_score: evolvedSkill.quality_score,
+        } as Parameters<typeof tx.json>[0])},
+        ${false},
+        ${userId}
+      )
+      RETURNING *
+    `
 
-  return skill
+    // 2. 更新进化技能状态为 promoted
+    await tx`
+      UPDATE evolved_skills
+      SET status = 'promoted',
+          version = version + 1,
+          updated_at = NOW()
+      WHERE id = ${id}
+        AND org_id = ${orgId}
+        AND deleted_at IS NULL
+    `
+
+    return skillResult
+  })
+
+  logger.info('[EvolvedSkill] 已提升为正式技能', {
+    evolvedSkillId: id,
+    newSkillId: newSkill.id,
+    name: evolvedSkill.name,
+    promotedBy: userId,
+  })
+
+  return { evolvedSkill: { ...evolvedSkill, status: 'promoted' }, skill: newSkill }
 }
 
 /**
