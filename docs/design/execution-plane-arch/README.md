@@ -9,7 +9,7 @@
 | [01-产品设计](./01-PRODUCT-VISION.md) | 产品理念、定位、用户场景、与 OpenClaw 差异化 | ✅ |
 | [02-架构总览](./02-ARCHITECTURE-OVERVIEW.md) | 三层架构、部署模式、数据流、技术选型 | ✅ |
 | [03-控制平面设计](./03-CONTROL-PLANE.md) | 控制平面职责、模块拆分、API 设计、数据模型变更 | ✅ |
-| [04-执行平面设计](./04-EXECUTION-PLANE.md) | 执行平面职责、RuntimeAdapter 抽象层、Semibot/OpenClaw 双运行时、OpenClaw Bridge、短期记忆、用户级虚拟机、多 session 进程管理 | ✅ |
+| [04-执行平面设计](./04-EXECUTION-PLANE.md) | 执行平面职责、RuntimeAdapter 抽象层、SemiGraph/OpenClaw 双运行时、OpenClaw Bridge、短期记忆、用户级虚拟机、多 session 进程管理 | ✅ |
 | [05-WebSocket 协议](./05-WEBSOCKET-PROTOCOL.md) | 统一 WebSocket 通信协议、消息类型、断线重连、SSE 中转 | ✅ |
 | [06-迁移计划](./06-MIGRATION-PLAN.md) | 从现有架构分阶段迁移的具体步骤和风险控制 | ✅ |
 
@@ -21,7 +21,7 @@
 4. **LLM 直连** — 执行平面直连 LLM Provider，不经过控制平面中转
 5. **技能分层** — 控制平面是"技能仓库"（定义、版本、市场），执行平面是"技能运行时"（懒加载、执行）
 6. **MCP 分治** — 平台远程 MCP 放控制平面共享连接池，本地 STDIO MCP 放执行平面
-7. **双运行时支持** — 执行平面同时支持 Semibot（Python/LangGraph）和 OpenClaw（Node.js）两种 runtime，每个 session 二选一，通过 RuntimeAdapter 抽象层统一管理，控制平面和前端无需感知差异
+7. **双运行时支持** — 执行平面同时支持 SemiGraph（Python/LangGraph）和 OpenClaw（Node.js）两种 runtime，每个 session 二选一，通过 RuntimeAdapter 抽象层统一管理，控制平面和前端无需感知差异
 
 ## 架构一句话
 

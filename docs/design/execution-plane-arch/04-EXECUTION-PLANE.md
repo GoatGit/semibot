@@ -1,6 +1,6 @@
 # 04 - 执行平面 (Execution Plane) 详细设计
 
-> 执行平面是每个用户独立的虚拟机环境（= 个人电脑），负责实际的 Agent 执行。每个用户分配一个执行平面实例，多个 session 作为独立进程共享同一文件系统，通过一条 WebSocket 与控制平面通信。执行平面支持双运行时：Semibot（Python/LangGraph）和 OpenClaw（Node.js），每个 session 可独立选择 runtime，通过 RuntimeAdapter 抽象层统一管理。
+> 执行平面是每个用户独立的虚拟机环境（= 个人电脑），负责实际的 Agent 执行。每个用户分配一个执行平面实例，多个 session 作为独立进程共享同一文件系统，通过一条 WebSocket 与控制平面通信。执行平面支持双运行时：SemiGraph（Python/LangGraph）和 OpenClaw（Node.js），每个 session 可独立选择 runtime，通过 RuntimeAdapter 抽象层统一管理。
 
 ---
 
@@ -27,8 +27,8 @@
 | 职责 | 说明 |
 |------|------|
 | Session 进程管理 | 每个 session 作为独立进程运行，由虚拟机内的主进程统一管理 |
-| 双运行时支持 | 通过 RuntimeAdapter 抽象层支持 Semibot（Python/LangGraph）和 OpenClaw（Node.js）两种 runtime，每个 session 二选一 |
-| LangGraph 编排 | 运行 Agent 的完整推理-行动-反思循环（Semibot runtime） |
+| 双运行时支持 | 通过 RuntimeAdapter 抽象层支持 SemiGraph（Python/LangGraph）和 OpenClaw（Node.js）两种 runtime，每个 session 二选一 |
+| LangGraph 编排 | 运行 Agent 的完整推理-行动-反思循环（SemiGraph runtime） |
 | OpenClaw Bridge | Node.js 桥接进程，驱动 OpenClaw 原生运行并翻译事件格式（OpenClaw runtime） |
 | 短期记忆（MD 文件） | 基于本地 MD 文件的会话记忆，替代 Redis |
 | 文件系统（用户共享） | 虚拟机 = 用户的个人电脑，所有 session 共享同一文件系统 |
@@ -85,7 +85,7 @@
 | checkpoint/local_checkpointer.py | `checkpoint/local_checkpointer.py` | 基于本地文件的 LangGraph checkpoint |
 | session/manager.py | `session/manager.py` | Session 进程管理器，根据 `runtime_type` 选择 Adapter |
 | session/runtime_adapter.py | `session/runtime_adapter.py` | RuntimeAdapter ABC — 双运行时抽象层 |
-| session/semibot_adapter.py | `session/semibot_adapter.py` | SemibotAdapter — 包装现有 SessionProcess |
+| session/semigraph_adapter.py | `session/semigraph_adapter.py` | SemiGraphAdapter — 包装现有 SessionProcess |
 | session/openclaw_adapter.py | `session/openclaw_adapter.py` | OpenClawBridgeAdapter — 启动 Node.js Bridge 进程 |
 | openclaw-bridge/ | `openclaw-bridge/` | Node.js Bridge 进程（IPC + 事件翻译 + Skill 加载） |
 
@@ -435,8 +435,8 @@ class LocalCheckpointer:
 ```
 SessionManager (Python, VM 级守护进程)
     │
-    ├── Session A (runtime_type=semibot)
-    │   └── SemibotAdapter → LangGraph 进程（现有逻辑不变）
+    ├── Session A (runtime_type=semigraph)
+    │   └── SemiGraphAdapter → LangGraph 进程（现有逻辑不变）
     │
     └── Session B (runtime_type=openclaw)
         └── OpenClawBridgeAdapter → Node.js Bridge 进程
@@ -486,19 +486,19 @@ class RuntimeAdapter(ABC):
         ...
 ```
 
-### 4.3 SemibotAdapter
+### 4.3 SemiGraphAdapter
 
 包装现有 `SessionProcess`，逻辑零改动：
 
 ```python
-# runtime/src/session/semibot_adapter.py
+# runtime/src/session/semigraph_adapter.py
 from session.runtime_adapter import RuntimeAdapter
 from orchestrator.graph import create_agent_graph
 from memory.local_memory import LocalShortTermMemory
 from checkpoint.local_checkpointer import LocalCheckpointer
 
-class SemibotAdapter(RuntimeAdapter):
-    """Semibot runtime — 包装现有 SessionProcess（Python/LangGraph）"""
+class SemiGraphAdapter(RuntimeAdapter):
+    """SemiGraph runtime — 包装现有 SessionProcess（Python/LangGraph）"""
 
     def __init__(self, client, memory_dir: str):
         self.client = client
@@ -868,7 +868,7 @@ export function translateEvent(openclawEvent: any): SemibotSSEEvent | null {
 
 两个 runtime 都使用 SKILL.md 格式，共享同一份缓存目录 `/home/user/.semibot/skills/`。
 
-- **Semibot**：通过现有的 `load_skill_with_cache()` 加载（见第 8 节）
+- **SemiGraph**：通过现有的 `load_skill_with_cache()` 加载（见第 8 节）
 - **OpenClaw**：Bridge 重写 OpenClaw 的 skill loader，优先从缓存读取，缓存未命中时通过 IPC → Python → WS 从控制平面拉取
 
 ```typescript
@@ -904,7 +904,7 @@ export async function loadSkill(
 ### 4.8 记忆兼容
 
 - **短期记忆**：各 runtime 使用独立子目录，互不干扰
-  - Semibot：`.semibot/sessions/{session_id}/memory/`
+  - SemiGraph：`.semibot/sessions/{session_id}/memory/`
   - OpenClaw：`.semibot/sessions/{session_id}/openclaw-memory/`
 - **长期记忆**：两者都通过 WS `memory_search` 请求控制平面，Bridge 代理此调用
 
@@ -916,16 +916,16 @@ export async function loadSkill(
 2. `agents.runtime_type` — agent 默认值
 3. `users.default_runtime_type` — 用户偏好
 4. `organizations.default_runtime_type` — 组织默认
-5. 系统默认：`'semibot'`
+5. 系统默认：`'semigraph'`
 
-> **混合 runtime 支持**：同一用户的不同 session 允许使用不同的 `runtime_type`（硬需求）。例如用户可以同时拥有一个 `semibot` session 和一个 `openclaw` session，由 `SessionManager` 为每个 session 独立创建对应的 `RuntimeAdapter`。
+> **混合 runtime 支持**：同一用户的不同 session 允许使用不同的 `runtime_type`（硬需求）。例如用户可以同时拥有一个 `semigraph` session 和一个 `openclaw` session，由 `SessionManager` 为每个 session 独立创建对应的 `RuntimeAdapter`。
 
 控制平面在构造 `start_session` 消息时解析此优先级链，执行平面只需读取消息中的 `runtime_type` 字段。
 
 ### 4.10 错误处理
 
 - **Bridge 崩溃不影响其他 session**（进程隔离）
-- **不做自动 fallback**：OpenClaw session 失败不会切换到 Semibot（执行模型完全不同，自动切换会导致不可预期的行为）
+- **不做自动 fallback**：OpenClaw session 失败不会切换到 SemiGraph（执行模型完全不同，自动切换会导致不可预期的行为）
 - **健康检查**新增 `openclaw_available` 字段，检测 Node.js 和 OpenClaw 是否可用
 - **Bridge 进程监控**：`OpenClawBridgeAdapter` 监控子进程退出码，异常退出时上报 `execution_error` 事件
 
@@ -988,14 +988,14 @@ if __name__ == '__main__':
 import asyncio
 import logging
 from session.runtime_adapter import RuntimeAdapter
-from session.semibot_adapter import SemibotAdapter
+from session.semigraph_adapter import SemiGraphAdapter
 from session.openclaw_adapter import OpenClawBridgeAdapter
 
 logger = logging.getLogger(__name__)
 
 # ── 工厂函数 ──────────────────────────────────────────────
 
-SUPPORTED_RUNTIME_TYPES = {'semibot', 'openclaw'}
+SUPPORTED_RUNTIME_TYPES = {'semigraph', 'openclaw'}
 
 def create_adapter(runtime_type: str, client, memory_dir: str) -> RuntimeAdapter:
     """根据 runtime_type 创建对应的 RuntimeAdapter 实例
@@ -1013,7 +1013,7 @@ def create_adapter(runtime_type: str, client, memory_dir: str) -> RuntimeAdapter
         )
     if runtime_type == 'openclaw':
         return OpenClawBridgeAdapter(client=client, memory_dir=memory_dir)
-    return SemibotAdapter(client=client, memory_dir=memory_dir)
+    return SemiGraphAdapter(client=client, memory_dir=memory_dir)
 
 
 # ── SessionManager ───────────────────────────────────────
@@ -1029,7 +1029,7 @@ class SessionManager:
     async def start_session(self, data: dict):
         session_id = data['session_id']
         agent_config = data['agent_config']
-        runtime_type = data.get('runtime_type', 'semibot')  # 控制平面已解析好
+        runtime_type = data.get('runtime_type', 'semigraph')  # 控制平面已解析好
         skill_index = data.get('skill_index')
 
         memory_dir = f'/home/user/.semibot/sessions/{session_id}'
@@ -1037,7 +1037,7 @@ class SessionManager:
         # 1. 通过工厂函数创建对应的 Adapter（仅实例化，未初始化）
         adapter = create_adapter(runtime_type, self.client, memory_dir)
 
-        # 2. 初始化运行时（Semibot: 创建 LangGraph；OpenClaw: 启动 Bridge 进程）
+        # 2. 初始化运行时（SemiGraph: 创建 LangGraph；OpenClaw: 启动 Bridge 进程）
         await adapter.start(session_id, config={
             'agent_config': agent_config,
             'skill_index': skill_index,
@@ -1093,7 +1093,7 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 进入消息循环等待
         │
         ▼ (收到 start_session)
-根据 runtime_type 创建 RuntimeAdapter（SemibotAdapter / OpenClawBridgeAdapter）
+根据 runtime_type 创建 RuntimeAdapter（SemiGraphAdapter / OpenClawBridgeAdapter）
         │
         ▼
 调用 adapter.start(session_id, config) 初始化运行时
@@ -1220,7 +1220,7 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 
 ## 7. LangGraph 节点改造
 
-每个 Semibot session 拥有独立的 LangGraph 实例（在 `SemibotAdapter` 内部创建）。节点通过 `config` 获取 `session_id`、`memory`、`control_plane` 等上下文。OpenClaw session 不使用 LangGraph，由 Bridge 进程内部管理。
+每个 SemiGraph session 拥有独立的 LangGraph 实例（在 `SemiGraphAdapter` 内部创建）。节点通过 `config` 获取 `session_id`、`memory`、`control_plane` 等上下文。OpenClaw session 不使用 LangGraph，由 Bridge 进程内部管理。
 
 ### 7.1 start_node 改造
 
@@ -1563,7 +1563,7 @@ runtime/src/
 ├── session/                   NEW: Session 进程管理
 │   ├── manager.py             SessionManager + create_adapter 工厂
 │   ├── runtime_adapter.py     NEW: RuntimeAdapter 抽象基类
-│   ├── semibot_adapter.py     NEW: SemibotAdapter（包装 SessionProcess）
+│   ├── semigraph_adapter.py     NEW: SemiGraphAdapter（包装 SessionProcess）
 │   └── openclaw_adapter.py    NEW: OpenClawBridgeAdapter（Unix Socket IPC）
 ├── ws/                        NEW: WebSocket 客户端
 │   ├── client.py              控制平面客户端（多 session 多路复用）

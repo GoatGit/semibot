@@ -145,7 +145,7 @@
 
 ### Phase 3：端到端联调 — Docker 模式（End-to-End with Docker）
 
-**目标：** 完整链路跑通：前端 → 控制平面 → WS → 执行平面（Docker 容器，Semibot runtime）→ LLM → 响应 → SSE → 前端。
+**目标：** 完整链路跑通：前端 → 控制平面 → WS → 执行平面（Docker 容器，SemiGraph runtime）→ LLM → 响应 → SSE → 前端。
 
 #### 步骤
 
@@ -218,7 +218,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 #### 步骤
 
 1. 新增 `runtime/src/session/runtime_adapter.py` — RuntimeAdapter ABC
-2. 新增 `runtime/src/session/semibot_adapter.py` — 包装现有 SessionProcess，零改动
+2. 新增 `runtime/src/session/semigraph_adapter.py` — 包装现有 SessionProcess，零改动
 3. 新增 `runtime/src/session/openclaw_adapter.py` — OpenClaw Bridge 适配器
 4. 改造 `runtime/src/session/manager.py` — SessionManager 根据 `runtime_type` 选择 Adapter
 5. 新增 `runtime/openclaw-bridge/` — Node.js Bridge 进程骨架：
@@ -228,7 +228,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
    - `src/skill-loader.ts` — Skill 缓存集成
 6. IPC 协议实现（JSON-line，Unix Domain Socket）
 7. 单元测试：mock OpenClaw 事件 → 验证翻译后的 SSE 事件格式正确
-8. Adapter 单元测试：验证 SemibotAdapter 和 OpenClawBridgeAdapter 实现 RuntimeAdapter 接口
+8. Adapter 单元测试：验证 SemiGraphAdapter 和 OpenClawBridgeAdapter 实现 RuntimeAdapter 接口
 
 #### 变更范围
 
@@ -236,7 +236,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 新增：
 ├── runtime/src/session/
 │   ├── runtime_adapter.py       RuntimeAdapter ABC
-│   ├── semibot_adapter.py       包装现有 SessionProcess
+│   ├── semigraph_adapter.py       包装现有 SessionProcess
 │   └── openclaw_adapter.py      OpenClaw Bridge 适配器
 ├── runtime/openclaw-bridge/
 │   ├── package.json
@@ -253,11 +253,11 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 
 #### 风险评估
 
-**低风险。** SemibotAdapter 只是包装现有 SessionProcess，不改变任何现有行为。OpenClaw Bridge 是独立的 Node.js 进程。
+**低风险。** SemiGraphAdapter 只是包装现有 SessionProcess，不改变任何现有行为。OpenClaw Bridge 是独立的 Node.js 进程。
 
 #### 回滚
 
-不使用 `runtime_type=openclaw` 即可，所有 session 默认走 SemibotAdapter（= 现有逻辑）。
+不使用 `runtime_type=openclaw` 即可，所有 session 默认走 SemiGraphAdapter（= 现有逻辑）。
 
 ---
 
@@ -275,7 +275,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 4. 实现 MCP 代理：Bridge 代理远程 MCP 调用，通过 IPC → Python → WS 到控制平面
 5. IPC 集成测试：Python ↔ Node.js Unix Socket 通信正确性
 6. E2E 测试：创建 `runtime_type='openclaw'` 的 agent，发送消息，验证前端收到正确的 SSE 流
-7. 并发测试：同一 VM 内同时运行 Semibot session 和 OpenClaw session，互不干扰
+7. 并发测试：同一 VM 内同时运行 SemiGraph session 和 OpenClaw session，互不干扰
 
 #### 变更范围
 
@@ -298,7 +298,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 
 #### 回滚
 
-将 `runtime_type` 切回 `semibot`，OpenClaw session 不再创建。
+将 `runtime_type` 切��� `semigraph`，OpenClaw session 不再创建。
 
 ---
 
@@ -309,19 +309,19 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 #### 步骤
 
 1. 创建双运行时 Docker 镜像 `runtime/Dockerfile.dual`：
-   - Stage 1: Python 3.12 + Semibot runtime（现有）
+   - Stage 1: Python 3.12 + SemiGraph runtime（现有）
    - Stage 2: Node.js 20 + OpenClaw + Bridge
    - Stage 3: 合并，约 +160MB 内存 / +380MB 磁盘
 2. 数据库迁移：
    ```sql
-   ALTER TABLE agents ADD COLUMN runtime_type VARCHAR(20) DEFAULT 'semibot';
+   ALTER TABLE agents ADD COLUMN runtime_type VARCHAR(20) DEFAULT 'semigraph';
    ALTER TABLE agents ADD COLUMN openclaw_config JSONB;
    ALTER TABLE sessions ADD COLUMN runtime_type VARCHAR(20);
    ALTER TABLE users ADD COLUMN default_runtime_type VARCHAR(20);
    ALTER TABLE organizations ADD COLUMN default_runtime_type VARCHAR(20);
    ```
 3. 控制平面：`resolveRuntimeType()` 实现配置优先级链（session > agent > user > org > 系统默认）
-4. 前端：Agent 设置页面添加 runtime 选择器（Semibot / OpenClaw）
+4. 前端：Agent 设置页面添加 runtime 选择器（SemiGraph / OpenClaw）
 5. 健康检查新增 `openclaw_available` 字段
 6. VM 调度器：OpenClaw session 启用时建议 VM 内存从 512MB 提升到 768MB
 
@@ -342,7 +342,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 
 #### 风险评估
 
-**中等风险。** 涉及数据库变更和前端改动，但 runtime_type 默认为 `semibot`，不影响现有用户。
+**中等风险。** 涉及数据库变更和前端改动，但 runtime_type 默认为 `semigraph`，不影响现有用户。
 
 #### 回滚
 
@@ -584,8 +584,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_vm_one_active
 
 -- agents 表：添加默认运行时类型
 ALTER TABLE agents
-  ADD COLUMN IF NOT EXISTS runtime_type VARCHAR(20) DEFAULT 'semibot';
--- 'semibot' | 'openclaw'
+  ADD COLUMN IF NOT EXISTS runtime_type VARCHAR(20) DEFAULT 'semigraph';
+-- 'semigraph' | 'openclaw'
 
 -- agents 表：添加 OpenClaw 特有配置
 ALTER TABLE agents
@@ -617,7 +617,7 @@ ALTER TABLE organizations
 | 执行平面崩溃导致数据丢失 | 低 | 高 | 每个状态转换写 checkpoint、定期快照同步到控制平面、鼓励用户 git push |
 | 迁移期间双模式并存增加复杂度 | 高 | 低 | 清晰的 Feature Flag 设计、完善的测试覆盖、缩短迁移窗口期 |
 | 本地执行平面安全风险（用户运行任意代码） | 低 | 中 | 用户级 JWT、控制平面数据只读访问、本地模式下用户对自己的机器负责 |
-| OpenClaw Bridge 崩溃影响 VM 稳定性 | 低 | 中 | Bridge 作为独立进程运行，崩溃不影响其他 session；不做自动 fallback 到 Semibot |
+| OpenClaw Bridge 崩溃影响 VM 稳定性 | 低 | 中 | Bridge 作为独立进程运行，崩溃不影响其他 session；不做自动 fallback 到 SemiGraph |
 | OpenClaw 版本升级导致事件格式变化 | 中 | 中 | event-translator 做版本适配，Bridge 启动时检测 OpenClaw 版本 |
 | 双运行时 VM 内存不足 | 低 | 中 | OpenClaw 启用时自动提升 VM 内存到 768MB；监控内存使用率 |
 
@@ -635,7 +635,7 @@ ALTER TABLE organizations
 | Local Memory | conversation 读写、context 读写、scratchpad 读写 |
 | Local Checkpointer | put、get_latest、自动清理旧文件 |
 | VM Scheduler | allocate、release、健康检查、恢复流程 |
-| RuntimeAdapter | SemibotAdapter 和 OpenClawBridgeAdapter 接口一致性 |
+| RuntimeAdapter | SemiGraphAdapter 和 OpenClawBridgeAdapter 接口一致性 |
 | Event Translator | OpenClaw 事件 → Semibot SSE 事件格式映射正确性 |
 | Bridge IPC | JSON-line 协议解析、Unix Domain Socket 通信 |
 
@@ -661,7 +661,7 @@ ALTER TABLE organizations
 | 并发隔离 | 10 个用户各运行多个 session，验证互不干扰 |
 | 本地模式 | 本地执行平面连接 → 执行 → 断开，验证全流程 |
 | OpenClaw Happy Path | 创建 `runtime_type='openclaw'` 的 agent → 发送消息 → 验证 SSE 事件格式正确 |
-| 双运行时并发 | 同一 VM 内同时运行 Semibot session 和 OpenClaw session，互不干扰 |
+| 双运行时并发 | 同一 VM 内同时运行 SemiGraph session 和 OpenClaw session，互不干扰 |
 | OpenClaw Bridge 崩溃 | kill Bridge 进程，验证不影响其他 session，错误正确上报 |
 
 ### 性能测试
@@ -684,11 +684,11 @@ Phase 1: 控制平面 WS 基础设施（Foundation）
 Phase 2: 执行平面 WS 客户端（Client）
     │         依赖：Phase 1（需要 WS 服务端才能连接）
     ▼
-Phase 3: 端到端联调（E2E，Semibot only）
+Phase 3: 端到端联调（E2E，SemiGraph only）
     │         依赖：Phase 1 + Phase 2
     ▼
 Phase 3.5a: OpenClaw Bridge 骨架（IPC + Adapter + 事件翻译，mock OpenClaw）
-    │         依赖：Phase 3（需要 Semibot 链路跑通）
+    │         依赖：Phase 3（需要 SemiGraph 链路跑通）
     ▼
 Phase 3.5b: OpenClaw E2E 集成（真实 OpenClaw，skill/memory/MCP 打通）
     │         依赖：Phase 3.5a
@@ -710,7 +710,7 @@ Phase 6: 清理旧代码（Cleanup）
 
 - Phase 2 依赖 Phase 1 — 需要 WS 服务端才能开发客户端
 - Phase 3 依赖 Phase 1 + 2 — 需要两端都就绪才能联调
-- Phase 3.5a 依赖 Phase 3 — 需要 Semibot 链路跑通后才能开发 Bridge
+- Phase 3.5a 依赖 Phase 3 — 需要 SemiGraph 链路跑通后才能开发 Bridge
 - Phase 3.5b 依赖 Phase 3.5a — 需要 Bridge 骨架才能接入真实 OpenClaw
 - Phase 3.5c 依赖 Phase 3.5b — 需要 E2E 验证通过才能发布
 - Phase 4 依赖 Phase 3.5c — 容错需覆盖两种 runtime

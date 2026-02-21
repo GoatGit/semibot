@@ -203,7 +203,7 @@ Execution Plane (User VM)             Control Plane
   "type": "start_session",
   "data": {
     "session_id": "uuid",
-    "runtime_type": "semibot | openclaw",
+    "runtime_type": "semigraph | openclaw",
     "agent_config": {
       "system_prompt": "string",
       "model": "string",
@@ -234,7 +234,7 @@ Execution Plane (User VM)             Control Plane
 
 | 字段 | 必需 | 说明 |
 |------|------|------|
-| `runtime_type` | 否 | 运行时类型，`semibot`（默认）或 `openclaw` |
+| `runtime_type` | 否 | 运行时类型，`semigraph`（默认）或 `openclaw` |
 | `openclaw_config` | 否 | 仅 `runtime_type=openclaw` 时有效，OpenClaw 特有配置 |
 | `openclaw_config.tool_profile` | 否 | OpenClaw 工具配置集（如 `coding`、`data-analysis`） |
 | `openclaw_config.skills` | 否 | OpenClaw 原生 skill 列表 |
@@ -335,7 +335,7 @@ SessionManager 路由到 session X 的 RuntimeAdapter
         ▼
 adapter.cancel()
         │
-        ├── SemibotAdapter: 取消 LangGraph 当前节点执行
+        ├── SemiGraphAdapter: 取消 LangGraph 当前节点执行
         │   ├── 中断 LLM 流式调用
         │   ├── 尝试取消进行中的工具调用
         │   └── 保存当前 checkpoint

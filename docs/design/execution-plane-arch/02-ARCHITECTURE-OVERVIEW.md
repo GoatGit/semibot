@@ -79,7 +79,7 @@
      控制平面（管理）            执行平面（运行，每用户一个）
      ├── Skill Registry        ├── Session 进程管理
      ├── Evolution Engine      ├── RuntimeAdapter 抽象层
-     ├── 长期记忆 (pgvector)    │   ├── SemibotAdapter → LangGraph 编排器
+     ├── 长期记忆 (pgvector)    │   ├── SemiGraphAdapter → LangGraph 编排器
      ├── 远程 MCP 连接池        │   └── OpenClawBridgeAdapter → Node.js Bridge → OpenClaw
      ├── Agent 定义管理         ├── 短期记忆 (MD)
      ├── 审计/计费             ├── 文件系统（用户共享）
@@ -278,8 +278,8 @@ API Key 由控制平面在 VM 启动时通过 WebSocket `init` 消息注入执�
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
-| 编排器 | LangGraph (现有) | Semibot runtime 核心 |
-| LLM 调用 | LangChain (现有) | Semibot runtime |
+| 编排器 | LangGraph (现有) | SemiGraph runtime 核心 |
+| LLM 调用 | LangChain (现有) | SemiGraph runtime |
 | WebSocket 客户端 | websockets 库 | Python WebSocket 客户端 |
 | 短期记忆 | MD 文件 | 替代 Redis |
 | Checkpoint | JSON 文件 | LangGraph 状态持久化 |
@@ -349,7 +349,7 @@ Web → 控制平面 → 执行平面（每用户一个虚拟机，多 session �
     ├── server/        → 删除 HTTP 服务器（改为 WS 客户端）
     ├── memory/        → short_term 改为 MD 文件
     ├── queue/         → 删除（不再用消息队列）
-    ├── session/       → RuntimeAdapter 抽象层（SemibotAdapter + OpenClawBridgeAdapter）
+    ├── session/       → RuntimeAdapter 抽象层（SemiGraphAdapter + OpenClawBridgeAdapter）
     ├── 新增 ws/       → WebSocket 客户端 + 消息路由
     └── 新增 openclaw-bridge/ → Node.js Bridge 进程（IPC + 事件翻译）
 ```

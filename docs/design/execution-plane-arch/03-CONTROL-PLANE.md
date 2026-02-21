@@ -313,7 +313,7 @@ class WSServer {
    * 向用户 VM 下发启动 session 指令
    * VM 收到后根据 runtime_type 启动对应的 Adapter 进程
    */
-  sendStartSession(userId: string, sessionId: string, agentConfig: any, runtimeType: string = 'semibot', openclawConfig?: any) {
+  sendStartSession(userId: string, sessionId: string, agentConfig: any, runtimeType: string = 'semigraph', openclawConfig?: any) {
     const conn = this.connections.get(userId);
     if (!conn || conn.status !== 'ready') {
       throw new Error('用户 VM 未就绪');
@@ -785,7 +785,7 @@ class ChatService {
         ?? agent.runtimeType
         ?? user.defaultRuntimeType
         ?? org.defaultRuntimeType
-        ?? 'semibot';
+        ?? 'semigraph';
 
       wsServer.sendStartSession(userId, sessionId, {
         system_prompt: agent.systemPrompt,
@@ -904,12 +904,12 @@ ALTER TABLE agents ADD COLUMN default_vm_mode VARCHAR(20) DEFAULT 'docker';
 
 -- ============================================================
 -- runtime_type 配置（双运行时支持）
--- 优先级：session > agent > user > org > 系统默认('semibot')
+-- 优先级：session > agent > user > org > 系统默认('semigraph')
 -- ============================================================
 
 -- agents 表增加默认运行时类型
-ALTER TABLE agents ADD COLUMN runtime_type VARCHAR(20) DEFAULT 'semibot';
--- 'semibot' | 'openclaw'
+ALTER TABLE agents ADD COLUMN runtime_type VARCHAR(20) DEFAULT 'semigraph';
+-- 'semigraph' | 'openclaw'
 
 -- agents 表增加 OpenClaw 特有配置
 ALTER TABLE agents ADD COLUMN openclaw_config JSONB;
@@ -925,7 +925,7 @@ ALTER TABLE users ADD COLUMN default_runtime_type VARCHAR(20);
 
 -- organizations 表增加组织级默认运行时
 ALTER TABLE organizations ADD COLUMN default_runtime_type VARCHAR(20);
--- NULL 表示使用系统默认值 'semibot'
+-- NULL 表示使用系统默认值 'semigraph'
 ```
 
 ## 5. 删除的模块
