@@ -22,7 +22,7 @@ OpenClaw 通过"全部跑在本地"解决了这些问题，但失去了多租户
 
 **将 Semibot 改造为"云端大脑 + 本地双手"架构：**
 
-- 云端（控制平面）负责思考：Agent 定义、技能管理、���期记忆、进化治理、审计计费
+- 云端（控制平面）负责思考：Agent 定义、技能管理、长期记忆、进化治理、审计计费
 - 用户虚拟机（执行平面）负责动手：代码执行、文件操作、浏览器控制、LLM 调用
 - 每个用户分配一个虚拟机，等同于一台"个人电脑"，多个 session 作为独立进程共享同一文件系统
 
@@ -34,6 +34,7 @@ OpenClaw 通过"全部跑在本地"解决了这些问题，但失去了多租户
 |------|----------|------------------|
 | 定位 | 个人开发者的本地 Agent | 团队/企业的 Agent 编排平台 |
 | 执行环境 | 只能本地 | 云端虚拟机 / 本地机器 / 混合 |
+| 运行时 | 单一 Node.js runtime | 双运行时（Semibot Python/LangGraph + OpenClaw Node.js），每 session 可切换 |
 | 并发隔离 | 无（单用户单进程） | 用户级虚拟机隔离，多 session 进程级复用 |
 | 技能管理 | SKILL.md 文件 + ClawHub | 双层模型 + 版本锁定 + 安装审计 |
 | 进化技能 | 无 | LLM 自动生成 → 审核 → 跨 session 复用 |
@@ -41,11 +42,12 @@ OpenClaw 通过"全部跑在本地"解决了这些问题，但失去了多租户
 | 长期记忆 | 无 | pgvector 向量检索 + 跨 session 积累 |
 | 离线能力 | 天然支持 | 执行平面可离线运行（退化模式） |
 
-**Semibot 不可替代的三个优势：**
+**Semibot 不可替代的四个优势：**
 
 1. **用户级隔离** — 每个用户一个虚拟机（= 个人电脑），不同用户绝对隔离；同一用户的多个 session 共享文件系统，通过独立进程运行
-2. **进化技能** — 从成功执行中自动提炼技能，跨 session/用户复用
-3. **团队协作** — 多人共享 Agent、技能、记忆，统一管控
+2. **双运行时** — 同时支持 Semibot 自研 runtime 和 OpenClaw 开源 runtime，用户按需选择，控制平面和前端无感知
+3. **进化技能** — 从成功执行中自动提炼技能，跨 session/用户复用
+4. **团队协作** — 多人共享 Agent、技能、记忆，统一管控
 
 ## 2. 用户场景
 
@@ -92,6 +94,20 @@ OpenClaw 通过"全部跑在本地"解决了这些问题，但失去了多租户
   → 下次类似任务，Agent 从长期记忆中检索历史报告作为参考
 ```
 
+### 2.4 场景四：OpenClaw 运行时
+
+```
+开发者（已有 OpenClaw 使用经验）：
+  → 在控制平面创建 Agent，选择 runtime_type = openclaw
+  → 控制平面为用户分配虚拟机，VM 内预装 Semibot + OpenClaw 双运行时
+  → 用户发送消息，SessionManager 启动 OpenClaw Bridge 进程
+  → Bridge 驱动 OpenClaw 原生 Brain/Skills/Memory 运行
+  → Bridge 将 OpenClaw 事件翻译为 Semibot SSE 格式，前端无感知
+  → 用户可在同一 VM 内同时运行 Semibot session 和 OpenClaw session
+  → Skill 缓存共享（两者都使用 SKILL.md 格式）
+  → 长期记忆共享（都通过 WS 请求控制平面）
+```
+
 ## 3. 产品需求
 
 ### 3.1 P0 — 必须实现
@@ -117,6 +133,7 @@ OpenClaw 通过"全部跑在本地"解决了这些问题，但失去了多租户
 | 状态快照同步 | 执行平面定期将关键状态同步到控制平面，用于灾难恢复 |
 | OAuth 集成 | 控制平面管理 OAuth token，按需注入执行平面 |
 | 远程 MCP 连接池 | 平台提供的远程 MCP Server 在控制平面共享连接池 |
+| 双运行时支持 | 执行平面同时支持 Semibot（Python/LangGraph）和 OpenClaw（Node.js）两种 runtime，每个 session 可独立选择，通过 RuntimeAdapter 抽象层统一管理 |
 
 ### 3.3 P2 — 可以实现
 

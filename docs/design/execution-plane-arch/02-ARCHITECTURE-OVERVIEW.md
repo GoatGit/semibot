@@ -24,7 +24,7 @@
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
 │  │ 远程 MCP │  │ 进化技能  │  │ OAuth/   │  │ SSE      │        │
 │  │ 连接池   │  │ 治理     │  │ Key 管理  │  │ 缓冲转发  │        │
-│  └───���──────┘  └──────────┘  └──────────┘  └──────────┘        │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
 │                                                                  │
 │  PostgreSQL + Redis                                              │
 └──────────────────────────┬───────────────────────────────────────┘
@@ -32,14 +32,14 @@
                            ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                  执行平面 (每用户一个虚拟机)                        │
-│                    Python + LangGraph                             │
+│              Python + LangGraph / Node.js + OpenClaw               │
 │                                                                  │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
 │  │ Session  │  │ 短期记忆  │  │ 文件系统  │  │ 代码执行  │        │
 │  │ 进程管理  │  │ (MD文件)  │  │ (共享)   │  │ (直接)   │        │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
-│  │ LangGraph��  │ 本地 MCP │  │ LLM 直连  │  │Checkpoint│        │
+│  │ LangGraph │  │ 本地 MCP │  │ LLM 直连  │  │Checkpoint│        │
 │  │ 编排器   │  │ (STDIO)  │  │ Provider │  │ 本地存储  │        │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
 │                                                                  │
@@ -78,12 +78,14 @@
           ▼                           ▼
      控制平面（管理）            执行平面（运行，每用户一个）
      ├── Skill Registry        ├── Session 进程管理
-     ├── Evolution Engine      ├── LangGraph 编排器
-     ├── 长期记忆 (pgvector)    ├── 短期记忆 (MD)
-     ├── 远程 MCP 连接池        ├── 文件系统（用户共享）
-     ├── Agent 定义管理         ├── 代码执行 (直接)
-     ├── 审计/计费             ├── 本地 MCP (STDIO)
-     └── Session 调度          ├── LLM 直连
+     ├── Evolution Engine      ├── RuntimeAdapter 抽象层
+     ├── 长期记忆 (pgvector)    │   ├── SemibotAdapter → LangGraph 编排器
+     ├── 远程 MCP 连接池        │   └── OpenClawBridgeAdapter → Node.js Bridge → OpenClaw
+     ├── Agent 定义管理         ├── 短期记忆 (MD)
+     ├── 审计/计费             ├── 文件系统（用户共享）
+     └── Session 调度          ├── 代码执行 (直接)
+                               ├── 本地 MCP (STDIO)
+                               ├── LLM 直连
                                └── Checkpoint
 ```
 
@@ -99,7 +101,7 @@
 执行平面 ──→ (通过 WebSocket) ──→ 控制平面 ──→ (SSE) ──→ 前端
 ```
 
-API Key 由控制平面在 session 启动时注入执行平面内存，不落盘，session 结束后擦除。
+API Key 由控制平面在 VM 启动时通过 WebSocket `init` 消息注入执行平面内存，不落盘，同一 VM 内多个 session 共享。VM 关闭时随进程内存一并擦除。
 
 ### 2.4 技能分层
 
@@ -137,7 +139,7 @@ API Key 由控制平面在 session 启动时注入执行平面内存，不落盘
 ```
 1. 前端 POST /api/v1/chat/sessions/{id}
    │
-2. 控制平面收到消���
+2. 控制平面收到消息
    ├── 保存 user message 到 PostgreSQL
    ├── 建立 SSE 连接给前端
    └── 通过 WebSocket 下发给执行平面
@@ -167,7 +169,7 @@ API Key 由控制平面在 session 启动时注入执行平面内存，不落盘
 4. 控制平面收到 execution_complete
    ├── 保存 assistant message 到 PostgreSQL
    ├── 记录用量（tokens、延迟）
-   └── SSE 发送 done 事件给前端
+   └── SSE 发送 execution_complete 事件给前端
 ```
 
 ### 3.2 Session 生命周期
@@ -276,12 +278,14 @@ API Key 由控制平面在 session 启动时注入执行平面内存，不落盘
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
-| 编排器 | LangGraph (现有) | 从 Runtime 迁移 |
-| LLM 调用 | LangChain (现有) | 从 Runtime 迁移 |
+| 编排器 | LangGraph (现有) | Semibot runtime 核心 |
+| LLM 调用 | LangChain (现有) | Semibot runtime |
 | WebSocket 客户端 | websockets 库 | Python WebSocket 客户端 |
 | 短期记忆 | MD 文件 | 替代 Redis |
 | Checkpoint | JSON 文件 | LangGraph 状态持久化 |
 | 本地 MCP | STDIO (现有) | 从 Runtime 迁移 |
+| OpenClaw Runtime | Node.js 20 + OpenClaw | 可选的第二运行时 |
+| OpenClaw Bridge | TypeScript | Python ↔ Node.js IPC 桥接层（Unix Domain Socket） |
 
 ### 5.3 虚拟机 / 容器
 
@@ -292,7 +296,7 @@ API Key 由控制平面在 session 启动时注入执行平面内存，不落盘
 | Docker 容器 | ~1s | 512MB 起（含 Chrome 2GB） | 开发环境，简单部署 |
 | 本地进程 | 即时 | 共享 | 开发调试 |
 
-> 注：每用户一个虚拟机/容器，多 session 共享。不含 Chrome 时 512MB 足够，含 Chrome 时建议 2GB。
+> 注：每用户一个虚拟机/容器，多 session 共享。不含 Chrome 时 512MB 足够，含 Chrome 时建议 2GB。启用 OpenClaw runtime 时建议 VM 内存从 512MB 提升到 768MB（额外 ~160MB 内存 / ~380MB 磁盘）。
 
 ## 6. 与现有架构的对比
 
@@ -341,9 +345,11 @@ Web → 控制平面 → 执行平面（每用户一个虚拟机，多 session �
 │   ├── services/chat.service.ts     → 改为通过 WS 转发
 │   └── 新增 ws/ 目录                → WebSocket 连接管理
 │
-└── runtime/           → 执行平面（瘦身 + 增加 WS 客户端）
+└── runtime/           → 执行平面（瘦身 + 增加 WS 客户端 + 双运行时）
     ├── server/        → 删除 HTTP 服务器（改为 WS 客户端）
     ├── memory/        → short_term 改为 MD 文件
     ├── queue/         → 删除（不再用消息队列）
-    └── 新增 ws/       → WebSocket 客户端 + 消息路由
+    ├── session/       → RuntimeAdapter 抽象层（SemibotAdapter + OpenClawBridgeAdapter）
+    ├── 新增 ws/       → WebSocket 客户端 + 消息路由
+    └── 新增 openclaw-bridge/ → Node.js Bridge 进程（IPC + 事件翻译）
 ```

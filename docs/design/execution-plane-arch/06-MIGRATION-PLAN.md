@@ -25,21 +25,26 @@
 ```
 迁移期间的双轨架构：
 
-旧路径（legacy）：
+旧路径（http）：
   前端 → API → HTTP POST /api/v1/execute/stream → Runtime（单进程）→ SSE → 前端
 
-新路径（new）：
+新路径（websocket）：
   前端 → 控制平面 → WebSocket → 执行平面（per-user VM（多 session 共享））→ SSE → 前端
 
-切换方式：
-  user.execution_mode = 'legacy' | 'new'
-  org.execution_mode = 'legacy' | 'new'   （组织级覆盖）
+切换方式（两个独立维度）：
+  routing_mode = 'http' | 'websocket'     — 请求走哪条链路（迁移完成后废弃）
+  vm_mode = 'firecracker' | 'docker' | 'local'  — VM 实际运行方式（长期保留）
+
+  优先级：user > org > 系统默认
+  字段映射：
+    routing_mode: user.routing_mode > org.routing_mode > 系统默认('http')
+    vm_mode:      user.vm_mode > agent.default_vm_mode > org.default_vm_mode > 系统默认('docker')
 ```
 
 ### 关键约束
 
 - **绝不破坏现有系统** — 每个阶段只在现有代码旁边添加新能力，不修改已有行为
-- **Feature Flag 控制切换** — 通过 `execution_mode` 字段决定走旧路径还是新路径
+- **Feature Flag 控制切换** — 通过 `routing_mode` 字段决定走旧路径（HTTP）还是新路径（WebSocket），`vm_mode` 字段决定 VM 运行方式
 - **独立可回滚** — 每个阶段都有明确的回滚步骤，最坏情况下可在 5 分钟内恢复
 - **旧代码最后删除** — 只有在新路径稳定运行 2 周以上后，才清理旧代码
 
@@ -140,7 +145,7 @@
 
 ### Phase 3：端到端联调 — Docker 模式（End-to-End with Docker）
 
-**目标：** 完整链路跑通：前端 → 控制平面 → WS → 执行平面（Docker 容器）→ LLM → 响应 → SSE → 前端。
+**目标：** 完整链路跑通：前端 → 控制平面 → WS → 执行平面（Docker 容器，Semibot runtime）→ LLM → 响应 → SSE → 前端。
 
 #### 步骤
 
@@ -154,7 +159,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
   const session = await sessionRepository.findById(sessionId);
   const user = await userRepository.findById(userId);
 
-  if (user.executionMode === 'new') {
+  if (user.routingMode === 'websocket') {
     // 新路径：查找用户的 VM 连接，通过 WebSocket 下发给执行平面
     const vmConn = await wsServer.getOrStartVm(userId, orgId);
     vmConn.send({
@@ -180,7 +185,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 
 5. 创建 Docker 镜像：`semibot/execution-plane`
 
-6. 端到端测试：创建 `execution_mode='new'` 的用户，发送消息，验证完整响应
+6. 端到端测试：创建 `routing_mode='websocket'` 的用户，发送消息，验证完整响应
 
 #### 变更范围
 
@@ -202,13 +207,152 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 
 #### 回滚
 
-将所有用户的 `execution_mode` 设为 `'legacy'`，旧路径立即接管。
+将所有用户的 `routing_mode` 设为 `'http'`，旧路径立即接管。
+
+---
+
+### Phase 3.5a：OpenClaw Bridge 骨架（Bridge Skeleton）
+
+**目标：** 实现 RuntimeAdapter 抽象层、OpenClaw Bridge IPC 协议和事件翻译器，使用 mock OpenClaw 验证。
+
+#### 步骤
+
+1. 新增 `runtime/src/session/runtime_adapter.py` — RuntimeAdapter ABC
+2. 新增 `runtime/src/session/semibot_adapter.py` — 包装现有 SessionProcess，零改动
+3. 新增 `runtime/src/session/openclaw_adapter.py` — OpenClaw Bridge 适配器
+4. 改造 `runtime/src/session/manager.py` — SessionManager 根据 `runtime_type` 选择 Adapter
+5. 新增 `runtime/openclaw-bridge/` — Node.js Bridge 进程骨架：
+   - `src/main.ts` — 入口
+   - `src/bridge.ts` — Unix Domain Socket IPC 服务端
+   - `src/event-translator.ts` — OpenClaw → Semibot SSE 事件翻译
+   - `src/skill-loader.ts` — Skill 缓存集成
+6. IPC 协议实现（JSON-line，Unix Domain Socket）
+7. 单元测试：mock OpenClaw 事件 → 验证翻译后的 SSE 事件格式正确
+8. Adapter 单元测试：验证 SemibotAdapter 和 OpenClawBridgeAdapter 实现 RuntimeAdapter 接口
+
+#### 变更范围
+
+```
+新增：
+├── runtime/src/session/
+│   ├── runtime_adapter.py       RuntimeAdapter ABC
+│   ├── semibot_adapter.py       包装现有 SessionProcess
+│   └── openclaw_adapter.py      OpenClaw Bridge 适配器
+├── runtime/openclaw-bridge/
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── src/
+│       ├── main.ts              入口
+│       ├── bridge.ts            IPC 服务端
+│       ├── event-translator.ts  事件格式翻译
+│       └── skill-loader.ts      Skill 缓存集成
+
+修改：
+└── runtime/src/session/manager.py  → 添加 runtime_type 路由逻辑
+```
+
+#### 风险评估
+
+**低风险。** SemibotAdapter 只是包装现有 SessionProcess，不改变任何现有行为。OpenClaw Bridge 是独立的 Node.js 进程。
+
+#### 回滚
+
+不使用 `runtime_type=openclaw` 即可，所有 session 默认走 SemibotAdapter（= 现有逻辑）。
+
+---
+
+### Phase 3.5b：OpenClaw E2E 集成（OpenClaw Integration）
+
+**目标：** 接入真实 OpenClaw runtime，打通 Skill/Memory/MCP 全链路。
+
+#### 步骤
+
+1. Bridge 接入真实 OpenClaw Brain/Skills/Memory 模块
+2. 实现 Skill 兼容：Bridge 重写 OpenClaw skill loader，优先从 `.semibot/skills/` 缓存读取，缓存未命中时通过 IPC → Python → WS 从控制平面拉取
+3. 实现记忆兼容：
+   - 短期记忆：OpenClaw 使用独立子目录（`openclaw-memory/`），互不干扰
+   - 长期记忆：Bridge 代理 `memory_search` 请求，通过 IPC → Python → WS 到控制平面
+4. 实现 MCP 代理：Bridge 代理远程 MCP 调用，通过 IPC → Python → WS 到控制平面
+5. IPC 集成测试：Python ↔ Node.js Unix Socket 通信正确性
+6. E2E 测试：创建 `runtime_type='openclaw'` 的 agent，发送消息，验证前端收到正确的 SSE 流
+7. 并发测试：同一 VM 内同时运行 Semibot session 和 OpenClaw session，互不干扰
+
+#### 变更范围
+
+```
+修改：
+├── runtime/openclaw-bridge/src/   → 接入真实 OpenClaw
+│   ├── bridge.ts                  → 完善 IPC 请求代理
+│   ├── skill-loader.ts            → 接入 Semibot skill 缓存
+│   └── event-translator.ts        → 完善事件映射
+
+新增：
+└── tests/
+    ├── openclaw-ipc.test.ts       IPC 集成测试
+    └── openclaw-e2e.test.ts       E2E 测试
+```
+
+#### 风险评估
+
+**中等风险。** 涉及两个 runtime 的交互，但通过进程隔离限制了影响范围。
+
+#### 回滚
+
+将 `runtime_type` 切回 `semibot`，OpenClaw session 不再创建。
+
+---
+
+### Phase 3.5c：双运行时 VM 镜像 + DB Migration + 前端 UI（Dual Runtime Release）
+
+**目标：** 生产就绪的双运行时支持，包括 Docker 镜像、数据库变更和前端 runtime 选择 UI。
+
+#### 步骤
+
+1. 创建双运行时 Docker 镜像 `runtime/Dockerfile.dual`：
+   - Stage 1: Python 3.12 + Semibot runtime（现有）
+   - Stage 2: Node.js 20 + OpenClaw + Bridge
+   - Stage 3: 合并，约 +160MB 内存 / +380MB 磁盘
+2. 数据库迁移：
+   ```sql
+   ALTER TABLE agents ADD COLUMN runtime_type VARCHAR(20) DEFAULT 'semibot';
+   ALTER TABLE agents ADD COLUMN openclaw_config JSONB;
+   ALTER TABLE sessions ADD COLUMN runtime_type VARCHAR(20);
+   ALTER TABLE users ADD COLUMN default_runtime_type VARCHAR(20);
+   ALTER TABLE organizations ADD COLUMN default_runtime_type VARCHAR(20);
+   ```
+3. 控制平面：`resolveRuntimeType()` 实现配置优先级链（session > agent > user > org > 系统默认）
+4. 前端：Agent 设置页面添加 runtime 选择器（Semibot / OpenClaw）
+5. 健康检查新增 `openclaw_available` 字段
+6. VM 调度器：OpenClaw session 启用时建议 VM 内存从 512MB 提升到 768MB
+
+#### 变更范围
+
+```
+新增：
+├── runtime/Dockerfile.dual                双运行时镜像
+└── database/migrations/
+    └── 016_dual_runtime.sql               runtime_type 字段
+
+修改：
+├── apps/api/src/services/chat.service.ts  → resolveRuntimeType()
+├── apps/api/src/ws/ws-server.ts           → sendStartSession 传递 runtime_type
+├── apps/api/src/scheduler/vm-scheduler.ts → OpenClaw 内存配置
+└── apps/web/.../agent-settings.tsx        → runtime 选择 UI
+```
+
+#### 风险评估
+
+**中等风险。** 涉及数据库变更和前端改动，但 runtime_type 默认为 `semibot`，不影响现有用户。
+
+#### 回滚
+
+数据库字段保留（有默认值），前端 UI 隐藏即可。
 
 ---
 
 ### Phase 4：断线重连与容错（Resilience）
 
-**目标：** 系统能优雅处理断线、崩溃和恢复。
+**目标：** 系统能优雅处理断线、崩溃和恢复，覆盖两种 runtime。
 
 #### 步骤
 
@@ -238,7 +382,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 
 #### 回滚
 
-Feature Flag 切回 `execution_mode='legacy'`。
+Feature Flag 切回 `routing_mode='http'`。
 
 ---
 
@@ -287,9 +431,9 @@ Feature Flag 切回 `execution_mode='legacy'`。
 
 #### 前置条件
 
-- 新架构在生产环境稳定运行 2 周以上
-- 无用户使用 `legacy` 模式
-- 所有监控指标健康
+- 新架构（`routing_mode='websocket'`）在生产环境稳定运行 2 周以上
+- 无用户使用 `routing_mode='http'` 模式（灰度已 100% 切换）
+- 所有监控指标健康（错误率、延迟、重连成功率均在阈值内）
 
 #### 步骤
 
@@ -337,7 +481,7 @@ CREATE TABLE IF NOT EXISTS user_vm_instances (
   mode VARCHAR(20) NOT NULL
     CHECK (mode IN ('firecracker', 'docker', 'local')),
   status VARCHAR(20) NOT NULL DEFAULT 'starting'
-    CHECK (status IN ('starting', 'running', 'frozen', 'terminated')),
+    CHECK (status IN ('starting', 'running', 'frozen', 'failed', 'terminated')),
   vm_id VARCHAR(255),                -- 虚拟机/容器 ID
   disk_id VARCHAR(255),              -- 持久化磁盘 ID（用于崩溃恢复）
   ip_address VARCHAR(45),            -- 执行平面 IP 地址
@@ -408,18 +552,56 @@ CREATE INDEX IF NOT EXISTS idx_usage_records_session
 -- 4. 现有表扩展
 -- ============================================================
 
--- organizations 表：添加组织级执行模式（优先级高于用户级）
--- 'legacy' = 旧 HTTP 路径，'new' = 新 WebSocket 路径
+-- organizations 表：添加组织级路由模式
+-- 'http' = 旧 HTTP 路径，'websocket' = 新 WebSocket 路径（迁移完成后废弃此字段）
 ALTER TABLE organizations
-  ADD COLUMN IF NOT EXISTS execution_mode VARCHAR(20) DEFAULT 'legacy';
+  ADD COLUMN IF NOT EXISTS routing_mode VARCHAR(20) DEFAULT 'http';
 
--- users 表：添加用户级执行模式
+-- organizations 表：添加组织级 VM 运行模式（长期保留）
+ALTER TABLE organizations
+  ADD COLUMN IF NOT EXISTS default_vm_mode VARCHAR(20) DEFAULT 'docker';
+
+-- users 表：添加用户级路由模式（NULL = 继承组织级）
 ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS execution_mode VARCHAR(20) DEFAULT 'legacy';
+  ADD COLUMN IF NOT EXISTS routing_mode VARCHAR(20);
 
--- agents 表：添加默认执行模式
+-- users 表：添加用户级 VM 运行模式
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS vm_mode VARCHAR(20);
+
+-- agents 表：添加默认 VM 运行模式
 ALTER TABLE agents
-  ADD COLUMN IF NOT EXISTS default_execution_mode VARCHAR(20) DEFAULT 'legacy';
+  ADD COLUMN IF NOT EXISTS default_vm_mode VARCHAR(20) DEFAULT 'docker';
+
+-- user_vm_instances 表：每用户仅允许一个非终止状态的 VM（防御性约束）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_vm_one_active
+  ON user_vm_instances(user_id)
+  WHERE status NOT IN ('terminated', 'failed');
+
+-- ============================================================
+-- 5. 双运行时支持（Phase 3.5c）
+-- ============================================================
+
+-- agents 表：添加默认运行时类型
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS runtime_type VARCHAR(20) DEFAULT 'semibot';
+-- 'semibot' | 'openclaw'
+
+-- agents 表：添加 OpenClaw 特有配置
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS openclaw_config JSONB;
+
+-- sessions 表：添加运行时类型（session 级覆盖）
+ALTER TABLE sessions
+  ADD COLUMN IF NOT EXISTS runtime_type VARCHAR(20);
+
+-- users 表：添加默认运行时偏好
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS default_runtime_type VARCHAR(20);
+
+-- organizations 表：添加组织级默认运行时
+ALTER TABLE organizations
+  ADD COLUMN IF NOT EXISTS default_runtime_type VARCHAR(20);
 ```
 
 ---
@@ -435,6 +617,9 @@ ALTER TABLE agents
 | 执行平面崩溃导致数据丢失 | 低 | 高 | 每个状态转换写 checkpoint、定期快照同步到控制平面、鼓励用户 git push |
 | 迁移期间双模式并存增加复杂度 | 高 | 低 | 清晰的 Feature Flag 设计、完善的测试覆盖、缩短迁移窗口期 |
 | 本地执行平面安全风险（用户运行任意代码） | 低 | 中 | 用户级 JWT、控制平面数据只读访问、本地模式下用户对自己的机器负责 |
+| OpenClaw Bridge 崩溃影响 VM 稳定性 | 低 | 中 | Bridge 作为独立进程运行，崩溃不影响其他 session；不做自动 fallback 到 Semibot |
+| OpenClaw 版本升级导致事件格式变化 | 中 | 中 | event-translator 做版本适配，Bridge 启动时检测 OpenClaw 版本 |
+| 双运行时 VM 内存不足 | 低 | 中 | OpenClaw 启用时自动提升 VM 内存到 768MB；监控内存使用率 |
 
 ---
 
@@ -450,16 +635,22 @@ ALTER TABLE agents
 | Local Memory | conversation 读写、context 读写、scratchpad 读写 |
 | Local Checkpointer | put、get_latest、自动清理旧文件 |
 | VM Scheduler | allocate、release、健康检查、恢复流程 |
+| RuntimeAdapter | SemibotAdapter 和 OpenClawBridgeAdapter 接口一致性 |
+| Event Translator | OpenClaw 事件 → Semibot SSE 事件格式映射正确性 |
+| Bridge IPC | JSON-line 协议解析、Unix Domain Socket 通信 |
 
 ### 集成测试
 
 | 场景 | 验证内容 |
 |------|----------|
 | 控制平面 ↔ 执行平面 | 完整消息交换：init → user_message → sse_event → request/response |
-| SSE 中继 | 前端 �� 控制平面 → WS → 执行平面 → 响应 → WS → SSE → 前端 |
+| SSE 中继 | 前端 → 控制平面 → WS → 执行平面 → 响应 → WS → SSE → 前端 |
 | 断线重连 | kill WS 连接，验证自动重连和 resume 恢复 |
 | Skill 懒加载 | 缓存未命中 → WS 拉取 → 缓存命中 |
 | MCP 调用 | 远程 MCP 通过 WS 代理、本地 MCP 通过 STDIO 直连 |
+| Python ↔ Node.js IPC | Unix Domain Socket JSON-line 通信正确性、错误处理 |
+| OpenClaw Skill 加载 | Bridge 从 `.semibot/skills/` 缓存读取，缓存未命中时通过 IPC 拉取 |
+| OpenClaw 记忆代理 | Bridge 代理 memory_search 请求到控制平面 |
 
 ### 端到端测试
 
@@ -469,6 +660,9 @@ ALTER TABLE agents
 | 崩溃恢复 | 执行中 kill 执行平面 → 验证自动恢复 → 验证响应继续 |
 | 并发隔离 | 10 个用户各运行多个 session，验证互不干扰 |
 | 本地模式 | 本地执行平面连接 → 执行 → 断开，验证全流程 |
+| OpenClaw Happy Path | 创建 `runtime_type='openclaw'` 的 agent → 发送消息 → 验证 SSE 事件格式正确 |
+| 双运行时并发 | 同一 VM 内同时运行 Semibot session 和 OpenClaw session，互不干扰 |
+| OpenClaw Bridge 崩溃 | kill Bridge 进程，验证不影响其他 session，错误正确上报 |
 
 ### 性能测试
 
@@ -490,13 +684,22 @@ Phase 1: 控制平面 WS 基础设施（Foundation）
 Phase 2: 执行平面 WS 客户端（Client）
     │         依赖：Phase 1（需要 WS 服务端才能连接）
     ▼
-Phase 3: 端到端联调（E2E）
+Phase 3: 端到端联调（E2E，Semibot only）
     │         依赖：Phase 1 + Phase 2
+    ▼
+Phase 3.5a: OpenClaw Bridge 骨架（IPC + Adapter + 事件翻译，mock OpenClaw）
+    │         依赖：Phase 3（需要 Semibot 链路跑通）
+    ▼
+Phase 3.5b: OpenClaw E2E 集成（真实 OpenClaw，skill/memory/MCP 打通）
+    │         依赖：Phase 3.5a
+    ▼
+Phase 3.5c: 双运行时 VM 镜像 + DB migration + 前端 runtime 选择 UI
+    │         依赖：Phase 3.5b
     ├─────────────────────┐
     ▼                     ▼
 Phase 4: 断线重连与容错    Phase 5: 本地执行模式
-（Resilience）            （Local）
-    │  依赖：Phase 3       │  依赖：Phase 3（可与 Phase 4 并行）
+（Resilience，覆盖双 RT）  （Local）
+    │  依赖：Phase 3.5c    │  依赖：Phase 3（可与 Phase 3.5/4 并行）
     └─────────┬───────────┘
               ▼
 Phase 6: 清理旧代码（Cleanup）
@@ -507,8 +710,11 @@ Phase 6: 清理旧代码（Cleanup）
 
 - Phase 2 依赖 Phase 1 — 需要 WS 服务端才能开发客户端
 - Phase 3 依赖 Phase 1 + 2 — 需要两端都就绪才能联调
-- Phase 4 依赖 Phase 3 — 需要端到端跑通后才能做容错
-- Phase 5 可在 Phase 3 完成后启动，与 Phase 4 并行开发
+- Phase 3.5a 依赖 Phase 3 — 需要 Semibot 链路跑通后才能开发 Bridge
+- Phase 3.5b 依赖 Phase 3.5a — 需要 Bridge 骨架才能接入真实 OpenClaw
+- Phase 3.5c 依赖 Phase 3.5b — 需要 E2E 验证通过才能发布
+- Phase 4 依赖 Phase 3.5c — 容错需覆盖两种 runtime
+- Phase 5 可在 Phase 3 完成后启动，与 Phase 3.5/4 并行开发
 - Phase 6 依赖 Phase 4 + 5 — 所有新功能稳定后才清理旧代码
 
 ---
@@ -520,7 +726,10 @@ Phase 6: 清理旧代码（Cleanup）
 | 阶段 | 回滚方式 | 影响范围 |
 |------|----------|----------|
 | Phase 1-2 | 纯新增代码，不使用即可 | 无影响 |
-| Phase 3-5 | Feature Flag `execution_mode='legacy'` 切回旧路径 | 新路径 session 需重新创建 |
+| Phase 3 | Feature Flag `routing_mode='http'` 切回旧路径 | 新路径 session 需重新创建 |
+| Phase 3.5a-b | 不使用 `runtime_type=openclaw` 即可 | 仅影响 OpenClaw session |
+| Phase 3.5c | 数据库字段保留（有默认值），前端 UI 隐藏 | 无影响 |
+| Phase 4-5 | Feature Flag `routing_mode='http'` 切回旧路径 | 新路径 session 需重新创建 |
 | Phase 6 | `git revert` 恢复删除的文件 | 需重新部署 |
 
 ### 紧急回滚流程
@@ -529,8 +738,8 @@ Phase 6: 清理旧代码（Cleanup）
 
 ```
 1. 数据库：将所有用户切回旧模式
-   UPDATE users SET execution_mode = 'legacy' WHERE execution_mode = 'new';
-   UPDATE organizations SET execution_mode = 'legacy' WHERE execution_mode = 'new';
+   UPDATE users SET routing_mode = 'http' WHERE routing_mode = 'websocket';
+   UPDATE organizations SET routing_mode = 'http' WHERE routing_mode = 'websocket';
 
 2. 重启 API 服务
    → 旧 HTTP Runtime 路径立即接管所有请求

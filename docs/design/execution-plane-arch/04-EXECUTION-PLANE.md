@@ -1,6 +1,6 @@
 # 04 - 执行平面 (Execution Plane) 详细设计
 
-> 执行平面是每个用户独立的虚拟机环境（= 个人电脑），负责实际的 Agent 执行。每个用户分配一个执行平面实例，多个 session 作为独立进程共享同一文件系统，通过一条 WebSocket 与控制平面通信。
+> 执行平面是每个用户独立的虚拟机环境（= 个人电脑），负责实际的 Agent 执行。每个用户分配一个执行平面实例，多个 session 作为独立进程共享同一文件系统，通过一条 WebSocket 与控制平面通信。执行平面支持双运行时：Semibot（Python/LangGraph）和 OpenClaw（Node.js），每个 session 可独立选择 runtime，通过 RuntimeAdapter 抽象层统一管理。
 
 ---
 
@@ -9,13 +9,14 @@
 1. [职责概述](#1-职责概述)
 2. [模块架构迁移方案](#2-模块架构迁移方案)
 3. [新增模块设计](#3-新增模块设计)
-4. [主入口启动流程](#4-主入口启动流程)
-5. [文件系统与目录规划](#5-文件系统与目录规划)
-6. [LangGraph 节点改造](#6-langgraph-节点改造)
-7. [Skill 加载流程](#7-skill-加载流程)
-8. [LLM 调用流程](#8-llm-调用流程)
-9. [离线/降级模式](#9-离线降级模式)
-10. [重构后目录结构](#10-重构后目录结构)
+4. [RuntimeAdapter 抽象层与双运行时](#4-runtimeadapter-抽象层与双运行时)
+5. [主入口启动流程](#5-主入口启动流程)
+6. [文件系统与目录规划](#6-文件系统与目录规划)
+7. [LangGraph 节点改造](#7-langgraph-节点改造)
+8. [Skill 加载流程](#8-skill-加载流程)
+9. [LLM 调用流程](#9-llm-调用流程)
+10. [离线/降级模式](#10-离线降级模式)
+11. [重构后目录结构](#11-重构后目录结构)
 
 ---
 
@@ -26,7 +27,9 @@
 | 职责 | 说明 |
 |------|------|
 | Session 进程管理 | 每个 session 作为独立进程运行，由虚拟机内的主进程统一管理 |
-| LangGraph 编排 | 运行 Agent 的完整推理-行动-反思循环 |
+| 双运行时支持 | 通过 RuntimeAdapter 抽象层支持 Semibot（Python/LangGraph）和 OpenClaw（Node.js）两种 runtime，每个 session 二选一 |
+| LangGraph 编排 | 运行 Agent 的完整推理-行动-反思循环（Semibot runtime） |
+| OpenClaw Bridge | Node.js 桥接进程，驱动 OpenClaw 原生运行并翻译事件格式（OpenClaw runtime） |
 | 短期记忆（MD 文件） | 基于本地 MD 文件的会话记忆，替代 Redis |
 | 文件系统（用户共享） | 虚拟机 = 用户的个人电脑，所有 session 共享同一文件系统 |
 | 代码执行 | 直接在执行平面内执行用户代码（虚拟机本身即隔离边界） |
@@ -80,7 +83,11 @@
 | ws/message_types.py | `ws/message_types.py` | 消息类型定义 |
 | memory/local_memory.py | `memory/local_memory.py` | 基于 MD 文件的短期记忆 |
 | checkpoint/local_checkpointer.py | `checkpoint/local_checkpointer.py` | 基于本地文件的 LangGraph checkpoint |
-| session/manager.py | `session/manager.py` | Session 进程管理器，负责启动/停止/监控 session 进程 |
+| session/manager.py | `session/manager.py` | Session 进程管理器，根据 `runtime_type` 选择 Adapter |
+| session/runtime_adapter.py | `session/runtime_adapter.py` | RuntimeAdapter ABC — 双运行时抽象层 |
+| session/semibot_adapter.py | `session/semibot_adapter.py` | SemibotAdapter — 包装现有 SessionProcess |
+| session/openclaw_adapter.py | `session/openclaw_adapter.py` | OpenClawBridgeAdapter — 启动 Node.js Bridge 进程 |
+| openclaw-bridge/ | `openclaw-bridge/` | Node.js Bridge 进程（IPC + 事件翻译 + Skill 加载） |
 
 ---
 
@@ -103,16 +110,21 @@ from uuid import uuid4
 class ControlPlaneClient:
     """WebSocket client connecting to control plane (one per VM, multi-session multiplexed)"""
 
-    def __init__(self, control_plane_url: str, user_id: str, token: str):
-        self.url = f"{control_plane_url}?user_id={user_id}&token={token}"
+    def __init__(self, control_plane_url: str, user_id: str, ticket: str, token: str):
+        self.base_url = control_plane_url
         self.user_id = user_id
+        self.connect_url = f"{control_plane_url}?user_id={user_id}&ticket={ticket}"
+        self.reconnect_url = f"{control_plane_url}?user_id={user_id}"  # 重连不带 ticket
+        self.token = token  # JWT，通过首帧 auth 消息传输
         self.ws = None
         self.pending_requests: dict[str, asyncio.Future] = {}
         self.message_handlers: dict[str, dict[str, callable]] = {}  # session_id -> {type -> handler}
         self._reconnect_delays = [1, 2, 4, 8, 16, 30, 30, 30]
-    
+
     async def connect(self):
-        self.ws = await websockets.connect(self.url)
+        self.ws = await websockets.connect(self.connect_url)
+        # 首帧发送 auth 消息（JWT 不通过 URL 传递，避免泄露到日志）
+        await self.ws.send(json.dumps({'type': 'auth', 'token': self.token}))
         init_msg = json.loads(await self.ws.recv())
         assert init_msg['type'] == 'init'
         asyncio.create_task(self._listen_loop())
@@ -158,13 +170,21 @@ class ControlPlaneClient:
     async def _reconnect(self):
         for delay in self._reconnect_delays:
             try:
-                self.ws = await websockets.connect(self.url)
+                # 重连不带 ticket（ticket 一次性，已失效），仅靠 auth 首帧认证
+                self.ws = await websockets.connect(self.reconnect_url)
+                # 重连后也需要首帧 auth
+                await self.ws.send(json.dumps({'type': 'auth', 'token': self.token}))
+                # 等待 init 消息
+                init_msg = json.loads(await self.ws.recv())
+                assert init_msg['type'] == 'init'
+                # 收到 init 后再发送 resume
                 pending_ids = list(self.pending_requests.keys())
                 await self.ws.send(json.dumps({
                     'type': 'resume',
                     'pending_ids': pending_ids,
                 }))
                 resume_resp = json.loads(await self.ws.recv())
+                assert resume_resp['type'] == 'resume_response'
                 for msg_id, result in resume_resp.get('results', {}).items():
                     future = self.pending_requests.get(msg_id)
                     if future and not future.done():
@@ -193,7 +213,12 @@ class ControlPlaneClient:
             'method': method,
             'params': params,
         }))
-        return await asyncio.wait_for(future, timeout=60)
+        try:
+            return await asyncio.wait_for(future, timeout=60)
+        except asyncio.TimeoutError:
+            # 超时后必须清理 pending_requests，避免内存泄漏和重连时发送过期 ID
+            self.pending_requests.pop(msg_id, None)
+            raise
 
     async def send_sse_event(self, session_id: str, data: str):
         await self.ws.send(json.dumps({
@@ -245,7 +270,7 @@ class ControlPlaneClient:
 | `start_session` | 控制平面 → 执行平面 | 要求启动新 session 进程（agent_config、skill_index） |
 | `stop_session` | 控制平面 → 执行平面 | 要求停止 session 进程 |
 | `request` | 执行平面 → 控制平面 | 请求-响应模式，带唯一 msg_id 和 session_id |
-| `response` | 控制平面 → 执行平面 | 对 request 的响应，携带对应 msg_id 和 session_id |
+| `response` | 控制平面 → 执行平面 | 对 request 的响应，通过 msg_id 匹配请求 |
 | `fire_and_forget` | 执行平面 → 控制平面 | 单向发送，无需响应，携带 session_id |
 | `sse_event` | 执行平面 → 控制平面 | SSE 事件转发（LLM 流式 token），携带 session_id |
 | `user_message` | 控制平面 → 执行平面 | 用户发送的新消息，携带 session_id 路由到对应进程 |
@@ -264,7 +289,7 @@ class ControlPlaneClient:
 
 ### 3.2 本地短期记忆 — `memory/local_memory.py`
 
-基于 MD 文件的短期记忆，替代原有的 Redis 短期记忆。所有数据存储在 session 目录下的 `.memory/` 子目录中。
+基于 MD 文件的短期记忆，替代原有的 Redis 短期记忆。所有数据存储在 session 目录下的 `memory/` 子目录中。
 
 ```python
 import os
@@ -276,7 +301,7 @@ class LocalShortTermMemory:
     """Short-term memory stored as MD files in session directory"""
     
     def __init__(self, session_dir: str):
-        self.memory_dir = Path(session_dir) / '.memory'
+        self.memory_dir = Path(session_dir) / 'memory'
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.conversation_file = self.memory_dir / 'conversation.md'
         self.context_file = self.memory_dir / 'context.json'
@@ -361,7 +386,7 @@ class LocalCheckpointer:
     """LangGraph checkpoint stored as local JSON files"""
     
     def __init__(self, session_dir: str):
-        self.checkpoint_dir = Path(session_dir) / '.checkpoints'
+        self.checkpoint_dir = Path(session_dir) / 'checkpoints'
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     
     async def put(self, config: dict, checkpoint: dict, metadata: dict):
@@ -401,7 +426,512 @@ class LocalCheckpointer:
 
 ---
 
-## 4. 主入口启动流程
+## 4. RuntimeAdapter 抽象层与双运行时
+
+执行平面通过 `RuntimeAdapter` 抽象层支持多种运行时。`SessionManager` 根据 `start_session` 消息中的 `runtime_type` 字段选择对应的 Adapter，对上层完全透明。
+
+### 4.1 架构概览
+
+```
+SessionManager (Python, VM 级守护进程)
+    │
+    ├── Session A (runtime_type=semibot)
+    │   └── SemibotAdapter → LangGraph 进程（现有逻辑不变）
+    │
+    └── Session B (runtime_type=openclaw)
+        └── OpenClawBridgeAdapter → Node.js Bridge 进程
+            └── OpenClaw Brain/Skills/Memory（原生运行）
+```
+
+两种 runtime 共享：
+- 同一条 WebSocket 连接（通过 session_id 多路复用）
+- 同一个文件系统（`/home/user/workspace/`）
+- 同一份 Skill 缓存（`/home/user/.semibot/skills/`）
+- 同一套 API Key（由控制平面通过 `init` 消息注入）
+
+控制平面和前端**无需感知** runtime 差异——SSE 事件格式统一。
+
+### 4.2 RuntimeAdapter ABC
+
+```python
+# runtime/src/session/runtime_adapter.py
+from abc import ABC, abstractmethod
+
+class RuntimeAdapter(ABC):
+    """双运行时抽象层 — 每个 session 对应一个 Adapter 实例"""
+
+    @abstractmethod
+    async def start(self, session_id: str, config: dict) -> None:
+        """启动 runtime，初始化执行环境"""
+        ...
+
+    @abstractmethod
+    async def send_message(self, data: dict) -> None:
+        """发送用户消息到 runtime"""
+        ...
+
+    @abstractmethod
+    async def cancel(self) -> None:
+        """取消当前执行"""
+        ...
+
+    @abstractmethod
+    async def stop(self) -> None:
+        """优雅关闭 runtime"""
+        ...
+
+    @abstractmethod
+    async def get_snapshot(self) -> dict:
+        """获取当前状态快照（用于定期同步到控制平面）"""
+        ...
+```
+
+### 4.3 SemibotAdapter
+
+包装现有 `SessionProcess`，逻辑零改动：
+
+```python
+# runtime/src/session/semibot_adapter.py
+from session.runtime_adapter import RuntimeAdapter
+from orchestrator.graph import create_agent_graph
+from memory.local_memory import LocalShortTermMemory
+from checkpoint.local_checkpointer import LocalCheckpointer
+
+class SemibotAdapter(RuntimeAdapter):
+    """Semibot runtime — 包装现有 SessionProcess（Python/LangGraph）"""
+
+    def __init__(self, client, memory_dir: str):
+        self.client = client
+        self.memory_dir = memory_dir
+        self.memory = None
+        self.checkpointer = None
+        self.graph = None
+        self.session_id = None
+
+    async def start(self, session_id: str, config: dict) -> None:
+        self.session_id = session_id
+        self.memory = LocalShortTermMemory(self.memory_dir)
+        self.checkpointer = LocalCheckpointer(self.memory_dir)
+        self.graph = create_agent_graph(
+            agent_config=config.get('agent_config', {}),
+            checkpointer=self.checkpointer,
+            control_plane=self.client,
+            session_id=session_id,
+            memory=self.memory,
+        )
+
+    async def send_message(self, data: dict) -> None:
+        await self.memory.save_message('user', data['message'])
+        result = await self.graph.ainvoke({
+            'user_message': data['message'],
+            'history_messages': data.get('history', []),
+            'session_id': self.session_id,
+        })
+        await self.memory.save_message('assistant', result.get('response', ''))
+
+    async def cancel(self) -> None:
+        """取消当前执行：中断 LLM 流式调用，保存 checkpoint"""
+        if self.graph and hasattr(self.graph, 'acancel'):
+            await self.graph.acancel()
+        # 保存当前状态，下次对话可从中断点继续
+        if self.checkpointer:
+            snapshot = await self.get_snapshot()
+            await self.client.fire_and_forget(self.session_id, 'snapshot_sync', **snapshot)
+        # 通知前端执行已取消
+        await self.client.send_sse_event(self.session_id, json.dumps({
+            'type': 'execution_complete',
+            'cancelled': True,
+        }))
+
+    async def stop(self) -> None:
+        # 最终快照
+        snapshot = await self.get_snapshot()
+        await self.client.fire_and_forget(self.session_id, 'snapshot_sync', **snapshot)
+
+    async def get_snapshot(self) -> dict:
+        return {
+            'checkpoint': await self.checkpointer.get_all_for_snapshot(),
+            'short_term_memory': await self.memory.get_all_for_snapshot(),
+        }
+```
+
+### 4.4 OpenClawBridgeAdapter
+
+启动 Node.js Bridge 进程，通过 Unix Domain Socket 通信：
+
+```python
+# runtime/src/session/openclaw_adapter.py
+import asyncio
+import json
+import os
+import tempfile
+from pathlib import Path
+from session.runtime_adapter import RuntimeAdapter
+from utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+class OpenClawBridgeAdapter(RuntimeAdapter):
+    """OpenClaw runtime — 启动 Node.js Bridge 进程，通过 Unix Domain Socket 通信"""
+
+    BRIDGE_SCRIPT = Path('/opt/openclaw-bridge/dist/main.js')
+
+    def __init__(self, client, memory_dir: str):
+        self.client = client
+        self.memory_dir = memory_dir
+        self.session_id = None
+        self.process = None
+        self.reader = None
+        self.writer = None
+        self.socket_path = None
+        self._listen_task = None
+
+    async def start(self, session_id: str, config: dict) -> None:
+        self.session_id = session_id
+
+        # 创建 Unix Domain Socket
+        self.socket_path = f'/tmp/openclaw-{session_id}.sock'
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+
+        # 启动 IPC 服务端（Python 侧）
+        server_ready = asyncio.Event()
+
+        async def handle_bridge_connection(reader, writer):
+            self.reader = reader
+            self.writer = writer
+            server_ready.set()
+
+        self._unix_server = await asyncio.start_unix_server(
+            handle_bridge_connection, path=self.socket_path
+        )
+
+        # 启动 Node.js Bridge 进程
+        self.process = await asyncio.create_subprocess_exec(
+            'node', str(self.BRIDGE_SCRIPT),
+            env={
+                **os.environ,
+                'SOCKET_PATH': self.socket_path,
+                'SESSION_ID': session_id,
+                'SKILLS_CACHE_DIR': '/home/user/.semibot/skills',
+                'MEMORY_DIR': os.path.join(self.memory_dir, 'openclaw-memory'),
+            },
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        # 等待 Bridge 连接
+        await asyncio.wait_for(server_ready.wait(), timeout=10)
+
+        # 发送初始化指令
+        await self._send({
+            'type': 'start',
+            'agent_config': config.get('agent_config', {}),
+            'skill_index': config.get('skill_index', []),
+            'api_keys': config.get('api_keys', {}),
+            'openclaw_config': config.get('openclaw_config', {}),
+        })
+
+        # 等待 ready 响应
+        ready_msg = await self._recv()
+        if ready_msg.get('type') != 'ready':
+            raise RuntimeError(f'OpenClaw Bridge 初始化失败: {ready_msg}')
+
+        # 启动消息监听循环
+        self._listen_task = asyncio.create_task(self._listen_loop())
+
+        logger.info(f'[OpenClaw] Bridge 启动成功', extra={'session_id': session_id})
+
+    async def send_message(self, data: dict) -> None:
+        await self._send({
+            'type': 'user_message',
+            'data': data,
+        })
+
+    async def cancel(self) -> None:
+        await self._send({'type': 'cancel'})
+
+    async def stop(self) -> None:
+        try:
+            await self._send({'type': 'stop'})
+            if self.process:
+                await asyncio.wait_for(self.process.wait(), timeout=5)
+        except Exception:
+            if self.process:
+                self.process.kill()
+        finally:
+            if self._listen_task:
+                self._listen_task.cancel()
+            if self._unix_server:
+                self._unix_server.close()
+            if self.socket_path and os.path.exists(self.socket_path):
+                os.unlink(self.socket_path)
+
+    async def get_snapshot(self) -> dict:
+        # OpenClaw 的状态由 Bridge 管理，通过 IPC 获取
+        return {
+            'runtime_type': 'openclaw',
+            'session_id': self.session_id,
+        }
+
+    # ---- IPC 通信 ----
+
+    async def _send(self, msg: dict):
+        """发送 JSON-line 消息到 Bridge"""
+        line = json.dumps(msg, ensure_ascii=False) + '\n'
+        self.writer.write(line.encode())
+        await self.writer.drain()
+
+    async def _recv(self) -> dict:
+        """接收一条 JSON-line 消息"""
+        line = await self.reader.readline()
+        return json.loads(line.decode())
+
+    async def _listen_loop(self):
+        """监听 Bridge 上行消息，转发到控制平面"""
+        try:
+            while True:
+                line = await self.reader.readline()
+                if not line:
+                    break
+                msg = json.loads(line.decode())
+                await self._handle_bridge_message(msg)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f'[OpenClaw] Bridge 监听异常', extra={
+                'session_id': self.session_id, 'error': str(e)
+            })
+
+    async def _handle_bridge_message(self, msg: dict):
+        """处理 Bridge 上行消息"""
+        msg_type = msg.get('type')
+
+        if msg_type == 'sse_event':
+            # 翻译后的 SSE 事件，直接转发到控制平面
+            await self.client.send_sse_event(self.session_id, msg['data'])
+
+        elif msg_type == 'request':
+            # Bridge 需要控制平面处理的请求（memory_search、get_skill_files、mcp_call）
+            try:
+                result = await self.client.request(
+                    self.session_id, msg['method'], **msg.get('params', {})
+                )
+                await self._send({
+                    'type': 'response',
+                    'id': msg['id'],
+                    'result': result,
+                })
+            except Exception as e:
+                await self._send({
+                    'type': 'response',
+                    'id': msg['id'],
+                    'error': str(e),
+                })
+
+        elif msg_type == 'fire_and_forget':
+            # 单向通知（usage_report、audit_log）
+            await self.client.fire_and_forget(
+                self.session_id, msg['method'], **msg.get('params', {})
+            )
+
+        elif msg_type == 'error':
+            logger.error(f'[OpenClaw] Bridge 报错', extra={
+                'session_id': self.session_id, 'error': msg.get('message')
+            })
+            await self.client.send_sse_event(self.session_id, json.dumps({
+                'type': 'execution_error',
+                'error': msg.get('message', 'OpenClaw Bridge error'),
+            }))
+```
+
+### 4.5 OpenClaw Bridge 进程（Node.js）
+
+Bridge 是一个 Node.js 进程，职责：
+- 通过 Unix Domain Socket 接收 Python SessionManager 的指令
+- 驱动 OpenClaw 的 Brain/Skills/Memory 原生运行
+- 将 OpenClaw 事件翻译为 Semibot SSE 事件格式
+- 代理控制平面请求（长期记忆搜索、远程 MCP、Skill 文件拉取）
+
+```
+Python SessionManager ←→ Unix Socket (JSON-line) ←→ Node.js Bridge ←→ OpenClaw
+```
+
+#### IPC 协议（JSON-line，每行一个 JSON 对象）
+
+**Python → Bridge：**
+
+| type | 用途 |
+|------|------|
+| `start` | 初始化 OpenClaw，传入 agent_config、skill_index、api_keys |
+| `user_message` | 用户消息 |
+| `cancel` | 取消当前执行 |
+| `stop` | 优雅关闭 |
+| `response` | 控制平面请求的响应（memory_search、mcp_call 等） |
+
+**Bridge → Python：**
+
+| type | 用途 |
+|------|------|
+| `ready` | 初始化完成 |
+| `sse_event` | 翻译后的 SSE 事件（text_chunk、tool_call_start 等） |
+| `request` | 需要控制平面处理的请求（memory_search、get_skill_files、mcp_call） |
+| `fire_and_forget` | 单向通知（usage_report、audit_log） |
+| `error` | 错误 |
+
+#### Bridge 目录结构
+
+```
+runtime/openclaw-bridge/
+├── package.json
+├── tsconfig.json
+└── src/
+    ├── main.ts              # 入口：连接 Unix Socket，初始化 OpenClaw
+    ├── bridge.ts            # IPC 客户端：JSON-line 协议收发
+    ├── event-translator.ts  # 事件格式翻译：OpenClaw → Semibot SSE
+    └── skill-loader.ts      # Skill 缓存集成：优先本地，未命中走 IPC
+```
+
+### 4.6 SSE 事件翻译
+
+Bridge 内置事件翻译器，将 OpenClaw 事件映射为 Semibot 格式：
+
+| OpenClaw 事件 | → Semibot SSE 事件 |
+|--------------|-------------------|
+| LLM token stream | `text_chunk` |
+| tool_use | `tool_call_start` |
+| tool_result | `tool_call_complete` |
+| skill invocation | `skill_call_start` / `skill_call_complete` |
+| thinking | `thinking` (stage="openclaw") |
+| done | `execution_complete` |
+| error | `execution_error` |
+
+翻译后的事件通过 IPC 发送到 Python 侧，再由 `client.send_sse_event(session_id, data)` 转发到控制平面，最终推送到前端。控制平面和前端完全无感。
+
+```typescript
+// runtime/openclaw-bridge/src/event-translator.ts
+
+interface SemibotSSEEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+export function translateEvent(openclawEvent: any): SemibotSSEEvent | null {
+  switch (openclawEvent.type) {
+    case 'token':
+      return { type: 'text_chunk', content: openclawEvent.content };
+
+    case 'tool_use':
+      return {
+        type: 'tool_call_start',
+        tool_name: openclawEvent.name,
+        tool_input: openclawEvent.input,
+      };
+
+    case 'tool_result':
+      return {
+        type: 'tool_call_complete',
+        tool_name: openclawEvent.name,
+        result: openclawEvent.output,
+      };
+
+    case 'skill_invoke':
+      return {
+        type: 'skill_call_start',
+        skill_name: openclawEvent.skill,
+        arguments: openclawEvent.args,
+      };
+
+    case 'skill_result':
+      return {
+        type: 'skill_call_complete',
+        skill_name: openclawEvent.skill,
+        result: openclawEvent.output,
+      };
+
+    case 'thinking':
+      return { type: 'thinking', content: openclawEvent.content, stage: 'openclaw' };
+
+    case 'done':
+      return { type: 'execution_complete', content: openclawEvent.response };
+
+    case 'error':
+      return { type: 'execution_error', error: openclawEvent.message };
+
+    default:
+      return null; // 未知事件，跳过
+  }
+}
+```
+
+### 4.7 Skill 兼容
+
+两个 runtime 都使用 SKILL.md 格式，共享同一份缓存目录 `/home/user/.semibot/skills/`。
+
+- **Semibot**：通过现有的 `load_skill_with_cache()` 加载（见第 8 节）
+- **OpenClaw**：Bridge 重写 OpenClaw 的 skill loader，优先从缓存读取，缓存未命中时通过 IPC → Python → WS 从控制平面拉取
+
+```typescript
+// runtime/openclaw-bridge/src/skill-loader.ts
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
+
+const SKILLS_CACHE_DIR = process.env.SKILLS_CACHE_DIR || '/home/user/.semibot/skills';
+
+export async function loadSkill(
+  skillId: string,
+  requestFn: (method: string, params: any) => Promise<any>
+): Promise<string> {
+  const cachePath = join(SKILLS_CACHE_DIR, skillId, 'SKILL.md');
+
+  // 缓存命中
+  if (existsSync(cachePath)) {
+    return readFileSync(cachePath, 'utf-8');
+  }
+
+  // 缓存未命中，通过 IPC 请求控制平面
+  const result = await requestFn('get_skill_files', { skill_id: skillId });
+
+  // 写入缓存
+  const dir = join(SKILLS_CACHE_DIR, skillId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(cachePath, result.content, 'utf-8');
+
+  return result.content;
+}
+```
+
+### 4.8 记忆兼容
+
+- **短期记忆**：各 runtime 使用独立子目录，互不干扰
+  - Semibot：`.semibot/sessions/{session_id}/memory/`
+  - OpenClaw：`.semibot/sessions/{session_id}/openclaw-memory/`
+- **长期记忆**：两者都通过 WS `memory_search` 请求控制平面，Bridge 代理此调用
+
+### 4.9 配置优先级
+
+`runtime_type` 字段加入配置层级（优先级从高到低）：
+
+1. `sessions.runtime_type` — session 级覆盖
+2. `agents.runtime_type` — agent 默认值
+3. `users.default_runtime_type` — 用户偏好
+4. `organizations.default_runtime_type` — 组织默认
+5. 系统默认：`'semibot'`
+
+> **混合 runtime 支持**：同一用户的不同 session 允许使用不同的 `runtime_type`（硬需求）。例如用户可以同时拥有一个 `semibot` session 和一个 `openclaw` session，由 `SessionManager` 为每个 session 独立创建对应的 `RuntimeAdapter`。
+
+控制平面在构造 `start_session` 消息时解析此优先级链，执行平面只需读取消息中的 `runtime_type` 字段。
+
+### 4.10 错误处理
+
+- **Bridge 崩溃不影响其他 session**（进程隔离）
+- **不做自动 fallback**：OpenClaw session 失败不会切换到 Semibot（执行模型完全不同，自动切换会导致不可预期的行为）
+- **健康检查**新增 `openclaw_available` 字段，检测 Node.js 和 OpenClaw 是否可用
+- **Bridge 进程监控**：`OpenClawBridgeAdapter` 监控子进程退出码，异常退出时上报 `execution_error` 事件
+
+---
+
+## 5. 主入口启动流程
 
 执行平面作为虚拟机级别的守护进程启动（每用户一个），通过环境变量接收配置，连接控制平面后管理多个 session 进程。
 
@@ -415,10 +945,11 @@ from session.manager import SessionManager
 async def main():
     user_id = os.environ['USER_ID']
     token = os.environ['VM_TOKEN']
+    ticket = os.environ['VM_TICKET']
     control_plane_url = os.environ['CONTROL_PLANE_WS']
 
     # 1. Connect to control plane (one WS per VM)
-    client = ControlPlaneClient(control_plane_url, user_id, token)
+    client = ControlPlaneClient(control_plane_url, user_id, ticket, token)
     init_data = await client.connect()
 
     # 2. Initialize session manager
@@ -430,13 +961,14 @@ async def main():
         'stop_session': session_mgr.stop_session,
     }
 
-    # 4. Periodic snapshot sync (VM-level)
+    # 4. Periodic snapshot sync (VM-level, 通过 RuntimeAdapter 统一接口)
     async def snapshot_loop():
         while True:
             await asyncio.sleep(60)
-            for sid, proc in session_mgr.active_sessions.items():
-                snapshot = await proc.get_snapshot()
-                await client.fire_and_forget(sid, 'snapshot_sync', **snapshot)
+            for sid, adapter in session_mgr.active_sessions.items():
+                snapshot = await adapter.get_snapshot()
+                if snapshot:  # OpenClaw 可能返回空 dict，跳过
+                    await client.fire_and_forget(sid, 'snapshot_sync', **snapshot)
 
     asyncio.create_task(snapshot_loop())
 
@@ -449,78 +981,96 @@ if __name__ == '__main__':
 
 ### Session 进程管理器
 
+`SessionManager` 通过 `RuntimeAdapter` 抽象层管理 session，根据 `runtime_type` 路由到不同的运行时实现。
+
 ```python
 # runtime/src/session/manager.py
 import asyncio
-from orchestrator.graph import create_agent_graph
-from memory.local_memory import LocalShortTermMemory
-from checkpoint.local_checkpointer import LocalCheckpointer
+import logging
+from session.runtime_adapter import RuntimeAdapter
+from session.semibot_adapter import SemibotAdapter
+from session.openclaw_adapter import OpenClawBridgeAdapter
 
-class SessionProcess:
-    """一个 session 的运行上下文"""
+logger = logging.getLogger(__name__)
 
-    def __init__(self, session_id: str, agent_config: dict, client, memory_dir: str):
-        self.session_id = session_id
-        self.memory = LocalShortTermMemory(memory_dir)
-        self.checkpointer = LocalCheckpointer(memory_dir)
-        self.graph = create_agent_graph(
-            agent_config=agent_config,
-            checkpointer=self.checkpointer,
-            control_plane=client,
-            session_id=session_id,
-            memory=self.memory,
+# ── 工厂函数 ──────────────────────────────────────────────
+
+SUPPORTED_RUNTIME_TYPES = {'semibot', 'openclaw'}
+
+def create_adapter(runtime_type: str, client, memory_dir: str) -> RuntimeAdapter:
+    """根据 runtime_type 创建对应的 RuntimeAdapter 实例
+
+    注意：此时只创建实例，不初始化运行时。
+    调用方必须随后调用 adapter.start(session_id, config) 完成初始化。
+
+    Raises:
+        ValueError: runtime_type 不在支持列表中时拒绝创建，不做静默回落
+    """
+    if runtime_type not in SUPPORTED_RUNTIME_TYPES:
+        raise ValueError(
+            f"不支持的 runtime_type: '{runtime_type}'，"
+            f"允许值: {SUPPORTED_RUNTIME_TYPES}"
         )
+    if runtime_type == 'openclaw':
+        return OpenClawBridgeAdapter(client=client, memory_dir=memory_dir)
+    return SemibotAdapter(client=client, memory_dir=memory_dir)
 
-    async def handle_message(self, data):
-        await self.memory.save_message('user', data['message'])
-        result = await self.graph.ainvoke({
-            'user_message': data['message'],
-            'history_messages': data.get('history', []),
-            'session_id': self.session_id,
-        })
-        await self.memory.save_message('assistant', result.get('response', ''))
 
-    async def get_snapshot(self) -> dict:
-        return {
-            'checkpoint': await self.checkpointer.get_all_for_snapshot(),
-            'short_term_memory': await self.memory.get_all_for_snapshot(),
-        }
-
+# ── SessionManager ───────────────────────────────────────
 
 class SessionManager:
-    """管理虚拟机内的多个 session 进程"""
+    """管理虚拟机内的多个 session，通过 RuntimeAdapter 屏蔽运行时差异"""
 
     def __init__(self, client, init_data: dict):
         self.client = client
         self.init_data = init_data
-        self.active_sessions: dict[str, SessionProcess] = {}
+        self.active_sessions: dict[str, RuntimeAdapter] = {}
 
     async def start_session(self, data: dict):
         session_id = data['session_id']
         agent_config = data['agent_config']
-        skill_index = data['skill_index']
+        runtime_type = data.get('runtime_type', 'semibot')  # 控制平面已解析好
+        skill_index = data.get('skill_index')
 
-        # session 的短期记忆放在 .semibot/sessions/ 下
         memory_dir = f'/home/user/.semibot/sessions/{session_id}'
 
-        proc = SessionProcess(session_id, agent_config, self.client, memory_dir)
-        self.active_sessions[session_id] = proc
+        # 1. 通过工厂函数创建对应的 Adapter（仅实例化，未初始化）
+        adapter = create_adapter(runtime_type, self.client, memory_dir)
 
-        # 注册该 session 的消息处理器
+        # 2. 初始化运行时（Semibot: 创建 LangGraph；OpenClaw: 启动 Bridge 进程）
+        await adapter.start(session_id, config={
+            'agent_config': agent_config,
+            'skill_index': skill_index,
+            'api_keys': self.init_data.get('api_keys', {}),
+            'openclaw_config': data.get('openclaw_config', {}),
+        })
+
+        self.active_sessions[session_id] = adapter
+
+        logger.info('session %s started with runtime=%s', session_id, runtime_type)
+
+        # 3. 注册该 session 的消息处理器（统一接口）
         self.client.register_session(session_id, {
-            'user_message': proc.handle_message,
-            'cancel': lambda: None,  # TODO: implement cancel
+            'user_message': adapter.send_message,
+            'cancel': adapter.cancel,
         })
 
     async def stop_session(self, data: dict):
         session_id = data['session_id']
-        proc = self.active_sessions.pop(session_id, None)
-        if proc:
-            # 最终快照
-            snapshot = await proc.get_snapshot()
-            await self.client.fire_and_forget(session_id, 'snapshot_sync', **snapshot)
+        adapter = self.active_sessions.pop(session_id, None)
+        if adapter:
+            # 优雅关闭（Adapter 内部处理快照上报）
+            await adapter.stop()
             self.client.unregister_session(session_id)
+            logger.info('session %s stopped', session_id)
 ```
+
+> **变更要点**：
+> - `active_sessions` 的值类型从 `SessionProcess` 改为 `RuntimeAdapter`
+> - `create_adapter()` 仅实例化，随后必须调用 `adapter.start(session_id, config)` 初始化运行时
+> - `start_session` 读取 `runtime_type` 字段，通过工厂函数路由，并将 `api_keys` 从 `init_data` 注入 config
+> - 消息处理器绑定到 `adapter.send_message`（非 execute），`cancel` 绑定到 `adapter.cancel()`
+> - `stop_session` 调用 `adapter.stop()`，由各 Adapter 自行处理快照上报和资源清理
 
 ### 启动流程时序
 
@@ -543,13 +1093,16 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 进入消息循环等待
         │
         ▼ (收到 start_session)
-创建 SessionProcess → 初始化 LangGraph + 短期记忆 + Checkpoint
+根据 runtime_type 创建 RuntimeAdapter（SemibotAdapter / OpenClawBridgeAdapter）
         │
         ▼
-注册该 session 的消息处理器 (user_message, cancel)
+调用 adapter.start(session_id, config) 初始化运行时
+        │
+        ▼
+注册该 session 的消息处理器 (user_message → adapter.send_message, cancel → adapter.cancel)
         │
         ▼ (收到 user_message with session_id)
-路由到对应 SessionProcess → graph.ainvoke
+路由到对应 RuntimeAdapter → adapter.send_message()
 ```
 
 ### 环境变量
@@ -557,7 +1110,8 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 | 变量名 | 必需 | 说明 |
 |--------|------|------|
 | `USER_ID` | 是 | 用户唯一标识 |
-| `VM_TOKEN` | 是 | 虚拟机认证 token，由控制平面签发 |
+| `VM_TOKEN` | 是 | 虚拟机认证 JWT，由控制平面签发，通过首帧 auth 消息传输 |
+| `VM_TICKET` | 是 | 一次性连接票据，由控制平面在调度 VM 时生成，有效期 30 秒 |
 | `CONTROL_PLANE_WS` | 是 | 控制平面 WebSocket 地址 |
 
 ### init_data 结构
@@ -612,7 +1166,7 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 
 ---
 
-## 5. 文件系统与目录规划
+## 6. 文件系统与目录规划
 
 虚拟机 = 用户的个人电脑。所有 session 共享同一文件系统，不做 session 间隔离。
 
@@ -629,7 +1183,7 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 │   │   │   │   ├── context.json      # 键值对上下文
 │   │   │   │   └── scratchpad.md     # Agent 草稿板
 │   │   │   └── checkpoints/
-│   │   ��       ├── {id}.json         # LangGraph checkpoint
+│   │   │       ├── {id}.json         # LangGraph checkpoint
 │   │   │       └── ...
 │   │   └── ...
 │   └── skills/                       # Skill 文件缓存（所有 session 共享）
@@ -652,7 +1206,7 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 | `.semibot/sessions/{id}/memory/` | 内部 | 单 session | 该 session 的短期记忆 |
 | `.semibot/sessions/{id}/checkpoints/` | 内部 | 单 session | 该 session 的 LangGraph 状态 |
 | `.semibot/skills/` | 内部 | 所有 session | Skill 文件缓存，按需从控制平面拉取 |
-| `workspace/` | 用户可见 | 所有 session | 用户文件，就像个人电脑的工作目�� |
+| `workspace/` | 用户可见 | 所有 session | 用户文件，就像个人电脑的工作目录 |
 
 ### 设计原则
 
@@ -664,11 +1218,11 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 
 ---
 
-## 6. LangGraph 节点改造
+## 7. LangGraph 节点改造
 
-每个 session 拥有独立的 LangGraph 实例（在 `SessionProcess` 中创建）。节点通过 `config` 获取 `session_id`、`memory`、`control_plane` 等上下文。
+每个 Semibot session 拥有独立的 LangGraph 实例（在 `SemibotAdapter` 内部创建）。节点通过 `config` 获取 `session_id`、`memory`、`control_plane` 等上下文。OpenClaw session 不使用 LangGraph，由 Bridge 进程内部管理。
 
-### 6.1 start_node 改造
+### 7.1 start_node 改造
 
 | 维度 | 改造前 | 改造后 |
 |------|--------|--------|
@@ -704,7 +1258,7 @@ async def start_node(state, config):
     }
 ```
 
-### 6.2 act_node 改造
+### 7.2 act_node 改造
 
 | 维度 | 改造前 | 改造后 |
 |------|--------|--------|
@@ -746,7 +1300,7 @@ async def act_node(state, config):
     return {**state, 'tool_results': results}
 ```
 
-### 6.3 reflect_node 改造
+### 7.3 reflect_node 改造
 
 | 维度 | 改造前 | 改造后 |
 |------|--------|--------|
@@ -773,7 +1327,7 @@ async def reflect_node(state, config):
     return state
 ```
 
-### 6.4 respond_node 改造
+### 7.4 respond_node 改造
 
 | 维度 | 改造前 | 改造后 |
 |------|--------|--------|
@@ -785,15 +1339,16 @@ async def respond_node(state, config):
     client = config['control_plane']
 
     # 流式发送响应（带 session_id 路由）
+    # 事件类型使用统一 SSE 规范：text_chunk / execution_complete
     for token in state['response_tokens']:
         await client.send_sse_event(session_id, json.dumps({
-            'type': 'token',
+            'type': 'text_chunk',
             'content': token,
         }))
 
     # 发送完成事件
     await client.send_sse_event(session_id, json.dumps({
-        'type': 'done',
+        'type': 'execution_complete',
         'content': state['final_response'],
     }))
 
@@ -810,7 +1365,7 @@ async def respond_node(state, config):
 
 ---
 
-## 7. Skill 加载流程
+## 8. Skill 加载流程
 
 Skill 采用懒加载策略，首次使用时从控制平面拉取并缓存到虚拟机本地。缓存在 `.semibot/skills/` 下，所有 session 共享。
 
@@ -868,7 +1423,7 @@ async def load_skill_with_cache(skill_id: str, client: ControlPlaneClient) -> st
 
 ---
 
-## 8. LLM 调用流程
+## 9. LLM 调用流程
 
 LLM 调用是执行平面直接与 LLM 提供商通信，不经过控制平面中转，以减少延迟。
 
@@ -924,7 +1479,7 @@ class BaseLLMProvider:
 
 ---
 
-## 9. 离线/降级模式
+## 10. 离线/降级模式
 
 当 WebSocket 连接断开时，执行平面进入降级模式，本地资源继续可用，远程功能优雅降级。
 
@@ -998,7 +1553,7 @@ class LocalUsageQueue:
 
 ---
 
-## 10. 重构后目录结构
+## 11. 重构后目录结构
 
 以下是执行平面重构后的完整目录结构，标注了每个文件的状态（KEEP / MODIFY / NEW / REMOVE）。
 
@@ -1006,7 +1561,10 @@ class LocalUsageQueue:
 runtime/src/
 ├── main.py                    NEW: VM 级守护进程入口
 ├── session/                   NEW: Session 进程管理
-│   └── manager.py             SessionManager + SessionProcess
+│   ├── manager.py             SessionManager + create_adapter 工厂
+│   ├── runtime_adapter.py     NEW: RuntimeAdapter 抽象基类
+│   ├── semibot_adapter.py     NEW: SemibotAdapter（包装 SessionProcess）
+│   └── openclaw_adapter.py    NEW: OpenClawBridgeAdapter（Unix Socket IPC）
 ├── ws/                        NEW: WebSocket 客户端
 │   ├── client.py              控制平面客户端（多 session 多路复用）
 │   └── message_types.py       消息类型定义
@@ -1046,6 +1604,15 @@ runtime/src/
 ├── evolution/                 REMOVE（仅保留 WS 提交接口）
 └── constants/
     └── config.py              MODIFY: 添加 WS 配置，移除 server 配置
+
+runtime/openclaw-bridge/                NEW: OpenClaw Bridge（Node.js）
+├── package.json
+├── tsconfig.json
+└── src/
+    ├── main.ts                入口：连接 Unix Socket，初始化 OpenClaw
+    ├── bridge.ts              IPC 客户端：JSON-line 协议收发
+    ├── event-translator.ts    事件格式翻译：OpenClaw → Semibot SSE
+    └── skill-loader.ts        Skill 缓存集成：优先本地，未命中走 IPC
 ```
 
 ### 模块状态统计
@@ -1054,7 +1621,7 @@ runtime/src/
 |------|------|------|
 | KEEP | 14 | 保持不变，直接复用 |
 | MODIFY | 7 | 需要改造，适配 WS 通信 |
-| NEW | 6 | 新增模块（含 session/manager.py） |
+| NEW | 10 | 新增模块（含 session/ 4 文件 + openclaw-bridge/ 4 文件） |
 | REMOVE | 7 | 移除或迁移至控制平面 |
 
 ### 依赖关系

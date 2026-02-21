@@ -112,16 +112,27 @@ class WSServer {
   }
 
   /**
-   * 执行平面连接时的认证
-   * URL: /ws/vm?token={jwt}&user_id={id}
+   * 执行平面连接时的认证（两阶段）
+   * 首次连接: /ws/vm?user_id={id}&ticket={one_time_ticket}
+   * 重连: /ws/vm?user_id={id} (无 ticket，认证完全依赖首帧 auth 消息)
+   * 两种情况都需要首帧 auth 消息携带 JWT
    */
   private authenticate(info: any, callback: Function) {
     const url = new URL(info.req.url, 'http://localhost');
-    const token = url.searchParams.get('token');
+    const ticket = url.searchParams.get('ticket');
     const userId = url.searchParams.get('user_id');
 
-    // 验证 JWT token 和用户归属
-    // ...
+    if (ticket) {
+      // 首次连接：验证一次性 ticket（短时效，使用后立即失效）
+      // ticket 验证通过后仍需等待首帧 auth 消息
+      // ...
+    }
+    // 无 ticket 时仍允许连接（仅限重连场景）
+    // 安全保障完全依赖首帧 auth ���息中的 JWT 验证：
+    //   - JWT 必须有效且未过期
+    //   - JWT 中的 user_id 必须与 URL 中的 user_id 一致
+    //   - 该 user_id 必须存在活跃的 VM 实例（status = 'running'）
+    // ticket 仅作为首次连接的额外校验层，不是安全边界
     callback(true);
   }
 
@@ -135,21 +146,42 @@ class WSServer {
     const conn: ExecutionPlaneConnection = {
       ws,
       userId,
-      orgId: extractOrgId(req),
+      orgId: '', // 待 auth 消息验证后填充
       status: 'initializing',
       lastHeartbeat: Date.now(),
       pendingRequests: new Map(),
       sseBuffers: new Map(),
     };
 
-    this.connections.set(userId, conn);
+    // 等待首帧 auth 消息（携带 JWT）
+    ws.once('message', async (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type !== 'auth' || !msg.token) {
+        ws.close(4001, 'Authentication failed: expected auth message');
+        return;
+      }
+      // 验证 JWT token
+      const payload = await verifyJWT(msg.token);
+      if (!payload || payload.user_id !== userId) {
+        ws.close(4001, 'Authentication failed: invalid token');
+        return;
+      }
+      // 校验该用户存在活跃 VM 实例
+      const activeVM = await this.vmRepo.findActiveByUserId(userId);
+      if (!activeVM) {
+        ws.close(4003, 'No active VM instance for this user');
+        return;
+      }
+      conn.orgId = payload.org_id;
+      this.connections.set(userId, conn);
 
-    // 发送用户级初始化数据包
-    this.sendInit(conn);
+      // 认证通过，发送 init
+      this.sendInit(conn);
 
-    ws.on('message', (data) => this.handleMessage(conn, data));
-    ws.on('close', () => this.handleDisconnect(conn));
-    ws.on('error', (err) => this.handleError(conn, err));
+      ws.on('message', (data) => this.handleMessage(conn, data));
+      ws.on('close', () => this.handleDisconnect(conn));
+      ws.on('error', (err) => this.handleError(conn, err));
+    });
   }
 
   /**
@@ -279,9 +311,9 @@ class WSServer {
 
   /**
    * 向用户 VM 下发启动 session 指令
-   * VM 收到后在内部 fork 新进程运行该 session
+   * VM 收到后根据 runtime_type 启动对应的 Adapter 进程
    */
-  sendStartSession(userId: string, sessionId: string, agentConfig: any) {
+  sendStartSession(userId: string, sessionId: string, agentConfig: any, runtimeType: string = 'semibot', openclawConfig?: any) {
     const conn = this.connections.get(userId);
     if (!conn || conn.status !== 'ready') {
       throw new Error('用户 VM 未就绪');
@@ -291,7 +323,9 @@ class WSServer {
       type: 'start_session',
       data: {
         session_id: sessionId,
+        runtime_type: runtimeType,
         agent_config: agentConfig,
+        ...(runtimeType === 'openclaw' && openclawConfig ? { openclaw_config: openclawConfig } : {}),
       },
     }));
   }
@@ -365,9 +399,10 @@ class WSServer {
 interface ExecutionPlaneInstance {
   id: string;
   userId: string;
+  orgId: string;
   mode: 'firecracker' | 'docker' | 'local';
   ip?: string;
-  status: 'starting' | 'running' | 'frozen' | 'terminated';
+  status: 'starting' | 'running' | 'frozen' | 'failed' | 'terminated';
   diskId?: string;
   createdAt: number;
   lastActivity: number;
@@ -395,6 +430,7 @@ class VMScheduler {
         const instance: ExecutionPlaneInstance = {
           id: vm.id,
           userId,
+          orgId,
           mode: 'firecracker',
           ip: vm.ip,
           diskId: vm.diskId,
@@ -410,6 +446,7 @@ class VMScheduler {
             CONTROL_PLANE_WS: `ws://${CONTROL_PLANE_INTERNAL_IP}:8080/ws/vm`,
             USER_ID: userId,
             VM_TOKEN: await this.generateVMToken(userId, orgId),
+            VM_TICKET: await this.generateOneTimeTicket(userId),
           },
         });
 
@@ -424,6 +461,7 @@ class VMScheduler {
             `CONTROL_PLANE_WS=ws://${CONTROL_PLANE_INTERNAL_IP}:8080/ws/vm`,
             `USER_ID=${userId}`,
             `VM_TOKEN=${await this.generateVMToken(userId, orgId)}`,
+            `VM_TICKET=${await this.generateOneTimeTicket(userId)}`,
           ],
           HostConfig: {
             Memory: 512 * 1024 * 1024,  // 512MB
@@ -437,6 +475,7 @@ class VMScheduler {
         const instance: ExecutionPlaneInstance = {
           id: container.id,
           userId,
+          orgId,
           mode: 'docker',
           status: 'running',
           createdAt: Date.now(),
@@ -451,6 +490,7 @@ class VMScheduler {
         const instance: ExecutionPlaneInstance = {
           id: `local-${userId}`,
           userId,
+          orgId,
           mode: 'local',
           status: 'starting', // 等待 WS 连接后变为 running
           createdAt: Date.now(),
@@ -520,6 +560,7 @@ class VMScheduler {
           CONTROL_PLANE_WS: `ws://${CONTROL_PLANE_INTERNAL_IP}:8080/ws/vm`,
           USER_ID: userId,
           VM_TOKEN: await this.generateVMToken(userId, instance.orgId),
+          VM_TICKET: await this.generateOneTimeTicket(userId),
         },
       });
 
@@ -738,6 +779,14 @@ class ChatService {
     if (!activeConn.sseBuffers.has(sessionId)) {
       const session = await sessionService.getSession(sessionId);
       const agent = await agentService.getAgent(session.agentId);
+
+      // 解析 runtime_type（优先级：session > agent > user > org > 系统默认）
+      const runtimeType = session.runtimeType
+        ?? agent.runtimeType
+        ?? user.defaultRuntimeType
+        ?? org.defaultRuntimeType
+        ?? 'semibot';
+
       wsServer.sendStartSession(userId, sessionId, {
         system_prompt: agent.systemPrompt,
         model: agent.config.model,
@@ -746,7 +795,7 @@ class ChatService {
         skills: await skillService.getSkillIndex(agent.skills),
         mcp_servers: agent.mcpServers,
         sub_agents: agent.subAgents,
-      });
+      }, runtimeType, agent.openclawConfig);
       // 等待 session 进程就绪
       await this.waitForSessionReady(userId, sessionId, 5_000);
     }
@@ -755,8 +804,8 @@ class ChatService {
     //   （改造前：HTTP POST 到 Runtime /api/v1/execute/stream）
     wsServer.send(userId, {
       type: 'user_message',
+      session_id: sessionId,
       data: {
-        session_id: sessionId,
         message,
         history: history.map(m => ({
           role: m.role,
@@ -793,6 +842,11 @@ CREATE TABLE user_vm_instances (
 
 CREATE INDEX idx_user_vm_instances_user ON user_vm_instances(user_id);
 CREATE INDEX idx_user_vm_instances_status ON user_vm_instances(status) WHERE status != 'terminated';
+
+-- 每用户仅允许一个非终止状态的 VM（防御性约束）
+CREATE UNIQUE INDEX idx_user_vm_one_active
+  ON user_vm_instances(user_id)
+  WHERE status NOT IN ('terminated', 'failed');
 
 -- Session 状态快照（灾难恢复用，快照粒度仍为 session）
 CREATE TABLE session_snapshots (
@@ -833,16 +887,45 @@ CREATE INDEX idx_usage_records_user ON usage_records(user_id, created_at);
 ### 4.2 现有表修改
 
 ```sql
--- organizations 表增加默认执行模式（执行模式提升到组织/用户级别）
-ALTER TABLE organizations ADD COLUMN default_execution_mode VARCHAR(20) DEFAULT 'firecracker';
+-- organizations 表增加路由模式和虚拟机模式
+ALTER TABLE organizations ADD COLUMN routing_mode VARCHAR(20) DEFAULT 'http';
+-- 'http' | 'websocket'
+ALTER TABLE organizations ADD COLUMN default_vm_mode VARCHAR(20) DEFAULT 'docker';
 -- 'firecracker' | 'docker' | 'local'
 
--- users 表增加执行模式覆盖（可选，优先级高于组织默认值）
-ALTER TABLE users ADD COLUMN execution_mode VARCHAR(20);
+-- users 表增加路由模式和虚拟机模式覆盖（可选，优先级高于组织默认值）
+ALTER TABLE users ADD COLUMN routing_mode VARCHAR(20);
+-- NULL 表示使用组织默认值
+ALTER TABLE users ADD COLUMN vm_mode VARCHAR(20);
 -- NULL 表示使用组织默认值
 
--- agents 表增加默认执行模式
-ALTER TABLE agents ADD COLUMN default_execution_mode VARCHAR(20) DEFAULT 'firecracker';
+-- agents 表增加默认虚拟机模式
+ALTER TABLE agents ADD COLUMN default_vm_mode VARCHAR(20) DEFAULT 'docker';
+
+-- ============================================================
+-- runtime_type 配置（双运行时支持）
+-- 优先级：session > agent > user > org > 系统默认('semibot')
+-- ============================================================
+
+-- agents 表增加默认运行时类型
+ALTER TABLE agents ADD COLUMN runtime_type VARCHAR(20) DEFAULT 'semibot';
+-- 'semibot' | 'openclaw'
+
+-- agents 表增加 OpenClaw 特有配置
+ALTER TABLE agents ADD COLUMN openclaw_config JSONB;
+-- {"tool_profile": "coding", "skills": ["pdf", "web-search"]}
+
+-- sessions 表增加运行时类型（session 级覆盖）
+ALTER TABLE sessions ADD COLUMN runtime_type VARCHAR(20);
+-- NULL 表示使用 agent 默认值
+
+-- users 表增加默认运行时偏好
+ALTER TABLE users ADD COLUMN default_runtime_type VARCHAR(20);
+-- NULL 表示使用组织默认值
+
+-- organizations 表增加组织级默认运行时
+ALTER TABLE organizations ADD COLUMN default_runtime_type VARCHAR(20);
+-- NULL 表示使用系统默认值 'semibot'
 ```
 
 ## 5. 删除的模块

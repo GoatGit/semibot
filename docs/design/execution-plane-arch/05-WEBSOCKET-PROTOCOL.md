@@ -17,14 +17,17 @@
 
 ### 连接地址
 
-```
-ws(s)://{host}/ws/vm?user_id={id}&token={jwt}
-```
+- 首次连接：`ws(s)://{host}/ws/vm?user_id={id}&ticket={one_time_ticket}`
+- 重连：`ws(s)://{host}/ws/vm?user_id={id}`（无 ticket）
 
 | 参数 | 说明 |
 |------|------|
-| `user_id` | 用户 ID（UUID） |
-| `token` | 虚拟机级 JWT，可访问该用户的所有 session 数据 |
+| `user_id` | 用户 ID（UUID），必填 |
+| `ticket` | 一次性连接票据（短时效，仅用于首次连接，使用后立即失效）。重连时不携带 |
+
+> **安全说明**：WebSocket 连接不通过 URL query 传递长期 JWT，避免 token 泄露到日志和 Referer 头。连接建立后，执行平面通过首帧 `auth` 消息传输完整 JWT（见下方生命周期）。
+>
+> **ticket 定位**：ticket 仅用于调度层反滥用（防止未经授权的首次连接），不参与最终认证决策。安全边界完全由首帧 `auth` 消息中的 JWT 验证保障（JWT 有效 + user_id 匹配 + 存在活跃 VM 实例）。无 ticket 的连接（重连场景）只要通过 JWT 验证即为合法。
 
 ---
 
@@ -34,7 +37,10 @@ ws(s)://{host}/ws/vm?user_id={id}&token={jwt}
 Execution Plane (User VM)             Control Plane
      │                                      │
      ├── WS Connect ──────────────────→     │
-     │   ?user_id=xxx&token=yyy             │
+     │   ?user_id=xxx&ticket=yyy           │
+     │                                      │
+     ├── auth ──────────────────────→      │  (首帧：传输 JWT)
+     │   {token: "jwt..."}                 │
      │                                      │
      │  ←── init ──────────────────────────┤
      │   {user_id, org_id, api_keys}       │
@@ -64,7 +70,10 @@ Execution Plane (User VM)             Control Plane
 
 ## 3. 消息格式
 
-所有消息均为 JSON，包含 `type` 字段。除 VM 级消息（heartbeat、init）外，所有消息必须包含 `session_id` 字段用于路由。
+所有消息均为 JSON，包含 `type` 字段。除以下消息外，所有消息必须包含 `session_id` 字段用于路由：
+
+- VM 级消息：`heartbeat`、`init`、`auth`（无 session 上下文）
+- 请求匹配消息：`response`、`resume_response`、`resume`（通过 `id` / `pending_ids` 关联请求，无需 `session_id`）
 
 ```json
 {
@@ -106,7 +115,7 @@ Execution Plane (User VM)             Control Plane
 }
 ```
 
-### 4.3 `request` — 请求-响应��用
+### 4.3 `request` — 请求-响应调用
 
 需要控制平面返回结果的调用，通过 `id` 字段匹配请求与响应。
 
@@ -128,6 +137,7 @@ Execution Plane (User VM)             Control Plane
 | `memory_search` | `{query: string, top_k?: number}` | `{results: [{content: string, score: number, metadata: object}]}` |
 | `mcp_call` | `{server: string, tool: string, arguments: object}` | `{result: any}` |
 | `get_config` | `{agent_id: string}` | `{config: object}` |
+| `get_session` | `{session_id: string}` | `{session: object, agent: object}` |
 
 ### 4.4 `fire_and_forget` — 单向通知
 
@@ -193,6 +203,7 @@ Execution Plane (User VM)             Control Plane
   "type": "start_session",
   "data": {
     "session_id": "uuid",
+    "runtime_type": "semibot | openclaw",
     "agent_config": {
       "system_prompt": "string",
       "model": "string",
@@ -212,10 +223,21 @@ Execution Plane (User VM)             Control Plane
     "session_config": {
       "max_turns": 50,
       "timeout_seconds": 3600
+    },
+    "openclaw_config": {
+      "tool_profile": "coding",
+      "skills": ["pdf", "web-search"]
     }
   }
 }
 ```
+
+| 字段 | 必需 | 说明 |
+|------|------|------|
+| `runtime_type` | 否 | 运行时类型，`semibot`（默认）或 `openclaw` |
+| `openclaw_config` | 否 | 仅 `runtime_type=openclaw` 时有效，OpenClaw 特有配置 |
+| `openclaw_config.tool_profile` | 否 | OpenClaw 工具配置集（如 `coding`、`data-analysis`） |
+| `openclaw_config.skills` | 否 | OpenClaw 原生 skill 列表 |
 
 ### 5.3 `stop_session` — 停止 Session
 
@@ -288,6 +310,45 @@ Execution Plane (User VM)             Control Plane
 }
 ```
 
+#### cancel 语义定义
+
+| 维度 | 说明 |
+|------|------|
+| 触发方 | 用户在前端点击"停止生成"按钮，控制平面下发 cancel |
+| 作用范围 | 仅影响 `session_id` 对应的 session 进程，不影响同 VM 内其他 session |
+| 执行平面行为 | 调用 `RuntimeAdapter.cancel()`，中断当前 LLM 流式输出和工具调用 |
+| LLM 调用中断 | 立即关闭与 LLM API 的流式连接，停止产生新 token |
+| 工具调用中断 | 正在执行的工具调用尝试取消（best-effort），已完成的工具结果保留 |
+| SSE 事件 | 发送 `execution_complete` 事件（附带 `cancelled: true`），通知前端执行已终止。这是唯一的取消完成事件，不单独定义 `cancelled` 事件类型 |
+| 状态保存 | cancel 后保存当前 checkpoint 和短期记忆，下次对话可从中断点继续 |
+| 幂等性 | 对已完成或已取消的 session 重复发送 cancel 无副作用（静默忽略） |
+| reason 字段 | 可选，用于审计日志。预定义值：`user_cancelled`（用户主动取消）、`timeout`（超时取消）、`admin`（管理员取消） |
+
+#### cancel 处理流程
+
+```
+控制平面下发 cancel (session_id=X)
+        │
+        ▼
+SessionManager 路由到 session X 的 RuntimeAdapter
+        │
+        ▼
+adapter.cancel()
+        │
+        ├── SemibotAdapter: 取消 LangGraph 当前节点执行
+        │   ├── 中断 LLM 流式调用
+        │   ├── 尝试取消进行中的工具调用
+        │   └── 保存当前 checkpoint
+        │
+        └── OpenClawBridgeAdapter: 发送 cancel 指令到 Bridge 进程
+            ├── Bridge 中断 OpenClaw 执行
+            └── Bridge 上报 execution_complete (cancelled: true)
+        │
+        ▼
+通过 WS 发送 sse_event → 控制平面 → SSE → 前端
+{type: "execution_complete", cancelled: true}
+```
+
 ### 5.7 `config_update` — 热更新配置
 
 运行时动态更新指定 session 的配置参数，无需重连。
@@ -324,13 +385,15 @@ Execution Plane (User VM)             Control Plane
 
 1. 执行平面检测到连接断开
 2. 指数退避重试：`1s -> 2s -> 4s -> 8s -> 16s -> 30s -> 30s -> 30s ...`
-3. 重连成功后收到 `init` 消息
-4. 发送 `resume` 消息，携带所有 session 的未完成请求 ID
-5. 控制平面返回 `resume_response`，包含已缓存的请求结果
-6. 对于 `not_found` 的请求，执行平面重新发送原始请求
-7. 若所有重试均失败，pending 请求以 `ConnectionError` 超时
-8. LangGraph observe 节点通过 replan 机制处理工具调用失败
-9. 重连期间各 session 进程保持运行，本地资源（短期记忆、LLM 直连）不受影响
+3. 重连 URL 不携带 ticket（已失效），仅携带 `user_id`
+4. 连接建立后发送 `auth` 首帧（JWT 认证）
+5. 认证通过后收到 `init` 消息
+6. 发送 `resume` 消息，携带所有 session 的未完成请求 ID
+7. 控制平面返回 `resume_response`，包含已缓存的请求结果
+8. 对于 `not_found` 的请求，执行平面重新发送原始请求
+9. 若所有重试均失败，pending 请求以 `ConnectionError` 超时
+10. LangGraph observe 节点通过 replan 机制处理工具调用失败
+11. 重连期间各 session 进程保持运行，本地资源（短期记忆、LLM 直连）不受影响
 
 ### 时序图
 
@@ -341,7 +404,10 @@ Execution Plane (User VM)             Control Plane
      |                                      |
      |  [等待 1s]                            |
      |-- WS Reconnect ──────────────→       |
-     |   ?user_id=xxx&token=yyy             |
+     |   ?user_id=xxx (无 ticket)          |
+     |                                      |
+     |-- auth ──────────────────────→       |
+     |   {token: "jwt..."}                 |
      |                                      |
      |  <── init ──────────────────────────-|
      |                                      |
@@ -374,18 +440,39 @@ GET /api/v1/sessions/{session_id}/stream?last_event_id=0
 
 ### SSE 事件格式
 
+所有 SSE 事件使用统一的类型命名规范（与 OpenClaw 事件翻译后的格式一致）：
+
 ```
 id: 42
-data: {"type":"text","content":"Hello"}
+data: {"type":"text_chunk","content":"Hello"}
 
 id: 43
-data: {"type":"tool_call","name":"search","args":{}}
+data: {"type":"tool_call_start","tool_name":"search","tool_input":{}}
+
+id: 44
+data: {"type":"tool_call_complete","tool_name":"search","result":{}}
+
+id: 45
+data: {"type":"execution_complete","content":"Done."}
 
 : heartbeat
 
 event: resync
 data: {}
 ```
+
+#### 标准 SSE 事件类型
+
+| 事件类型 | 说明 |
+|---------|------|
+| `text_chunk` | LLM 流式 token 输出 |
+| `tool_call_start` | 工具调用开始 |
+| `tool_call_complete` | 工具调用完成 |
+| `skill_call_start` | Skill 调用开始 |
+| `skill_call_complete` | Skill 调用完成 |
+| `thinking` | 思考过程（stage 区分来源） |
+| `execution_complete` | 执行完成 |
+| `execution_error` | 执行错误 |
 
 ---
 
@@ -424,9 +511,24 @@ data: {}
 
 ### 认证
 
-- JWT token 通过 query parameter 传递（WebSocket 不便使用自定义 Header）
+认证采用两阶段方案，避免 JWT 泄露到 URL 日志：
+
+1. **连接阶段**：URL query 仅携带一次性 `ticket`（短时效，使用后失效），用于建立 WebSocket 连接
+2. **首帧认证**：连接建立后，执行平面发送 `auth` 消息携带完整 JWT
+3. 控制平面验证 JWT 后返回 `init` 消息；若验证失败，关闭连接（code `4001`）
+
+```json
+// 执行平面 → 控制平面（首帧）
+{
+  "type": "auth",
+  "token": "eyJhbGciOiJSUzI1NiIs..."
+}
+```
+
 - Token 为用户虚拟机级别，可访问该用户的所有 session 数据
 - Token 由控制平面在分配虚拟机时签发，包含 user_id 和 org_id
+- Ticket 由控制平面在调度 VM 时生成，有效期 30 秒，仅可使用一次
+- 重连时不需要 ticket（已失效），URL 仅携带 `user_id`，认证完全依赖首帧 `auth` 消息中的 JWT
 
 ### API Key 注入
 
