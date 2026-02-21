@@ -11,15 +11,13 @@ import asyncio
 import json
 import re
 import traceback
-from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from src.constants.config import EXECUTION_STREAM_TIMEOUT
-from src.mcp.client import McpClient
-from src.mcp.models import McpServerConfig
+from src.mcp.bootstrap import setup_mcp_client
 from src.orchestrator.context import (
     AgentConfig,
     McpServerDefinition,
@@ -31,16 +29,13 @@ from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
 from src.server.errors import UnifiedError
-from src.server.event_emitter import EventEmitter
 from src.server.models import HealthResponse, McpServerInput, MemoryHealthStatus, RuntimeInputState
 from src.utils.logging import get_logger
+from src.ws.event_emitter import EventEmitter
 
 logger = get_logger(__name__)
 
 router = APIRouter()
-
-# MCP connection timeout (seconds)
-MCP_CONNECT_TIMEOUT = 15
 
 # Active task registry: session_id → asyncio.Task
 _active_tasks: dict[str, asyncio.Task] = {}
@@ -59,77 +54,6 @@ def _get_llm_provider(request: Request):
 def _get_memory_system(request: Request):
     """Retrieve the MemorySystem stored in app state during lifespan."""
     return getattr(request.app.state, "memory_system", None)
-
-
-async def _connect_single_mcp(
-    mcp_client: McpClient, srv_input: McpServerInput
-) -> bool:
-    """Connect to a single MCP server.
-
-    Returns True on success, False on failure.
-    """
-    transport = srv_input.transport.lower()
-    if transport in ("sse", "http", "streamable_http"):
-        connection_params: dict[str, Any] = {"url": srv_input.endpoint}
-        if srv_input.auth_config:
-            headers: dict[str, str] = {}
-            api_key = srv_input.auth_config.get("apiKey") or srv_input.auth_config.get("api_key")
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            if headers:
-                connection_params["headers"] = headers
-    elif transport == "stdio":
-        connection_params = {"command": srv_input.endpoint}
-    else:
-        logger.warning(f"Unsupported MCP transport: {transport}, skipping {srv_input.name}")
-        return False
-
-    config = McpServerConfig(
-        server_id=srv_input.id,
-        server_name=srv_input.name,
-        transport_type=transport if transport != "sse" else "http",
-        connection_params=connection_params,
-    )
-    try:
-        await mcp_client.add_server(config)
-        await mcp_client.connect(srv_input.id)
-        logger.info(f"Connected to MCP server: {srv_input.name}")
-        return True
-    except BaseException as e:
-        logger.error(f"Failed to connect to MCP server {srv_input.name}: {e}")
-        return False
-
-
-async def _setup_mcp_client(
-    mcp_servers: list[McpServerInput],
-) -> McpClient | None:
-    """Create McpClient and connect to all servers.
-
-    Connections run directly in the caller's asyncio Task so that anyio
-    cancel-scopes entered during connect() are later exited in the same
-    task during disconnect()/close_all().  Individual connection failures
-    are caught and logged without aborting the remaining servers.
-    """
-    if not mcp_servers:
-        return None
-
-    mcp_client = McpClient()
-    for srv_input in mcp_servers:
-        try:
-            await asyncio.wait_for(
-                _connect_single_mcp(mcp_client, srv_input),
-                timeout=MCP_CONNECT_TIMEOUT,
-            )
-        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
-            logger.error(
-                f"MCP server {srv_input.name} connection timed out or cancelled: {e}"
-            )
-        except Exception as e:
-            logger.error(
-                f"MCP server {srv_input.name} connection error: {e}"
-            )
-
-    return mcp_client
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -286,7 +210,7 @@ async def execute_stream(body: RuntimeInputState, request: Request):
 
             # Setup MCP client — connections run in isolated tasks to prevent
             # anyio cancel-scope leaks from poisoning this task.
-            mcp_client = await _setup_mcp_client(body.available_mcp_servers or [])
+            mcp_client = await setup_mcp_client(mcp_servers)
 
             # Update MCP server definitions with actual connection status
             if mcp_client and mcp_servers:

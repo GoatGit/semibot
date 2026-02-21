@@ -14,11 +14,11 @@ from src.orchestrator.context import AgentConfig, McpServerDefinition, RuntimeSe
 from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
-from src.server.event_emitter import EventEmitter
 from src.session.runtime_adapter import RuntimeAdapter
 from src.skills.bootstrap import create_default_registry
 from src.utils.logging import get_logger
 from src.ws.client import ControlPlaneClient
+from src.ws.event_emitter import EventEmitter
 
 logger = get_logger(__name__)
 

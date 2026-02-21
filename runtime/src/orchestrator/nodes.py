@@ -18,8 +18,6 @@ from typing import Any
 
 from src.constants import MAX_REPLAN_ATTEMPTS, REPLAN_RESULT_MAX_CHARS
 from src.orchestrator.execution import (
-    execute_parallel,
-    execute_single,
     parse_plan_response,
     parse_reflection_response,
 )
@@ -364,14 +362,13 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
     ACT node: Execute pending actions (tool/skill calls).
 
     This node:
-    1. Uses UnifiedActionExecutor if available (with RuntimeSessionContext)
-    2. Falls back to legacy action_executor for backward compatibility
-    3. Supports parallel execution for independent actions
-    4. Collects results and errors
+    1. Uses UnifiedActionExecutor (with RuntimeSessionContext)
+    2. Supports parallel execution for independent actions
+    3. Collects results and errors
 
     Args:
         state: Current agent state
-        context: Injected dependencies (action_executor, unified_executor, etc.)
+        context: Injected dependencies (unified_executor, event_emitter, etc.)
 
     Returns:
         State updates with tool execution results
@@ -386,13 +383,10 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
 
     event_emitter = context.get("event_emitter")
 
-    # Check for UnifiedActionExecutor first (preferred)
     unified_executor = context.get("unified_executor")
-    action_executor = context.get("action_executor")
-
-    if not unified_executor and not action_executor:
+    if not unified_executor:
         return {
-            "error": "No executor configured",
+            "error": "UnifiedActionExecutor not configured",
             "current_step": "observe",
             "pending_actions": [],
         }
@@ -403,183 +397,87 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
             "current_step": "observe",
         }
 
-    # If using UnifiedActionExecutor, validation is handled internally
-    if unified_executor:
-        logger.info(
-            "Using UnifiedActionExecutor",
-            extra={"session_id": state["session_id"]},
-        )
-
-        results: list[ToolCallResult] = []
-
-        # Separate parallel and sequential actions
-        parallel_actions = [a for a in pending_actions if a.parallel]
-        sequential_actions = [a for a in pending_actions if not a.parallel]
-
-        # Force sequential if mix of search + code_executor (data dependency)
-        has_search = any(
-            a.tool in ["tavily-search", "tavily_search", "bailian_web_search", "exa_search"]
-            for a in pending_actions
-        )
-        has_code = any(a.tool == "code_executor" for a in pending_actions)
-        if has_search and has_code:
-            sequential_actions = pending_actions
-            parallel_actions = []
-
-        # Execute parallel actions first, then sequential actions in order
-        if parallel_actions:
-            import asyncio
-            parallel_results = await asyncio.gather(
-                *[_execute_with_events(unified_executor, action, event_emitter) for action in parallel_actions],
-                return_exceptions=True,
-            )
-            # Convert exceptions to error results
-            for i, result in enumerate(parallel_results):
-                if isinstance(result, Exception):
-                    results.append(
-                        ToolCallResult(
-                            tool_name=parallel_actions[i].tool or "unknown",
-                            params=parallel_actions[i].params,
-                            error=str(result),
-                            success=False,
-                        )
-                    )
-                else:
-                    results.append(result)
-
-        # Execute sequential actions (with context_data injection for code_executor)
-        for action in sequential_actions:
-            try:
-                # Inject search results into code_executor steps
-                if action.tool == "code_executor" and results:
-                    search_results = _extract_search_results(results)
-                    _inject_context_data(action, search_results, state["session_id"])
-
-                result = await _execute_with_events(unified_executor, action, event_emitter)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Action execution failed: {e}")
-                results.append(
-                    ToolCallResult(
-                        tool_name=action.tool or "unknown",
-                        params=action.params,
-                        error=str(e),
-                        success=False,
-                    )
-                )
-
-        # Update current_step_index to last step so observe_node knows all steps are done
-        plan = state.get("plan")
-        updated_plan = None
-        if plan and plan.steps:
-            updated_plan = ExecutionPlan(
-                goal=plan.goal,
-                steps=plan.steps,
-                current_step_index=len(plan.steps) - 1,
-                requires_delegation=plan.requires_delegation,
-                delegate_to=plan.delegate_to,
-            )
-
-        result_state = {
-            "tool_results": results,
-            "pending_actions": [],
-            "current_step": "observe",
-        }
-        if updated_plan:
-            result_state["plan"] = updated_plan
-        return result_state
-
-    # Legacy path: use action_executor with manual validation
-    logger.warning(
-        "Using legacy action_executor (no UnifiedActionExecutor)",
+    logger.info(
+        "Using UnifiedActionExecutor",
         extra={"session_id": state["session_id"]},
     )
 
-    # Build CapabilityGraph for validation
-    capability_graph = None
-    runtime_context = state.get("context")
-
-    if runtime_context:
-        from src.orchestrator.capability import CapabilityGraph
-
-        capability_graph = CapabilityGraph(runtime_context)
-        capability_graph.build()
-
-    # Validate actions against capability graph
-    validated_actions = []
-    for action in pending_actions:
-        tool_name = action.tool
-
-        if not tool_name:
-            logger.warning(
-                "Action has no tool specified, skipping",
-                extra={"session_id": state["session_id"], "action_id": action.id},
-            )
-            continue
-
-        # Validate action if capability_graph is available
-        if capability_graph:
-            if not capability_graph.validate_action(tool_name):
-                logger.error(
-                    "Action validation failed: not in capability graph",
-                    extra={
-                        "session_id": state["session_id"],
-                        "action_id": action.id,
-                        "tool_name": tool_name,
-                        "available_capabilities": capability_graph.list_capabilities(),
-                    },
-                )
-                # Skip this action - it's not in the capability graph
-                continue
-
-        validated_actions.append(action)
-
-    if not validated_actions:
-        logger.warning(
-            "No valid actions to execute after validation",
-            extra={"session_id": state["session_id"]},
-        )
-        return {
-            "current_step": "observe",
-            "pending_actions": [],
-        }
-
-    # Separate parallel and sequential actions
-    # If mix of search + code_executor, force all sequential to preserve data flow
-    has_search = any(a.tool not in ("code_executor",) for a in validated_actions)
-    has_code = any(a.tool == "code_executor" for a in validated_actions)
-    force_sequential = has_search and has_code
-
-    if force_sequential:
-        parallel_actions = []
-        sequential_actions = validated_actions
-        logger.info("Forcing sequential execution: search + code_executor detected",
-                     extra={"session_id": state["session_id"]})
-    else:
-        parallel_actions = [a for a in validated_actions if a.parallel]
-        sequential_actions = [a for a in validated_actions if not a.parallel]
-
     results: list[ToolCallResult] = []
 
-    # Execute parallel actions
+    # Separate parallel and sequential actions
+    parallel_actions = [a for a in pending_actions if a.parallel]
+    sequential_actions = [a for a in pending_actions if not a.parallel]
+
+    # Force sequential if mix of search + code_executor (data dependency)
+    has_search = any(
+        a.tool in ["tavily-search", "tavily_search", "bailian_web_search", "exa_search"]
+        for a in pending_actions
+    )
+    has_code = any(a.tool == "code_executor" for a in pending_actions)
+    if has_search and has_code:
+        sequential_actions = pending_actions
+        parallel_actions = []
+
+    # Execute parallel actions first, then sequential actions in order
     if parallel_actions:
-        parallel_results = await execute_parallel(parallel_actions, action_executor)
-        results.extend(parallel_results)
+        import asyncio
 
-    # Execute sequential actions, injecting context_data from prior results
+        parallel_results = await asyncio.gather(
+            *[_execute_with_events(unified_executor, action, event_emitter) for action in parallel_actions],
+            return_exceptions=True,
+        )
+        for i, result in enumerate(parallel_results):
+            if isinstance(result, Exception):
+                results.append(
+                    ToolCallResult(
+                        tool_name=parallel_actions[i].tool or "unknown",
+                        params=parallel_actions[i].params,
+                        error=str(result),
+                        success=False,
+                    )
+                )
+            else:
+                results.append(result)
+
     for action in sequential_actions:
-        # Before each code_executor step, inject accumulated search results
-        if action.tool == "code_executor" and results:
-            search_results = _extract_search_results(results)
-            _inject_context_data(action, search_results, state["session_id"])
-        result = await execute_single(action, action_executor)
-        results.append(result)
+        try:
+            if action.tool == "code_executor" and results:
+                search_results = _extract_search_results(results)
+                _inject_context_data(action, search_results, state["session_id"])
 
-    return {
+            result = await _execute_with_events(unified_executor, action, event_emitter)
+            results.append(result)
+        except Exception as e:
+            logger.error(f"Action execution failed: {e}")
+            results.append(
+                ToolCallResult(
+                    tool_name=action.tool or "unknown",
+                    params=action.params,
+                    error=str(e),
+                    success=False,
+                )
+            )
+
+    # Update current_step_index to last step so observe_node knows all steps are done
+    plan = state.get("plan")
+    updated_plan = None
+    if plan and plan.steps:
+        updated_plan = ExecutionPlan(
+            goal=plan.goal,
+            steps=plan.steps,
+            current_step_index=len(plan.steps) - 1,
+            requires_delegation=plan.requires_delegation,
+            delegate_to=plan.delegate_to,
+        )
+
+    result_state = {
         "tool_results": results,
         "pending_actions": [],
         "current_step": "observe",
     }
+    if updated_plan:
+        result_state["plan"] = updated_plan
+    return result_state
 
 
 async def _execute_with_events(

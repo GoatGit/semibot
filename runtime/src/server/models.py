@@ -1,7 +1,7 @@
-"""Pydantic request/response models for the HTTP server.
+"""Pydantic request/response models for the runtime HTTP server.
 
-These models align with the TypeScript RuntimeInputState defined in
-apps/api/src/adapters/runtime.adapter.ts.
+This module is kept for the standalone runtime HTTP mode used in tests
+and local diagnostics.
 """
 
 from typing import Any
@@ -61,8 +61,6 @@ class SubAgentInput(BaseModel):
 
 class RuntimeInputState(BaseModel):
     """Input payload for POST /api/v1/execute/stream.
-
-    Must stay aligned with the TypeScript interface in runtime.adapter.ts.
     """
 
     session_id: str = Field(..., min_length=1)

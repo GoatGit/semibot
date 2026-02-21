@@ -9,12 +9,12 @@ from typing import Any
 
 from src.orchestrator.context import (
     AgentConfig,
-    McpServerDefinition,
     RuntimeSessionContext,
     SubAgentDefinition,
 )
 from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
+from src.mcp.bootstrap import setup_mcp_client
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -153,29 +153,7 @@ class SubAgentDelegator:
 
             # 6. 连接子 Agent 自己的 MCP servers
             if sub_agent_def.mcp_servers:
-                from src.server.routes import _setup_mcp_client
-                from src.server.models import McpServerInput, McpToolInput
-
-                mcp_inputs = [
-                    McpServerInput(
-                        id=srv.id,
-                        name=srv.name,
-                        endpoint=srv.endpoint,
-                        transport=srv.transport,
-                        is_connected=False,
-                        auth_config=srv.auth_config,
-                        available_tools=[
-                            McpToolInput(
-                                name=t.get("name", ""),
-                                description=t.get("description", ""),
-                                parameters=t.get("parameters", {}),
-                            )
-                            for t in srv.available_tools
-                        ],
-                    )
-                    for srv in sub_agent_def.mcp_servers
-                ]
-                sub_mcp_client = await _setup_mcp_client(mcp_inputs)
+                sub_mcp_client = await setup_mcp_client(sub_agent_def.mcp_servers)
                 if sub_mcp_client:
                     for srv_def in sub_runtime_context.available_mcp_servers:
                         srv_def.is_connected = sub_mcp_client.is_connected(srv_def.id)

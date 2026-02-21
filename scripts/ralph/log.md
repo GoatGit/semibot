@@ -452,3 +452,53 @@
   - `pnpm --filter @semibot/api exec tsc --noEmit`
   - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
   - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+26 — 自动执行（旧 HTTP runtime 残留清理）
+1. 删除 API 侧旧 `runtime HTTP adapter`：`apps/api/src/adapters/runtime.adapter.ts`
+2. 删除其测试：`apps/api/src/__tests__/runtime.adapter.test.ts`
+3. 删除未挂载的 legacy runtime 监控路由：`apps/api/src/routes/v1/runtime.ts`
+4. 删除 legacy runtime 监控服务：`apps/api/src/services/runtime-monitor.service.ts`
+5. 删除 legacy 监控/回退集成测试：`apps/api/src/__tests__/chat-runtime.integration.test.ts`
+6. 清理 `config.ts` 中仅供旧 HTTP adapter 使用的 runtime 常量
+7. 移除 `RUNTIME_SERVICE_URL` 启动日志噪声
+8. 全库检索确认无 runtime.adapter/runtime-monitor 残留引用
+9. API TypeScript 编译校验通过
+10. 执行平面关键测试（API + runtime）回归通过
+- 验证通过：
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `pnpm --filter @semibot/api exec vitest --run src/__tests__/chat-ws.integration.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts src/__tests__/vm.route.behavior.test.ts`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
+
+### 2026-02-22 迭代 X+27 — 自动执行（runtime 去耦：server 依赖剥离）
+1. 新增通用 MCP 启动模块：`runtime/src/mcp/bootstrap.py`
+2. 将 MCP 连接逻辑从 `server/routes.py` 抽离到 `mcp/bootstrap.py`
+3. `SubAgentDelegator` 改为直接调用 `setup_mcp_client`，移除对 `src.server.routes/models` 的依赖
+4. `test_delegator.py` patch 路径更新为 `src.agents.delegator.setup_mcp_client`
+5. 新增 `runtime/src/ws/event_emitter.py`（execution-plane 中立事件发射器）
+6. `SemiGraphAdapter` 与 `server/routes.py` 都切换到 `src.ws.event_emitter`
+7. 删除旧 `runtime/src/server/event_emitter.py`
+8. 新增 `runtime/src/storage/file_manager.py`，将文件持久化能力迁移到中立模块
+9. `code_executor.py` 与 `server/app.py` 改为引用 `src.storage.file_manager`
+10. 删除旧 `runtime/src/server/file_manager.py`
+- 验证通过：
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/memory/test_app_integration.py tests/agents/test_delegator.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+28 — 自动执行（无兼容化收敛）
+1. `runtime/src/server/models.py` 文档注释去除对已删除 `runtime.adapter.ts` 的引用
+2. `orchestrator/act_node` 去掉 legacy executor fallback 描述，明确仅支持 `UnifiedActionExecutor`
+3. `act_node` 逻辑删除 `action_executor` 分支与 capability-graph 兼容路径
+4. `act_node` 保留并强化统一执行策略：并行+顺序混合，search→code_executor 时强制顺序
+5. 清理 `nodes.py` 中已废弃的 `execute_parallel/execute_single` 导入
+6. 新增中立模块 `runtime/src/mcp/bootstrap.py`（MCP 连接抽象）
+7. `SubAgentDelegator` 改用中立 MCP 抽象，不再依赖 `server.routes/models`
+8. 新增中立模块 `runtime/src/ws/event_emitter.py` 并替换引用
+9. 新增中立模块 `runtime/src/storage/file_manager.py`，替换 `code_executor` 与 `server/app` 引用
+10. 删除 server 包中的已迁移组件：`event_emitter.py`、`file_manager.py`
+- 验证通过：
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/orchestrator/test_nodes_memory.py tests/agents/test_delegator.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/memory/test_app_integration.py tests/agents/test_delegator.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `pnpm --filter @semibot/api exec vitest --run src/__tests__/chat-ws.integration.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts src/__tests__/vm.route.behavior.test.ts`

@@ -302,7 +302,7 @@ async def test_delegate_mcp_cleanup_on_success(runtime_context_with_mcp):
 
     with (
         patch("src.agents.delegator.create_agent_graph", return_value=mock_graph),
-        patch("src.server.routes._setup_mcp_client", new_callable=AsyncMock, return_value=mock_mcp_client),
+        patch("src.agents.delegator.setup_mcp_client", new_callable=AsyncMock, return_value=mock_mcp_client),
     ):
         result = await delegator.delegate(
             sub_agent_id="sub-agent-mcp",

@@ -10,8 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from src.server.file_manager import FileManager
 from src.skills.base import BaseTool, ToolResult
+from src.storage.file_manager import FileManager
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)

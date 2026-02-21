@@ -160,8 +160,8 @@ async def lifespan(app: FastAPI):
     app.state.llm_provider = _create_llm_provider()
 
     # Initialize FileManager and inject into CodeExecutorTool
-    from src.server.file_manager import FileManager
     from src.skills.code_executor import set_file_manager
+    from src.storage.file_manager import FileManager
 
     file_manager = FileManager()
     file_manager.start_cleanup_loop()

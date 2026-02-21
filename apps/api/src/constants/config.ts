@@ -141,60 +141,6 @@ export const SESSION_TIMEOUT_MS = 600000
 /** 数据库查询超时 (毫秒) */
 export const DB_QUERY_TIMEOUT_MS = 30000
 
-/** Runtime 执行超时 (毫秒) */
-export const RUNTIME_EXECUTION_TIMEOUT_MS = 300000
-
-/** Runtime 健康检查超时 (毫秒) */
-export const RUNTIME_HEALTH_CHECK_TIMEOUT_MS = 5000
-
-/** Runtime SSE 流 stall 超时 (毫秒) */
-export const RUNTIME_STALL_TIMEOUT_MS = 30000
-
-/** Runtime SSE 连续解析失败最大次数 */
-export const RUNTIME_MAX_CONSECUTIVE_PARSE_FAILURES = 5
-
-// ═══════════════════════════════════════════════════════════════
-// Runtime 配置
-// ═══════════════════════════════════════════════════════════════
-
-/** Runtime 超时阈值 (毫秒) - 超过此值触发告警 */
-export const CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS = parseInt(
-  process.env.CHAT_RUNTIME_TIMEOUT_THRESHOLD_MS ?? String(RUNTIME_EXECUTION_TIMEOUT_MS),
-  10
-)
-
-/** Runtime 错误率阈值 (0-1) - 超过此值自动回退 */
-export const CHAT_RUNTIME_ERROR_RATE_THRESHOLD = parseFloat(
-  process.env.CHAT_RUNTIME_ERROR_RATE_THRESHOLD ?? '0.5'
-)
-
-/** Python Runtime 服务地址 */
-export const RUNTIME_SERVICE_URL = process.env.RUNTIME_URL ?? 'http://localhost:8801'
-// eslint-disable-next-line no-console -- 启动时打印配��便于排查
-console.log('[config.ts] RUNTIME_SERVICE_URL =', RUNTIME_SERVICE_URL, '| env =', process.env.RUNTIME_URL)
-
-// ═══════════════════════════════════════════════════════════════
-// Runtime 监控配置
-// ═══════════════════════════════════════════════════════════════
-
-/** Runtime 监控最大记录数 */
-export const RUNTIME_MONITOR_MAX_RECORDS = 1000
-
-/** Runtime 监控滑动窗口时间 (毫秒) */
-export const RUNTIME_MONITOR_WINDOW_MS = 300000 // 5 分钟
-
-/** Runtime 监控最小样本数 (触发回退前需要的最小样本数) */
-export const RUNTIME_MONITOR_MIN_SAMPLES = 10
-
-/** Runtime 监控超时率阈值 (0-1) */
-export const RUNTIME_MONITOR_TIMEOUT_RATE_THRESHOLD = 0.3 // 30%
-
-/** Runtime 监控错误率恢复倍数 */
-export const RUNTIME_MONITOR_ERROR_RATE_RECOVERY_MULTIPLIER = 0.5
-
-/** Runtime 监控延迟阈值倍数 */
-export const RUNTIME_MONITOR_LATENCY_THRESHOLD_MULTIPLIER = 0.8
-
 // ═══════════════════════════════════════════════════════════════
 // 缓存配置
 // ═══════════════════════════════════════════════════════════════
