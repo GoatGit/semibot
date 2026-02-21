@@ -15,10 +15,10 @@ import memoryRouter from './memory'
 import logsRouter from './logs'
 import llmProvidersRouter from './llm-providers'
 import usersRouter from './users'
-import runtimeRouter from './runtime'
 import skillDefinitionsRouter from './skill-definitions'
 import evolvedSkillsRouter from './evolved-skills'
 import webhooksRouter from './webhooks'
+import vmRouter from './vm'
 
 const router: Router = Router()
 
@@ -49,9 +49,9 @@ router.use('/memory', memoryRouter)
 router.use('/logs', logsRouter)
 router.use('/llm-providers', llmProvidersRouter)
 router.use('/users', usersRouter)
-router.use('/runtime', runtimeRouter)
 router.use('/skill-definitions', skillDefinitionsRouter)
 router.use('/evolved-skills', evolvedSkillsRouter)
 router.use('/webhooks', webhooksRouter)
+router.use('/vm', vmRouter)
 
 export default router

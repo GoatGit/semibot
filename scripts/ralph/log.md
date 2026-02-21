@@ -21,3 +21,434 @@
 
 ### 备注
 - 4 个已有测试文件存在预先失败（errorHandler、evolved-skill-promote、skill-prompt-builder），与本次改动无关
+
+## 2026-02-22 迭代 X — Execution Plane 重构主链路
+
+### US-EPA-01 Execution Plane 三层架构重构 → PASS ✅
+- API 新增控制平面 WS 模块：`apps/api/src/ws/*`
+- API 新增 SSE 中继：`apps/api/src/relay/sse-relay.ts`
+- Chat 服务切换为 WS 下发：`apps/api/src/services/chat.service.ts`
+- Runtime 新增执行平面入口：`runtime/src/main.py`
+- Runtime 新增 WS Client + SessionManager + RuntimeAdapter：`runtime/src/ws/client.py`, `runtime/src/session/*`
+- 新增数据库迁移：`database/migrations/015_execution_plane_arch.sql`
+- 验证：`pnpm --filter @semibot/api exec tsc --noEmit` 通过；`cd runtime && .venv/bin/python -m compileall src` 通过
+
+### 2026-02-22 迭代 X+1 — Execution Plane 深化
+- WS request 方法补全：`get_skill_package`（包文件读取）与 `memory_search`（文本回退检索）
+- Agent/Session 数据模型贯通 `runtime_type` 与 `openclaw_config`
+- API 路由移除 `/runtime` 挂载，避免继续暴露旧监控入口
+- 验证通过：`pnpm --filter @semibot/api exec tsc --noEmit`，`cd runtime && .venv/bin/python -m compileall src`
+- WS 上行 `fire_and_forget` 已接入（usage_report/audit_log/snapshot_sync/evolution_submit）
+- 新增单测：`ws.message-router.test.ts`、`relay.sse-relay.test.ts`（共 9 个用例全通过）
+- Runtime 新增 `WSMemoryProxy`：短期记忆落本地，长期记忆检索走控制平面 WS request(memory_search)
+
+### 2026-02-22 迭代 X+2 — 测试补齐与取消态修复
+- 新增 API 侧聊天 WS 路径测试：`chat-ws.integration.test.ts`
+- 新增 API 侧 WS request/fire-and-forget 分发测试：`ws.server.request-fireforget.test.ts`
+- 修复 Runtime `semigraph` 取消竞态：任务未进入 `_run` 即 cancel 时也会上报 `EXECUTION_CANCELLED`
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/relay.sse-relay.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+3 — WS 协议恢复机制补齐
+- 控制平面新增 `resume` 处理与 `resume_response` 返回：`apps/api/src/ws/ws-server.ts`
+- 控制平面为 request 响应新增短期缓存（按 request id），支持断线恢复匹配
+- 执行平面 WS 客户端补齐重连后的 `resume_response` 处理：`runtime/src/ws/client.py`
+- 控制平面认证补充活跃 VM 校验（`user_vm_instances`）：
+  - 默认启用
+  - `NODE_ENV=test` 或 `WS_SKIP_VM_INSTANCE_CHECK=true` 时跳过
+- 新增测试：`runtime/tests/ws/test_client_reconnect.py`（重连恢复 completed / lost）
+- 新增测试：`apps/api/src/__tests__/ws.server.request-fireforget.test.ts` 中 `handleResume` 用例
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/relay.sse-relay.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+4 — VM 实例状态同步闭环
+- 控制平面在 WS 连接生命周期同步 `user_vm_instances`：
+  - 认证成功后标记 `ready`
+  - 心跳更新 `last_heartbeat_at`
+  - 断线/心跳超时标记 `disconnected`
+- 关键实现：`apps/api/src/ws/ws-server.ts`（`markVMInstanceState` / `touchHeartbeat`）
+- 验证通过：
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/relay.sse-relay.test.ts`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+
+### 2026-02-22 迭代 X+5 — OpenClaw Bridge 骨架落地
+- `runtime/src/session/openclaw_adapter.py` 从占位实现升级为真实桥接：
+  - 启动子进程（`OPENCLAW_BRIDGE_CMD` 可覆盖）
+  - JSONL stdin/stdout IPC（start/user_message/cancel/stop）
+  - 桥接事件转发到控制平面 SSE
+  - bridge 异常退出统一上报 `OPENCLAW_BRIDGE_EXITED`
+- 新增 OpenClaw Bridge Node 骨架：
+  - `runtime/openclaw-bridge/package.json`
+  - `runtime/openclaw-bridge/tsconfig.json`
+  - `runtime/openclaw-bridge/src/main.ts`
+  - `runtime/openclaw-bridge/src/bridge.ts`
+  - `runtime/openclaw-bridge/src/event-translator.ts`
+  - `runtime/openclaw-bridge/src/skill-loader.ts`
+- 新增测试：`runtime/tests/session/test_openclaw_adapter.py`
+- 验证通过：
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+6 — OpenClaw 控制平面代理往返打通
+- `OpenClawBridgeAdapter` 新增 bridge→adapter `cp_request` 处理：
+  - bridge 发起 `cp_request(id, method, params)`
+  - adapter 调用 `client.request(session_id, method, **params)`
+  - adapter 回写 `cp_response(id, result/error)` 到 bridge stdin
+- `runtime/openclaw-bridge/src/bridge.ts` 新增 mock 控制平面调用链：
+  - `user_message` 时发送 `cp_request(memory_search)`
+  - 收到 `cp_response` 后输出 `text` + `execution_complete`
+  - 失败输出 `execution_error`
+- 测试增强：`runtime/tests/session/test_openclaw_adapter.py`
+  - 新增 `cp_request` 场景断言（调用 client.request + 回写 cp_response）
+- 验证通过：
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+7 — OpenClaw start payload 规整
+- `OpenClawBridgeAdapter` 新增 `_start_payload_for_bridge()`：
+  - 仅转发 bridge 需要的白名单字段（agent/runtime/mcp/skills/session/openclaw 配置）
+  - 避免把无关上下文直接透传到 bridge 进程
+- 测试更新：`runtime/tests/session/test_openclaw_adapter.py`
+  - 断言 `start` 指令 payload 包含 `runtime_type`
+- 验证通过：
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+8 — OpenClaw Bridge 事件/技能/上报增强
+- `openclaw_adapter` 新增 bridge 消息类型支持：
+  - `cp_fire_and_forget` → `client.fire_and_forget(...)`
+  - 异常时上报 `CP_FIRE_AND_FORGET_FAILED`
+- `runtime/openclaw-bridge/src/event-translator.ts` 增加 `translateOpenClawEvent()`：
+  - `reasoning/assistant_message/tool_started/tool_finished/done/error` → Semibot SSE 事件
+- `runtime/openclaw-bridge/src/skill-loader.ts` 从占位升级为可用组件：
+  - 支持从 `skill_index` 初始化
+  - 跟踪待加载 skill
+  - 缓存已加载 package
+- `runtime/openclaw-bridge/src/bridge.ts` 增强：
+  - `start` 后自动发 `get_skill_package` 预加载请求
+  - `user_message` 发 `memory_search` 请求
+  - `cp_response` 后输出文本与完成事件
+  - 同步发 `cp_fire_and_forget`（`audit_log` + `usage_report`）
+- 测试增强：`runtime/tests/session/test_openclaw_adapter.py`
+  - 新增 `cp_fire_and_forget` 场景
+- 验证通过：
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py -q`
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+9 — OpenClawRunner 抽象与桥接入口
+- 新增 `runtime/openclaw-bridge/src/openclaw-runner.ts`：
+  - 抽象 `OpenClawRunner` 接口（`onStart/onUserMessage/onCancel`）
+  - 实现 `MockOpenClawRunner`（控制平面 memory_search + fire_and_forget 上报）
+  - 导出 `createOpenClawRunner()` 作为 bridge 的统一执行入口
+- 重构 `runtime/openclaw-bridge/src/bridge.ts`：
+  - 用 session 级 runtime 容器管理 `runner + skillLoader`
+  - `cp_request/cp_response` 变为 Promise 请求-响应模型
+  - `user_message` 逻辑迁移到 runner（bridge 只做 IO/路由）
+  - 保留 `start` skill 预加载和 `cancel/stop` 控制消息
+  - 增加内部异常保护（`OPENCLAW_BRIDGE_INTERNAL_ERROR`）
+- 验证通过：
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+10 — Runner 模式切换占位
+- `runtime/openclaw-bridge/src/openclaw-runner.ts` 增加 `SdkOpenClawRunner` 占位实现
+- `createOpenClawRunner()` 支持 `OPENCLAW_RUNNER_MODE` 环境变量：
+  - `mock`（默认）
+  - `sdk`（占位，当前返回未实现错误事件）
+- 验证通过：
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py -q`
+
+### 2026-02-22 迭代 X+11 — SdkOpenClawRunner 最小可运行链路
+- 新增 `runtime/openclaw-bridge/src/sdk-provider.ts`
+  - `OpenClawSdkProvider` 抽象
+  - `CommandSdkProvider`（`OPENCLAW_SDK_CMD`，stdin 输入 JSON，stdout 输出文本/JSON）
+  - `FallbackSdkProvider`（无外部命令时的内置占位生成）
+- `runtime/openclaw-bridge/src/openclaw-runner.ts` 中 `SdkOpenClawRunner` 升级：
+  - `onStart` 读取 `agent_config.model` 与 `openclaw_config.tool_profile`
+  - `onUserMessage`：先 `memory_search`，再调用 sdk provider 生成回复
+  - 回传 `assistant_message` + `done`
+  - 上报 `audit_log` / `usage_report`
+- 验证通过：
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py -q`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+12 — OpenClaw Bridge 协议收敛与 E2E
+- 新增协议模块：`runtime/openclaw-bridge/src/protocol.ts`
+  - 统一 bridge 入站命令 schema（`parseBridgeCommand`）
+  - 固定 SDK 命令输入/输出 schema（snake_case）
+  - 统一 SDK 输出解析（JSON/text 双模式）
+- bridge / sdk-provider 接入统一协议：
+  - `runtime/openclaw-bridge/src/bridge.ts` 使用 `parseBridgeCommand`
+  - `runtime/openclaw-bridge/src/sdk-provider.ts` 使用 `toSdkCommandInput` / `parseSdkCommandOutput`
+- 修复协议路由缺陷：
+  - `cp_response` 无 `session_id` 时不再被 bridge 丢弃（符合 WS 协议）
+- 新增 bridge 端到端测试：
+  - `runtime/openclaw-bridge/tests/bridge-e2e.mjs`
+  - 覆盖 `start -> get_skill_package -> user_message -> memory_search -> cp_fire_and_forget -> execution_complete`
+  - `runtime/openclaw-bridge/package.json` 新增 `test:e2e` 脚本
+- 验证通过：
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+13 — SDK 命令协议文档化与 SDK E2E
+- 新增文档：`runtime/openclaw-bridge/PROTOCOL.md`
+  - bridge stdin/stderr 协议
+  - `OPENCLAW_SDK_CMD` 输入输出 schema
+  - 错误处理约定
+- 新增 SDK 模式 E2E：`runtime/openclaw-bridge/tests/bridge-sdk-e2e.mjs`
+  - `OPENCLAW_RUNNER_MODE=sdk`
+  - 注入 `OPENCLAW_SDK_CMD` mock 命令
+  - 覆盖 `memory_search -> sdk output -> usage/audit -> execution_complete`
+- 新增脚本：`runtime/openclaw-bridge/package.json`
+  - `test:e2e:sdk`
+- 验证通过：
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e:sdk`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+14 — SDK 错误码细化与失败 E2E
+- `runtime/openclaw-bridge/src/sdk-provider.ts`
+  - 新增 `SdkProviderError`
+  - 细化错误码：
+    - `SDK_COMMAND_SPAWN_FAILED`
+    - `SDK_COMMAND_TIMEOUT`
+    - `SDK_COMMAND_FAILED`
+    - `SDK_OUTPUT_INVALID`
+  - 支持 `OPENCLAW_SDK_TIMEOUT_MS`（默认 15000ms）
+- `runtime/openclaw-bridge/src/openclaw-runner.ts`
+  - `SdkOpenClawRunner` 捕获并透传 `SdkProviderError` 到 `execution_error.code`
+  - 增加兼容分支（duck-typing）避免跨模块实例判断失效
+- `runtime/openclaw-bridge/src/event-translator.ts`
+  - `OpenClawEvent` 增加 `error_code`
+  - `error` 事件优先使用 `event.error_code`
+- 新增失败路径 E2E：
+  - `runtime/openclaw-bridge/tests/bridge-sdk-fail-e2e.mjs`
+  - `runtime/openclaw-bridge/package.json` 新增 `test:e2e:sdk:fail`
+- 文档更新：
+  - `runtime/openclaw-bridge/PROTOCOL.md` 增加 SDK 错误码约定
+- 验证通过：
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e:sdk`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e:sdk:fail`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+15 — SDK 错误码覆盖完善（timeout/invalid）
+- 新增 SDK 失败覆盖 E2E：
+  - `runtime/openclaw-bridge/tests/bridge-sdk-timeout-e2e.mjs` → 断言 `SDK_COMMAND_TIMEOUT`
+  - `runtime/openclaw-bridge/tests/bridge-sdk-invalid-output-e2e.mjs` → 断言 `SDK_OUTPUT_INVALID`
+- `runtime/openclaw-bridge/package.json` 新增脚本：
+  - `test:e2e:sdk:timeout`
+  - `test:e2e:sdk:invalid`
+- 文档补充：
+  - `runtime/openclaw-bridge/PROTOCOL.md` 说明 `OPENCLAW_SDK_TIMEOUT_MS` 默认值 `15000`
+- 验证通过：
+  - `pnpm -C runtime/openclaw-bridge exec tsc -p tsconfig.json`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e:sdk`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e:sdk:fail`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e:sdk:timeout`
+  - `pnpm -C runtime/openclaw-bridge run test:e2e:sdk:invalid`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_openclaw_adapter.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+16 — SemiGraph 凭证下发闭环补强
+- 控制平面 WS `init` 现在下发运行时可用 `api_keys`：
+  - `apps/api/src/ws/ws-server.ts`
+  - 来源：`process.env.OPENAI_API_KEY` / `process.env.ANTHROPIC_API_KEY`
+- 新增握手测试：`apps/api/src/__tests__/ws.server.handshake.test.ts`
+  - 认证通过后 `init.data.api_keys` 下发断言
+  - 缺少 `user_id` 时拒绝连接断言
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/relay.sse-relay.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/session/test_openclaw_adapter.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+17 — VM Scheduler 主流程接入 Chat
+- 新增：`apps/api/src/scheduler/vm-scheduler.ts`
+  - `ensureUserVM(userId, orgId, { wsReady })`：
+    - 无活跃 VM：创建 `user_vm_instances` 记录（`starting`）
+    - WS 已就绪：状态纠正为 `ready`
+    - `disconnected`：触发重拉起并置为 `provisioning`
+    - `failed/terminated`：重建实例
+  - 支持 `VM_BOOTSTRAP_CMD`（可选）触发拉起命令，并注入 VM 上下文环境变量
+- 改造：`apps/api/src/services/chat.service.ts`
+  - chat 下发前先执行 `ensureUserVM`
+  - VM 未就绪时返回明确状态：`执行平面未就绪（状态: xxx）`
+- 新增测试：
+  - `apps/api/src/__tests__/vm-scheduler.test.ts`
+  - `apps/api/src/__tests__/chat-ws.integration.test.ts`（增加 scheduler 调用断言）
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/relay.sse-relay.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+18 — VM 生命周期状态一致性修复
+- 新增迁移：`database/migrations/016_user_vm_instances_lifecycle_columns.sql`
+  - 为 `user_vm_instances` 增加：
+    - `updated_at`
+    - `last_heartbeat_at`
+    - `disconnected_at`
+  - 增加相关索引并做历史数据回填
+- 修复 `apps/api/src/ws/ws-server.ts` 状态判定：
+  - `hasActiveVMInstance` 支持 `starting/provisioning/running/ready/disconnected`
+  - VM 状态更新 SQL 支持 `starting/provisioning`，避免首次连接无法从 `starting` 转 `ready`
+  - 心跳更新时间支持 `starting/provisioning`
+- 测试增强：`apps/api/src/__tests__/vm-scheduler.test.ts`
+  - 新增 `starting + wsReady=true -> ready` 场景
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/relay.sse-relay.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+19 — 本地 VM Bootstrap 模板与 Runbook
+- 新增可执行脚本：`scripts/vm/bootstrap-local.sh`
+  - 为 `VM_BOOTSTRAP_CMD` 提供本地拉起模板
+  - 支持 pid/log 管理与幂等启动
+  - 通过环境变量注入 runtime 启动参数（`VM_USER_ID/VM_TOKEN/...`）
+- 新增文档：`docs/design/execution-plane-arch/07-LOCAL-BOOTSTRAP.md`
+  - 说明 scheduler 触发机制、脚本参数、建议本地接线
+- 测试增强：`apps/api/src/__tests__/vm-scheduler.test.ts`
+  - 校验 bootstrap spawn 参数与注入环境变量
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+
+### 2026-02-22 迭代 X+20 — Scheduler 自动签发 VM_TOKEN
+- `apps/api/src/scheduler/vm-scheduler.ts`
+  - bootstrap 触发时自动签发 `VM_TOKEN`（JWT，10 分钟）
+  - payload: `{ userId, orgId }`
+  - 使用 `JWT_SECRET` 签名
+- `apps/api/src/__tests__/vm-scheduler.test.ts`
+  - 新增对 `VM_TOKEN` 的解签断言（校验 `userId/orgId`）
+- 文档更新：
+  - `docs/design/execution-plane-arch/07-LOCAL-BOOTSTRAP.md`
+  - 明确 `VM_TOKEN` 由 scheduler 自动注入
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+21 — 自动执行 10 步（调度稳态 + 运维）
+1. `vm-scheduler` 增加 bootstrap 元数据字段读取：`last_bootstrap_at/bootstrap_attempts`
+2. 新实例创建写入 `bootstrap_attempts=0`
+3. 增加默认 bootstrap 命令解析：
+   - 非生产环境且 `scripts/vm/bootstrap-local.sh` 存在时自动启用
+4. 增加 bootstrap 冷却策略：`VM_BOOTSTRAP_COOLDOWN_MS`（默认 30000）
+5. 增加 bootstrap 触发计数与时间戳更新：`touchBootstrapAttempt`
+6. 断线 VM 在冷却窗口内不重复拉起，避免风暴
+7. 新增迁移：`database/migrations/017_user_vm_instances_bootstrap_attempts.sql`
+8. 单测增强：`vm-scheduler.test.ts` 增加 cooldown 跳过场景
+9. 新增运维脚本：`scripts/vm/stop-local.sh`
+10. 新增运维脚本：`scripts/vm/status-local.sh`
+- 文档更新：
+  - `docs/design/execution-plane-arch/07-LOCAL-BOOTSTRAP.md`
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `bash -n scripts/vm/bootstrap-local.sh scripts/vm/status-local.sh scripts/vm/stop-local.sh`
+
+### 2026-02-22 迭代 X+22 — 自动执行 10 步（Bootstrap 强化）
+1. `vm-scheduler` 新增 bootstrap 元字段：`bootstrap_last_error`
+2. 新增失败错误落库逻辑：`recordBootstrapFailure`
+3. 新实例拉起成功时状态直接推进到 `provisioning`
+4. 断线恢复增加尝试次数上限：`VM_BOOTSTRAP_MAX_ATTEMPTS`（默认 5）
+5. 超过上限自动标记 `failed`，并记录失败原因
+6. 保留 cooldown 防抖策略并与上限策略组合
+7. 新增迁移：`database/migrations/018_user_vm_instances_bootstrap_error.sql`
+8. 扩展 `vm-scheduler.test.ts`：新增 provisioning 启动路径断言
+9. 扩展 `vm-scheduler.test.ts`：新增 attempts exceeded -> failed 断言
+10. 更新 runbook：`07-LOCAL-BOOTSTRAP.md` 增加 `VM_BOOTSTRAP_MAX_ATTEMPTS`
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+23 — 自动执行 10 步（调度可观测与控制）
+1. `ensureUserVM` 返回 `retryAfterMs`，用于上层重试提示
+2. `chat.service.ts` 在 VM 未就绪错误中增加秒级重试建议
+3. scheduler 新增 `getUserVMStatus(userId)` 查询接口
+4. scheduler 新增 `forceRebootstrap(userId, orgId)` 强制重拉起接口
+5. 新增路由：`apps/api/src/routes/v1/vm.ts`
+   - `GET /api/v1/vm/status`
+   - `POST /api/v1/vm/rebootstrap`
+6. `routes/v1/index.ts` 挂载 `/vm`
+7. scheduler 新增 bootstrap 失败持久化字段：`bootstrap_last_error`
+8. 新增迁移：`database/migrations/018_user_vm_instances_bootstrap_error.sql`
+9. 单测增强：`vm-scheduler` 增加 retryAfterMs/cooldown/attempts 上限相关断言
+10. 新增路由导出测试：`apps/api/src/__tests__/vm.route.test.ts`
+- 文档更新：
+  - `docs/design/execution-plane-arch/07-LOCAL-BOOTSTRAP.md` 增加 `VM_BOOTSTRAP_MAX_ATTEMPTS`
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/vm.route.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+
+### 2026-02-22 迭代 X+24 — 自动执行 10 步（状态与重试策略完善）
+1. `ensureUserVM` 支持返回 `retryAfterMs`
+2. `chat.service.ts` 将 `retryAfterMs` 映射为“建议 N 秒后重试”提示
+3. `forceRebootstrap` 明确绕过 cooldown（`force=true`）
+4. `getUserVMStatus` 返回 `retryAfterMs`
+5. scheduler 新增 `bootstrap_last_error` 字段读取与返回
+6. disconnected 状态增加尝试上限保护并可标记 failed
+7. 新增迁移：`database/migrations/019_user_vm_instances_bootstrap_indexes.sql`
+8. 新增本地运维脚本：`scripts/vm/rebootstrap-local.sh`
+9. runbook 增补 VM 状态控制 API：`/api/v1/vm/status`、`/api/v1/vm/rebootstrap`
+10. 测试增强：`vm-scheduler.test.ts` 新增 force bypass cooldown 与 status retryAfterMs 用例
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/vm.route.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py -q`
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `bash -n scripts/vm/bootstrap-local.sh scripts/vm/status-local.sh scripts/vm/stop-local.sh scripts/vm/rebootstrap-local.sh`
+
+### 2026-02-22 迭代 X+25 — 自动执行（SemiGraph checkpoint 闭环）
+1. 升级 `runtime/src/checkpoint/local_checkpointer.py` 为 session 目录结构：`.semibot/sessions/{session_id}/checkpoints/*.json`
+2. 增加 checkpoint 保留策略（默认保留最近 10 个）
+3. 增加 `load_latest` 与 `get_all_for_snapshot` 能力
+4. `SemiGraphAdapter` 切换为 session 根目录：`.semibot/sessions/{session_id}`
+5. `SemiGraphAdapter` 接入 `LocalCheckpointer`，执行完成/失败/取消均落盘 checkpoint
+6. `SemiGraphAdapter` 追加 `snapshot_sync` 上报（best-effort）
+7. `SemiGraphAdapter` 在缺省 history 场景下从最近 checkpoint 恢复历史
+8. 取消流程补齐 checkpoint+snapshot，避免早取消丢快照
+9. 强化单测：`test_semigraph_adapter_ws.py` 增加 checkpoint 落盘、snapshot_sync、history 恢复断言
+10. 修复 API 路由行为测试，移除 `supertest` 依赖改为直接调用路由 handler
+- 验证通过：
+  - `pnpm --filter @semibot/api exec vitest --run src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/vm.route.behavior.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
+  - `cd runtime && .venv/bin/python -m compileall src`

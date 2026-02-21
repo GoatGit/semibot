@@ -235,8 +235,8 @@ class ControlPlaneClient:
             'params': params,
         }))
 
-    async def get_skill_files(self, session_id: str, skill_id: str, version: str = 'latest'):
-        return await self.request(session_id, 'get_skill_files', skill_id=skill_id, version=version)
+    async def get_skill_package(self, session_id: str, skill_id: str, version: str = 'latest'):
+        return await self.request(session_id, 'get_skill_package', skill_id=skill_id, version=version)
 
     async def search_long_term_memory(self, session_id: str, query: str, top_k: int = 5):
         return await self.request(session_id, 'memory_search', query=query, top_k=top_k)
@@ -267,7 +267,7 @@ class ControlPlaneClient:
 | 消息类型 | 方向 | 说明 |
 |----------|------|------|
 | `init` | 控制平面 → 执行平面 | 连接建立后发送初始化数据（user_id、api_keys） |
-| `start_session` | 控制平面 → 执行平面 | 要求启动新 session 进程（agent_config、skill_index） |
+| `start_session` | 控制平面 → 执行平面 | 要求启动新 session 进程（agent_config、skill_index、file_inventory） |
 | `stop_session` | 控制平面 → 执行平面 | 要求停止 session 进程 |
 | `request` | 执行平面 → 控制平面 | 请求-响应模式，带唯一 msg_id 和 session_id |
 | `response` | 控制平面 → 执行平面 | 对 request 的响应，通过 msg_id 匹配请求 |
@@ -712,7 +712,7 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
             await self.client.send_sse_event(self.session_id, msg['data'])
 
         elif msg_type == 'request':
-            # Bridge 需要控制平面处理的请求（memory_search、get_skill_files、mcp_call）
+            # Bridge 需要控制平面处理的请求（memory_search、get_skill_package、mcp_call）
             try:
                 result = await self.client.request(
                     self.session_id, msg['method'], **msg.get('params', {})
@@ -751,7 +751,7 @@ Bridge 是一个 Node.js 进程，职责：
 - 通过 Unix Domain Socket 接收 Python SessionManager 的指令
 - 驱动 OpenClaw 的 Brain/Skills/Memory 原生运行
 - 将 OpenClaw 事件翻译为 Semibot SSE 事件格式
-- 代理控制平面请求（长期记忆搜索、远程 MCP、Skill 文件拉取）
+- 代理控制平面请求（长期记忆搜索、远程 MCP、Skill 包拉取）
 
 ```
 Python SessionManager ←→ Unix Socket (JSON-line) ←→ Node.js Bridge ←→ OpenClaw
@@ -775,7 +775,7 @@ Python SessionManager ←→ Unix Socket (JSON-line) ←→ Node.js Bridge ←�
 |------|------|
 | `ready` | 初始化完成 |
 | `sse_event` | 翻译后的 SSE 事件（text_chunk、tool_call_start 等） |
-| `request` | 需要控制平面处理的请求（memory_search、get_skill_files、mcp_call） |
+| `request` | 需要控制平面处理的请求（memory_search、get_skill_package、mcp_call） |
 | `fire_and_forget` | 单向通知（usage_report、audit_log） |
 | `error` | 错误 |
 
@@ -866,14 +866,49 @@ export function translateEvent(openclawEvent: any): SemibotSSEEvent | null {
 
 ### 4.7 Skill 兼容
 
-两个 runtime 都使用 SKILL.md 格式，共享同一份缓存目录 `/home/user/.semibot/skills/`。
+两个 runtime 都使用 SKILL.md 格式，共享同一份缓存目录 `/home/user/.semibot/skills/`。缓存的是**完整技能包目录**（SKILL.md + scripts/ + REFERENCE.md 等），而非单个文件，以支持 ClawHub 技能包的 scripts/ 执行。
 
 - **SemiGraph**：通过现有的 `load_skill_with_cache()` 加载（见第 8 节）
 - **OpenClaw**：Bridge 重写 OpenClaw 的 skill loader，优先从缓存读取，缓存未命中时通过 IPC → Python → WS 从控制平面拉取
 
+#### ClawHub 技能包兼容
+
+Semibot 的目标是**直接运行 ClawHub 上的技能包**，无需任何适配。兼容性保障：
+
+| 维度 | ClawHub 技能包 | Semibot 处理 |
+|------|--------------|-------------|
+| 元数据 | SKILL.md frontmatter（仅 name + description） | 控制平面安装时自动补全 skill_id（slug 化 name）、version（时间戳） |
+| 目录结构 | SKILL.md + scripts/ + REFERENCE.md + ... | 完整目录缓存到 VM，保持原始结构 |
+| scripts/ 执行 | LLM 通过 bash 调用 `python scripts/xxx.py` | VM 内 bash 工具直接执行缓存目录下的脚本 |
+| 依赖检查 | `metadata.requires`（二进制、环境变量） | Session 启动时校验 `skill_index[].requires`，不满足的 skill 标记为 unavailable |
+| 懒加载 | OpenClaw 原生支持 | 索引注入 + `get_skill_package` 按需拉取完整目录 |
+
+#### 缓存目录结构
+
+```
+/home/user/.semibot/skills/
+├── pdf/                          # 完整技能包目录（与 ClawHub 原始结构一致）
+│   ├── SKILL.md
+│   ├── REFERENCE.md
+│   ├── FORMS.md
+│   ├── scripts/
+│   │   ├── check_fillable_fields.py
+│   │   ├── fill_pdf_form_with_annotations.py
+│   │   └── extract_form_field_info.py
+│   └── LICENSE.txt
+├── xlsx/
+│   ├── SKILL.md
+│   └── scripts/
+│       └── recalc.py
+└── web-search/
+    └── SKILL.md
+```
+
+#### Skill 加载器（完整目录缓存）
+
 ```typescript
 // runtime/openclaw-bridge/src/skill-loader.ts
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 const SKILLS_CACHE_DIR = process.env.SKILLS_CACHE_DIR || '/home/user/.semibot/skills';
@@ -882,22 +917,30 @@ export async function loadSkill(
   skillId: string,
   requestFn: (method: string, params: any) => Promise<any>
 ): Promise<string> {
-  const cachePath = join(SKILLS_CACHE_DIR, skillId, 'SKILL.md');
+  const skillDir = join(SKILLS_CACHE_DIR, skillId);
+  const skillMdPath = join(skillDir, 'SKILL.md');
 
-  // 缓存命中
-  if (existsSync(cachePath)) {
-    return readFileSync(cachePath, 'utf-8');
+  // 缓存命中（目录存在且 SKILL.md 存在）
+  if (existsSync(skillMdPath)) {
+    return readFileSync(skillMdPath, 'utf-8');
   }
 
-  // 缓存未命中，通过 IPC 请求控制平面
-  const result = await requestFn('get_skill_files', { skill_id: skillId });
+  // 缓存未命中，通过 IPC 请求控制平面拉取完整技能包
+  const result = await requestFn('get_skill_package', { skill_id: skillId });
 
-  // 写入缓存
-  const dir = join(SKILLS_CACHE_DIR, skillId);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(cachePath, result.content, 'utf-8');
+  // 写入完整目录（保持原始结构）
+  mkdirSync(skillDir, { recursive: true });
+  for (const file of result.package.files) {
+    const filePath = join(skillDir, file.path);
+    mkdirSync(join(filePath, '..'), { recursive: true });
+    if (file.encoding === 'base64') {
+      writeFileSync(filePath, Buffer.from(file.content, 'base64'));
+    } else {
+      writeFileSync(filePath, file.content, 'utf-8');
+    }
+  }
 
-  return result.content;
+  return readFileSync(skillMdPath, 'utf-8');
 }
 ```
 
@@ -1367,12 +1410,20 @@ async def respond_node(state, config):
 
 ## 8. Skill 加载流程
 
-Skill 采用懒加载策略，首次使用时从控制平面拉取并缓存到虚拟机本地。缓存在 `.semibot/skills/` 下，所有 session 共享。
+Skill 采用懒加载策略，首次使用时从控制平面拉取**完整技能包目录**并缓存到虚拟机本地。缓存在 `.semibot/skills/` 下，所有 session 共享。
+
+### 设计目标
+
+直接运行 ClawHub 上的技能包，无需任何适配。技能包的完整目录结构（SKILL.md + scripts/ + REFERENCE.md 等）原样缓存到 VM，LLM 可通过 bash 工具直接调用 scripts/ 下的脚本。
 
 ### 流程图
 
 ```
-Session 启动 → 控制平面发送 skill_index（仅名称 + 描述）
+Session 启动 → 控制平面发送 skill_index（名称 + 描述 + file_inventory + requires）
+                                    │
+                                    ▼
+                          依赖检查（requires.binaries / requires.env_vars）
+                          不满足的 skill 标记为 unavailable，不注入索引
                                     │
                                     ▼
 Agent 需要 Skill X → 检查 .semibot/skills/{skill_id}/SKILL.md 缓存
@@ -1382,24 +1433,72 @@ Agent 需要 Skill X → 检查 .semibot/skills/{skill_id}/SKILL.md 缓存
                      缓存命中              缓存未命中
                           │                   │
                           ▼                   ▼
-                     直接执行         WS request: get_skill_files(skill_id)
+                  读取 SKILL.md      WS request: get_skill_package(skill_id)
+                  按指令执行                   │
+                                              ▼
+                                    控制平面返回完整技能包
+                                    {files: [{path, content, encoding}]}
                                               │
                                               ▼
-                                    控制平面返回 SKILL.md 内容
+                                    写入 .semibot/skills/{skill_id}/
+                                    （保���原始目录结构）
                                               │
                                               ▼
-                                    保存到 .semibot/skills/{skill_id}/SKILL.md
-                                              │
-                                              ▼
-                                          执行 Skill
+                                    读取 SKILL.md → 按指令执行
+                                    scripts/ 通过 bash 工具调用
 ```
 
 ### 缓存策略
 
-- **首次加载**：从控制平面拉取完整 SKILL.md 文件
+- **首次加载**：从控制平面拉取完整技能包目录（所有文件）
 - **缓存有效期**：虚拟机生命周期内有效（所有 session 共享），不主动失效
-- **版本控制**：`get_skill_files` 支持 `version` 参数，默认 `latest`
-- **缓存目录**：`/home/user/.semibot/skills/{skill_id}/SKILL.md`
+- **版本控制**：`get_skill_package` 支持 `version` 参数，默认 `latest`
+- **缓存目录**：`/home/user/.semibot/skills/{skill_id}/`（完整目录结构）
+- **缓存判断**：目录存在且 `SKILL.md` 文件存在即视为缓存命中
+
+### 依赖检查
+
+Session 启动时，执行平面根据 `skill_index[].requires` 校验 VM 环境：
+
+```python
+import shutil
+import os
+
+def check_skill_requirements(skill_entry: dict) -> tuple[bool, list[str]]:
+    """检查 skill 依赖是否满足，返回 (satisfied, missing_items)"""
+    missing = []
+    requires = skill_entry.get('requires', {})
+
+    for binary in requires.get('binaries', []):
+        if not shutil.which(binary):
+            missing.append(f'binary:{binary}')
+
+    for env_var in requires.get('env_vars', []):
+        if not os.environ.get(env_var):
+            missing.append(f'env:{env_var}')
+
+    return len(missing) == 0, missing
+```
+
+不满足依赖的 skill 不注入 `<available_skills>` 索引，避免 LLM 尝试调用不可用的技能。
+
+### 索引注入格式
+
+```
+<available_skills>
+  <skill name="pdf" path="/home/user/.semibot/skills/pdf/">
+    处理 PDF 文件（读取、合并、拆分、表单填写等）
+    文件: SKILL.md, REFERENCE.md, FORMS.md, scripts/(8个脚本)
+  </skill>
+  <skill name="xlsx" path="/home/user/.semibot/skills/xlsx/">
+    处理 Excel 文件（创建、编辑、公式、图表等）
+    文件: SKILL.md, scripts/recalc.py
+  </skill>
+</available_skills>
+
+当任务匹配某个技能时，先用 read_skill_file 工具读取对应的 SKILL.md 获取完整指南。
+如需执行技能中的脚本，使用 bash 工具运行。脚本位于技能目录的 scripts/ 下。
+```
 
 ### 代码示例
 
@@ -1407,18 +1506,26 @@ Agent 需要 Skill X → 检查 .semibot/skills/{skill_id}/SKILL.md 缓存
 SKILLS_CACHE_DIR = Path('/home/user/.semibot/skills')
 
 async def load_skill_with_cache(skill_id: str, client: ControlPlaneClient) -> str:
-    cache_path = SKILLS_CACHE_DIR / skill_id / 'SKILL.md'
+    """加载完整技能包目录，返回 SKILL.md 内容"""
+    skill_dir = SKILLS_CACHE_DIR / skill_id
+    skill_md_path = skill_dir / 'SKILL.md'
 
-    if cache_path.exists():
-        return cache_path.read_text(encoding='utf-8')
+    if skill_md_path.exists():
+        return skill_md_path.read_text(encoding='utf-8')
 
-    # 缓存未命中，从控制平面拉取
-    skill_data = await client.get_skill_files(skill_id)
+    # 缓存未命中，从控制平面拉取完整技能包
+    pkg = await client.get_skill_package(skill_id)
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(skill_data['content'], encoding='utf-8')
+    # 写入完整目录（保持原始结构）
+    for file_entry in pkg['package']['files']:
+        file_path = skill_dir / file_entry['path']
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        if file_entry.get('encoding') == 'base64':
+            file_path.write_bytes(base64.b64decode(file_entry['content']))
+        else:
+            file_path.write_text(file_entry['content'], encoding='utf-8')
 
-    return skill_data['content']
+    return skill_md_path.read_text(encoding='utf-8')
 ```
 
 ---

@@ -40,6 +40,8 @@ export interface Agent {
   isActive: boolean
   isPublic: boolean
   isSystem: boolean
+  runtimeType: 'semigraph' | 'openclaw'
+  openclawConfig?: Record<string, unknown>
   createdAt: string
   updatedAt: string
 }
@@ -61,6 +63,8 @@ export interface CreateAgentInput {
   skills?: string[]
   subAgents?: string[]
   isPublic?: boolean
+  runtimeType?: 'semigraph' | 'openclaw'
+  openclawConfig?: Record<string, unknown>
 }
 
 export interface UpdateAgentInput {
@@ -72,6 +76,8 @@ export interface UpdateAgentInput {
   subAgents?: string[]
   isActive?: boolean
   isPublic?: boolean
+  runtimeType?: 'semigraph' | 'openclaw'
+  openclawConfig?: Record<string, unknown>
 }
 
 export interface ListAgentsOptions {
@@ -136,6 +142,8 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
     isActive: row.is_active,
     isPublic: row.is_public,
     isSystem: row.is_system,
+    runtimeType: (row.runtime_type as 'semigraph' | 'openclaw' | null) ?? 'semigraph',
+    openclawConfig: row.openclaw_config ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -193,6 +201,8 @@ export async function createAgent(orgId: string, input: CreateAgentInput): Promi
     skills: input.skills,
     subAgents: input.subAgents,
     isPublic: input.isPublic,
+    runtimeType: input.runtimeType,
+    openclawConfig: input.openclawConfig,
   })
 
   return rowToAgent(row)
@@ -292,6 +302,8 @@ export async function updateAgent(
     subAgents: input.subAgents,
     isActive: input.isActive,
     isPublic: input.isPublic,
+    runtimeType: input.runtimeType,
+    openclawConfig: input.openclawConfig,
   })
 
   if (!row) {

@@ -33,6 +33,7 @@ export interface Session {
   status: SessionStatus
   title?: string
   metadata?: Record<string, unknown>
+  runtimeType?: 'semigraph' | 'openclaw'
   startedAt: string
   endedAt?: string
   createdAt: string
@@ -65,6 +66,7 @@ export interface CreateSessionInput {
   agentId: string
   title?: string
   metadata?: Record<string, unknown>
+  runtimeType?: 'semigraph' | 'openclaw'
 }
 
 export interface AddMessageInput {
@@ -111,6 +113,7 @@ function rowToSession(row: sessionRepository.SessionRow): Session {
     status: row.status,
     title: row.title ?? undefined,
     metadata: row.metadata ?? undefined,
+    runtimeType: (row.runtime_type as 'semigraph' | 'openclaw' | null) ?? undefined,
     startedAt: row.started_at,
     endedAt: row.ended_at ?? undefined,
     createdAt: row.created_at,
@@ -154,6 +157,7 @@ export async function createSession(
     userId,
     title: input.title,
     metadata: input.metadata,
+    runtimeType: input.runtimeType,
   })
 
   return rowToSession(row)

@@ -1,0 +1,47 @@
+{
+  "id": "US-EPA-01",
+  "title": "Execution Plane 三层架构重构（无兼容模式）",
+  "description": "按 docs/design/execution-plane-arch 方案，将聊天主链路重构为 Web -> Control Plane WS -> Execution Plane WS，并引入 per-user VM 连接与 session 多路复用。",
+  "actor": "平台开发者",
+  "preconditions": [
+    "控制平面和执行平面均可访问 WebSocket",
+    "数据库允许执行新增迁移",
+    "Runtime 以 VM 守护进程模式启动"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "API 提供 /ws/vm 端点并支持执行平面 auth/init/heartbeat",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "Chat 服务不再调用 Runtime HTTP，而是通过 WS 下发 start_session/user_message",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "Runtime 新增 WS Client + SessionManager + semigraph adapter 主入口",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "数据库新增 execution-plane 所需字段和表（routing/vm/runtime/user_vm_instances/session_snapshots）",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "apps/api TypeScript 类型检查通过",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "runtime Python 语法检查通过",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "integration",
+  "priority": "high",
+  "tags": ["execution-plane", "websocket", "refactor", "ralph-loop"]
+}

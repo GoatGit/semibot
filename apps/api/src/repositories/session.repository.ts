@@ -25,6 +25,7 @@ export interface SessionRow {
   status: SessionStatus
   title: string | null
   metadata: Record<string, unknown> | null
+  runtime_type: string | null
   started_at: string
   ended_at: string | null
   created_at: string
@@ -36,6 +37,7 @@ export interface CreateSessionData {
   userId: string
   title?: string
   metadata?: Record<string, unknown>
+  runtimeType?: 'semigraph' | 'openclaw'
 }
 
 export interface ListSessionsParams {
@@ -88,13 +90,14 @@ export class SessionRepositoryImpl extends BaseRepository<SessionRow> {
  */
 export async function create(data: CreateSessionData): Promise<SessionRow> {
   const result = await sql`
-    INSERT INTO sessions (org_id, agent_id, user_id, title, metadata)
+    INSERT INTO sessions (org_id, agent_id, user_id, title, metadata, runtime_type)
     VALUES (
       ${data.orgId},
       ${data.agentId},
       ${data.userId},
       ${data.title ?? null},
-      ${data.metadata ? sql.json(data.metadata as Parameters<typeof sql.json>[0]) : null}
+      ${data.metadata ? sql.json(data.metadata as Parameters<typeof sql.json>[0]) : null},
+      ${data.runtimeType ?? null}
     )
     RETURNING *
   `

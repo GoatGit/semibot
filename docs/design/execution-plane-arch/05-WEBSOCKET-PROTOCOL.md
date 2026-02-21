@@ -124,7 +124,7 @@ Execution Plane (User VM)             Control Plane
   "type": "request",
   "session_id": "uuid",
   "id": "msg-uuid",
-  "method": "get_skill_files | memory_search | mcp_call | get_config",
+  "method": "get_skill_package | memory_search | mcp_call | get_config",
   "params": { ... }
 }
 ```
@@ -133,7 +133,7 @@ Execution Plane (User VM)             Control Plane
 
 | 方法 | 请求参数 | 返回值 |
 |------|----------|--------|
-| `get_skill_files` | `{skill_id: string, version?: string}` | `{files: [{name: string, content: string}]}` |
+| `get_skill_package` | `{skill_id: string, version?: string}` | `{package: {skill_id, version, files: [{path, content, encoding}], file_inventory}}` |
 | `memory_search` | `{query: string, top_k?: number}` | `{results: [{content: string, score: number, metadata: object}]}` |
 | `mcp_call` | `{server: string, tool: string, arguments: object}` | `{result: any}` |
 | `get_config` | `{agent_id: string}` | `{config: object}` |
@@ -211,7 +211,24 @@ Execution Plane (User VM)             Control Plane
       "max_tokens": 4096
     },
     "skill_index": [
-      {"id": "uuid", "name": "string", "description": "string", "version": "string"}
+      {
+        "id": "uuid",
+        "name": "string",
+        "description": "string",
+        "version": "string",
+        "source": "clawhub | upload | builtin",
+        "file_inventory": {
+          "has_skill_md": true,
+          "has_scripts": true,
+          "has_references": false,
+          "script_files": ["scripts/main.py"],
+          "reference_files": []
+        },
+        "requires": {
+          "binaries": ["python3"],
+          "env_vars": []
+        }
+      }
     ],
     "mcp_servers": [
       {"name": "github", "type": "remote"},
@@ -275,7 +292,7 @@ Execution Plane (User VM)             Control Plane
   "type": "response",
   "id": "msg-uuid",
   "result": null,
-  "error": {"code": "SKILL_NOT_FOUND", "message": "Skill xxx not found"}
+  "error": {"code": "SKILL_NOT_FOUND", "message": "Skill package xxx not found"}
 }
 ```
 

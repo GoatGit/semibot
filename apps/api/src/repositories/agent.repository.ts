@@ -28,6 +28,9 @@ export interface AgentRow {
   is_active: boolean
   is_public: boolean
   is_system: boolean
+  default_vm_mode: string | null
+  runtime_type: string | null
+  openclaw_config: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
@@ -41,6 +44,8 @@ export interface CreateAgentData {
   skills?: string[]
   subAgents?: string[]
   isPublic?: boolean
+  runtimeType?: 'semigraph' | 'openclaw'
+  openclawConfig?: Record<string, unknown>
 }
 
 export interface UpdateAgentData {
@@ -52,6 +57,8 @@ export interface UpdateAgentData {
   subAgents?: string[]
   isActive?: boolean
   isPublic?: boolean
+  runtimeType?: 'semigraph' | 'openclaw'
+  openclawConfig?: Record<string, unknown>
 }
 
 export interface ListAgentsParams {
@@ -116,7 +123,7 @@ export async function create(data: CreateAgentData): Promise<AgentRow> {
   const result = await sql`
     INSERT INTO agents (
       org_id, name, description, system_prompt, config,
-      skills, sub_agents, is_public
+      skills, sub_agents, is_public, runtime_type, openclaw_config
     )
     VALUES (
       ${data.orgId},
@@ -126,7 +133,9 @@ export async function create(data: CreateAgentData): Promise<AgentRow> {
       ${sql.json(data.config as Parameters<typeof sql.json>[0])},
       ${data.skills ?? []},
       ${data.subAgents ?? []},
-      ${data.isPublic ?? false}
+      ${data.isPublic ?? false},
+      ${data.runtimeType ?? 'semigraph'},
+      ${sql.json((data.openclawConfig ?? {}) as Parameters<typeof sql.json>[0])}
     )
     RETURNING *
   `
@@ -283,6 +292,8 @@ export async function update(
         sub_agents = ${data.subAgents ?? agent.sub_agents},
         is_active = ${data.isActive ?? agent.is_active},
         is_public = ${data.isPublic ?? agent.is_public},
+        runtime_type = ${data.runtimeType ?? agent.runtime_type},
+        openclaw_config = ${sql.json((data.openclawConfig ?? agent.openclaw_config ?? {}) as Parameters<typeof sql.json>[0])},
         version = version + 1,
         updated_at = NOW(),
         updated_by = ${updatedBy ?? null}

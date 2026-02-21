@@ -1,0 +1,22 @@
+{
+  "name": "@semibot/openclaw-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/main.ts",
+    "start": "node dist/main.js",
+    "test:e2e": "node tests/bridge-e2e.mjs",
+    "test:e2e:sdk": "node tests/bridge-sdk-e2e.mjs",
+    "test:e2e:sdk:fail": "node tests/bridge-sdk-fail-e2e.mjs",
+    "test:e2e:sdk:timeout": "node tests/bridge-sdk-timeout-e2e.mjs",
+    "test:e2e:sdk:invalid": "node tests/bridge-sdk-invalid-output-e2e.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.17.12",
+    "tsx": "^4.20.3",
+    "typescript": "^5.7.3"
+  }
+}
