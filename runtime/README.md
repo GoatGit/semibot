@@ -1,14 +1,14 @@
 # Semibot Runtime
 
-AI Agent Execution Engine powered by LangGraph.
+Execution-plane runtime for Semibot (WS client + per-session adapters).
 
 ## Overview
 
 Semibot Runtime is a Python-based execution engine for AI agents. It provides:
 
 - **Agent Orchestration**: LangGraph-based workflow execution
-- **Memory Management**: Short-term (Redis) and long-term (PostgreSQL) memory
-- **Task Queue**: Redis-based distributed task queue
+- **Execution Plane WS Client**: one VM connection multiplexing many sessions
+- **Local Memory + Checkpoint**: session-local storage with snapshot sync
 - **MCP Integration**: Model Context Protocol client for tool servers
 - **Multi-LLM Support**: OpenAI, Anthropic, and custom providers
 - **Audit Logging**: Comprehensive execution tracking
@@ -43,8 +43,7 @@ pip install --upgrade pip
 pip install -e .
 
 # 6. Install additional dependencies
-pip install "aiohttp>=3.9.0" "docker>=7.0.0" "fastapi>=0.115.0" \
-    "uvicorn[standard]>=0.30.0" "sse-starlette>=2.1.0" \
+pip install "aiohttp>=3.9.0" "docker>=7.0.0" \
     "opentelemetry-exporter-otlp>=1.26.0"
 
 # 7. Install MCP SDK from GitHub
@@ -70,12 +69,20 @@ pytest --cov=src --cov-report=html
 ## Architecture
 
 - `src/orchestrator/` - Agent workflow orchestration
-- `src/memory/` - Memory management (short-term & long-term)
-- `src/queue/` - Task queue system
+- `src/ws/` - Control-plane WebSocket client
+- `src/session/` - Session manager and runtime adapters
+- `src/memory/` - Local memory + control-plane proxy
+- `src/checkpoint/` - Local checkpoint persistence
 - `src/llm/` - LLM provider integrations
 - `src/mcp/` - MCP client implementation
 - `src/audit/` - Audit logging system
 - `src/skills/` - Built-in skills (code execution, web search)
+
+## Run
+
+```bash
+python -m src.main
+```
 
 ## Configuration
 

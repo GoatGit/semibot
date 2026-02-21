@@ -1,9 +1,11 @@
-"""Runtime server entry point.
+"""Execution-plane runtime entry point.
 
 Usage:
-    uvicorn main:app --host 0.0.0.0 --port 8801
+    python -m src.main
 """
 
-from src.server.app import create_app
+from src.main import main
 
-app = create_app()
+
+if __name__ == "__main__":
+    main()

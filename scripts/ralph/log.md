@@ -502,3 +502,20 @@
   - `cd runtime && .venv/bin/python -m compileall src`
   - `pnpm --filter @semibot/api exec tsc --noEmit`
   - `pnpm --filter @semibot/api exec vitest --run src/__tests__/chat-ws.integration.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts src/__tests__/vm.route.behavior.test.ts`
+
+### 2026-02-22 迭代 X+29 — 自动执行（彻底下线 runtime HTTP server）
+1. `runtime/main.py` 入口改为 execution-plane 模式：调用 `src.main.main()`
+2. `runtime/package.json` dev 脚本改为 `python -m src.main`
+3. 删除 runtime HTTP server 代码：`runtime/src/server/app.py`
+4. 删除 runtime HTTP server 代码：`runtime/src/server/routes.py`
+5. 删除 runtime HTTP server 代码：`runtime/src/server/models.py`
+6. 删除 runtime HTTP server 代码：`runtime/src/server/middleware.py`
+7. 删除 runtime HTTP server 代码：`runtime/src/server/errors.py`
+8. 删除 runtime HTTP server 包入口：`runtime/src/server/__init__.py`
+9. 删除仅服务于 HTTP server 的测试：`runtime/tests/memory/test_app_integration.py`
+10. 更新 `runtime/README.md`，移除 uvicorn/FastAPI 运行与依赖说明，新增 `python -m src.main`
+- 验证通过：
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/orchestrator/test_nodes_memory.py tests/agents/test_delegator.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `pnpm --filter @semibot/api exec vitest --run src/__tests__/chat-ws.integration.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts src/__tests__/vm.route.behavior.test.ts`
