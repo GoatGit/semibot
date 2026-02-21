@@ -1,6 +1,7 @@
 # OpenClaw 与本项目架构对比分析
 
 > 本文档对比 OpenClaw 开源 Agent 框架与本项目（Semibot-S1）的架构差异，分析可改进之处。
+> 最后更新：2026-02-20
 
 ## 1. 架构概览对比
 
@@ -44,6 +45,10 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                      apps/api (API层)                        │
 │              Express + Repository 模式                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │ Skill Prompt │  │   Runtime    │  │     MCP      │      │
+│  │   Builder    │  │   Adapter    │  │   Service    │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -52,7 +57,12 @@
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │ orchestrator │  │    agents    │  │    skills    │      │
-│  │  (LangGraph) │  │ Planner/Exec │  │   Registry   │      │
+│  │  (LangGraph) │  │ Base/Deleg.  │  │   Registry   │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   sandbox    │  │     mcp      │  │  evolution   │      │
+│  │ Docker Pool  │  │   Client     │  │   Engine     │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
@@ -77,6 +87,19 @@ START → PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND → END
               ↑______|              │
                      |______________|
 ```
+
+**状态节点职责：**
+- `start_node`：初始化上下文、加载记忆
+- `plan_node`：解析意图、生成 ExecutionPlan
+- `act_node`：执行工具/技能（支持并行）
+- `delegate_node`：委托给 SubAgent
+- `observe_node`：评估结果、决定下一步（replan/continue/done）
+- `reflect_node`：总结学习、存储进化技能
+- `respond_node`：生成最终响应
+
+**条件路由：**
+- `route_after_plan`：PLAN 后路由到 ACT / DELEGATE / RESPOND
+- `route_after_observe`：OBSERVE 后路由到 PLAN / ACT / REFLECT
 
 ---
 
@@ -111,13 +134,23 @@ START → PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND → END
 
 | 对比项 | OpenClaw | 本项目 | 评价 |
 |--------|----------|--------|------|
-| 技能注册 | ClawHub 市场 | SkillRegistry | 相当 |
-| 技能格式 | SKILL.md + YAML | Skill 类 + ToolSchema | 相当 |
-| 工具类型 | 多种 | api/code/query/mcp/browser | 相当 |
-| 触发机制 | 关键词 | triggerKeywords | 相当 |
-| 参数校验 | 基础 | OpenAPI-style ToolParameterSchema | ✅ 本项目更好 |
+| 架构模型 | 单层：SKILL.md 目录即技能 | 双层：SkillDefinition（管理）+ SkillPackage（执行�� | ✅ 本项目更完善 |
+| 技能格式 | SKILL.md + YAML frontmatter | SKILL.md（已移除 manifest.json） | 相当 |
+| 技能注册 | ClawHub 公共注册中心 | 管理员管理 + 多来源安装 | ⚠️ OpenClaw 生态更开放 |
+| 安装来源 | `clawhub install <slug>` | 手动 skill_id / manifest URL / 文件上传 / Anthropic 源 | ✅ 本项目来源更多 |
+| 安装流程 | 简单下载到 `./skills/` | 状态机：pending → downloading → validating → installing → active | ✅ 本项目更健壮 |
+| 安装审计 | 无 | skill_install_logs 完整审计表 | ✅ 本项目更好 |
+| 版本管理 | 注册中心 semver | 数据库记录 + 文件系统 `{skillId}/{version}/` | ✅ 本项目更好 |
+| 版本锁定 | 无 | agent_skills 支持 version_lock + auto_update | ✅ 本项目更好 |
+| 懒加载 | 三阶段：索引 → read_skill_file → 执行 | 两阶段：索引注入 → read_skill_file 按需读取 | 相当（设计一致） |
+| 技能发现 | Embedding 语义搜索 | 按名称/分类/标签过滤 | ⚠️ OpenClaw 更智能 |
+| 社区生态 | 50+ 内置技能 + 社区贡献 + Stars/下载量 | 管理员管理，无公开市场 | ⚠️ OpenClaw 更开放 |
+| 进化技能 | 无 | evolved_skills：LLM 自动生成 → 审核 → 向量检索复用 | ✅ 本项目独有 |
+| 参数校验 | 基础 | OpenAPI-style ToolParameterSchema + Zod | ✅ 本项目更好 |
+| 多租户 | 无（本地运行） | 全局可见 + 执行隔离（org_id 命名空间） | ✅ 本项目更好 |
+| 工具类型 | 工具分组（fs/runtime/web/ui），profile 控制 | api/code/query/mcp/browser + MCP 集成 | 相当 |
 
-**结论：** 技能系统基本相当，本项目的参数校验更完善。
+**结论：** 本项目的技能系统在企业级管控（双层模型、安装审计、版本锁定、多租户隔离、进化技能）方面远优于 OpenClaw。OpenClaw 的优势在于开放的社区生态（ClawHub 注册中心）和语义搜索发现机制。
 
 ### 2.4 Gateway / 通信层
 
@@ -133,13 +166,28 @@ START → PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND → END
 
 | 对比项 | OpenClaw | 本项目 | 评价 |
 |--------|----------|--------|------|
-| Docker 沙箱 | ✅ 完整实现 | ❌ 未实现 | ⚠️ 需要补充 |
-| 工具权限控制 | ✅ 白名单机制 | ❌ 未实现 | ⚠️ 需要补充 |
-| 网络隔离 | ✅ | ❌ | ⚠️ 需要补充 |
-| 文件系统隔离 | ✅ | ❌ | ⚠️ 需要补充 |
-| 工作区访问控制 | ro/rw/none | ❌ | ⚠️ 需要补充 |
+| Docker 沙箱 | ✅ 完整实现 | ✅ 完整实现（SandboxManager + SandboxPool） | 相当 |
+| 工具权限控制 | ✅ 白名单机制 | ✅ PolicyEngine 安全策略引擎 | 相当 |
+| 网络隔离 | ✅ | ✅ `network_mode: "none"` 默认隔离 | 相当 |
+| 文件系统隔离 | ✅ | ✅ 只读文件系统选项 | 相当 |
+| 工作区访问控制 | ro/rw/none | ✅ 支持 | 相当 |
+| 容器池 | 无 | ✅ 预热容器池（默认 5 个，2x 溢出） | ✅ 本项目更好 |
+| 资源限制 | 基础 | ✅ 内存 512MB / CPU 1 核 / Seccomp | ✅ 本项目更细 |
+| 审计日志 | 基础 | ✅ 完整审计（session/agent/org 上下文 + 资源指标） | ✅ 本项目更好 |
+| 多语言执行 | ✅ | ✅ Python / JavaScript / Bash | 相当 |
 
-**结论：** 安全沙箱是本项目的主要差距，如涉及代码执行需要补充。
+**结论：** 两者沙箱能力基本对齐，本项目在容器池预热、资源限制粒度和审计日志方面更完善。
+
+### 2.6 MCP 集成
+
+| 对比项 | OpenClaw | 本项目 | 评价 |
+|--------|----------|--------|------|
+| MCP 支持 | ✅ 基础支持 | ✅ 完整实现（McpClient + 连接池） | ✅ 本项目更好 |
+| 传输类型 | STDIO | STDIO / HTTP-SSE / Streamable HTTP | ✅ 本项目更好 |
+| 连接管理 | 基础 | 连接池 + 状态追踪 + 重试 + 超时 | ✅ 本项目更好 |
+| Agent 绑定 | 无明确绑定 | Agent 可关联多个 MCP Server | ✅ 本项目更好 |
+
+**结论：** 本项目的 MCP 集成更完善，支持多传输类型和连接池管理。
 
 ---
 
@@ -151,12 +199,12 @@ START → PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND → END
 
 ```python
 # 状态节点
-- start_node    # 初始化
+- start_node    # 初始化上下文、加载记忆
 - plan_node     # 规划执行计划
-- act_node      # 执行工具
+- act_node      # 执行工具（支持并行）
 - delegate_node # 委托给子 Agent
-- observe_node  # 观察执行结果
-- reflect_node  # 反思总结
+- observe_node  # 观察执行结果、决定下一步
+- reflect_node  # 反思总结、存储进化技能
 - respond_node  # 生成响应
 
 # 条件路由
@@ -169,29 +217,78 @@ START → PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND → END
 ```python
 # 分层记忆架构
 class MemorySystem:
-    short_term: ShortTermMemory  # Redis - 当前会话
+    short_term: ShortTermMemory  # Redis - 当前会话（无 TTL 过期）
     long_term: LongTermMemory    # pgvector - 历史知识
 
 # 向量检索能力
 class EmbeddingService:
     provider: OpenAIEmbeddingProvider
     cache: RedisEmbeddingCache
+
+# 优雅降级：Redis/PostgreSQL 不可用时仍可工作
 ```
 
 ### 3.3 更灵活的 Agent 体系
 
 ```python
-# Agent 继承体系
+# Agent 体系
 BaseAgent
-├── PlannerAgent   # 规划型 Agent
-└── ExecutorAgent  # 执行型 Agent
+└── 支持 SubAgent 委托（delegate_node）
 
-# 支持委托和子 Agent
-class Agent:
-    subAgents: list[str]  # 可委托的子 Agent ID
+# Agent-Skills 绑定
+agent_skills 表：
+├── skill_definition_id  # 绑定技能定义
+├── version_lock         # 版本锁定（^1.2.0, ~1.2.3）
+├── auto_update          # 自动更新
+├── priority             # 执行优先级
+└── config_override      # 每 Agent 技能配置覆盖
 ```
 
-### 3.4 Checkpointing 支持
+### 3.4 完整的技能生命周期
+
+```
+安装 → 验证 → 激活 → 绑定 Agent → 懒加载 → 执行 → 进化 → 审核 → 复用
+                                                      ↑
+                                              evolved_skills 自动生成
+```
+
+- 双层模型：SkillDefinition（管理语义）+ SkillPackage（执行语义）
+- 懒加载：索引注入（~50 token/技能）+ `read_skill_file` 按需读取
+- 进化技能：LLM 自动从成功执行中提取技能 → 质量评分 → 审核 → 向量检索复用
+
+### 3.5 Docker 沙箱隔离
+
+```python
+# 沙箱架构
+SandboxManager
+├── SandboxPool      # 预热容器池（默认 5 个，2x 溢出）
+├── PolicyEngine     # 安全策略引擎
+└── AuditLogger      # 执行审计
+
+# 容器配置
+- 非 root 用户（1000:1000）
+- 内存限制：512MB / CPU 限制：1 核
+- 网络隔离：network_mode: "none"
+- 只读文件系统 / Seccomp profile
+```
+
+### 3.6 MCP 多协议集成
+
+```python
+# MCP 客户端
+McpClient
+├── STDIO 传输（本地进程）
+├── HTTP-SSE 传输（服务端推送）
+└── Streamable HTTP 传输（双向 HTTP）
+
+# 特性
+- 连接池 + 状态追踪
+- 重试逻辑（指数退避，最多 3 次）
+- 超时处理（连接 30s / 调用 60s）
+- Agent 可关联多个 MCP Server
+```
+
+### 3.7 Checkpointing 支持
 
 ```python
 # 支持状态持久化和恢复
@@ -205,87 +302,30 @@ create_agent_graph_with_checkpointer(
 
 ## 4. 需要改进的方面
 
-### 4.1 高优先级：安全沙箱
+### 4.1 高优先级：技能市场 / 发现机制
 
-**问题：** 缺少工具执行的安全隔离机制。
+**问题：** 缺少公开的技能注册中心和语义搜索发现机制。当前技能由管理员手动管理，用户无法自助发现和安装技能。
 
-**建议实现：**
+**借鉴 ClawHub 的设计：**
 
-```python
-# runtime/src/sandbox/__init__.py
-from dataclasses import dataclass
-from enum import Enum
-
-class WorkspaceAccess(Enum):
-    NONE = "none"
-    READ_ONLY = "ro"
-    READ_WRITE = "rw"
-
-@dataclass
-class SandboxConfig:
-    """沙箱配置"""
-    enabled: bool = True
-    workspace_access: WorkspaceAccess = WorkspaceAccess.READ_ONLY
-    network_access: bool = False
-    allowed_tools: list[str] = None  # 白名单
-    max_execution_time: int = 30  # 秒
-    max_memory_mb: int = 512
-
-class Sandbox:
-    """Docker 沙箱执行环境"""
-
-    def __init__(self, config: SandboxConfig):
-        self.config = config
-
-    async def execute(self, tool: str, params: dict) -> ToolResult:
-        """在沙箱中执行工具"""
-        # 1. 检查工具白名单
-        # 2. 创建隔离的 Docker 容器
-        # 3. 执行工具
-        # 4. 收集结果并销毁容器
-        pass
-```
-
-### 4.2 中优先级：并行执行调度
-
-**问题：** `PlanStep.parallel` 字段存在但未见并行调度实现。
+- **语义搜索**：ClawHub 使用 Embedding 语义搜索，而非关键词匹配。本项目已有 EmbeddingService 和 evolved_skills 的向量检索基础，可复用
+- **简化安装 CLI**：ClawHub 的 `clawhub install <slug>` 体验极简，可考虑提供类似的一键安装能力
+- **社区信号**：Stars、下载量、社区举报机制，帮助用户判断技能质量
 
 **建议实现：**
 
-```python
-# runtime/src/orchestrator/parallel.py
-import asyncio
-from src.orchestrator.state import PlanStep, ToolCallResult
+```typescript
+// 技能发现 API
+GET /api/v1/skill-catalog/search?q=<query>  // 语义搜索
+GET /api/v1/skill-catalog/popular            // 热门技能
+GET /api/v1/skill-catalog/recommended        // 推荐技能
 
-async def execute_parallel_steps(
-    steps: list[PlanStep],
-    executor: Callable,
-) -> list[ToolCallResult]:
-    """并行执行多个步骤"""
-
-    # 分组：可并行的步骤 vs 必须串行的步骤
-    parallel_steps = [s for s in steps if s.parallel]
-    serial_steps = [s for s in steps if not s.parallel]
-
-    results = []
-
-    # 并行执行
-    if parallel_steps:
-        parallel_results = await asyncio.gather(
-            *[executor(step) for step in parallel_steps],
-            return_exceptions=True,
-        )
-        results.extend(parallel_results)
-
-    # 串行执行
-    for step in serial_steps:
-        result = await executor(step)
-        results.append(result)
-
-    return results
+// 一键安装
+POST /api/v1/skill-catalog/install
+{ "slug": "pdf-tools", "version": "latest" }
 ```
 
-### 4.3 中优先级：Human-in-the-Loop
+### 4.2 中优先级：Human-in-the-Loop
 
 **问题：** 有 checkpointer 但缺少明确的人工介入点。
 
@@ -333,7 +373,7 @@ class HumanInTheLoop:
         pass
 ```
 
-### 4.4 低优先级：Gateway 多渠道支持
+### 4.3 低优先级：Gateway 多渠道支持
 
 **问题：** 仅支持 Web 界面。
 
@@ -348,20 +388,14 @@ class BaseGateway(ABC):
 
     @abstractmethod
     async def receive_message(self) -> Message:
-        """接收消息"""
         pass
 
     @abstractmethod
     async def send_message(self, message: Message):
-        """发送消息"""
         pass
 
 class WebGateway(BaseGateway):
     """Web 网关 (当前实现)"""
-    pass
-
-class TelegramGateway(BaseGateway):
-    """Telegram 网关"""
     pass
 
 class DingTalkGateway(BaseGateway):
@@ -371,19 +405,6 @@ class DingTalkGateway(BaseGateway):
 class FeishuGateway(BaseGateway):
     """飞书网关"""
     pass
-
-class GatewayRouter:
-    """网关路由器"""
-
-    def __init__(self):
-        self.gateways: dict[str, BaseGateway] = {}
-
-    def register(self, name: str, gateway: BaseGateway):
-        self.gateways[name] = gateway
-
-    async def route_message(self, source: str, message: Message):
-        """路由消息到对应网关"""
-        pass
 ```
 
 ---
@@ -486,8 +507,7 @@ class SkillExtension:
 
 | 优先级 | 改进项 | 工作量 | 价值 | 建议 |
 |--------|--------|--------|------|------|
-| 🔴 高 | 安全沙箱隔离 | 中 | 安全关键 | 立即实施 |
-| 🟡 中 | 并行执行调度 | 中 | 性能提升 | 下个迭代 |
+| 🔴 高 | 技能市场 / 语义搜索发现 | 中 | 生态关键 | 复用 EmbeddingService 实现 |
 | 🟡 中 | Human-in-the-Loop | 低 | 用户体验 | 下个迭代 |
 | 🟢 低 | Gateway 多渠道 | 高 | 按需扩展 | 需求驱动 |
 | ⚪ 可选 | LiteAgent 模式 | 低 | 特定场景 | 按需实现 |
@@ -499,32 +519,102 @@ class SkillExtension:
 
 ### 7.1 本项目的优势
 
-1. **更完善的状态机** - LangGraph 实现的完整 Agent 循环
-2. **更强的记忆系统** - Redis + pgvector 分层架构
-3. **更好的规划能力** - ExecutionPlan + PlanStep
-4. **反思机制** - REFLECT 节点支持经验总结
+1. **更完善的状态机** - LangGraph 实现的完整 Agent 循环（PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND）
+2. **更强的记忆系统** - Redis + pgvector 分层架构，支持优雅降级
+3. **更好的规划能力** - ExecutionPlan + PlanStep + 条件路由
+4. **反思机制** - REFLECT 节点支持经验总结 + 进化技能自动提取
 5. **委托机制** - SubAgent 支持任务分解
+6. **企业级技能管控** - 双层模型 + 安装审计 + 版本锁定 + 多租户隔离
+7. **Docker 沙箱** - 预热容器池 + PolicyEngine + 完整审计
+8. **MCP 多协议集成** - STDIO / HTTP-SSE / Streamable HTTP + 连接池
+9. **进化技能** - LLM 自动生成 → 质量评分 → 审核 → 向量检索复用
 
 ### 7.2 主要差距
 
-1. **安全沙箱** - 缺少 Docker 隔离执行环境
+1. **技能市场 / 发现机制** - 缺少公开注册中心和语义搜索
 2. **多渠道支持** - 仅有 Web 界面
-3. **并行调度** - 并行执行未完整实现
+3. **Human-in-the-Loop** - 缺少明确的人工介入点
 
 ### 7.3 建议路线图
 
 ```
 Phase 1 (当前)
-└── 补充安全沙箱实现
+└── 技能市场 + 语义搜索发现机制
 
 Phase 2 (下个迭代)
-├── 完善并行执行调度
-└── 添加 Human-in-the-Loop
+└── Human-in-the-Loop 人工介入
 
 Phase 3 (按需)
 ├── Gateway 多渠道支持
 └── LiteAgent 轻量模式
 ```
+
+---
+
+## 8. ClawHub 技能系统对比分析
+
+> 本节专门对比 ClawHub（OpenClaw 的公共技能注册中心）与本项目技能系统的差异。
+
+### 8.1 架构模型对比
+
+| 维度 | Semibot | ClawHub (OpenClaw) |
+|------|---------|-------------------|
+| 核心模型 | 双层：SkillDefinition（管理） + SkillPackage（执行） | 单层：SKILL.md 目录即技能 |
+| 元数据存储 | PostgreSQL 数据库（skill_definitions 表） | SKILL.md YAML frontmatter |
+| 版本管理 | 数据库记录 + 文件系统目录 `{skillId}/{version}/` | 注册中心 semver 版本 |
+| 必需文件 | SKILL.md（已移除 manifest.json） | 仅 SKILL.md |
+| 多租户 | 全局可见 + 执行隔离（org_id 命名空间） | 无多租户概念，本地运行 |
+
+### 8.2 安装机制对比
+
+| 维度 | Semibot | ClawHub |
+|------|---------|---------|
+| 安装来源 | 手动 skill_id、manifest URL、文件上传、Anthropic 源 | `clawhub install <slug>` 从注册中心拉取 |
+| 安装流程 | 状态机：pending → downloading → validating → installing → active | 简单下载到 `./skills/` 目录 |
+| 安装日志 | 完整审计表（skill_install_logs），记录每步进度、耗时、错误 | 无专门审计机制 |
+| 回滚 | 支持版本回滚 API | 手动删除/重装 |
+| 校验 | SHA256 校验 + 目录结构验证 + Zod schema | 社区举报 + 账号年龄限制 |
+
+### 8.3 运行时加载对比
+
+| 维度 | Semibot | ClawHub |
+|------|---------|---------|
+| 加载策略 | 两阶段懒加载：索引注入 → `read_skill_file` 按需读取 | 三阶段懒加载：索引注入 → `read_skill_file` → 执行 |
+| 技能绑定 | Agent-Skill 多对多绑定（agent_skills 表），支持优先级、版本锁定 | 三级目录覆盖：workspace > managed > bundled |
+| 执行隔离 | SkillExecutionContext（orgId/sessionId/userId），沙箱资源限制 | 本地 Docker sandbox |
+| 工具集成 | 统一 SkillRegistry（Python runtime），tool/skill 分层 | 工具分组（fs/runtime/web/ui），profile 控制访问 |
+
+### 8.4 发现与分享对比
+
+| 维度 | Semibot | ClawHub |
+|------|---------|---------|
+| 技能市场 | 无（计划中） | ClawHub 注册中心，支持语义搜索（embedding） |
+| 发布机制 | 管理员手动创建/上传 | `clawhub publish` / `clawhub sync` 批量发布 |
+| 搜索 | 按名称/分类/标签过滤 | Embedding 语义搜索 |
+| 社区机制 | 无 | Stars、下载量、社区举报 |
+| 进化技能 | 有（evolved_skills 表），支持 LLM 自动生成 + 审核 + 复用 | 无 |
+
+### 8.5 各自优势总结
+
+**Semibot 更强的地方：**
+- 企业级多租户隔离，执行上下文完整（org/session/user/agent）
+- 完整的安装状态机 + 审计日志，可追溯每次安装
+- Agent-Skill 绑定支持优先级、版本锁定、自动更新
+- 进化技能系统（LLM 自动生成 → 审核 → 复用），ClawHub 没有
+- 沙箱执行有细粒度资源限制（CPU/内存/网络/文件系统）
+
+**ClawHub 更强的地方：**
+- 开放的公共注册中心，社区生态成熟（50+ 内置技能）
+- 安装体验极简（一条命令），无需数据库
+- Embedding 语义搜索，发现技能更智能
+- 发布流程简单（`clawhub publish`），社区贡献门槛低
+- 本地优先，无服务端依赖
+
+### 8.6 可借鉴的方向
+
+1. **语义搜索发现机制** - 复用已有的 EmbeddingService，为技能目录添加向量搜索
+2. **简化安装体验** - 提供类似 `clawhub install` 的一键安装 API
+3. **社区信号** - 引入使用量、评分等信号帮助用户判断技能质量（可复用 evolved_skills 的 use_count/success_count）
 
 ---
 

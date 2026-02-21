@@ -1,6 +1,7 @@
 # OpenClaw Agent 范式详解
 
 > 本文档总结了 OpenClaw 开源项目的 Agent 架构设计和范式，供项目开发参考。
+> 最后更新：2026-02-20
 
 ## 1. 项目概述
 
@@ -143,7 +144,51 @@ author: developer
 ...
 ```
 
-### 4.2 内置技能类型
+**关键设计：** 技能不是 function-calling 工具定义，而是 LLM 操作手册（prompt 模板）。LLM 读取 SKILL.md 指令后，用已有工具（bash、文件读写等）执行。
+
+**可选 frontmatter 字段：**
+- `license` - 许可证
+- `metadata` - 单行 JSON 对象，支持以下 gating 选项：
+  - `user-invocable` - 暴露为斜杠命令
+  - `disable-model-invocation` - 从模型 prompt 中排除
+  - `requires` - 指定所需的二进制文件、环境变量或配置路径
+
+**实际技能目录结构示例（Anthropic 的 pdf 技能）：**
+```
+pdf/
+├── SKILL.md              <- frontmatter + LLM 操作指令
+├── REFERENCE.md          <- 高级用法文档
+├── FORMS.md              <- 表单处理指南
+├── scripts/              <- Python CLI 脚本，LLM 通过 bash 调用
+│   ├── check_fillable_fields.py
+│   ├── fill_pdf_form_with_annotations.py
+│   └── extract_form_field_info.py
+└── LICENSE.txt
+```
+
+### 4.2 技能加载位置
+
+三个加载位置（优先级从高到低）：
+
+1. **工作区技能** (`<workspace>/skills/`) - 最高优先级，用户自建
+2. **托管技能** (`~/.openclaw/skills/`) - OpenClaw 团队维护
+3. **内置技能** - 随 OpenClaw 发行
+
+工作区技能覆盖托管技能，托管技能覆盖内置技能。
+
+**加载时过滤：** OpenClaw 在加载时根据以下条件过滤技能：
+- 所需环境变量是否存在
+- 所需二进制文件是否在系统上
+- 配置设置是否满足
+- 操作系统平台要求
+
+### 4.3 运行时懒加载（三阶段）
+
+1. **索引注入**（每条消息，低成本 ~50-100 tokens/技能）：轻量 `<available_skills>` 块附加到系统 prompt
+2. **按需读取**（LLM 决定）：LLM 判断匹配后调用 `read_skill_file` 获取完整 SKILL.md（500-5000 tokens）
+3. **执行**（LLM 按指令操作）：LLM 使用已有工具（bash、文件读写、代码执行）执行技能逻辑
+
+### 4.4 内置技能类型
 
 | 类型 | 示例 |
 |------|------|
@@ -153,7 +198,7 @@ author: developer
 | API 集成 | HTTP requests, Webhooks |
 | 工作流 | Multi-step orchestration |
 
-### 4.3 自定义技能开发
+### 4.5 自定义技能开发
 
 ```typescript
 // skills/my-skill/index.ts
@@ -169,12 +214,59 @@ export default {
 };
 ```
 
-### 4.4 ClawHub 技能市场
+### 4.6 ClawHub 技能市场
 
-ClawHub 是 OpenClaw 的公共技能注册表：
-- 提供大量社区贡献的技能
-- 通过 GUI 安装额外技能
-- **安全提醒**：需警惕恶意技能，建议仅使用可信来源
+ClawHub 是 OpenClaw 的公共技能注册中心（clawhub.com / clawhub.ai）：
+
+**核心特性：**
+- 存储版本化的技能包（SKILL.md + 支持文件的目录）
+- **Embedding 语义搜索**（非关键词匹配），发现技能更智能
+- Semver 版本管理 + 变更日志
+- 社区信号：Stars、下载量
+
+**安全机制：**
+- 发布者 GitHub 账号需注册满 1 周
+- 社区举报达 3 次自动隐藏
+- 管理员可解除隐藏、删除或封禁
+
+**CLI 命令：**
+```bash
+# ClawHub CLI
+clawhub install <slug>     # 安装技能
+clawhub search <query>     # 语义搜索
+clawhub update <slug>      # 更新技能
+clawhub publish            # 发布技能
+clawhub sync               # 批量扫描并发布
+clawhub auth               # GitHub 认证
+
+# OpenClaw CLI
+openclaw skills list              # 列出所有技能
+openclaw skills list --eligible   # 仅显示可用技能
+openclaw skills info <name>       # 查看技能详情
+openclaw skills check             # 验证技能依赖
+```
+
+**技能配置**（`~/.openclaw/openclaw.json` 的 `skills` 键）：
+- `load.extraDirs` - 额外技能目录
+- `load.watch` - 文件监听热重载
+- `allowBundled` - 内置技能白名单
+- `entries` - 每技能开关、环境变量注入、API Key 配置
+
+### 4.7 工具组织
+
+OpenClaw 将工具分组并通过访问 profile 控制：
+
+| 工具组 | 说明 |
+|--------|------|
+| `group:fs` | 文件操作（read, write, edit, apply_patch） |
+| `group:runtime` | 执行（exec, bash, process） |
+| `group:sessions` | 会话管理 |
+| `group:memory` | 记忆搜索/检索 |
+| `group:web` | Web 搜索和抓取 |
+| `group:ui` | 浏览器和画布控制 |
+| `group:automation` | 定时任务和网关任务 |
+
+工具 profile 提供基础白名单：`minimal`、`coding`、`messaging`、`full`。通过 `tools.allow`/`tools.deny` 控制访问。
 
 ## 5. Pi - 最小化 Agent
 
@@ -256,15 +348,20 @@ services:
 
 ## 7. 与其他 Agent 框架对比
 
-| 特性 | OpenClaw | LangChain | AutoGPT |
-|------|----------|-----------|---------|
-| 本地优先 | ✅ | ❌ | ⚠️ |
-| 模型无关 | ✅ | ✅ | ❌ |
-| 消息平台集成 | ✅ | ❌ | ❌ |
-| 沙箱安全 | ✅ | ❌ | ❌ |
-| 持久化记忆 | ✅ | ⚠️ | ✅ |
-| 技能市场 | ✅ (ClawHub) | ⚠️ | ❌ |
-| 最小化核心 | ✅ (Pi) | ❌ | ❌ |
+| 特性 | OpenClaw | Semibot | LangChain | AutoGPT |
+|------|----------|---------|-----------|---------|
+| 本地优先 | ✅ | ❌ SaaS | ❌ | ⚠️ |
+| 模型无关 | ✅ | ✅ LLM Router | ✅ | ❌ |
+| 消息平台集成 | ✅ | ❌ 仅 Web | ❌ | ❌ |
+| 沙箱安全 | ✅ | ✅ Docker Pool + PolicyEngine | ❌ | ❌ |
+| 持久化记忆 | ✅ Markdown | ✅ Redis + pgvector | ⚠️ | ✅ |
+| 技能市场 | ✅ ClawHub | ❌ 计划中 | ⚠️ | ❌ |
+| 最小化核心 | ✅ Pi | ❌ | ❌ | ❌ |
+| 状态机编排 | ❌ 简单循环 | ✅ LangGraph | ⚠️ | ⚠️ |
+| 多租户隔离 | ❌ | ✅ org_id 全链路 | ❌ | ❌ |
+| 进化技能 | ❌ | ✅ 自动提取 + 审核 | ❌ | ❌ |
+| MCP 集成 | ⚠️ 基础 | ✅ 多协议 + 连接池 | ❌ | ❌ |
+| SubAgent 委托 | ❌ | ✅ delegate_node | ⚠️ | ✅ |
 
 ## 8. 应用场景
 
@@ -300,10 +397,28 @@ OpenClaw Agent 范式的核心设计理念：
 2. **Agentic Loop**：持续循环的消息处理-意图解析-工具执行-响应生成
 3. **本地优先**：在用户设备上运行，保护隐私和数据控制
 4. **安全沙箱**：Docker 隔离执行，防止系统被攻破
-5. **可扩展技能**：AgentSkills 标准 + ClawHub 市场
+5. **可扩展技能**：AgentSkills 标准 + ClawHub 市场 + 懒加载机制
 6. **最小化核心**：Pi Agent 展示了极简但强大的设计
 
-这种范式为构建可靠、安全、可扩展的 AI Agent 提供了良好的参考架构。
+### 与本项目（Semibot）的定位差异
+
+| 维度 | OpenClaw | Semibot |
+|------|----------|---------|
+| 定位 | 开源个人 AI 助手框架 | 企业级 SaaS AI Agent 平台 |
+| 部署模式 | 本地运行，无服务端 | 云端部署，多租户 |
+| 技能生态 | 开放社区（ClawHub） | 管理员管控 |
+| 编排能力 | 简单循环 | LangGraph 完整状态机 |
+| 记忆系统 | Markdown 文件 | Redis + pgvector 分层 |
+| 核心优势 | 社区生态 + 极简安装 | 企业管控 + 进化技能 + MCP 集成 |
+
+### 可借鉴的方向
+
+1. **语义搜索发现** - ClawHub 的 Embedding 搜索机制，本项目已有 EmbeddingService 基础可复用
+2. **简化安装体验** - 类似 `clawhub install` 的一键安装 API
+3. **社区信号** - Stars、下载量等帮助用户判断技能质量
+4. **懒加载设计** - 本项目已采用相同的索引注入 + `read_skill_file` 按需读取模式
+
+这种范式为构建可靠、安全、可扩展的 AI Agent 提供了良好的参考架构。详细对比分析见 [OpenClaw 与本项目架构对比分析](./openclaw-comparison-analysis.md)。
 
 ---
 
@@ -311,6 +426,8 @@ OpenClaw Agent 范式的核心设计理念：
 
 - [OpenClaw GitHub Repository](https://github.com/openclaw/openclaw)
 - [OpenClaw 官方文档](https://openclaw.ai)
+- [ClawHub 技能注册中心](https://clawhub.ai)
+- [OpenClaw 与本项目架构对比分析](./openclaw-comparison-analysis.md)
 - [DigitalOcean - OpenClaw 部署指南](https://digitalocean.com)
 - [CrowdStrike - AI Agent 安全](https://crowdstrike.com)
 - [Composio - 凭证管理](https://composio.dev)
