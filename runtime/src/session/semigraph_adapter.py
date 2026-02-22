@@ -83,9 +83,8 @@ class SemiGraphAdapter(RuntimeAdapter):
                 await self.client.send_sse_event(
                     self.session_id,
                     {
-                        "type": "execution_error",
-                        "code": "EXECUTION_CANCELLED",
-                        "error": "Execution cancelled",
+                        "type": "execution_complete",
+                        "cancelled": True,
                     },
                 )
                 await self._save_checkpoint(
@@ -193,9 +192,8 @@ class SemiGraphAdapter(RuntimeAdapter):
             await self.client.send_sse_event(
                 self.session_id,
                 {
-                    "type": "execution_error",
-                    "code": "EXECUTION_CANCELLED",
-                    "error": "Execution cancelled",
+                    "type": "execution_complete",
+                    "cancelled": True,
                 },
             )
             await self._save_checkpoint(
@@ -274,3 +272,19 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
         except Exception as exc:
             logger.warning("snapshot_sync_failed", extra={"session_id": self.session_id, "error": str(exc)})
+
+    async def update_config(self, payload: dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        self.start_payload = {**self.start_payload, **payload}
+        logger.info("semigraph_config_updated", extra={"session_id": self.session_id})
+
+    async def get_snapshot(self) -> dict[str, Any] | None:
+        try:
+            return {
+                "checkpoint": await self.checkpointer.get_all_for_snapshot(self.session_id),
+                "short_term_memory": await self.memory_system.short_term.snapshot(self.session_id),
+            }
+        except Exception as exc:
+            logger.warning("semigraph_snapshot_failed", extra={"session_id": self.session_id, "error": str(exc)})
+            return None

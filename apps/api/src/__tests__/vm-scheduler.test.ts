@@ -53,6 +53,7 @@ describe('vm-scheduler', () => {
       .mockResolvedValueOnce([]) // getActiveVM
       .mockResolvedValueOnce([{ vm_mode: null, default_vm_mode: 'docker' }]) // resolve mode
       .mockResolvedValueOnce([{ id: 'vm-1b' }]) // create
+      .mockResolvedValueOnce([{ connect_ticket: 'ticket-1' }]) // issue ticket
       .mockResolvedValueOnce(undefined) // touch bootstrap attempt
       .mockResolvedValueOnce(undefined) // mark provisioning
 
@@ -88,6 +89,7 @@ describe('vm-scheduler', () => {
 
     mockSql
       .mockResolvedValueOnce([{ id: 'vm-3', status: 'disconnected', mode: 'docker', vm_id: 'x', last_bootstrap_at: null, bootstrap_attempts: 0, bootstrap_last_error: null }]) // getActiveVM
+      .mockResolvedValueOnce([{ connect_ticket: 'ticket-3' }]) // issue ticket
       .mockResolvedValueOnce(undefined) // touch bootstrap attempt
       .mockResolvedValueOnce(undefined) // mark provisioning
 
@@ -104,6 +106,7 @@ describe('vm-scheduler', () => {
       VM_ORG_ID: 'org-1',
       VM_INSTANCE_ID: 'vm-3',
       VM_MODE: 'docker',
+      VM_TICKET: 'ticket-3',
     })
     const token = spawnArgs[2]?.env?.VM_TOKEN as string
     expect(typeof token).toBe('string')
@@ -178,6 +181,7 @@ describe('vm-scheduler', () => {
           bootstrap_last_error: null,
         },
       ]) // getActiveVM
+      .mockResolvedValueOnce([{ connect_ticket: 'ticket-6' }]) // issue ticket
       .mockResolvedValueOnce(undefined) // touch bootstrap attempt
       .mockResolvedValueOnce(undefined) // mark provisioning
 

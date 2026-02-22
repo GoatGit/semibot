@@ -65,7 +65,18 @@ class WSMemoryProxy:
         importance: float = 0.5,
         org_id: str | None = None,
     ) -> None:
-        # Placeholder: protocol currently has memory_search but no memory_write.
-        # Keep non-blocking behavior to avoid breaking main flow.
-        del agent_id, content, importance, org_id
-        return
+        del org_id
+        if not content.strip():
+            return
+        try:
+            await self.client.fire_and_forget(
+                session_id="__memory__",
+                method="memory_write",
+                agent_id=agent_id,
+                content=content,
+                importance=importance,
+                memory_type="long_term",
+                metadata={"source": "execution_plane"},
+            )
+        except Exception as exc:
+            logger.warning("ws_memory_write_failed", extra={"error": str(exc)})

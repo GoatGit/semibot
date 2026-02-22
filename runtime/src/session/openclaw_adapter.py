@@ -7,6 +7,7 @@ import os
 import shlex
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from src.session.runtime_adapter import RuntimeAdapter
 from src.ws.client import ControlPlaneClient
@@ -20,6 +21,7 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
         self.process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[Any] | None = None
         self._stopping = False
+        self._snapshot_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     async def start(self) -> None:
         cmd = self._bridge_command()
@@ -77,6 +79,10 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
                 self.process.kill()
                 await self.process.wait()
         self.process = None
+        for fut in self._snapshot_futures.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError("bridge stopped"))
+        self._snapshot_futures.clear()
 
     def _bridge_command(self) -> list[str]:
         override = os.getenv("OPENCLAW_BRIDGE_CMD", "").strip()
@@ -142,6 +148,13 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
 
     async def _dispatch_bridge_message(self, msg: dict[str, Any]) -> None:
         msg_type = str(msg.get("type", ""))
+        if msg_type == "snapshot_response":
+            request_id = str(msg.get("id", ""))
+            fut = self._snapshot_futures.pop(request_id, None)
+            if fut and not fut.done():
+                snapshot = msg.get("snapshot")
+                fut.set_result(snapshot if isinstance(snapshot, dict) else {})
+            return
         if msg_type == "cp_request":
             asyncio.create_task(self._handle_control_plane_request(msg))
             return
@@ -242,3 +255,35 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
                     "error": str(exc),
                 },
             )
+
+    async def update_config(self, payload: dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        self.start_payload = {**self.start_payload, **payload}
+        await self._send_command(
+            {
+                "type": "config_update",
+                "session_id": self.session_id,
+                "payload": payload,
+            }
+        )
+
+    async def get_snapshot(self) -> dict[str, Any] | None:
+        if not self.process:
+            return None
+        loop = asyncio.get_event_loop()
+        request_id = str(uuid4())
+        fut: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self._snapshot_futures[request_id] = fut
+        try:
+            await self._send_command(
+                {
+                    "type": "snapshot",
+                    "id": request_id,
+                    "session_id": self.session_id,
+                }
+            )
+            return await asyncio.wait_for(fut, timeout=3)
+        except Exception:
+            self._snapshot_futures.pop(request_id, None)
+            return None

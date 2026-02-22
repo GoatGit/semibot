@@ -37,6 +37,7 @@ class ControlPlaneClient:
         self.active_sessions_provider: Callable[[], list[str]] | None = None
         self._listen_task: asyncio.Task[Any] | None = None
         self._heartbeat_task: asyncio.Task[Any] | None = None
+        self._resume_future: asyncio.Future[dict[str, Any]] | None = None
         self._reconnect_delays = [1, 2, 4, 8, 16, 30, 30]
 
     async def connect(self) -> dict[str, Any]:
@@ -59,9 +60,16 @@ class ControlPlaneClient:
         if self.ws:
             await self.ws.close()
 
-    def register_vm_handlers(self, start_session: VMHandler, stop_session: VMHandler) -> None:
+    def register_vm_handlers(
+        self,
+        start_session: VMHandler,
+        stop_session: VMHandler,
+        config_update: VMHandler | None = None,
+    ) -> None:
         self.vm_handlers["start_session"] = start_session
         self.vm_handlers["stop_session"] = stop_session
+        if config_update:
+            self.vm_handlers["config_update"] = config_update
 
     def register_session_handlers(self, session_id: str, user_message: SessionHandler, cancel: SessionHandler) -> None:
         self.session_handlers[session_id] = {
@@ -149,7 +157,13 @@ class ControlPlaneClient:
                         future.set_result(msg.get("result"))
                 continue
 
-            if msg_type in ("start_session", "stop_session"):
+            if msg_type == "resume_response":
+                if self._resume_future and not self._resume_future.done():
+                    results = msg.get("results")
+                    self._resume_future.set_result(results if isinstance(results, dict) else {})
+                continue
+
+            if msg_type in ("start_session", "stop_session", "config_update"):
                 handler = self.vm_handlers.get(msg_type)
                 if handler:
                     asyncio.create_task(handler(msg.get("data", {})))
@@ -176,7 +190,13 @@ class ControlPlaneClient:
             sessions = self.active_sessions_provider() if self.active_sessions_provider else []
             try:
                 await self._send_raw({"type": "heartbeat", "active_sessions": sessions})
-            except Exception:
+            except Exception as exc:
+                logger.warning("heartbeat_send_failed", extra={"error": str(exc), "user_id": self.user_id})
+                if self.ws:
+                    try:
+                        await self.ws.close()
+                    except Exception:
+                        pass
                 return
 
     async def _reconnect(self) -> None:
@@ -191,12 +211,12 @@ class ControlPlaneClient:
                 if init_msg.get("type") != "init":
                     raise RuntimeError("init not received on reconnect")
 
+                self._listen_task = asyncio.create_task(self._listen_loop())
                 pending_ids = list(self.pending_requests.keys())
+                loop = asyncio.get_event_loop()
+                self._resume_future = loop.create_future()
                 await self._send_raw({"type": "resume", "pending_ids": pending_ids})
-                resume_resp = json.loads(await self.ws.recv())
-                if resume_resp.get("type") != "resume_response":
-                    raise RuntimeError("resume_response not received")
-                results = resume_resp.get("results") or {}
+                results = await asyncio.wait_for(self._resume_future, timeout=10)
                 for msg_id, result in results.items():
                     future = self.pending_requests.pop(msg_id, None)
                     if not future or future.done():
@@ -208,12 +228,13 @@ class ControlPlaneClient:
                     else:
                         future.set_exception(RuntimeError("Request lost during reconnect"))
 
-                self._listen_task = asyncio.create_task(self._listen_loop())
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
                 logger.info("control_plane_reconnected", extra={"user_id": self.user_id})
                 return
             except Exception as exc:
                 logger.warning("reconnect_attempt_failed", extra={"error": str(exc), "delay": delay})
+            finally:
+                self._resume_future = None
 
         for future in self.pending_requests.values():
             if not future.done():

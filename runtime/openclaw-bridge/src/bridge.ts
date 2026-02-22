@@ -109,6 +109,23 @@ export function startBridgeLoop(): void {
       return
     }
 
+    if (cmd.type === 'config_update') {
+      const runtime = ensureSession(sessionId)
+      await runtime.runner.onConfigUpdate(cmd.payload ?? {})
+      return
+    }
+
+    if (cmd.type === 'snapshot') {
+      const runtime = sessions.get(sessionId)
+      writeJSON({
+        type: 'snapshot_response',
+        id: cmd.id ?? '',
+        session_id: sessionId,
+        snapshot: runtime?.runner.getSnapshot() ?? {},
+      })
+      return
+    }
+
     if (cmd.type === 'cp_response') {
       const id = cmd.id ?? ''
       const pending = pendingRequests.get(id)

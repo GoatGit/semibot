@@ -20,3 +20,10 @@ class RuntimeAdapter(ABC):
     @abstractmethod
     async def stop(self) -> None:
         raise NotImplementedError
+
+    async def update_config(self, payload: dict[str, Any]) -> None:
+        del payload
+        return None
+
+    async def get_snapshot(self) -> dict[str, Any] | None:
+        return None

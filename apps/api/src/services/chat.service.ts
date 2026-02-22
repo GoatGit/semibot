@@ -9,6 +9,8 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import type { Response } from 'express'
+import fs from 'fs-extra'
+import path from 'path'
 import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
 import * as agentService from './agent.service'
@@ -53,6 +55,93 @@ export interface SSEConnection {
 }
 
 const sseConnections = new Map<string, SSEConnection>()
+
+type SkillFileInventory = {
+  has_skill_md: boolean
+  has_scripts: boolean
+  has_references: boolean
+  script_files: string[]
+  reference_files: string[]
+}
+
+type SkillRequires = {
+  binaries: string[]
+  env_vars: string[]
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((v): v is string => typeof v === 'string').map((s) => s.trim()).filter(Boolean)
+}
+
+async function resolveSkillMetadata(pkg: skillPackageRepo.SkillPackage): Promise<{
+  fileInventory: SkillFileInventory
+  requires: SkillRequires
+}> {
+  const validationResult = (pkg.validationResult ?? {}) as Record<string, unknown>
+  const config = (pkg.config ?? {}) as Record<string, unknown>
+
+  const fromValidation = (validationResult.file_inventory ?? validationResult.fileInventory) as Record<string, unknown> | undefined
+  const fromConfig = (config.file_inventory ?? config.fileInventory) as Record<string, unknown> | undefined
+  const rawInventory = fromValidation ?? fromConfig ?? {}
+
+  const scriptFilesFromMeta = normalizeStringArray(
+    rawInventory.script_files ?? rawInventory.scriptFiles
+  )
+  const referenceFilesFromMeta = normalizeStringArray(
+    rawInventory.reference_files ?? rawInventory.referenceFiles
+  )
+
+  let scriptFiles = scriptFilesFromMeta
+  let referenceFiles = referenceFilesFromMeta
+  let hasSkillMd = Boolean(rawInventory.has_skill_md ?? rawInventory.hasSkillMd)
+  let hasScripts = Boolean(rawInventory.has_scripts ?? rawInventory.hasScripts)
+  let hasReferences = Boolean(rawInventory.has_references ?? rawInventory.hasReferences)
+
+  const pkgPath = pkg.packagePath
+  if (pkgPath && await fs.pathExists(pkgPath)) {
+    const skillMdPath = path.join(pkgPath, 'SKILL.md')
+    hasSkillMd = hasSkillMd || await fs.pathExists(skillMdPath)
+
+    const scriptsDir = path.join(pkgPath, 'scripts')
+    if (await fs.pathExists(scriptsDir)) {
+      hasScripts = true
+      if (scriptFiles.length === 0) {
+        const entries = await fs.readdir(scriptsDir, { withFileTypes: true })
+        scriptFiles = entries.filter((e) => e.isFile()).map((e) => path.posix.join('scripts', e.name)).slice(0, 50)
+      }
+    }
+
+    const referencesDir = path.join(pkgPath, 'references')
+    if (await fs.pathExists(referencesDir)) {
+      hasReferences = true
+      if (referenceFiles.length === 0) {
+        const entries = await fs.readdir(referencesDir, { withFileTypes: true })
+        referenceFiles = entries.filter((e) => e.isFile()).map((e) => path.posix.join('references', e.name)).slice(0, 50)
+      }
+    }
+  }
+
+  const fromValidationReq = (validationResult.requires ?? {}) as Record<string, unknown>
+  const fromConfigReq = (config.requires ?? {}) as Record<string, unknown>
+  const rawRequires = Object.keys(fromValidationReq).length > 0 ? fromValidationReq : fromConfigReq
+
+  const requires: SkillRequires = {
+    binaries: normalizeStringArray(rawRequires.binaries),
+    env_vars: normalizeStringArray(rawRequires.env_vars ?? rawRequires.envVars),
+  }
+
+  return {
+    fileInventory: {
+      has_skill_md: hasSkillMd,
+      has_scripts: hasScripts || scriptFiles.length > 0,
+      has_references: hasReferences || referenceFiles.length > 0,
+      script_files: scriptFiles,
+      reference_files: referenceFiles,
+    },
+    requires,
+  }
+}
 
 export function createSSEConnection(
   res: Response,
@@ -236,21 +325,15 @@ async function handleChatViaExecutionPlane(
     if (!def || !def.isActive) continue
     const pkg = await skillPackageRepo.findByDefinition(skillDefId)
     if (!pkg) continue
+    const { fileInventory, requires } = await resolveSkillMetadata(pkg)
     skillIndex.push({
       id: def.skillId,
       name: def.name,
       description: def.description ?? '',
       version: 'current',
       source: pkg.sourceType,
-      file_inventory: {
-        has_skill_md: true,
-        has_scripts: true,
-        has_references: true,
-      },
-      requires: {
-        binaries: [],
-        env_vars: [],
-      },
+      file_inventory: fileInventory,
+      requires,
     })
   }
 
@@ -290,7 +373,7 @@ async function handleChatViaExecutionPlane(
   })
 
   res.on('close', () => {
-    if (!connection.isActive) {
+    if (connection.isActive) {
       try {
         wsServer.sendCancel(userId, sessionId)
       } catch {

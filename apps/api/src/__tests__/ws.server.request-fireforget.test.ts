@@ -128,4 +128,15 @@ describe('ws-server request/fire_and_forget internals', () => {
       },
     })
   })
+
+  it('handleMessage ignores invalid json payload safely', async () => {
+    const server = Object.create(WSServer.prototype) as any
+    const conn = {
+      userId: 'u1',
+      lastHeartbeat: Date.now(),
+      activeSessions: new Set<string>(),
+    }
+
+    await expect(server.handleMessage(conn, '{invalid json')).resolves.toBeUndefined()
+  })
 })

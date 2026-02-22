@@ -59,7 +59,7 @@ describe('ws-server handshake', () => {
   it('sends init with api_keys after auth', async () => {
     const server = Object.create(WSServer.prototype) as any
     server.connections = new Map()
-    server.validateAuth = vi.fn().mockResolvedValue({ userId: 'user-1', orgId: 'org-1' })
+    server.validateAuth = vi.fn().mockResolvedValue({ userId: 'user-1', orgId: 'org-1', token: 'jwt-token' })
 
     const ws = new FakeWS()
 
@@ -72,11 +72,13 @@ describe('ws-server handshake', () => {
     expect(init.data).toMatchObject({
       user_id: 'user-1',
       org_id: 'org-1',
-      api_keys: {
-        openai: 'sk-openai-test',
-        anthropic: 'sk-anthropic-test',
-      },
     })
+    expect(init.data.api_keys.openai.alg).toBe('aes-256-gcm')
+    expect(typeof init.data.api_keys.openai.iv).toBe('string')
+    expect(typeof init.data.api_keys.openai.tag).toBe('string')
+    expect(typeof init.data.api_keys.openai.ciphertext).toBe('string')
+    expect(init.data.api_keys.openai.ciphertext).not.toContain('sk-openai-test')
+    expect(init.data.api_keys.anthropic.alg).toBe('aes-256-gcm')
   })
 
   it('rejects connection when user_id is missing', () => {

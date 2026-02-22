@@ -100,7 +100,7 @@ async def test_semigraph_adapter_cancel(monkeypatch):
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.wait_for(adapter._task, timeout=3)
 
-    assert any(payload.get("type") == "execution_error" for _, payload in client.sse_events)
+    assert any(payload.get("type") == "execution_complete" and payload.get("cancelled") is True for _, payload in client.sse_events)
     assert any(method == "snapshot_sync" for _, method, _ in client.fire_and_forget_calls)
 
 

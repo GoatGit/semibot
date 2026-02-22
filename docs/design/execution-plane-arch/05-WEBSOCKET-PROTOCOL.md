@@ -147,7 +147,7 @@ Execution Plane (User VM)             Control Plane
 {
   "type": "fire_and_forget",
   "session_id": "uuid",
-  "method": "usage_report | audit_log | evolution_submit | snapshot_sync",
+  "method": "usage_report | audit_log | evolution_submit | snapshot_sync | memory_write",
   "params": { ... }
 }
 ```
@@ -160,6 +160,7 @@ Execution Plane (User VM)             Control Plane
 | `audit_log` | `{event: string, details: object}` | 审计日志 |
 | `evolution_submit` | `{name: string, description: string, skill_md: string, quality_score: number}` | Skill 进化提交 |
 | `snapshot_sync` | `{checkpoint: object, short_term_memory: object, conversation_state?: object, file_manifest?: object}` | 状态快照同步 |
+| `memory_write` | `{agent_id: string, content: string, memory_type?: string, importance?: number, metadata?: object}` | 追加长期记忆（控制平面落库） |
 
 ### 4.5 `resume` — 重连恢复
 
@@ -187,8 +188,18 @@ Execution Plane (User VM)             Control Plane
     "user_id": "uuid",
     "org_id": "uuid",
     "api_keys": {
-      "openai": "sk-...",
-      "anthropic": "sk-ant-..."
+      "openai": {
+        "alg": "aes-256-gcm",
+        "iv": "base64",
+        "tag": "base64",
+        "ciphertext": "base64"
+      },
+      "anthropic": {
+        "alg": "aes-256-gcm",
+        "iv": "base64",
+        "tag": "base64",
+        "ciphertext": "base64"
+      }
     }
   }
 }

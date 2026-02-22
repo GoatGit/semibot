@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import shutil
 from typing import Any
 
+from src.security.api_key_cipher import decrypt_api_keys
 from src.session.openclaw_adapter import OpenClawBridgeAdapter
 from src.session.runtime_adapter import RuntimeAdapter
 from src.session.semigraph_adapter import SemiGraphAdapter
@@ -16,7 +19,9 @@ SUPPORTED_RUNTIME_TYPES = {"semigraph", "openclaw"}
 class SessionManager:
     def __init__(self, client: ControlPlaneClient, init_data: dict[str, Any]) -> None:
         self.client = client
-        self.init_data = init_data
+        vm_token = os.getenv("VM_TOKEN", "")
+        self.init_data = dict(init_data)
+        self.init_data["api_keys"] = decrypt_api_keys(init_data.get("api_keys"), vm_token)
         self.user_id = str(init_data.get("user_id", ""))
         self.org_id = str(init_data.get("org_id", ""))
         self.adapters: dict[str, RuntimeAdapter] = {}
@@ -30,6 +35,8 @@ class SessionManager:
 
         if session_id in self.adapters:
             return
+
+        data = self._filter_skill_index_by_requirements(data)
 
         runtime_type = str(data.get("runtime_type", "semigraph"))
         adapter = self._create_adapter(runtime_type, session_id, data)
@@ -59,15 +66,92 @@ class SessionManager:
         if not adapter:
             return
         await adapter.handle_user_message(payload)
+        await self._sync_snapshot_if_supported(session_id, adapter)
 
     async def _on_cancel(self, session_id: str, _payload: dict[str, Any]) -> None:
         adapter = self.adapters.get(session_id)
         if not adapter:
             return
         await adapter.cancel()
+        await self._sync_snapshot_if_supported(session_id, adapter)
+
+    async def _on_config_update(self, payload: dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        session_id = str(payload.get("session_id", ""))
+        if not session_id:
+            return
+        adapter = self.adapters.get(session_id)
+        if not adapter:
+            return
+        await adapter.update_config(payload)
+
+    async def _sync_snapshot_if_supported(self, session_id: str, adapter: RuntimeAdapter) -> None:
+        snapshot = await adapter.get_snapshot()
+        if not snapshot:
+            return
+        checkpoint = snapshot.get("checkpoint")
+        short_term = snapshot.get("short_term_memory")
+        if not isinstance(checkpoint, dict) and not isinstance(short_term, dict):
+            return
+        await self.client.fire_and_forget(
+            session_id,
+            "snapshot_sync",
+            checkpoint=checkpoint if isinstance(checkpoint, dict) else {},
+            short_term_memory=short_term if isinstance(short_term, dict) else {},
+            conversation_state=snapshot.get("conversation_state") if isinstance(snapshot.get("conversation_state"), dict) else {},
+            file_manifest=snapshot.get("file_manifest") if isinstance(snapshot.get("file_manifest"), dict) else {},
+        )
 
     def get_active_sessions(self) -> list[str]:
         return list(self.adapters.keys())
+
+    def _filter_skill_index_by_requirements(self, data: dict[str, Any]) -> dict[str, Any]:
+        raw_skills = data.get("skill_index")
+        if not isinstance(raw_skills, list):
+            return data
+
+        filtered: list[dict[str, Any]] = []
+        for skill in raw_skills:
+            if not isinstance(skill, dict):
+                continue
+            requires = skill.get("requires")
+            if not isinstance(requires, dict):
+                filtered.append(skill)
+                continue
+
+            binaries = requires.get("binaries")
+            env_vars = requires.get("env_vars")
+
+            missing_binaries = [
+                b for b in binaries
+                if isinstance(b, str) and b.strip() and shutil.which(b.strip()) is None
+            ] if isinstance(binaries, list) else []
+            missing_envs = [
+                k for k in env_vars
+                if isinstance(k, str) and k.strip() and not os.getenv(k.strip())
+            ] if isinstance(env_vars, list) else []
+
+            if missing_binaries or missing_envs:
+                logger.warning(
+                    "skill_requirements_unmet_skip",
+                    extra={
+                        "session_id": data.get("session_id"),
+                        "skill_id": skill.get("id"),
+                        "missing_binaries": missing_binaries,
+                        "missing_env_vars": missing_envs,
+                    },
+                )
+                continue
+
+            filtered.append(skill)
+
+        if len(filtered) == len(raw_skills):
+            return data
+
+        copied = dict(data)
+        copied["skill_index"] = filtered
+        return copied
 
     def _create_adapter(self, runtime_type: str, session_id: str, data: dict[str, Any]) -> RuntimeAdapter:
         if runtime_type not in SUPPORTED_RUNTIME_TYPES:

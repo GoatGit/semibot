@@ -557,7 +557,7 @@ class SemiGraphAdapter(RuntimeAdapter):
 
 ### 4.4 OpenClawBridgeAdapter
 
-启动 Node.js Bridge 进程，通过 Unix Domain Socket 通信：
+启动 Node.js Bridge 进程，通过 `stdin/stdout` JSON-line 通信：
 
 ```python
 # runtime/src/session/openclaw_adapter.py
@@ -572,7 +572,7 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 class OpenClawBridgeAdapter(RuntimeAdapter):
-    """OpenClaw runtime — 启动 Node.js Bridge 进程，通过 Unix Domain Socket 通信"""
+    """OpenClaw runtime — 启动 Node.js Bridge 进程，通过 stdin/stdout JSON-line 通信"""
 
     BRIDGE_SCRIPT = Path('/opt/openclaw-bridge/dist/main.js')
 
@@ -583,36 +583,15 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
         self.process = None
         self.reader = None
         self.writer = None
-        self.socket_path = None
         self._listen_task = None
 
-    async def start(self, session_id: str, config: dict) -> None:
-        self.session_id = session_id
-
-        # 创建 Unix Domain Socket
-        self.socket_path = f'/tmp/openclaw-{session_id}.sock'
-        if os.path.exists(self.socket_path):
-            os.unlink(self.socket_path)
-
-        # 启动 IPC 服务端（Python 侧）
-        server_ready = asyncio.Event()
-
-        async def handle_bridge_connection(reader, writer):
-            self.reader = reader
-            self.writer = writer
-            server_ready.set()
-
-        self._unix_server = await asyncio.start_unix_server(
-            handle_bridge_connection, path=self.socket_path
-        )
-
+    async def start(self) -> None:
         # 启动 Node.js Bridge 进程
         self.process = await asyncio.create_subprocess_exec(
             'node', str(self.BRIDGE_SCRIPT),
             env={
                 **os.environ,
-                'SOCKET_PATH': self.socket_path,
-                'SESSION_ID': session_id,
+                'SESSION_ID': self.session_id,
                 'SKILLS_CACHE_DIR': '/home/user/.semibot/skills',
                 'MEMORY_DIR': os.path.join(self.memory_dir, 'openclaw-memory'),
             },
@@ -620,22 +599,12 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # 等待 Bridge 连接
-        await asyncio.wait_for(server_ready.wait(), timeout=10)
-
         # 发送初始化指令
         await self._send({
             'type': 'start',
-            'agent_config': config.get('agent_config', {}),
-            'skill_index': config.get('skill_index', []),
-            'api_keys': config.get('api_keys', {}),
-            'openclaw_config': config.get('openclaw_config', {}),
+            'session_id': self.session_id,
+            'payload': self.start_payload,
         })
-
-        # 等待 ready 响应
-        ready_msg = await self._recv()
-        if ready_msg.get('type') != 'ready':
-            raise RuntimeError(f'OpenClaw Bridge 初始化失败: {ready_msg}')
 
         # 启动消息监听循环
         self._listen_task = asyncio.create_task(self._listen_loop())
@@ -748,13 +717,13 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
 ### 4.5 OpenClaw Bridge 进程（Node.js）
 
 Bridge 是一个 Node.js 进程，职责：
-- 通过 Unix Domain Socket 接收 Python SessionManager 的指令
+- 通过 stdin/stdout JSON-line 接收 Python SessionManager 的指令
 - 驱动 OpenClaw 的 Brain/Skills/Memory 原生运行
 - 将 OpenClaw 事件翻译为 Semibot SSE 事件格式
 - 代理控制平面请求（长期记忆搜索、远程 MCP、Skill 包拉取）
 
 ```
-Python SessionManager ←→ Unix Socket (JSON-line) ←→ Node.js Bridge ←→ OpenClaw
+Python SessionManager ←→ stdin/stdout (JSON-line) ←→ Node.js Bridge ←→ OpenClaw
 ```
 
 #### IPC 协议（JSON-line，每行一个 JSON 对象）
@@ -786,7 +755,7 @@ runtime/openclaw-bridge/
 ├── package.json
 ├── tsconfig.json
 └── src/
-    ├── main.ts              # 入口：连接 Unix Socket，初始化 OpenClaw
+    ├── main.ts              # 入口：stdin/stdout JSON-line 协议，初始化 OpenClaw
     ├── bridge.ts            # IPC 客户端：JSON-line 协议收发
     ├── event-translator.ts  # 事件格式翻译：OpenClaw → Semibot SSE
     └── skill-loader.ts      # Skill 缓存集成：优先本地，未命中走 IPC
@@ -986,7 +955,7 @@ from ws.client import ControlPlaneClient
 from session.manager import SessionManager
 
 async def main():
-    user_id = os.environ['USER_ID']
+    user_id = os.environ['VM_USER_ID']
     token = os.environ['VM_TOKEN']
     ticket = os.environ['VM_TICKET']
     control_plane_url = os.environ['CONTROL_PLANE_WS']
@@ -1036,89 +1005,61 @@ from session.openclaw_adapter import OpenClawBridgeAdapter
 
 logger = logging.getLogger(__name__)
 
-# ── 工厂函数 ──────────────────────────────────────────────
-
 SUPPORTED_RUNTIME_TYPES = {'semigraph', 'openclaw'}
 
-def create_adapter(runtime_type: str, client, memory_dir: str) -> RuntimeAdapter:
-    """根据 runtime_type 创建对应的 RuntimeAdapter 实例
-
-    注意：此时只创建实例，不初始化运行时。
-    调用方必须随后调用 adapter.start(session_id, config) 完成初始化。
-
-    Raises:
-        ValueError: runtime_type 不在支持列表中时拒绝创建，不做静默回落
-    """
-    if runtime_type not in SUPPORTED_RUNTIME_TYPES:
-        raise ValueError(
-            f"不支持的 runtime_type: '{runtime_type}'，"
-            f"允许值: {SUPPORTED_RUNTIME_TYPES}"
-        )
-    if runtime_type == 'openclaw':
-        return OpenClawBridgeAdapter(client=client, memory_dir=memory_dir)
-    return SemiGraphAdapter(client=client, memory_dir=memory_dir)
-
-
-# ── SessionManager ───────────────────────────────────────
-
 class SessionManager:
-    """管理虚拟机内的多个 session，通过 RuntimeAdapter 屏蔽运行时差异"""
+    """管理虚拟机内多个 session，通过 RuntimeAdapter 屏蔽运行时差异"""
 
     def __init__(self, client, init_data: dict):
         self.client = client
         self.init_data = init_data
-        self.active_sessions: dict[str, RuntimeAdapter] = {}
+        self.adapters: dict[str, RuntimeAdapter] = {}
 
     async def start_session(self, data: dict):
-        session_id = data['session_id']
-        agent_config = data['agent_config']
-        runtime_type = data.get('runtime_type', 'semigraph')  # 控制平面已解析好
-        skill_index = data.get('skill_index')
-
-        memory_dir = f'/home/user/.semibot/sessions/{session_id}'
-
-        # 1. 通过工厂函数创建对应的 Adapter（仅实例化，未初始化）
-        adapter = create_adapter(runtime_type, self.client, memory_dir)
-
-        # 2. 初始化运行时（SemiGraph: 创建 LangGraph；OpenClaw: 启动 Bridge 进程）
-        await adapter.start(session_id, config={
-            'agent_config': agent_config,
-            'skill_index': skill_index,
-            'api_keys': self.init_data.get('api_keys', {}),
-            'openclaw_config': data.get('openclaw_config', {}),
-        })
-
-        self.active_sessions[session_id] = adapter
-
-        logger.info('session %s started with runtime=%s', session_id, runtime_type)
-
-        # 3. 注册该 session 的消息处理器（统一接口）
-        self.client.register_session(session_id, {
-            'user_message': adapter.send_message,
-            'cancel': adapter.cancel,
-        })
+        session_id = str(data.get('session_id', ''))
+        runtime_type = str(data.get('runtime_type', 'semigraph'))
+        adapter = self._create_adapter(runtime_type, session_id, data)
+        self.adapters[session_id] = adapter
+        self.client.register_session_handlers(
+            session_id,
+            user_message=lambda payload, sid=session_id: self._on_user_message(sid, payload),
+            cancel=lambda payload, sid=session_id: self._on_cancel(sid, payload),
+        )
+        await adapter.start()
 
     async def stop_session(self, data: dict):
-        session_id = data['session_id']
-        adapter = self.active_sessions.pop(session_id, None)
+        session_id = str(data.get('session_id', ''))
+        adapter = self.adapters.pop(session_id, None)
         if adapter:
-            # 优雅关闭（Adapter 内部处理快照上报）
             await adapter.stop()
-            self.client.unregister_session(session_id)
-            logger.info('session %s stopped', session_id)
+            self.client.unregister_session_handlers(session_id)
+
+    def _create_adapter(self, runtime_type: str, session_id: str, data: dict) -> RuntimeAdapter:
+        if runtime_type not in SUPPORTED_RUNTIME_TYPES:
+            raise ValueError(f"不支持的 runtime_type: {runtime_type}")
+        if runtime_type == 'openclaw':
+            return OpenClawBridgeAdapter(self.client, session_id, data)
+        return SemiGraphAdapter(
+            client=self.client,
+            session_id=session_id,
+            org_id=self.init_data.get('org_id', ''),
+            user_id=self.init_data.get('user_id', ''),
+            init_data=self.init_data,
+            start_payload=data,
+        )
 ```
 
 > **变更要点**：
-> - `active_sessions` 的值类型从 `SessionProcess` 改为 `RuntimeAdapter`
-> - `create_adapter()` 仅实例化，随后必须调用 `adapter.start(session_id, config)` 初始化运行时
-> - `start_session` 读取 `runtime_type` 字段，通过工厂函数路由，并将 `api_keys` 从 `init_data` 注入 config
-> - 消息处理器绑定到 `adapter.send_message`（非 execute），`cancel` 绑定到 `adapter.cancel()`
-> - `stop_session` 调用 `adapter.stop()`，由各 Adapter 自行处理快照上报和资源清理
+> - `SessionManager` 使用类方法 `_create_adapter(runtime_type, session_id, data)` 路由运行时
+> - `SemiGraphAdapter` 构造参数为 `(client, session_id, org_id, user_id, init_data, start_payload)`
+> - `OpenClawBridgeAdapter` 构造参数为 `(client, session_id, start_payload)`
+> - 消息处理器通过 `register_session_handlers(session_id, user_message, cancel)` 绑定
+> - `stop_session` 调用 `adapter.stop()`，由 Adapter 自行处理资源清理与快照同步
 
 ### 启动流程时序
 
 ```
-环境变量注入 (USER_ID, VM_TOKEN, CONTROL_PLANE_WS)
+环境变量注入 (VM_USER_ID, VM_TOKEN, CONTROL_PLANE_WS)
         │
         ▼
 WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
@@ -1152,7 +1093,7 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
 
 | 变量名 | 必需 | 说明 |
 |--------|------|------|
-| `USER_ID` | 是 | 用户唯一标识 |
+| `VM_USER_ID` | 是 | 用户唯一标识 |
 | `VM_TOKEN` | 是 | 虚拟机认证 JWT，由控制平面签发，通过首帧 auth 消息传输 |
 | `VM_TICKET` | 是 | 一次性连接票据，由控制平面在调度 VM 时生成，有效期 30 秒 |
 | `CONTROL_PLANE_WS` | 是 | 控制平面 WebSocket 地址 |
@@ -1168,8 +1109,18 @@ WebSocket 连接控制平面 → 接收 init 消息 (user_id, api_keys)
     "user_id": "user-uuid",
     "org_id": "org-uuid",
     "api_keys": {
-      "openai": "sk-...",
-      "anthropic": "sk-ant-..."
+      "openai": {
+        "alg": "aes-256-gcm",
+        "iv": "base64",
+        "tag": "base64",
+        "ciphertext": "base64"
+      },
+      "anthropic": {
+        "alg": "aes-256-gcm",
+        "iv": "base64",
+        "tag": "base64",
+        "ciphertext": "base64"
+      }
     }
   }
 }
@@ -1671,7 +1622,7 @@ runtime/src/
 │   ├── manager.py             SessionManager + create_adapter 工厂
 │   ├── runtime_adapter.py     NEW: RuntimeAdapter 抽象基类
 │   ├── semigraph_adapter.py     NEW: SemiGraphAdapter（包装 SessionProcess）
-│   └── openclaw_adapter.py    NEW: OpenClawBridgeAdapter（Unix Socket IPC）
+│   └── openclaw_adapter.py    NEW: OpenClawBridgeAdapter（stdin/stdout JSON-line IPC）
 ├── ws/                        NEW: WebSocket 客户端
 │   ├── client.py              控制平面客户端（多 session 多路复用）
 │   └── message_types.py       消息类型定义
@@ -1716,7 +1667,7 @@ runtime/openclaw-bridge/                NEW: OpenClaw Bridge（Node.js）
 ├── package.json
 ├── tsconfig.json
 └── src/
-    ├── main.ts                入口：连接 Unix Socket，初始化 OpenClaw
+    ├── main.ts                入口：stdin/stdout JSON-line 协议，初始化 OpenClaw
     ├── bridge.ts              IPC 客户端：JSON-line 协议收发
     ├── event-translator.ts    事件格式翻译：OpenClaw → Semibot SSE
     └── skill-loader.ts        Skill 缓存集成：优先本地，未命中走 IPC

@@ -9,7 +9,9 @@ type GetLoadedSkillCountFn = () => number
 export interface OpenClawRunner {
   onStart(startPayload: Record<string, unknown>): Promise<void>
   onUserMessage(message: string): Promise<void>
+  onConfigUpdate(payload: Record<string, unknown>): Promise<void>
   onCancel(): Promise<void>
+  getSnapshot(): Record<string, unknown>
 }
 
 type RunnerDeps = {
@@ -20,6 +22,9 @@ type RunnerDeps = {
 }
 
 class MockOpenClawRunner implements OpenClawRunner {
+  private lastMessage = ''
+  private lastResponse = ''
+
   constructor(private readonly deps: RunnerDeps) {}
 
   async onStart(_startPayload: Record<string, unknown>): Promise<void> {
@@ -30,6 +35,7 @@ class MockOpenClawRunner implements OpenClawRunner {
   }
 
   async onUserMessage(message: string): Promise<void> {
+    this.lastMessage = message
     this.deps.emit({
       kind: 'reasoning',
       text: 'OpenClaw bridge requesting control plane context...',
@@ -43,6 +49,7 @@ class MockOpenClawRunner implements OpenClawRunner {
       const firstMemory = result.results?.[0]?.content ?? 'No memory hit'
       const loadedSkillCount = this.deps.getLoadedSkillCount()
       const finalResponse = `OpenClaw mock response: ${firstMemory} (skills:${loadedSkillCount})`
+      this.lastResponse = finalResponse
 
       this.deps.emit({
         kind: 'assistant_message',
@@ -80,12 +87,27 @@ class MockOpenClawRunner implements OpenClawRunner {
       error: 'Execution cancelled',
     })
   }
+
+  async onConfigUpdate(_payload: Record<string, unknown>): Promise<void> {
+    return
+  }
+
+  getSnapshot(): Record<string, unknown> {
+    return {
+      last_user_message: this.lastMessage,
+      last_response: this.lastResponse,
+      loaded_skill_count: this.deps.getLoadedSkillCount(),
+      runner_mode: 'mock',
+    }
+  }
 }
 
 class SdkOpenClawRunner implements OpenClawRunner {
   private readonly sdk = createSdkProvider()
   private model = 'openclaw-sdk'
   private toolProfile = 'default'
+  private lastMessage = ''
+  private lastResponse = ''
 
   constructor(private readonly deps: RunnerDeps) {}
 
@@ -107,6 +129,7 @@ class SdkOpenClawRunner implements OpenClawRunner {
   }
 
   async onUserMessage(message: string): Promise<void> {
+    this.lastMessage = message
     this.deps.emit({
       kind: 'reasoning',
       text: 'OpenClaw SDK runner retrieving memory context...',
@@ -137,6 +160,7 @@ class SdkOpenClawRunner implements OpenClawRunner {
       })
 
       const text = generated.text || 'OpenClaw SDK returned empty response'
+      this.lastResponse = text
       this.deps.emit({
         kind: 'assistant_message',
         text,
@@ -197,6 +221,28 @@ class SdkOpenClawRunner implements OpenClawRunner {
       kind: 'error',
       error: 'Execution cancelled',
     })
+  }
+
+  async onConfigUpdate(payload: Record<string, unknown>): Promise<void> {
+    const openclawConfig = (payload.openclaw_config ?? {}) as Record<string, unknown>
+    const agentConfig = (payload.agent_config ?? {}) as Record<string, unknown>
+    if (typeof agentConfig.model === 'string' && agentConfig.model) {
+      this.model = agentConfig.model
+    }
+    if (typeof openclawConfig.tool_profile === 'string' && openclawConfig.tool_profile) {
+      this.toolProfile = openclawConfig.tool_profile
+    }
+  }
+
+  getSnapshot(): Record<string, unknown> {
+    return {
+      model: this.model,
+      tool_profile: this.toolProfile,
+      last_user_message: this.lastMessage,
+      last_response: this.lastResponse,
+      loaded_skill_count: this.deps.getLoadedSkillCount(),
+      runner_mode: 'sdk',
+    }
   }
 }
 

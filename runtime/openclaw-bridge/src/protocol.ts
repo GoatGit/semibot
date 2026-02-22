@@ -1,6 +1,8 @@
 export type BridgeCommandType =
   | 'start'
   | 'user_message'
+  | 'config_update'
+  | 'snapshot'
   | 'cp_response'
   | 'cancel'
   | 'stop'
@@ -14,6 +16,7 @@ export type BridgeOutboundType =
   | 'execution_error'
   | 'cp_request'
   | 'cp_fire_and_forget'
+  | 'snapshot_response'
 
 export type BridgeCommand = {
   type: BridgeCommandType
@@ -56,6 +59,8 @@ export function parseBridgeCommand(raw: string): BridgeCommand | null {
   if (
     type !== 'start' &&
     type !== 'user_message' &&
+    type !== 'config_update' &&
+    type !== 'snapshot' &&
     type !== 'cp_response' &&
     type !== 'cancel' &&
     type !== 'stop'

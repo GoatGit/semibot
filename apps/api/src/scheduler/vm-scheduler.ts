@@ -30,6 +30,15 @@ export interface EnsureVMResult {
   retryAfterMs?: number
 }
 
+function getJWTSecret(): string {
+  const secret = process.env.JWT_SECRET
+  if (secret) return secret
+  if ((process.env.NODE_ENV ?? 'development') === 'production') {
+    throw new Error('JWT_SECRET must be configured in production')
+  }
+  return 'development-secret-change-in-production'
+}
+
 export async function ensureUserVM(
   userId: string,
   orgId: string,
@@ -55,7 +64,7 @@ export async function ensureUserVM(
     return { ready: true, status: 'ready', instanceId: active.id }
   }
 
-  if (active.status === 'failed' || active.status === 'terminated') {
+  if (active.status === 'failed') {
     const mode = await resolveVMMode(userId, orgId)
     const created = await createVMInstance(userId, orgId, mode)
     const triggered = await maybeTriggerBootstrap(userId, orgId, created.id, mode)
@@ -171,6 +180,17 @@ async function touchBootstrapAttempt(instanceId: string): Promise<void> {
   `
 }
 
+async function issueVMConnectTicket(instanceId: string): Promise<string> {
+  const rows = await sql<Array<{ connect_ticket: string }>>`
+    UPDATE user_vm_instances
+    SET connect_ticket = gen_random_uuid(),
+        ticket_used_at = NULL
+    WHERE id = ${instanceId}
+    RETURNING connect_ticket::text
+  `
+  return rows[0]?.connect_ticket ?? ''
+}
+
 async function recordBootstrapFailure(instanceId: string, reason: string): Promise<void> {
   await sql`
     UPDATE user_vm_instances
@@ -200,6 +220,7 @@ async function maybeTriggerBootstrap(
     return false
   }
   const vmToken = createVMToken(userId, orgId)
+  const vmTicket = await issueVMConnectTicket(instanceId)
   await touchBootstrapAttempt(instanceId)
 
   try {
@@ -213,6 +234,7 @@ async function maybeTriggerBootstrap(
         VM_INSTANCE_ID: instanceId,
         VM_MODE: mode,
         VM_TOKEN: vmToken,
+        VM_TICKET: vmTicket,
       },
     })
     child.unref()
@@ -227,7 +249,7 @@ async function maybeTriggerBootstrap(
 }
 
 function createVMToken(userId: string, orgId: string): string {
-  const secret = process.env.JWT_SECRET ?? 'development-secret-change-in-production'
+  const secret = getJWTSecret()
   return jwt.sign(
     { userId, orgId },
     secret,

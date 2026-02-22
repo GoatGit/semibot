@@ -32,6 +32,7 @@ async def _run() -> None:
     client.register_vm_handlers(
         start_session=manager.start_session,
         stop_session=manager.stop_session,
+        config_update=manager._on_config_update,
     )
 
     logger.info("execution_plane_started", extra={"user_id": user_id})

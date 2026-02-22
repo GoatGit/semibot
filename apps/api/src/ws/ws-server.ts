@@ -1,5 +1,6 @@
 import type { Server } from 'http'
 import { createRequire } from 'module'
+import crypto from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { v4 as uuidv4 } from 'uuid'
 import fs from 'fs-extra'
@@ -31,6 +32,17 @@ interface AuthPayload {
   userId: string
   orgId: string
   exp?: number
+}
+
+interface AuthContext extends AuthPayload {
+  token: string
+}
+
+interface EncryptedSecretPayload {
+  alg: 'aes-256-gcm'
+  iv: string
+  tag: string
+  ciphertext: string
 }
 
 interface WSRequestMessage {
@@ -135,6 +147,16 @@ export class WSServer {
     })
   }
 
+  sendConfigUpdate(userId: string, sessionId: string, data: Record<string, unknown>): void {
+    this.send(userId, {
+      type: 'config_update',
+      data: {
+        session_id: sessionId,
+        ...data,
+      },
+    })
+  }
+
   close(): void {
     clearInterval(this.heartbeatTimer)
     for (const conn of this.connections.values()) {
@@ -153,7 +175,9 @@ export class WSServer {
   }
 
   private handleConnection(ws: VMWebSocket, requestUrl: string): void {
-    const userId = new URL(requestUrl, 'http://localhost').searchParams.get('user_id')
+    const params = new URL(requestUrl, 'http://localhost').searchParams
+    const userId = params.get('user_id')
+    const ticket = params.get('ticket') ?? undefined
     if (!userId) {
       ws.close(4001, 'user_id is required')
       return
@@ -170,7 +194,7 @@ export class WSServer {
     }
 
     ws.once('message', async (raw: unknown) => {
-      const auth = await this.validateAuth(String(raw), userId)
+      const auth = await this.validateAuth(String(raw), userId, ticket)
       if (!auth) {
         ws.close(4001, 'Authentication failed')
         return
@@ -186,7 +210,7 @@ export class WSServer {
         data: {
           user_id: auth.userId,
           org_id: auth.orgId,
-          api_keys: this.getInitApiKeys(),
+          api_keys: this.getEncryptedInitApiKeys(auth.token),
         },
       }))
 
@@ -206,19 +230,34 @@ export class WSServer {
     })
   }
 
-  private getInitApiKeys(): Record<string, string> {
-    const apiKeys: Record<string, string> = {}
-    if (process.env.OPENAI_API_KEY) apiKeys.openai = process.env.OPENAI_API_KEY
-    if (process.env.ANTHROPIC_API_KEY) apiKeys.anthropic = process.env.ANTHROPIC_API_KEY
+  private getEncryptedInitApiKeys(vmToken: string): Record<string, EncryptedSecretPayload> {
+    const apiKeys: Record<string, EncryptedSecretPayload> = {}
+    if (process.env.OPENAI_API_KEY) apiKeys.openai = this.encryptSecret(process.env.OPENAI_API_KEY, vmToken)
+    if (process.env.ANTHROPIC_API_KEY) apiKeys.anthropic = this.encryptSecret(process.env.ANTHROPIC_API_KEY, vmToken)
     return apiKeys
   }
 
-  private async validateAuth(raw: string, expectedUserId: string): Promise<AuthPayload | null> {
+  private encryptSecret(secretValue: string, vmToken: string): EncryptedSecretPayload {
+    const key = crypto.createHash('sha256').update(`semibot:init:${vmToken}`).digest()
+    const iv = crypto.randomBytes(12)
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+    cipher.setAAD(Buffer.from('semibot:init:api_keys', 'utf-8'))
+    const ciphertext = Buffer.concat([cipher.update(secretValue, 'utf-8'), cipher.final()])
+    const tag = cipher.getAuthTag()
+    return {
+      alg: 'aes-256-gcm',
+      iv: iv.toString('base64'),
+      tag: tag.toString('base64'),
+      ciphertext: ciphertext.toString('base64'),
+    }
+  }
+
+  private async validateAuth(raw: string, expectedUserId: string, ticket?: string): Promise<AuthContext | null> {
     try {
       const payload = JSON.parse(raw) as { type?: string; token?: string }
       if (payload.type !== 'auth' || !payload.token) return null
 
-      const secret = process.env.JWT_SECRET ?? 'development-secret-change-in-production'
+      const secret = this.getJWTSecret()
       const decoded = jwt.verify(payload.token, secret) as AuthPayload
       if (!decoded.userId || !decoded.orgId || decoded.userId !== expectedUserId) {
         return null
@@ -227,10 +266,54 @@ export class WSServer {
         wsLogger.warn('拒绝执行平面连接：用户无活跃 VM 实例', { userId: decoded.userId })
         return null
       }
-      return decoded
-    } catch {
+      if (!(await this.consumeOrValidateTicket(decoded.userId, ticket))) {
+        wsLogger.warn('拒绝执行平面连接：ticket 校验失败', { userId: decoded.userId })
+        return null
+      }
+      return { ...decoded, token: payload.token }
+    } catch (error) {
+      wsLogger.warn('执行平面 auth 校验失败', { reason: (error as Error).message })
       return null
     }
+  }
+
+  private getJWTSecret(): string {
+    const secret = process.env.JWT_SECRET
+    if (secret) return secret
+    if ((process.env.NODE_ENV ?? 'development') === 'production') {
+      throw new Error('JWT_SECRET must be configured in production')
+    }
+    return 'development-secret-change-in-production'
+  }
+
+  private async consumeOrValidateTicket(userId: string, ticket?: string): Promise<boolean> {
+    if (process.env.NODE_ENV === 'test' || process.env.WS_SKIP_VM_TICKET_CHECK === 'true') {
+      return true
+    }
+
+    if (ticket) {
+      const rows = await sql<Array<{ id: string }>>`
+        UPDATE user_vm_instances
+        SET ticket_used_at = NOW()
+        WHERE user_id = ${userId}
+          AND status IN ('starting', 'provisioning', 'running', 'ready', 'disconnected')
+          AND connect_ticket::text = ${ticket}
+          AND ticket_used_at IS NULL
+        RETURNING id
+      `
+      return rows.length > 0
+    }
+
+    const rows = await sql<Array<{ id: string }>>`
+      SELECT id
+      FROM user_vm_instances
+      WHERE user_id = ${userId}
+        AND status IN ('starting', 'provisioning', 'running', 'ready', 'disconnected')
+        AND ticket_used_at IS NOT NULL
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `
+    return rows.length > 0
   }
 
   private async hasActiveVMInstance(userId: string): Promise<boolean> {
@@ -249,7 +332,16 @@ export class WSServer {
   }
 
   private async handleMessage(conn: VMConnection, raw: string): Promise<void> {
-    const msg = JSON.parse(raw) as WSIncomingMessage
+    let msg: WSIncomingMessage
+    try {
+      msg = JSON.parse(raw) as WSIncomingMessage
+    } catch (error) {
+      wsLogger.warn('收到非法 JSON 消息，已忽略', {
+        userId: conn.userId,
+        error: (error as Error).message,
+      })
+      return
+    }
 
     if (msg.type === 'heartbeat') {
       conn.lastHeartbeat = Date.now()
@@ -314,21 +406,49 @@ export class WSServer {
         }
 
         case 'memory_search': {
-          const query = String(msg.params?.query ?? '')
+          const query = String(msg.params?.query ?? '').trim()
           const topK = Number(msg.params?.top_k ?? 5)
-          const rows = await sql<Array<{ content: string; metadata: Record<string, unknown> | null; created_at: string }>>`
-            SELECT content, metadata, created_at
-            FROM memories
-            WHERE org_id = ${conn.orgId}
-              AND (expires_at IS NULL OR expires_at > NOW())
-              AND content ILIKE ${`%${query}%`}
-            ORDER BY importance DESC, created_at DESC
-            LIMIT ${Math.max(1, Math.min(topK, 20))}
-          `
+          const limit = Math.max(1, Math.min(topK, 20))
+          if (!query) {
+            response.result = { results: [] }
+            break
+          }
+          const queryEmbedding = await this.generateOpenAIEmbedding(query)
+          const rows = queryEmbedding
+            ? await sql<Array<{ content: string; score: number; metadata: Record<string, unknown> | null; created_at: string }>>`
+                SELECT content,
+                       (1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector))::FLOAT AS score,
+                       metadata,
+                       created_at
+                FROM memories
+                WHERE org_id = ${conn.orgId}
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                  AND embedding IS NOT NULL
+                ORDER BY embedding <=> ${JSON.stringify(queryEmbedding)}::vector
+                LIMIT ${limit}
+              `
+            : await sql<Array<{ content: string; score: number; metadata: Record<string, unknown> | null; created_at: string }>>`
+                SELECT content,
+                       GREATEST(
+                         0.01,
+                         1 - (
+                           (POSITION(LOWER(${query}) IN LOWER(content)) - 1)::FLOAT
+                           / GREATEST(LENGTH(content), 1)
+                         )
+                       ) AS score,
+                       metadata,
+                       created_at
+                FROM memories
+                WHERE org_id = ${conn.orgId}
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                  AND content ILIKE ${`%${query}%`}
+                ORDER BY score DESC, importance DESC, created_at DESC
+                LIMIT ${limit}
+              `
           response.result = {
             results: rows.map((r) => ({
               content: r.content,
-              score: 1,
+              score: Number(r.score ?? 0),
               metadata: r.metadata ?? { created_at: r.created_at },
             })),
           }
@@ -353,6 +473,44 @@ export class WSServer {
 
     this.cacheRequestResult(conn, msg.id, response)
     conn.ws.send(JSON.stringify(response))
+  }
+
+  private async generateOpenAIEmbedding(query: string): Promise<number[] | null> {
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) return null
+    const base = process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1'
+    const model = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small'
+    try {
+      const response = await fetch(`${base}/embeddings`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          input: query,
+        }),
+      })
+      if (!response.ok) {
+        wsLogger.warn('OpenAI embedding 调用失败，降级为文本匹配', {
+          status: response.status,
+          statusText: response.statusText,
+        })
+        return null
+      }
+      const data = await response.json() as { data?: Array<{ embedding?: number[] }> }
+      const embedding = data.data?.[0]?.embedding
+      if (!Array.isArray(embedding) || embedding.length === 0) {
+        return null
+      }
+      return embedding
+    } catch (error) {
+      wsLogger.warn('OpenAI embedding 调用异常，降级为文本匹配', {
+        error: (error as Error).message,
+      })
+      return null
+    }
   }
 
   private cacheRequestResult(conn: VMConnection, requestId: string, response: Record<string, unknown>): void {
@@ -431,7 +589,7 @@ export class WSServer {
         messageId = saved.id
       }
 
-      forwardSSE(msg.session_id, 'done', {
+      forwardSSE(msg.session_id, 'execution_complete', {
         sessionId: msg.session_id,
         messageId,
       })
@@ -506,6 +664,44 @@ export class WSServer {
               ${sql.json(((params.short_term_memory as Record<string, unknown>) ?? {}) as Parameters<typeof sql.json>[0])},
               ${sql.json(((params.conversation_state as Record<string, unknown>) ?? {}) as Parameters<typeof sql.json>[0])},
               ${sql.json(((params.file_manifest as Record<string, unknown>) ?? {}) as Parameters<typeof sql.json>[0])}
+            )
+          `
+          await sql`
+            DELETE FROM session_snapshots
+            WHERE session_id = ${sessionId}
+              AND id NOT IN (
+                SELECT id
+                FROM session_snapshots
+                WHERE session_id = ${sessionId}
+                ORDER BY created_at DESC
+                LIMIT 3
+              )
+          `
+          break
+        }
+
+        case 'memory_write': {
+          const agentId = String(params.agent_id ?? '')
+          const content = String(params.content ?? '')
+          if (!agentId || !content.trim()) {
+            break
+          }
+          const embedding = await this.generateOpenAIEmbedding(content.trim())
+          await sql`
+            INSERT INTO memories (
+              org_id, agent_id, session_id, user_id, content, embedding, memory_type, importance, metadata, expires_at
+            )
+            VALUES (
+              ${conn.orgId},
+              ${agentId},
+              ${sessionId},
+              ${conn.userId},
+              ${content},
+              ${embedding ? JSON.stringify(embedding) : null}::vector,
+              ${String(params.memory_type ?? 'episodic')},
+              ${Number(params.importance ?? 0.5)},
+              ${sql.json(((params.metadata as Record<string, unknown>) ?? {}) as Parameters<typeof sql.json>[0])},
+              NULL
             )
           `
           break

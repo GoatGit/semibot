@@ -223,10 +223,10 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
 4. 改造 `runtime/src/session/manager.py` — SessionManager 根据 `runtime_type` 选择 Adapter
 5. 新增 `runtime/openclaw-bridge/` — Node.js Bridge 进程骨架：
    - `src/main.ts` — 入口
-   - `src/bridge.ts` — Unix Domain Socket IPC 服务端
+   - `src/bridge.ts` — stdin/stdout JSON-line IPC 服务端
    - `src/event-translator.ts` — OpenClaw → Semibot SSE 事件翻译
    - `src/skill-loader.ts` — Skill 缓存集成
-6. IPC 协议实现（JSON-line，Unix Domain Socket）
+6. IPC 协议实现（JSON-line，stdin/stdout）
 7. 单元测试：mock OpenClaw 事件 → 验证翻译后的 SSE 事件格式正确
 8. Adapter 单元测试：验证 SemiGraphAdapter 和 OpenClawBridgeAdapter 实现 RuntimeAdapter 接口
 
@@ -273,7 +273,7 @@ async handleChat(sessionId: string, message: string, userId: string, orgId: stri
    - 短期记忆：OpenClaw 使用独立子目录（`openclaw-memory/`），互不干扰
    - 长期记忆：Bridge 代理 `memory_search` 请求，通过 IPC → Python → WS 到控制平面
 4. 实现 MCP 代理：Bridge 代理远程 MCP 调用，通过 IPC → Python → WS 到控制平面
-5. IPC 集成测试：Python ↔ Node.js Unix Socket 通信正确性
+5. IPC 集成测试：Python ↔ Node.js stdin/stdout 通信正确性
 6. E2E 测试：创建 `runtime_type='openclaw'` 的 agent，发送消息，验证前端收到正确的 SSE 流
 7. 并发测试：同一 VM 内同时运行 SemiGraph session 和 OpenClaw session，互不干扰
 
@@ -637,7 +637,7 @@ ALTER TABLE organizations
 | VM Scheduler | allocate、release、健康检查、恢复流程 |
 | RuntimeAdapter | SemiGraphAdapter 和 OpenClawBridgeAdapter 接口一致性 |
 | Event Translator | OpenClaw 事件 → Semibot SSE 事件格式映射正确性 |
-| Bridge IPC | JSON-line 协议解析、Unix Domain Socket 通信 |
+| Bridge IPC | JSON-line 协议解析、stdin/stdout 通信 |
 
 ### 集成测试
 
@@ -648,7 +648,7 @@ ALTER TABLE organizations
 | 断线重连 | kill WS 连接，验证自动重连和 resume 恢复 |
 | Skill 懒加载 | 缓存未命中 → WS 拉取 → 缓存命中 |
 | MCP 调用 | 远程 MCP 通过 WS 代理、本地 MCP 通过 STDIO 直连 |
-| Python ↔ Node.js IPC | Unix Domain Socket JSON-line 通信正确性、错误处理 |
+| Python ↔ Node.js IPC | stdin/stdout JSON-line 通信正确性、错误处理 |
 | OpenClaw Skill 加载 | Bridge 从 `.semibot/skills/` 缓存读取，缓存未命中时通过 IPC 拉取 |
 | OpenClaw 记忆代理 | Bridge 代理 memory_search 请求到控制平面 |
 
