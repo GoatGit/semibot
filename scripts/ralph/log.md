@@ -536,3 +536,30 @@
   - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/orchestrator/test_nodes_memory.py tests/agents/test_delegator.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
   - `pnpm --filter @semibot/api exec tsc --noEmit`
   - `pnpm --filter @semibot/api exec vitest --run src/__tests__/chat-ws.integration.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts src/__tests__/vm.route.behavior.test.ts`
+
+### 2026-02-23 迭代 X+31 — 审查报告问题修复（高优先级批次）
+1. 修复 `chat.service.ts` 取消条件反转：`res.on('close')` 改为 `connection.isActive` 时下发 cancel
+2. 修复 `ws-server.ts` 完成事件名：`done` -> `execution_complete`
+3. 修复 `semigraph_adapter.py` 取消事件语义：`execution_error` -> `execution_complete + cancelled=true`
+4. 修复 `ws-server.ts` JSON 解析健壮性：`handleMessage` 增加 try/catch，非法 JSON 忽略并记录日志
+5. 修复 `vm-scheduler.ts` 死代码：移除 `active.status === 'terminated'` 分支
+6. 修复 JWT 弱密钥 fallback 风险：生产环境缺失 `JWT_SECRET` 时抛错（scheduler/ws-server）
+7. 实现 VM 一次性 ticket 校验：
+   - 调度侧每次 bootstrap 轮换 `connect_ticket` 并注入 `VM_TICKET`
+   - 控制平面握手时消费 ticket（首次连接）或校验已消费状态（重连）
+   - 新增迁移 `020_user_vm_instances_connect_ticket.sql`
+8. 实现长期记忆写入链路：
+   - runtime `WSMemoryProxy.save_long_term` 改为 `fire_and_forget(memory_write)`
+   - control-plane `ws-server` 新增 `memory_write` 处理并写入 `memories`
+9. 实现 session snapshot 保留策略：`snapshot_sync` 后保留最近 3 条，删除旧快照
+10. 实现 Skill 依赖检查：`SessionManager.start_session` 过滤不满足 `requires.binaries/env_vars` 的 skill
+11. 实现 skill metadata 非硬编码：`chat.service.ts` 从 package metadata/文件系统推导 `file_inventory` 与 `requires`
+12. 修正文档环境变量偏差：`04-EXECUTION-PLANE.md` 中 `USER_ID` -> `VM_USER_ID`
+13. 新增测试：
+   - `apps/api/src/__tests__/ws.server.request-fireforget.test.ts` 增加非法 JSON 忽略用例
+   - `runtime/tests/session/test_session_manager_requirements.py` 覆盖 skill requirement 过滤
+   - 更新 `runtime/tests/session/test_semigraph_adapter_ws.py` 取消事件断言
+- 验证通过：
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `pnpm --filter @semibot/api exec vitest --run src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/session/test_session_manager_requirements.py tests/ws/test_client_reconnect.py tests/agents/test_delegator.py`

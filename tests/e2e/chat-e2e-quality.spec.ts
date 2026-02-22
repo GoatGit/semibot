@@ -1,7 +1,10 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
 import { loginByApi } from './helpers/auth'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
+const rawApiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_BASE = rawApiBase.replace(/\/$/, '').endsWith('/api/v1')
+  ? rawApiBase.replace(/\/$/, '')
+  : `${rawApiBase.replace(/\/$/, '')}/api/v1`
 const TEST_EMAIL = process.env.E2E_TEST_EMAIL || '12611171@qq.com'
 const TEST_PASSWORD = process.env.E2E_TEST_PASSWORD || 'test123'
 

@@ -33,6 +33,7 @@ class ControlPlaneClient:
         self.ws: websockets.WebSocketClientProtocol | None = None
         self.pending_requests: dict[str, asyncio.Future[Any]] = {}
         self.session_handlers: dict[str, dict[str, SessionHandler]] = {}
+        self.pending_session_messages: dict[str, list[dict[str, Any]]] = {}
         self.vm_handlers: dict[str, VMHandler] = {}
         self.active_sessions_provider: Callable[[], list[str]] | None = None
         self._listen_task: asyncio.Task[Any] | None = None
@@ -76,9 +77,13 @@ class ControlPlaneClient:
             "user_message": user_message,
             "cancel": cancel,
         }
+        pending = self.pending_session_messages.pop(session_id, [])
+        for payload in pending:
+            asyncio.create_task(user_message(payload))
 
     def unregister_session_handlers(self, session_id: str) -> None:
         self.session_handlers.pop(session_id, None)
+        self.pending_session_messages.pop(session_id, None)
 
     def set_active_sessions_provider(self, provider: Callable[[], list[str]]) -> None:
         self.active_sessions_provider = provider
@@ -177,6 +182,11 @@ class ControlPlaneClient:
                 handler = self.session_handlers.get(session_id, {}).get("user_message")
                 if handler:
                     asyncio.create_task(handler(msg.get("data", {})))
+                else:
+                    queued = self.pending_session_messages.setdefault(session_id, [])
+                    queued.append(msg.get("data", {}))
+                    if len(queued) > 20:
+                        del queued[:-20]
                 continue
 
             if msg_type == "cancel":

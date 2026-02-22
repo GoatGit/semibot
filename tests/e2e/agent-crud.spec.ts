@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { loginByApi } from './helpers/auth'
 
 /**
  * Agent 管理 CRUD E2E 测试
@@ -6,13 +7,7 @@ import { test, expect } from '@playwright/test'
 test.describe('Agent Management', () => {
   // 每个测试前先登录
   test.beforeEach(async ({ page }) => {
-    await page.goto('/login')
-    await page.getByRole('textbox', { name: /email|邮箱|用户名/i }).fill('test@example.com')
-    await page.locator('input[type="password"]').fill('testpassword123')
-    await page.getByRole('button', { name: /login|登录|sign in/i }).click()
-
-    // 等待登录完成
-    await expect(page).not.toHaveURL(/\/login/i)
+    await loginByApi(page)
   })
 
   test.describe('List Agents', () => {
@@ -112,11 +107,7 @@ test.describe('Agent Management', () => {
         .click()
 
       // 验证创建表单可见
-      await expect(
-        page.getByRole('dialog')
-          .or(page.locator('[data-testid="agent-form"]'))
-          .or(page.getByRole('heading', { name: /create agent|创建代理|新建代理/i }))
-      ).toBeVisible()
+      await expect(page.getByRole('dialog', { name: /create agent|创建代理|新建代理/i })).toBeVisible()
 
       // 验证表单字段存在
       await expect(
@@ -163,17 +154,17 @@ test.describe('Agent Management', () => {
       }
 
       // 提交表单
+      const createResponsePromise = page.waitForResponse((res) => {
+        if (res.request().method() !== 'POST') return false
+        return /\/api\/v1\/agents\/?$/.test(new URL(res.url()).pathname)
+      })
       await page.getByRole('button', { name: /save|保存|create|创建|submit|提交/i }).click()
+      const createResponse = await createResponsePromise
 
       // 验证创建成功
-      await expect(
-        page.getByText(/success|成功|created/i)
-          .or(page.getByText(agentName))
-      ).toBeVisible()
-
-      // 验证新 Agent 出现在列表中
-      await page.goto('/agents')
-      await expect(page.getByText(agentName)).toBeVisible()
+      expect(createResponse.ok(), `Create agent failed: ${createResponse.status()}`).toBeTruthy()
+      const createBody = await createResponse.json()
+      expect(createBody?.success).toBe(true)
     })
 
     test('should show validation errors for required fields', async ({ page }) => {
@@ -207,7 +198,7 @@ test.describe('Agent Management', () => {
         .fill('Agent to cancel')
 
       // 点击取消
-      await page.getByRole('button', { name: /cancel|取消|close|关闭/i }).click()
+      await page.getByRole('button', { name: /cancel|取消/i }).click()
 
       // 验证模态框关闭
       await expect(

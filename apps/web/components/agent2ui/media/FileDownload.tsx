@@ -61,15 +61,50 @@ export function FileDownload({ data }: FileDownloadProps) {
   const { url, filename, size, mimeType } = data
   const IconComponent = getFileIcon(mimeType)
 
-  const handleDownload = () => {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.target = '_blank'
-    a.rel = 'noopener noreferrer'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+  const resolveDownloadUrl = () => {
+    if (/^https?:\/\//i.test(url)) return url
+    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1').replace(/\/$/, '')
+    const origin = base.replace(/\/api\/v1$/, '')
+
+    if (url.startsWith('/api/v1/')) {
+      return `${origin}${url}`
+    }
+    if (url.startsWith('/files/')) {
+      return `${base}${url}`
+    }
+    if (url.startsWith('/')) {
+      return `${origin}${url}`
+    }
+    return `${base}/${url.replace(/^\/+/, '')}`
+  }
+
+  const handleDownload = async () => {
+    const downloadUrl = resolveDownloadUrl()
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+      const response = await fetch(downloadUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) {
+        throw new Error(`下载失败: HTTP ${response.status}`)
+      }
+      const contentType = response.headers.get('content-type') ?? ''
+      if (contentType.includes('application/json')) {
+        throw new Error('下载失败: 服务端返回了错误响应')
+      }
+
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objectUrl)
+    } catch (error) {
+      console.error('[FileDownload] 下载失败:', error)
+    }
   }
 
   return (

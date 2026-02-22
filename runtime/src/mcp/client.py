@@ -324,13 +324,14 @@ class McpClient:
         except McpError:
             raise
         except Exception as e:
+            error_text = str(e).strip() or repr(e)
             logger.error(
-                f"MCP tool call failed: {e}",
+                f"MCP tool call failed: {error_text}",
                 extra={"server_id": server_id, "tool_name": tool_name},
             )
             raise McpError(
                 code=McpErrorCode.TOOL_EXECUTION_FAILED,
-                message=f"Tool call failed: {str(e)}",
+                message=f"Tool call failed: {error_text}",
                 details={"server_id": server_id, "tool_name": tool_name},
             )
 

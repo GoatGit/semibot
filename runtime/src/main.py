@@ -4,6 +4,8 @@ import asyncio
 import os
 
 from src.session.manager import SessionManager
+from src.skills.code_executor import set_file_manager
+from src.storage.file_manager import FileManager
 from src.utils.logging import get_logger
 from src.ws.client import ControlPlaneClient
 
@@ -15,9 +17,26 @@ async def _run() -> None:
     user_id = os.getenv("VM_USER_ID", "")
     ticket = os.getenv("VM_TICKET", "")
     token = os.getenv("VM_TOKEN", "")
+    node_env = os.getenv("NODE_ENV", "development").lower()
+    standby_enabled = os.getenv("RUNTIME_DEV_STANDBY", "true").lower() == "true"
 
     if not user_id or not token:
-        raise RuntimeError("VM_USER_ID 和 VM_TOKEN 必须配置")
+        if node_env == "production" or not standby_enabled:
+            raise RuntimeError("VM_USER_ID 和 VM_TOKEN 必须配置")
+        logger.warning(
+            "runtime_dev_standby_mode",
+            extra={
+                "reason": "missing_vm_identity",
+                "required": ["VM_USER_ID", "VM_TOKEN"],
+                "hint": "set RUNTIME_DEV_STANDBY=false to fail fast",
+            },
+        )
+        while True:
+            await asyncio.sleep(3600)
+
+    file_manager = FileManager()
+    set_file_manager(file_manager)
+    file_manager.start_cleanup_loop()
 
     client = ControlPlaneClient(
         control_plane_url=control_plane_ws,

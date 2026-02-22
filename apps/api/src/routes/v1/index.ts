@@ -19,6 +19,7 @@ import skillDefinitionsRouter from './skill-definitions'
 import evolvedSkillsRouter from './evolved-skills'
 import webhooksRouter from './webhooks'
 import vmRouter from './vm'
+import filesRouter from './files'
 
 const router: Router = Router()
 
@@ -53,5 +54,6 @@ router.use('/skill-definitions', skillDefinitionsRouter)
 router.use('/evolved-skills', evolvedSkillsRouter)
 router.use('/webhooks', webhooksRouter)
 router.use('/vm', vmRouter)
+router.use('/files', filesRouter)
 
 export default router

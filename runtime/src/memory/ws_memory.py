@@ -75,8 +75,8 @@ class WSMemoryProxy:
                 agent_id=agent_id,
                 content=content,
                 importance=importance,
-                memory_type="long_term",
-                metadata={"source": "execution_plane"},
+                memory_type="semantic",
+                metadata={"source": "execution_plane", "memory_scope": "long_term"},
             )
         except Exception as exc:
             logger.warning("ws_memory_write_failed", extra={"error": str(exc)})

@@ -1,0 +1,21 @@
+{
+  "id": "1771756969405",
+  "session_id": "23f7d9c2-b5ea-46a7-8a5e-f835f6741355",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "你好",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "你好！我是您的AI助手，很高兴为您服务。请问有什么可以帮助您的吗？无论是信息查询、文件处理还是数据分析，我都可以协助您。",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "你好",
+  "updated_at": 1771756969
+}

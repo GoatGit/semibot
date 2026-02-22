@@ -12,6 +12,7 @@
 | [04-执行平面设计](./04-EXECUTION-PLANE.md) | 执行平面职责、RuntimeAdapter 抽象层、SemiGraph/OpenClaw 双运行时、OpenClaw Bridge、短期记忆、用户级虚拟机、多 session 进程管理 | ✅ |
 | [05-WebSocket 协议](./05-WEBSOCKET-PROTOCOL.md) | 统一 WebSocket 通信协议、消息类型、断线重连、SSE 中转 | ✅ |
 | [06-迁移计划](./06-MIGRATION-PLAN.md) | 从现有架构分阶段迁移的具体步骤和风险控制 | ✅ |
+| [08-生产环境版本一致性关键需求](./08-PRODUCTION-VERSION-CONSISTENCY-REQUIREMENTS.md) | 生产与分布式场景下的版本发布、滚动升级、一致性校验、回滚与可观测关键需求 | 🆕 |
 
 ## 核心设计决策
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shlex
 from typing import Any
 
 from src.mcp.client import McpClient
@@ -27,7 +29,45 @@ def _build_connection_params(server: McpServerDefinition) -> tuple[str, dict[str
         normalized_transport = "http" if transport == "sse" else transport
         return normalized_transport, params
     if transport == "stdio":
-        return "stdio", {"command": server.endpoint}
+        try:
+            parts = shlex.split(server.endpoint)
+        except ValueError:
+            logger.warning("invalid_stdio_endpoint", extra={"server_id": server.id, "endpoint": server.endpoint})
+            return None
+
+        if not parts:
+            logger.warning("empty_stdio_endpoint", extra={"server_id": server.id})
+            return None
+
+        command = parts[0]
+        args = parts[1:]
+
+        auth_config = server.auth_config or {}
+        api_key = auth_config.get("apiKey") or auth_config.get("api_key")
+        env_overrides = auth_config.get("env") if isinstance(auth_config.get("env"), dict) else {}
+        env: dict[str, str] = {
+            str(k): str(v)
+            for k, v in (env_overrides or {}).items()
+            if v is not None
+        }
+        if api_key:
+            # Generic convention
+            env.setdefault("MCP_API_KEY", str(api_key))
+            # Common provider conventions
+            marker = f"{server.name} {server.id} {server.endpoint}".lower()
+            if "tavily" in marker:
+                env.setdefault("TAVILY_API_KEY", str(api_key))
+            if "brave" in marker:
+                env.setdefault("BRAVE_API_KEY", str(api_key))
+            if "github" in marker:
+                env.setdefault("GITHUB_TOKEN", str(api_key))
+
+        # Some MCP servers read keys from parent env; mirror if available.
+        for key in ("TAVILY_API_KEY", "BRAVE_API_KEY", "GITHUB_TOKEN", "MCP_API_KEY"):
+            if key not in env and os.getenv(key):
+                env[key] = os.getenv(key, "")
+
+        return "stdio", {"command": command, "args": args, "env": env}
     logger.warning("unsupported_mcp_transport", extra={"transport": transport, "server_id": server.id})
     return None
 

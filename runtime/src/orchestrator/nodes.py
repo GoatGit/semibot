@@ -14,6 +14,7 @@ an updated state. These nodes implement the core Agent execution logic:
 
 import json
 import time
+from datetime import datetime
 from typing import Any
 
 from src.constants import MAX_REPLAN_ATTEMPTS, REPLAN_RESULT_MAX_CHARS
@@ -35,6 +36,150 @@ logger = get_logger(__name__)
 
 
 import re as _re
+
+_LATEST_INTENT_PATTERNS = (
+    "最新",
+    "最近",
+    "today",
+    "todays",
+    "today's",
+    "latest",
+    "recent",
+    "news",
+    "近况",
+    "动态",
+)
+
+_SEARCH_TOOL_KEYWORDS = (
+    "search",
+    "tavily",
+    "exa",
+    "bailian",
+    "serp",
+    "google",
+    "bing",
+    "duckduckgo",
+)
+
+_TIME_SERIES_PATTERNS = (
+    r"近\s*(\d{1,3})\s*年",
+    r"过去\s*(\d{1,3})\s*年",
+    r"last\s*(\d{1,3})\s*years?",
+)
+
+
+def _is_latest_intent(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    return any(token in lower for token in _LATEST_INTENT_PATTERNS)
+
+
+def _is_search_tool(tool_name: str | None) -> bool:
+    if not tool_name:
+        return False
+    lower = tool_name.lower()
+    return any(token in lower for token in _SEARCH_TOOL_KEYWORDS)
+
+
+def _enhance_latest_search_query(query: str, now: datetime) -> str:
+    base = (query or "").strip()
+    if not base:
+        return base
+    constraints = (
+        f"仅返回{now.year}年最近30天内发布的信息，"
+        f"今天是{now.strftime('%Y-%m-%d')}，"
+        "优先官方公告与一手媒体，结果必须包含明确发布日期。"
+    )
+    return f"{base}。{constraints}"
+
+
+def _extract_requested_years(text: str) -> int | None:
+    if not text:
+        return None
+    for pattern in _TIME_SERIES_PATTERNS:
+        match = _re.search(pattern, text, _re.IGNORECASE)
+        if match:
+            try:
+                years = int(match.group(1))
+                if years > 0:
+                    return years
+            except Exception:
+                return None
+    return None
+
+
+def _enhance_time_series_search_query(query: str, years: int, now: datetime) -> str:
+    base = (query or "").strip()
+    if not base:
+        return base
+    start_year = max(1900, now.year - years + 1)
+    constraints = (
+        f"请返回按年份排列的结构化数据表，覆盖{start_year}-{now.year}，"
+        "每个年份至少包含1条数值记录，优先官方统计来源（政府/国际组织）并附来源链接。"
+    )
+    return f"{base}。{constraints}"
+
+
+def _enforce_freshness_on_plan_steps(
+    steps: list[PlanStep],
+    user_text: str,
+    now: datetime,
+    session_id: str,
+) -> None:
+    if not _is_latest_intent(user_text):
+        return
+
+    for step in steps:
+        if not _is_search_tool(step.tool):
+            continue
+        query = step.params.get("query")
+        if not isinstance(query, str) or not query.strip():
+            continue
+
+        step.params["query"] = _enhance_latest_search_query(query, now)
+        tool_name = (step.tool or "").lower()
+        if "tavily" in tool_name:
+            step.params.setdefault("topic", "news")
+            step.params.setdefault("days", 30)
+        logger.info(
+            "fresh_search_query_enforced",
+            extra={
+                "session_id": session_id,
+                "step_id": step.id,
+                "tool": step.tool,
+                "query_preview": step.params["query"][:180],
+            },
+        )
+
+
+def _enforce_time_series_on_plan_steps(
+    steps: list[PlanStep],
+    user_text: str,
+    now: datetime,
+    session_id: str,
+) -> None:
+    years = _extract_requested_years(user_text)
+    if not years:
+        return
+
+    for step in steps:
+        if not _is_search_tool(step.tool):
+            continue
+        query = step.params.get("query")
+        if not isinstance(query, str) or not query.strip():
+            continue
+        step.params["query"] = _enhance_time_series_search_query(query, years, now)
+        logger.info(
+            "time_series_search_query_enforced",
+            extra={
+                "session_id": session_id,
+                "step_id": step.id,
+                "tool": step.tool,
+                "years": years,
+                "query_preview": step.params["query"][:180],
+            },
+        )
 
 
 def _extract_search_results(tool_results: list[ToolCallResult]) -> list[dict[str, Any]]:
@@ -94,11 +239,17 @@ def _inject_context_data(
     action: PlanStep,
     search_results: list[dict[str, Any]],
     session_id: str,
+    user_request: str | None = None,
 ) -> None:
     """Inject search results as context_data into a code_executor action."""
-    if action.tool != "code_executor" or not search_results:
+    if action.tool not in {"code_executor", "xlsx", "pdf"} or not search_results:
         return
-    context_json = json.dumps({"results": search_results}, ensure_ascii=False)
+    payload = {
+        "results": search_results,
+        "user_request": user_request or "",
+        "generated_at": datetime.now().isoformat(),
+    }
+    context_json = json.dumps(payload, ensure_ascii=False)
     existing = action.params.get("context_data", "")
     action.params["context_data"] = context_json
     logger.info(
@@ -242,6 +393,29 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
     tool_results = state.get("tool_results", [])
     failed_results = [r for r in tool_results if not r.success]
     if failed_results and state["iteration"] > 0:
+        # Replan 时避免重复调用已经失败过的能力（尤其外部网络工具），降低“重复失败”噪声。
+        failed_names = {r.tool_name for r in failed_results if r.tool_name}
+        sticky_ban = {
+            name for name in failed_names
+            if name and name != "code_executor"
+        }
+        if sticky_ban:
+            before = len(available_skills)
+            available_skills = [
+                schema
+                for schema in available_skills
+                if str((schema.get("function") or {}).get("name") or "") not in sticky_ban
+            ]
+            logger.info(
+                "replan_capability_filtered",
+                extra={
+                    "session_id": state["session_id"],
+                    "banned_tools": sorted(sticky_ban),
+                    "before": before,
+                    "after": len(available_skills),
+                },
+            )
+
         error_lines = []
         for r in failed_results:
             error_lines.append(f"Tool '{r.tool_name}' failed:")
@@ -328,6 +502,22 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         # Parse plan from response
         plan = parse_plan_response(plan_response)
 
+        # Enforce freshness constraints for "latest/recent" user intents to
+        # avoid stale search results from overly broad queries.
+        user_text = messages[-1]["content"] if messages else ""
+        _enforce_freshness_on_plan_steps(
+            steps=plan.steps,
+            user_text=user_text,
+            now=datetime.now(),
+            session_id=state["session_id"],
+        )
+        _enforce_time_series_on_plan_steps(
+            steps=plan.steps,
+            user_text=user_text,
+            now=datetime.now(),
+            session_id=state["session_id"],
+        )
+
         # Emit plan_created event
         if event_emitter and plan.steps:
             await event_emitter.emit_plan_created([
@@ -413,7 +603,7 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
         a.tool in ["tavily-search", "tavily_search", "bailian_web_search", "exa_search"]
         for a in pending_actions
     )
-    has_code = any(a.tool == "code_executor" for a in pending_actions)
+    has_code = any(a.tool in {"code_executor", "xlsx", "pdf"} for a in pending_actions)
     if has_search and has_code:
         sequential_actions = pending_actions
         parallel_actions = []
@@ -441,9 +631,19 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
 
     for action in sequential_actions:
         try:
-            if action.tool == "code_executor" and results:
+            if action.tool in {"code_executor", "xlsx", "pdf"} and results:
                 search_results = _extract_search_results(results)
-                _inject_context_data(action, search_results, state["session_id"])
+                latest_user_text = ""
+                for m in reversed(state.get("messages", [])):
+                    if m.get("role") == "user":
+                        latest_user_text = str(m.get("content") or "")
+                        break
+                _inject_context_data(
+                    action,
+                    search_results,
+                    state["session_id"],
+                    latest_user_text,
+                )
 
             result = await _execute_with_events(unified_executor, action, event_emitter)
             results.append(result)

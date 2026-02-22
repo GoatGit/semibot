@@ -37,6 +37,7 @@ class SessionManager:
             return
 
         data = self._filter_skill_index_by_requirements(data)
+        data = await self._enrich_skill_packages(session_id, data)
 
         runtime_type = str(data.get("runtime_type", "semigraph"))
         adapter = self._create_adapter(runtime_type, session_id, data)
@@ -50,6 +51,51 @@ class SessionManager:
 
         await adapter.start()
         logger.info("session_started", extra={"session_id": session_id, "runtime_type": runtime_type})
+
+    async def _enrich_skill_packages(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        raw_skills = data.get("skill_index")
+        if not isinstance(raw_skills, list):
+            return data
+
+        enriched: list[dict[str, Any]] = []
+        loaded_count = 0
+        for item in raw_skills:
+            if not isinstance(item, dict):
+                continue
+            copied = dict(item)
+            skill_id = str(copied.get("id") or copied.get("name") or "").strip()
+            if not skill_id:
+                enriched.append(copied)
+                continue
+            try:
+                result = await self.client.request(
+                    session_id,
+                    "get_skill_package",
+                    skill_id=skill_id,
+                )
+                if isinstance(result, dict):
+                    pkg = result.get("package")
+                    if isinstance(pkg, dict):
+                        copied["package"] = pkg
+                        loaded_count += 1
+            except Exception as exc:
+                logger.warning(
+                    "skill_package_load_failed",
+                    extra={"session_id": session_id, "skill_id": skill_id, "error": str(exc)},
+                )
+            enriched.append(copied)
+
+        logger.info(
+            "skill_packages_enriched",
+            extra={
+                "session_id": session_id,
+                "requested": len(raw_skills),
+                "loaded": loaded_count,
+            },
+        )
+        copied_data = dict(data)
+        copied_data["skill_index"] = enriched
+        return copied_data
 
     async def stop_session(self, data: dict[str, Any]) -> None:
         session_id = str(data.get("session_id", ""))

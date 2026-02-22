@@ -311,9 +311,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                     handleMessage(data)
                     break
                   case 'done':
+                  case 'execution_complete':
                     handleDone(data)
                     break
                   case 'error':
+                  case 'execution_error':
                     handleError(data)
                     break
                   // heartbeat 等其他事件静默忽略

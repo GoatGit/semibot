@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import jwt from 'jsonwebtoken'
 import { sql } from '../lib/db'
 import { createLogger } from '../lib/logger'
@@ -14,6 +15,8 @@ type VMInstanceRow = {
   status: VMStatus
   mode: string
   vm_id: string | null
+  connect_ticket: string | null
+  ticket_used_at: string | null
   last_bootstrap_at: string | null
   bootstrap_attempts: number
   bootstrap_last_error: string | null
@@ -64,6 +67,24 @@ export async function ensureUserVM(
     return { ready: true, status: 'ready', instanceId: active.id }
   }
 
+  // DB 记录是 ready，但当前进程无 WS 连接（常见于 API 重启后内存态丢失）。
+  // 将其视为断连并尝试触发重连 bootstrap，避免返回 "status=ready 但不可用"。
+  if (active.status === 'ready') {
+    if (hasExceededBootstrapAttempts(active)) {
+      await markVMStatus(active.id, 'failed')
+      await recordBootstrapFailure(active.id, 'bootstrap attempts exceeded')
+      return { ready: false, status: 'failed', instanceId: active.id }
+    }
+    const retryAfterMs = getRemainingCooldownMs(active)
+    const triggered = await maybeTriggerBootstrap(userId, orgId, active.id, active.mode, active)
+    if (triggered) {
+      await markVMStatus(active.id, 'provisioning')
+      return { ready: false, status: 'provisioning', instanceId: active.id }
+    }
+    await markVMStatus(active.id, 'disconnected')
+    return { ready: false, status: 'disconnected', instanceId: active.id, retryAfterMs }
+  }
+
   if (active.status === 'failed') {
     const mode = await resolveVMMode(userId, orgId)
     const created = await createVMInstance(userId, orgId, mode)
@@ -90,12 +111,49 @@ export async function ensureUserVM(
     return { ready: false, status: active.status, instanceId: active.id, retryAfterMs }
   }
 
+  if (active.status === 'starting') {
+    if (hasExceededBootstrapAttempts(active)) {
+      await markVMStatus(active.id, 'failed')
+      await recordBootstrapFailure(active.id, 'bootstrap attempts exceeded')
+      return { ready: false, status: 'failed', instanceId: active.id }
+    }
+    const retryAfterMs = getRemainingCooldownMs(active)
+    const triggered = await maybeTriggerBootstrap(userId, orgId, active.id, active.mode, active)
+    if (triggered) {
+      await markVMStatus(active.id, 'provisioning')
+      return { ready: false, status: 'provisioning', instanceId: active.id }
+    }
+    return { ready: false, status: active.status, instanceId: active.id, retryAfterMs }
+  }
+
+  if (active.status === 'provisioning') {
+    if (hasExceededBootstrapAttempts(active)) {
+      await markVMStatus(active.id, 'failed')
+      await recordBootstrapFailure(active.id, 'bootstrap attempts exceeded')
+      return { ready: false, status: 'failed', instanceId: active.id }
+    }
+
+    const provisioningCooldownMs = getProvisioningRetryCooldownMs()
+    const retryAfterMs = getRemainingCooldownMsWithWindow(active, provisioningCooldownMs)
+    if (retryAfterMs && retryAfterMs > 0) {
+      return { ready: false, status: active.status, instanceId: active.id, retryAfterMs }
+    }
+
+    // provisioning 卡住时绕过常规 30s 冷却，用更短窗口重触发 bootstrap。
+    const triggered = await maybeTriggerBootstrap(userId, orgId, active.id, active.mode, active, true)
+    if (triggered) {
+      await markVMStatus(active.id, 'provisioning')
+      return { ready: false, status: 'provisioning', instanceId: active.id }
+    }
+    return { ready: false, status: active.status, instanceId: active.id, retryAfterMs }
+  }
+
   return { ready: false, status: active.status, instanceId: active.id }
 }
 
 async function getActiveVM(userId: string): Promise<VMInstanceRow | null> {
   const rows = await sql<VMInstanceRow[]>`
-    SELECT id, status, mode, vm_id, last_bootstrap_at, bootstrap_attempts, bootstrap_last_error
+    SELECT id, status, mode, vm_id, connect_ticket::text AS connect_ticket, ticket_used_at, last_bootstrap_at, bootstrap_attempts, bootstrap_last_error
     FROM user_vm_instances
     WHERE user_id = ${userId}
       AND status NOT IN ('terminated', 'failed')
@@ -142,8 +200,14 @@ function resolveBootstrapCommand(): string {
   if (fromEnv) return fromEnv
 
   if ((process.env.NODE_ENV ?? 'development') !== 'production') {
-    const localScript = path.resolve(process.cwd(), 'scripts/vm/bootstrap-local.sh')
-    if (fs.existsSync(localScript)) return localScript
+    const schedulerDir = path.dirname(fileURLToPath(import.meta.url))
+    const candidates = [
+      path.resolve(process.cwd(), 'scripts/vm/bootstrap-local.sh'),
+      path.resolve(schedulerDir, '../../../../scripts/vm/bootstrap-local.sh'),
+    ]
+    for (const localScript of candidates) {
+      if (fs.existsSync(localScript)) return localScript
+    }
   }
   return ''
 }
@@ -158,11 +222,19 @@ function shouldSkipBootstrapByCooldown(active: VMInstanceRow): boolean {
 
 function getRemainingCooldownMs(active: VMInstanceRow): number | undefined {
   const cooldownMs = Math.max(1000, Number(process.env.VM_BOOTSTRAP_COOLDOWN_MS ?? 30000))
+  return getRemainingCooldownMsWithWindow(active, cooldownMs)
+}
+
+function getRemainingCooldownMsWithWindow(active: VMInstanceRow, cooldownMs: number): number | undefined {
   if (!active.last_bootstrap_at) return undefined
   const last = Date.parse(active.last_bootstrap_at)
   if (Number.isNaN(last)) return undefined
   const remaining = cooldownMs - (Date.now() - last)
   return remaining > 0 ? remaining : undefined
+}
+
+function getProvisioningRetryCooldownMs(): number {
+  return Math.max(1000, Number(process.env.VM_PROVISIONING_RETRY_COOLDOWN_MS ?? 5000))
 }
 
 function hasExceededBootstrapAttempts(active: VMInstanceRow): boolean {
@@ -220,7 +292,11 @@ async function maybeTriggerBootstrap(
     return false
   }
   const vmToken = createVMToken(userId, orgId)
-  const vmTicket = await issueVMConnectTicket(instanceId)
+  // If there is an unused ticket on the active instance, reuse it to avoid
+  // invalidating an in-flight bootstrap process during provisioning retries.
+  const vmTicket = (active?.connect_ticket && !active.ticket_used_at)
+    ? active.connect_ticket
+    : await issueVMConnectTicket(instanceId)
   await touchBootstrapAttempt(instanceId)
 
   try {
@@ -235,6 +311,7 @@ async function maybeTriggerBootstrap(
         VM_MODE: mode,
         VM_TOKEN: vmToken,
         VM_TICKET: vmTicket,
+        FORCE_RESTART_RUNTIME: force ? 'true' : 'false',
       },
     })
     child.unref()
@@ -250,10 +327,11 @@ async function maybeTriggerBootstrap(
 
 function createVMToken(userId: string, orgId: string): string {
   const secret = getJWTSecret()
+  const tokenTtl = ((process.env.VM_TOKEN_TTL ?? '12h').trim() || '12h') as jwt.SignOptions['expiresIn']
   return jwt.sign(
     { userId, orgId },
     secret,
-    { expiresIn: '10m' }
+    { expiresIn: tokenTtl }
   )
 }
 

@@ -179,6 +179,9 @@ export default function NewChatPage() {
       }
 
       const sessionId = response.data.id
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(`semibot:initialMessage:${sessionId}`, initialMessage)
+      }
 
       // 立即跳转到会话页面，通过 query 参数传递初始消息
       router.push(`/chat/${sessionId}?initialMessage=${encodeURIComponent(initialMessage)}`)

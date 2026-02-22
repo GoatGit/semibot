@@ -4,6 +4,7 @@ Provides safe code execution in isolated environments.
 """
 
 import asyncio
+import json
 import subprocess
 import sys
 import tempfile
@@ -226,20 +227,8 @@ except ImportError:
     ) -> ToolResult:
         """Execute Python code."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Write context data file if provided
-            if context_data:
-                context_path = Path(tmpdir) / "context.json"
-                # Validate and re-serialize JSON to fix control characters
-                try:
-                    import json as _json
-                    parsed = _json.loads(context_data)
-                    context_path.write_text(
-                        _json.dumps(parsed, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                except (ValueError, TypeError):
-                    # If not valid JSON, write as-is (best effort)
-                    context_path.write_text(context_data, encoding="utf-8")
+            context_path = Path(tmpdir) / "context.json"
+            self._write_context_file(context_path, context_data)
 
             # Inject preamble to patch common fpdf2 issues
             full_code = self._PYTHON_PREAMBLE + code
@@ -274,19 +263,8 @@ except ImportError:
     ) -> ToolResult:
         """Execute JavaScript code with Node.js."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            if context_data:
-                context_path = Path(tmpdir) / "context.json"
-                # Validate and re-serialize JSON to fix control characters
-                try:
-                    import json as _json
-                    parsed = _json.loads(context_data)
-                    context_path.write_text(
-                        _json.dumps(parsed, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                except (ValueError, TypeError):
-                    # If not valid JSON, write as-is (best effort)
-                    context_path.write_text(context_data, encoding="utf-8")
+            context_path = Path(tmpdir) / "context.json"
+            self._write_context_file(context_path, context_data)
 
             script_path = Path(tmpdir) / "script.js"
             script_path.write_text(code)
@@ -311,19 +289,8 @@ except ImportError:
     ) -> ToolResult:
         """Execute shell script."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            if context_data:
-                context_path = Path(tmpdir) / "context.json"
-                # Validate and re-serialize JSON to fix control characters
-                try:
-                    import json as _json
-                    parsed = _json.loads(context_data)
-                    context_path.write_text(
-                        _json.dumps(parsed, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                except (ValueError, TypeError):
-                    # If not valid JSON, write as-is (best effort)
-                    context_path.write_text(context_data, encoding="utf-8")
+            context_path = Path(tmpdir) / "context.json"
+            self._write_context_file(context_path, context_data)
 
             script_path = Path(tmpdir) / "script.sh"
             script_path.write_text(code)
@@ -340,6 +307,28 @@ except ImportError:
                 result.metadata["generated_files"] = generated_files
 
             return result
+
+    def _write_context_file(self, context_path: Path, context_data: str | None) -> None:
+        """Always write a valid JSON context file for user code."""
+        if not context_data:
+            context_path.write_text(
+                json.dumps({"results": []}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return
+
+        try:
+            parsed = json.loads(context_data)
+            context_path.write_text(
+                json.dumps(parsed, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except (ValueError, TypeError):
+            logger.warning("Invalid context_data JSON, wrapping as raw payload")
+            context_path.write_text(
+                json.dumps({"raw": context_data}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
     def _collect_output_files(
         self,

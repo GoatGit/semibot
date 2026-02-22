@@ -9,9 +9,10 @@ set -euo pipefail
 #   VM_MODE
 #
 # Optional env:
-#   CONTROL_PLANE_WS (default: ws://127.0.0.1:3101/ws/vm)
+#   CONTROL_PLANE_WS (default: ws://127.0.0.1:3001/ws/vm)
 #   RUNTIME_WORKDIR   (default: runtime)
 #   RUNTIME_LOG_DIR   (default: /tmp)
+#   FORCE_RESTART_RUNTIME (default: false)
 
 if [[ -z "${VM_USER_ID:-}" || -z "${VM_ORG_ID:-}" || -z "${VM_INSTANCE_ID:-}" ]]; then
   echo "[bootstrap-local] missing required env: VM_USER_ID / VM_ORG_ID / VM_INSTANCE_ID" >&2
@@ -21,7 +22,8 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUNTIME_WORKDIR="${RUNTIME_WORKDIR:-runtime}"
 RUNTIME_LOG_DIR="${RUNTIME_LOG_DIR:-/tmp}"
-CONTROL_PLANE_WS="${CONTROL_PLANE_WS:-ws://127.0.0.1:3101/ws/vm}"
+CONTROL_PLANE_WS="${CONTROL_PLANE_WS:-ws://127.0.0.1:3001/ws/vm}"
+FORCE_RESTART_RUNTIME="${FORCE_RESTART_RUNTIME:-false}"
 
 LOG_FILE="${RUNTIME_LOG_DIR}/semibot-runtime-${VM_USER_ID}.log"
 PID_FILE="${RUNTIME_LOG_DIR}/semibot-runtime-${VM_USER_ID}.pid"
@@ -31,8 +33,18 @@ mkdir -p "${RUNTIME_LOG_DIR}"
 if [[ -f "${PID_FILE}" ]]; then
   OLD_PID="$(cat "${PID_FILE}" || true)"
   if [[ -n "${OLD_PID}" ]] && kill -0 "${OLD_PID}" >/dev/null 2>&1; then
-    echo "[bootstrap-local] runtime already running for user ${VM_USER_ID} (pid=${OLD_PID})"
-    exit 0
+    if [[ "${FORCE_RESTART_RUNTIME}" == "true" ]]; then
+      echo "[bootstrap-local] force restarting runtime for user ${VM_USER_ID} (old pid=${OLD_PID})"
+      kill "${OLD_PID}" >/dev/null 2>&1 || true
+      sleep 0.2
+      if kill -0 "${OLD_PID}" >/dev/null 2>&1; then
+        kill -9 "${OLD_PID}" >/dev/null 2>&1 || true
+      fi
+      rm -f "${PID_FILE}"
+    else
+      echo "[bootstrap-local] runtime already running for user ${VM_USER_ID} (pid=${OLD_PID})"
+      exit 0
+    fi
   fi
 fi
 

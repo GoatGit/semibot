@@ -145,7 +145,7 @@ test.describe('Chat Flow', () => {
       await mockChatSSE(page, 'sess-created', ['你好，我是测试助手。'])
 
       await page.goto('/chat')
-      await page.getByTestId('new-session-btn').click()
+      await page.getByRole('link', { name: '新建会话' }).click()
       await expect(page).toHaveURL(/\/chat\/new/)
 
       await page.getByRole('button', { name: /通用助手/ }).click()

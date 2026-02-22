@@ -5,14 +5,18 @@ import { test, expect, type Page, type APIRequestContext } from '@playwright/tes
  * 聊天流程中通过 code_executor 生成 PDF / XLSX 文件
  *
  * 前置条件：
- * - 三层服务已启动：Frontend (3100), API (3101), Runtime (8901)
+ * - 三层服务已启动：Frontend (3000), API (3001), Runtime (8901)
  * - 测试账号已存在：12611171@qq.com / test123
  * - Runtime 已安装 openpyxl + reportlab
  * - 至少有一个 isActive=true 的 Agent
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
-const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3100'
+const rawApiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_BASE = rawApiBase.replace(/\/$/, '').endsWith('/api/v1')
+  ? rawApiBase.replace(/\/$/, '')
+  : `${rawApiBase.replace(/\/$/, '')}/api/v1`
+const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+const API_ORIGIN = new URL(API_BASE).origin
 const TEST_EMAIL = '12611171@qq.com'
 const TEST_PASSWORD = 'test123'
 
@@ -38,13 +42,14 @@ async function apiLogin(request: APIRequestContext): Promise<string> {
 async function injectAuth(page: Page, token: string) {
   // 先访问一次以设置 origin
   await page.goto(APP_BASE, { waitUntil: 'domcontentloaded' })
+  const appHost = new URL(APP_BASE).hostname
 
   await page.evaluate((t) => {
     localStorage.setItem('auth_token', t)
   }, token)
 
   await page.context().addCookies([
-    { name: 'auth_token', value: token, domain: 'localhost', path: '/' },
+    { name: 'auth_token', value: token, domain: appHost, path: '/' },
   ])
 }
 
@@ -67,6 +72,11 @@ interface SSEResult {
   rawEvents: string[]
 }
 
+function toAbsoluteApiUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url
+  return `${API_ORIGIN}${url.startsWith('/') ? '' : '/'}${url}`
+}
+
 /**
  * 通过 Node fetch 发送消息并流式解析 SSE，返回所有 file 事件
  * 使用 native fetch 以支持 streaming（Playwright APIRequestContext 不支持 SSE 长连接）
@@ -77,25 +87,49 @@ async function sendMessageAndParseSSE(
   message: string,
   timeoutMs = 150_000,
 ): Promise<SSEResult> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const startedAt = Date.now()
+  let res: Response | null = null
 
-  const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'text/event-stream',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message }),
-    signal: controller.signal,
-  })
+  while (Date.now() - startedAt < timeoutMs) {
+    const attemptController = new AbortController()
+    const attemptTimer = setTimeout(() => attemptController.abort(), 30_000)
+    try {
+      res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'text/event-stream',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message }),
+        signal: attemptController.signal,
+      })
+    } finally {
+      clearTimeout(attemptTimer)
+    }
 
-  expect(res.ok, `Chat request failed: ${res.status}`).toBeTruthy()
+    if (res.ok) break
+
+    if (res.status === 503) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      continue
+    }
+
+    expect(res.ok, `Chat request failed: ${res.status}`).toBeTruthy()
+    break
+  }
+
+  expect(res && res.ok, `Chat request failed after retries: ${res?.status}`).toBeTruthy()
+  const streamResponse = res as Response
+  let timedOut = false
 
   const result: SSEResult = { files: [], hasError: false, hasDone: false, rawEvents: [] }
 
-  const reader = res.body!.getReader()
+  const reader = streamResponse.body!.getReader()
+  const timer = setTimeout(() => {
+    timedOut = true
+    void reader.cancel().catch(() => {})
+  }, timeoutMs)
   const decoder = new TextDecoder()
   let buffer = ''
 
@@ -134,6 +168,12 @@ async function sendMessageAndParseSSE(
           if (eventType === 'error') {
             result.hasError = true
           }
+          if (eventType === 'execution_complete' || parsed.type === 'execution_complete') {
+            result.hasDone = true
+          }
+          if (eventType === 'execution_error' || parsed.type === 'execution_error') {
+            result.hasError = true
+          }
 
           // file_created 事件 — runtime 生成文件后推送
           if (eventType === 'file_created' && parsed.data) {
@@ -159,7 +199,7 @@ async function sendMessageAndParseSSE(
       if (result.hasDone) break
     }
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === 'AbortError') {
+    if ((err instanceof Error && err.name === 'AbortError') || timedOut) {
       // timeout — 仍然返回已收集的结果
     } else {
       throw err
@@ -245,7 +285,7 @@ test.describe('Real E2E: Chat File Generation (PDF & XLSX)', () => {
 
     // 验证文件可下载
     if (xlsxFile!.url) {
-      const downloadRes = await request.get(xlsxFile!.url, {
+      const downloadRes = await request.get(toAbsoluteApiUrl(xlsxFile!.url), {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (downloadRes.ok()) {
@@ -303,7 +343,7 @@ test.describe('Real E2E: Chat File Generation (PDF & XLSX)', () => {
 
     // 验证文件可下载
     if (pdfFile!.url) {
-      const downloadRes = await request.get(pdfFile!.url, {
+      const downloadRes = await request.get(toAbsoluteApiUrl(pdfFile!.url), {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (downloadRes.ok()) {

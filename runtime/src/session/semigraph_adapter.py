@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -10,12 +11,20 @@ from src.llm.base import LLMConfig
 from src.llm.openai_provider import OpenAIProvider
 from src.mcp.client import McpClient
 from src.memory.ws_memory import WSMemoryProxy
-from src.orchestrator.context import AgentConfig, McpServerDefinition, RuntimeSessionContext
+from src.mcp.bootstrap import setup_mcp_client
+from src.orchestrator.context import (
+    AgentConfig,
+    McpServerDefinition,
+    RuntimeSessionContext,
+    SkillDefinition,
+    ToolDefinition,
+)
 from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
 from src.session.runtime_adapter import RuntimeAdapter
 from src.skills.bootstrap import create_default_registry
+from src.skills.package_tool import PackagePythonTool
 from src.utils.logging import get_logger
 from src.ws.client import ControlPlaneClient
 from src.ws.event_emitter import EventEmitter
@@ -50,17 +59,30 @@ class SemiGraphAdapter(RuntimeAdapter):
 
     def _create_llm_provider(self) -> OpenAIProvider | None:
         api_keys = self.init_data.get("api_keys") or {}
-        api_key = api_keys.get("openai")
+        api_key = (
+            api_keys.get("openai")
+            or api_keys.get("custom")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("CUSTOM_LLM_API_KEY")
+        )
         if not api_key:
             return None
 
         cfg = self.start_payload.get("agent_config") or {}
-        model = cfg.get("model") or "gpt-4o"
+        model = cfg.get("model") or os.getenv("CUSTOM_LLM_MODEL_NAME") or "gpt-4o"
+        base_url = (
+            os.getenv("OPENAI_API_BASE_URL")
+            or os.getenv("CUSTOM_LLM_API_BASE_URL")
+            or None
+        )
+        if base_url and "openai.azure.com" not in base_url and not base_url.rstrip("/").endswith("/v1"):
+            base_url = f"{base_url.rstrip('/')}/v1"
 
         return OpenAIProvider(
             LLMConfig(
                 model=model,
                 api_key=api_key,
+                base_url=base_url,
                 timeout=120,
             )
         )
@@ -105,6 +127,7 @@ class SemiGraphAdapter(RuntimeAdapter):
             agent_cfg = self.start_payload.get("agent_config") or {}
             agent_id = str(self.start_payload.get("agent_id") or self.session_id)
             mcp_servers_raw = self.start_payload.get("mcp_servers") or []
+            self._register_package_tools()
 
             mcp_servers = [
                 McpServerDefinition(
@@ -120,6 +143,12 @@ class SemiGraphAdapter(RuntimeAdapter):
                 if isinstance(srv, dict)
             ]
 
+            # 建立 MCP 实际连接，避免 capability 里有工具但执行时无 client。
+            mcp_client = await setup_mcp_client(mcp_servers)
+            if mcp_client:
+                for server in mcp_servers:
+                    server.is_connected = mcp_client.is_connected(server.id)
+
             runtime_context = RuntimeSessionContext(
                 org_id=self.org_id,
                 user_id=self.user_id,
@@ -133,6 +162,8 @@ class SemiGraphAdapter(RuntimeAdapter):
                     temperature=float(agent_cfg.get("temperature", 0.7)),
                     max_tokens=int(agent_cfg.get("max_tokens", 4096)),
                 ),
+                available_skills=self._build_skill_definitions(),
+                available_tools=self._build_tool_definitions(),
                 available_mcp_servers=mcp_servers,
             )
 
@@ -220,6 +251,11 @@ class SemiGraphAdapter(RuntimeAdapter):
         finally:
             await emitter.close()
             await forward_task
+            if mcp_client:
+                try:
+                    await mcp_client.close_all()
+                except Exception:
+                    logger.warning("mcp_close_all_failed", extra={"session_id": self.session_id})
 
     async def _forward_events(self, emitter: EventEmitter) -> None:
         async for event in emitter:
@@ -272,6 +308,104 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
         except Exception as exc:
             logger.warning("snapshot_sync_failed", extra={"session_id": self.session_id, "error": str(exc)})
+
+    def _build_tool_definitions(self) -> list[ToolDefinition]:
+        tools: list[ToolDefinition] = []
+        for tool_name in self.skill_registry.list_tools():
+            tool = self.skill_registry.get_tool(tool_name)
+            if not tool:
+                continue
+            tools.append(
+                ToolDefinition(
+                    name=tool.name,
+                    description=tool.description,
+                    parameters=tool.parameters,
+                    metadata={"source": "builtin"},
+                )
+            )
+        return tools
+
+    def _build_skill_definitions(self) -> list[SkillDefinition]:
+        definitions: list[SkillDefinition] = []
+        raw_index = self.start_payload.get("skill_index")
+        if not isinstance(raw_index, list):
+            return definitions
+
+        registered_names = set(self.skill_registry.list_skills()) | set(self.skill_registry.list_tools())
+
+        for item in raw_index:
+            if not isinstance(item, dict):
+                continue
+            skill_id = str(item.get("id") or item.get("name") or "").strip()
+            if not skill_id:
+                continue
+
+            if skill_id not in registered_names:
+                logger.debug(
+                    "skip_unregistered_skill_capability",
+                    extra={"session_id": self.session_id, "skill_id": skill_id},
+                )
+                continue
+            definitions.append(
+                SkillDefinition(
+                    id=skill_id,
+                    name=skill_id,
+                    description=str(item.get("description") or "").strip() or None,
+                    version=str(item.get("version") or "").strip() or None,
+                    source=str(item.get("source") or "local"),
+                    schema={},
+                    metadata={},
+                )
+            )
+        return definitions
+
+    def _register_package_tools(self) -> None:
+        raw_index = self.start_payload.get("skill_index")
+        if not isinstance(raw_index, list):
+            return
+
+        for item in raw_index:
+            if not isinstance(item, dict):
+                continue
+            skill_name = str(item.get("id") or item.get("name") or "").strip()
+            if not skill_name:
+                continue
+            if self.skill_registry.get_tool(skill_name) is not None:
+                continue
+
+            pkg = item.get("package")
+            if not isinstance(pkg, dict):
+                continue
+            files = pkg.get("files")
+            if not isinstance(files, list):
+                continue
+
+            script_content: str | None = None
+            for f in files:
+                if not isinstance(f, dict):
+                    continue
+                rel_path = str(f.get("path") or "")
+                if rel_path == "scripts/main.py":
+                    content = f.get("content")
+                    if isinstance(content, str) and content.strip():
+                        script_content = content
+                        break
+
+            if not script_content:
+                continue
+
+            description = str(item.get("description") or "").strip() or None
+            self.skill_registry.register_tool(
+                PackagePythonTool(
+                    skill_name=skill_name,
+                    description=description,
+                    script_content=script_content,
+                )
+            )
+            logger.info(
+                "package_tool_registered",
+                extra={"session_id": self.session_id, "skill_name": skill_name},
+            )
 
     async def update_config(self, payload: dict[str, Any]) -> None:
         if not isinstance(payload, dict):

@@ -3,6 +3,7 @@
 import os
 
 from src.skills.code_executor import CodeExecutorTool
+from src.skills.file_generators import PdfGeneratorTool, XlsxGeneratorTool
 from src.skills.registry import SkillRegistry
 from src.skills.web_search import WebSearchTool
 from src.utils.logging import get_logger
@@ -20,6 +21,9 @@ def create_default_registry() -> SkillRegistry:
     code_timeout = int(os.getenv("CODE_EXECUTOR_TIMEOUT", str(_CODE_EXECUTOR_DEFAULT_TIMEOUT)))
     registry.register_tool(CodeExecutorTool(timeout=code_timeout))
     logger.info("Registered CodeExecutorTool", extra={"timeout": code_timeout})
+    registry.register_tool(XlsxGeneratorTool())
+    registry.register_tool(PdfGeneratorTool())
+    logger.info("Registered file generator tools", extra={"tools": ["xlsx", "pdf"]})
 
     # Register WebSearchTool if an API key is available
     tavily_key = os.getenv("TAVILY_API_KEY")

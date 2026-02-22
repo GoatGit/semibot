@@ -55,6 +55,8 @@ export interface SSEConnection {
 }
 
 const sseConnections = new Map<string, SSEConnection>()
+const VM_READY_WAIT_MS = Math.max(0, Number(process.env.CHAT_VM_READY_WAIT_MS ?? 5000))
+const VM_READY_POLL_MS = Math.max(200, Number(process.env.CHAT_VM_READY_POLL_MS ?? 1000))
 
 type SkillFileInventory = {
   has_skill_md: boolean
@@ -276,6 +278,10 @@ export async function handleChat(
   await handleChatViaExecutionPlane(orgId, userId, sessionId, input, res, agent, session)
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function handleChatViaExecutionPlane(
   orgId: string,
   userId: string,
@@ -287,7 +293,17 @@ async function handleChatViaExecutionPlane(
 ): Promise<void> {
   const wsServer = getWSServer()
   const wsReady = wsServer.isUserReady(userId)
-  const vmState = await ensureUserVM(userId, orgId, { wsReady })
+  let vmState = await ensureUserVM(userId, orgId, { wsReady })
+
+  if (!vmState.ready && (vmState.status === 'starting' || vmState.status === 'provisioning') && VM_READY_WAIT_MS > 0) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < VM_READY_WAIT_MS) {
+      await sleep(VM_READY_POLL_MS)
+      vmState = await ensureUserVM(userId, orgId, { wsReady: wsServer.isUserReady(userId) })
+      if (vmState.ready) break
+      if (vmState.status === 'failed' || vmState.status === 'terminated') break
+    }
+  }
 
   if (!vmState.ready) {
     const retryHint = vmState.retryAfterMs ? `，建议 ${Math.ceil(vmState.retryAfterMs / 1000)} 秒后重试` : ''

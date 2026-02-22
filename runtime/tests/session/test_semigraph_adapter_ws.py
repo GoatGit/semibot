@@ -138,3 +138,56 @@ async def test_semigraph_adapter_restores_history_from_checkpoint(monkeypatch):
 
     assert captured_histories[0] == [{"role": "user", "content": "h1"}]
     assert captured_histories[1] == [{"role": "assistant", "content": "done"}]
+
+
+def test_semigraph_adapter_filters_unregistered_skills():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-skill-filter",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={"api_keys": {}, "memory_dir": "/tmp/semibot-test-memory"},
+        start_payload={
+            "agent_id": "agent-1",
+            "agent_config": {},
+            "mcp_servers": [],
+            "skill_index": [
+                {"id": "unregistered-demo-skill", "name": "unregistered-demo-skill"},
+                {"id": "code_executor", "name": "code_executor"},
+            ],
+        },
+    )
+
+    defs = adapter._build_skill_definitions()
+    names = [d.name for d in defs]
+    assert "unregistered-demo-skill" not in names
+    assert "code_executor" in names
+
+
+def test_semigraph_adapter_registers_package_python_tool():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-package-tool",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={"api_keys": {}, "memory_dir": "/tmp/semibot-test-memory"},
+        start_payload={
+            "agent_id": "agent-1",
+            "agent_config": {},
+            "mcp_servers": [],
+            "skill_index": [
+                {
+                    "id": "pkg-skill-demo",
+                    "name": "pkg-skill-demo",
+                    "package": {
+                        "files": [
+                            {"path": "scripts/main.py", "content": "print('hello package')", "encoding": "utf-8"},
+                        ],
+                    },
+                },
+            ],
+        },
+    )
+
+    adapter._register_package_tools()
+    assert adapter.skill_registry.get_tool("pkg-skill-demo") is not None

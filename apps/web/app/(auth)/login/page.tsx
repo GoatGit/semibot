@@ -117,6 +117,8 @@ function LoginForm() {
     } catch (err) {
       console.error('[Login] 登录失败:', err)
       setError('网络错误，请稍后重试')
+    } finally {
+      setLoading(false)
     }
   }
 

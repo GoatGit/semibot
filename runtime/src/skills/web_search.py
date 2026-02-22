@@ -77,6 +77,16 @@ class WebSearchTool(BaseTool):
                     "description": "Search depth - basic for quick results, advanced for detailed",
                     "default": "basic",
                 },
+                "topic": {
+                    "type": "string",
+                    "enum": ["general", "news"],
+                    "description": "Search topic. Use news for latest/current events.",
+                    "default": "general",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Restrict to the last N days for freshness-sensitive queries.",
+                },
             },
             "required": ["query"],
         }
@@ -92,6 +102,10 @@ class WebSearchTool(BaseTool):
         query: str,
         max_results: int = 5,
         search_depth: str = "basic",
+        topic: str = "general",
+        days: int | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
         **kwargs: Any,
     ) -> ToolResult:
         """
@@ -110,7 +124,15 @@ class WebSearchTool(BaseTool):
 
         try:
             if self.api_type == "tavily":
-                return await self._search_tavily(query, max_results, search_depth)
+                return await self._search_tavily(
+                    query=query,
+                    max_results=max_results,
+                    search_depth=search_depth,
+                    topic=topic,
+                    days=days,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                )
             elif self.api_type == "serpapi":
                 return await self._search_serpapi(query, max_results)
             else:
@@ -127,26 +149,56 @@ class WebSearchTool(BaseTool):
         query: str,
         max_results: int,
         search_depth: str,
+        topic: str = "general",
+        days: int | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
     ) -> ToolResult:
         """Execute search using Tavily API."""
         client = await self._get_client()
 
+        payload: dict[str, Any] = {
+            "api_key": self.api_key,
+            "query": query,
+            "search_depth": search_depth,
+            "max_results": max_results,
+            "include_answer": True,
+            "include_raw_content": False,
+            "topic": "news" if str(topic).lower() == "news" else "general",
+        }
+        if isinstance(days, int) and days > 0:
+            payload["days"] = days
+        if include_domains:
+            payload["include_domains"] = include_domains
+        if exclude_domains:
+            payload["exclude_domains"] = exclude_domains
+
         response = await client.post(
             "https://api.tavily.com/search",
-            json={
-                "api_key": self.api_key,
-                "query": query,
-                "search_depth": search_depth,
-                "max_results": max_results,
-                "include_answer": True,
-                "include_raw_content": False,
-            },
+            json=payload,
         )
 
         if response.status_code != 200:
             return ToolResult.error_result(f"Tavily API error: {response.status_code}")
 
         data = response.json()
+        if not data.get("results"):
+            # Fallback once with a relaxed query and without domain filters.
+            relaxed_query = (query.split("。", 1)[0] if "。" in query else query).strip()
+            relaxed_payload = {
+                "api_key": self.api_key,
+                "query": relaxed_query[:200],
+                "search_depth": "basic",
+                "max_results": max_results,
+                "include_answer": True,
+                "include_raw_content": False,
+                "topic": "news" if str(topic).lower() == "news" else "general",
+            }
+            if isinstance(days, int) and days > 0:
+                relaxed_payload["days"] = days
+            response = await client.post("https://api.tavily.com/search", json=relaxed_payload)
+            if response.status_code == 200:
+                data = response.json()
 
         # Format results
         results = []

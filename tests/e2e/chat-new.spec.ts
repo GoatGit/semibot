@@ -45,17 +45,17 @@ test.describe('/chat/new', () => {
 
     await page.goto('/chat/new')
 
-    await expect(page.getByRole('heading', { name: /开始新会话/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /(开始新会话|新建会话)/i })).toBeVisible()
     await expect(page.getByText('通用助手')).toBeVisible()
     await expect(page.getByText('代码助手')).toBeVisible()
     await expect(page.getByText('停用助手')).toHaveCount(0)
 
     const agentButton = page.getByRole('button', { name: /代码助手/i })
     await agentButton.click()
-    await expect(page.getByText(/已选择:.*代码助手/i)).toBeVisible()
+    await expect(page.getByText(/(已选择:.*代码助手|当前助手：代码助手)/i)).toBeVisible()
 
     await agentButton.click()
-    await expect(page.getByText(/已选择:/i)).toHaveCount(0)
+    await expect(page.getByText(/(已选择:|当前助手：)/i)).toHaveCount(0)
   })
 
   test('falls back to default templates when API returns empty list', async ({ page }) => {
@@ -67,7 +67,7 @@ test.describe('/chat/new', () => {
     await expect(page.getByText('代码助手')).toBeVisible()
     await expect(page.getByText('研究助手')).toBeVisible()
 
-    const startButton = page.getByRole('button', { name: /开始对话/i })
+    const startButton = page.getByRole('button', { name: /(开始对话|开始)/i })
     await expect(startButton).toBeDisabled()
   })
 
@@ -76,10 +76,13 @@ test.describe('/chat/new', () => {
 
     await page.goto('/chat/new')
 
-    const suggestion = '帮我分析这份销售数据并生成报告'
-    await page.getByRole('button', { name: suggestion }).click()
+    const suggestion = '搜索最新的 AI 行业动态并总结'
+    const suggestionButton = page.getByRole('button', { name: suggestion })
+    await suggestionButton.click()
 
-    await expect(page.getByPlaceholder('输入您的问题或任务描述...')).toHaveValue(suggestion)
+    await expect(
+      page.getByRole('textbox', { name: /(输入您的问题或任务描述|例如：)/i })
+    ).toHaveValue(suggestion)
   })
 
   test('start button enables when agent selected and uses default message', async ({ page }) => {
@@ -146,7 +149,7 @@ test.describe('/chat/new', () => {
 
     await page.goto('/chat/new')
 
-    const startButton = page.getByRole('button', { name: /开始对话/i })
+    const startButton = page.getByRole('button', { name: /(开始对话|开始)/i })
     await expect(startButton).toBeDisabled()
 
     await page.getByRole('button', { name: /通用助手/i }).click()
@@ -180,7 +183,7 @@ test.describe('/chat/new', () => {
     await page.goto('/chat/new')
 
     await page.getByRole('button', { name: /通用助手/i }).click()
-    await page.getByRole('button', { name: /开始对话/i }).click()
+    await page.getByRole('button', { name: /(开始对话|开始)/i }).click()
 
     await expect(page.getByText(/创建会话失败/i)).toBeVisible()
   })
