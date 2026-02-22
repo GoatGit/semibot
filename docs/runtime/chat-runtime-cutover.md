@@ -214,14 +214,14 @@ Authorization: Bearer <admin-token>
 
 ```bash
 cd apps/api
-npm test src/__tests__/runtime.adapter.test.ts
+npm test src/__tests__/chat-ws.integration.test.ts
 ```
 
 ### 集成测试
 
 ```bash
 cd apps/api
-npm test src/__tests__/chat-runtime.integration.test.ts
+npm test src/__tests__/chat-ws.integration.test.ts
 ```
 
 ### 手动测试
@@ -230,7 +230,7 @@ npm test src/__tests__/chat-runtime.integration.test.ts
 
 ```bash
 cd runtime
-python -m uvicorn src.main:app --reload --port 8801
+python -m src.main
 ```
 
 2. 启动 API 服务：
@@ -260,13 +260,13 @@ curl -X POST http://localhost:3001/api/v1/chat/start \
 
 **排查步骤**：
 
-1. 检查 Runtime 服务是否运行：`curl http://localhost:8801/health`
-2. 检查 `RUNTIME_SERVICE_URL` 配置是否正确
-3. 查看 API 日志：`[RuntimeAdapter] 健康检查失败`
+1. 检查 Runtime 进程是否运行：`pgrep -af "python -m src.main"`
+2. 检查 `CONTROL_PLANE_WS` 配置是否正确
+3. 查看 runtime 日志中的 ws 连接错误
 
 ### 自动回退触发
 
-**症状**：日志显示 `[Chat] 自动回退到 direct 模式`
+**症状**：日志显示 VM 未就绪或 ws 连接异常
 
 **排查步骤**：
 

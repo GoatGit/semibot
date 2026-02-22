@@ -519,3 +519,20 @@
   - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/orchestrator/test_nodes_memory.py tests/agents/test_delegator.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
   - `pnpm --filter @semibot/api exec tsc --noEmit`
   - `pnpm --filter @semibot/api exec vitest --run src/__tests__/chat-ws.integration.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts src/__tests__/vm.route.behavior.test.ts`
+
+### 2026-02-22 迭代 X+30 — 自动执行（依赖与文档收尾）
+1. `runtime/requirements.txt` 移除已下线 HTTP server 依赖：`fastapi`、`uvicorn`、`sse-starlette`
+2. `runtime/requirements.txt` 移除未使用依赖：`aiohttp`
+3. `runtime/pyproject.toml` 移除未使用依赖：`python-multipart`
+4. 更新 `docs/runtime/chat-runtime-implementation-summary.md` 启动命令为 `python -m src.main`
+5. 更新 `docs/runtime/chat-runtime-verification-checklist.md` 的测试项与启动命令
+6. 更新 `docs/runtime/chat-runtime-cutover.md` 的测试项与运行命令
+7. 更新 `docs/runtime/runtime-observability.md` 中进程检查命令，去除 uvicorn worker 建议
+8. 回归验证通过：runtime 关键测试（43 项）
+9. 回归验证通过：API TypeScript 编译
+10. 回归验证通过：API 执行平面关键用例（27 项）
+- 验证命令：
+  - `cd runtime && .venv/bin/python -m compileall src`
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/orchestrator/test_nodes_memory.py tests/agents/test_delegator.py tests/session/test_semigraph_adapter_ws.py tests/ws/test_client_reconnect.py`
+  - `pnpm --filter @semibot/api exec tsc --noEmit`
+  - `pnpm --filter @semibot/api exec vitest --run src/__tests__/chat-ws.integration.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/ws.server.handshake.test.ts src/__tests__/ws.message-router.test.ts src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/relay.sse-relay.test.ts src/__tests__/vm.route.behavior.test.ts`

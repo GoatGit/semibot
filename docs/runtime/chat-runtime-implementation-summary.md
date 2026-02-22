@@ -176,7 +176,7 @@ cp .env.example .env.local
 
 ```bash
 cd runtime
-python -m uvicorn src.main:app --host 0.0.0.0 --port 8801
+python -m src.main
 ```
 
 ### 3. 启动 API 服务
@@ -190,15 +190,8 @@ npm run start
 ### 4. 验证部署
 
 ```bash
-# 检查 Runtime 健康
-curl http://localhost:8801/health
-
 # 检查 API 健康
 curl http://localhost:3001/api/v1/health
-
-# 检查监控 API
-curl -H "Authorization: Bearer $ADMIN_TOKEN" \
-  http://localhost:3001/api/v1/runtime/metrics
 ```
 
 ## 灰度发布计划

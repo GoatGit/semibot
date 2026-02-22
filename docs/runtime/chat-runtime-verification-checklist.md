@@ -105,7 +105,7 @@ npm test src/__tests__/runtime.adapter.test.ts
 
 ```bash
 cd apps/api
-npm test src/__tests__/chat-runtime.integration.test.ts
+npm test src/__tests__/chat-ws.integration.test.ts
 
 # 预期：所有测试通过（部分测试可能需要实际环境）
 ```
@@ -117,7 +117,7 @@ npm test src/__tests__/chat-runtime.integration.test.ts
 ```bash
 # 终端 1：启动 Runtime 服务
 cd runtime
-python -m uvicorn src.main:app --reload --port 8801
+python -m src.main
 
 # 终端 2：启动 API 服务
 cd apps/api
@@ -127,35 +127,12 @@ npm run dev
 ### 2. 健康检查
 
 ```bash
-# 检查 Runtime 服务
-curl http://localhost:8801/health
-# 预期：{"status": "healthy"}
-
 # 检查 API 服务
 curl http://localhost:3001/api/v1/health
 # 预期：{"success": true, "data": {...}}
 ```
 
-### 3. 监控 API 测试
-
-```bash
-# 获取监控指标（需要管理员 token）
-curl -H "Authorization: Bearer $ADMIN_TOKEN" \
-  http://localhost:3001/api/v1/runtime/metrics
-
-# 预期：返回指标数据
-# {
-#   "success": true,
-#   "data": {
-#     "direct": {...},
-#     "runtime": {...},
-#     "fallbackEnabled": false,
-#     "fallbackReason": ""
-#   }
-# }
-```
-
-### 4. Chat API 测试
+### 3. Chat API 测试
 
 ```bash
 # 测试 direct_llm 模式（默认）
@@ -170,7 +147,7 @@ curl -X POST http://localhost:3001/api/v1/chat/start \
 # 预期：返回 SSE 流，包含 message 和 done 事件
 ```
 
-### 5. 灰度切换测试
+### 4. 灰度切换测试
 
 ```bash
 # 1. 设置白名单
@@ -191,11 +168,11 @@ curl -X POST http://localhost:3001/api/v1/chat/start \
 # 预期：使用 runtime_orchestrator 模式，done 事件包含 "executionMode": "runtime_orchestrator"
 ```
 
-### 6. 自动回退测试
+### 5. 自动回退测试
 
 ```bash
 # 1. 停止 Runtime 服务
-# Ctrl+C 停止 uvicorn
+# Ctrl+C 停止 python -m src.main
 
 # 2. 发送请求
 curl -X POST http://localhost:3001/api/v1/chat/start \
@@ -207,19 +184,6 @@ curl -X POST http://localhost:3001/api/v1/chat/start \
   }'
 
 # 预期：自动回退到 direct_llm 模式，done 事件包含 "executionMode": "direct_llm"
-
-# 3. 检查回退状态
-curl -H "Authorization: Bearer $ADMIN_TOKEN" \
-  http://localhost:3001/api/v1/runtime/fallback/status
-
-# 预期：
-# {
-#   "success": true,
-#   "data": {
-#     "fallbackEnabled": true,
-#     "fallbackReason": "Runtime service unavailable"
-#   }
-# }
 ```
 
 ## 性能验证
@@ -260,12 +224,11 @@ wrk -t 4 -c 20 -d 30s \
 
 ```bash
 # 查看 Runtime 相关日志
-tail -f logs/api.log | grep -E "RuntimeAdapter|RuntimeMonitor|Chat.*执行模式"
+tail -f logs/api.log | grep -E "ws|vm|Chat.*执行模式"
 
 # 预期输出示例：
 # [Chat] 执行模式: direct_llm - Session: xxx, Org: xxx
-# [RuntimeAdapter] 开始执行 - Session: xxx, Agent: xxx
-# [RuntimeMonitor] 触发自动回退 - 原因: 错误率过高
+# [Chat] ws dispatch - Session: xxx, VM: xxx
 ```
 
 ### 2. 指标验证

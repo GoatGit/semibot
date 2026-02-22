@@ -6,7 +6,6 @@ langchain-anthropic>=0.2.0
 
 # Async HTTP Client
 httpx>=0.27.0
-aiohttp>=3.9.0
 
 # Database
 asyncpg>=0.29.0
@@ -36,11 +35,6 @@ typing-extensions>=4.12.0
 # Sandbox (Docker)
 docker>=7.0.0
 pyyaml>=6.0.0
-
-# HTTP Server
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-sse-starlette>=2.1.0
 
 # PDF Generation
 fpdf2>=2.8.0

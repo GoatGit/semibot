@@ -179,7 +179,7 @@ annotations:
    curl http://localhost:8801/health
 
    # 检查进程
-   ps aux | grep uvicorn
+   pgrep -af "python -m src.main"
    ```
 
 2. **查看 Runtime 日志**
@@ -230,7 +230,7 @@ annotations:
 2. **检查 Runtime 资源**
    ```bash
    # CPU 和内存使用
-   top -p $(pgrep -f uvicorn)
+   top -p $(pgrep -f "python -m src.main")
 
    # 磁盘空间
    df -h
@@ -350,15 +350,8 @@ annotations:
 
 ### 1. Runtime 服务优化
 
-- **增加工作进程数**
-  ```bash
-  uvicorn src.main:app --workers 4
-  ```
-
-- **启用 HTTP/2**
-  ```bash
-  uvicorn src.main:app --http h2
-  ```
+- **增加 VM 实例容量**
+  通过控制平面调度参数提升可并发 VM 数，而不是在单进程内扩 worker。
 
 - **调整超时配置**
   ```python
