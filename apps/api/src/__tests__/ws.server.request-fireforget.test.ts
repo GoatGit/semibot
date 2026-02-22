@@ -8,6 +8,7 @@ import * as sessionService from '../services/session.service'
 import * as evolvedSkillRepo from '../repositories/evolved-skill.repository'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import * as skillPackageRepo from '../repositories/skill-package.repository'
+import * as sseRelay from '../relay/sse-relay'
 
 describe('ws-server request/fire_and_forget internals', () => {
   beforeEach(() => {
@@ -138,5 +139,113 @@ describe('ws-server request/fire_and_forget internals', () => {
     }
 
     await expect(server.handleMessage(conn, '{invalid json')).resolves.toBeUndefined()
+  })
+
+  it('handleSSEEvent persists file message metadata for history replay', async () => {
+    const server = Object.create(WSServer.prototype) as any
+    const addMessageSpy = vi.spyOn(sessionService, 'addMessage').mockResolvedValue({
+      id: 'm1',
+      sessionId: 's1',
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString(),
+    } as any)
+    const forwardSpy = vi.spyOn(sseRelay, 'forwardSSE').mockImplementation(() => {})
+
+    const conn = { userId: 'u1', orgId: 'o1' }
+    const msg = {
+      type: 'sse_event',
+      session_id: 's1',
+      data: JSON.stringify({
+        type: 'file_created',
+        url: '/api/v1/files/f1',
+        filename: 'report.pdf',
+        mime_type: 'application/pdf',
+        size: 1234,
+      }),
+    }
+
+    await server.handleSSEEvent(conn, msg)
+
+    expect(addMessageSpy).toHaveBeenCalledWith(
+      'o1',
+      's1',
+      expect.objectContaining({
+        role: 'assistant',
+        content: '',
+        metadata: expect.objectContaining({
+          agent2ui: expect.objectContaining({
+            type: 'file',
+            data: expect.objectContaining({
+              url: '/api/v1/files/f1',
+              filename: 'report.pdf',
+            }),
+          }),
+        }),
+      })
+    )
+    expect(forwardSpy).toHaveBeenCalled()
+  })
+
+  it('handleSSEEvent persists execution process metadata on completion', async () => {
+    const server = Object.create(WSServer.prototype) as any
+    server.processBufferBySession = new Map()
+
+    const addMessageSpy = vi.spyOn(sessionService, 'addMessage').mockResolvedValue({
+      id: 'm2',
+      sessionId: 's2',
+      role: 'assistant',
+      content: 'final answer',
+      createdAt: new Date().toISOString(),
+    } as any)
+    const forwardSpy = vi.spyOn(sseRelay, 'forwardSSE').mockImplementation(() => {})
+    const closeSpy = vi.spyOn(sseRelay, 'closeSessionConnections').mockImplementation(() => {})
+
+    const conn = { userId: 'u1', orgId: 'o1' }
+    await server.handleSSEEvent(conn, {
+      type: 'sse_event',
+      session_id: 's2',
+      data: JSON.stringify({
+        type: 'thinking',
+        content: '正在分析问题',
+      }),
+    })
+
+    await server.handleSSEEvent(conn, {
+      type: 'sse_event',
+      session_id: 's2',
+      data: JSON.stringify({
+        type: 'execution_complete',
+        final_response: 'final answer',
+      }),
+    })
+
+    expect(addMessageSpy).toHaveBeenCalledWith(
+      'o1',
+      's2',
+      expect.objectContaining({
+        role: 'assistant',
+        content: 'final answer',
+        metadata: expect.objectContaining({
+          execution_process: expect.objectContaining({
+            version: 1,
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'thinking',
+              }),
+            ]),
+          }),
+        }),
+      })
+    )
+    expect(forwardSpy).toHaveBeenCalledWith(
+      's2',
+      'execution_complete',
+      expect.objectContaining({
+        sessionId: 's2',
+      })
+    )
+    expect(closeSpy).toHaveBeenCalledWith('s2')
+    expect(server.processBufferBySession.has('s2')).toBe(false)
   })
 })

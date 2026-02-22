@@ -25,8 +25,24 @@ import {
   isExecutionError,
 } from './message-router'
 import type { VMWebSocket } from './vm-connection'
+import type { Agent2UIMessage } from '@semibot/shared-types'
 
 const wsLogger = createLogger('ws-server')
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const ALLOWED_MEMORY_TYPES = new Set(['episodic', 'semantic', 'procedural'] as const)
+
+function normalizeSessionIdForDb(sessionId: string): string | null {
+  return UUID_PATTERN.test(sessionId) ? sessionId : null
+}
+
+function normalizeMemoryType(memoryType: unknown): 'episodic' | 'semantic' | 'procedural' {
+  const raw = String(memoryType ?? 'episodic').trim().toLowerCase()
+  if (raw === 'long_term' || raw === 'long-term') return 'semantic'
+  if (ALLOWED_MEMORY_TYPES.has(raw as 'episodic' | 'semantic' | 'procedural')) {
+    return raw as 'episodic' | 'semantic' | 'procedural'
+  }
+  return 'episodic'
+}
 
 interface AuthPayload {
   userId: string
@@ -90,6 +106,7 @@ export class WSServer {
     close: () => void
   }
   private readonly connections = new Map<string, VMConnection>()
+  private readonly processBufferBySession = new Map<string, Agent2UIMessage[]>()
   private heartbeatTimer: NodeJS.Timeout
 
   constructor(server: Server) {
@@ -570,6 +587,7 @@ export class WSServer {
     }
 
     if (isExecutionError(parsed)) {
+      this.processBufferBySession.delete(msg.session_id)
       forwardSSE(msg.session_id, 'error', {
         code: (parsed.code as string) ?? 'SSE_STREAM_ERROR',
         message: (parsed.error as string) ?? '执行失败',
@@ -580,11 +598,21 @@ export class WSServer {
 
     if (isExecutionComplete(parsed)) {
       const finalResponse = (parsed.final_response as string) ?? (parsed.content as string) ?? ''
+      const processMessages = this.processBufferBySession.get(msg.session_id) ?? []
+      this.processBufferBySession.delete(msg.session_id)
       let messageId = uuidv4()
       if (finalResponse) {
         const saved = await sessionService.addMessage(conn.orgId, msg.session_id, {
           role: 'assistant',
           content: finalResponse,
+          metadata: processMessages.length > 0
+            ? {
+                execution_process: {
+                  version: 1,
+                  messages: processMessages,
+                },
+              }
+            : undefined,
         })
         messageId = saved.id
       }
@@ -602,7 +630,40 @@ export class WSServer {
       return
     }
 
+    if (this.shouldBufferProcessMessage(agentMessage.type)) {
+      const current = this.processBufferBySession.get(msg.session_id) ?? []
+      current.push(agentMessage)
+      // Guard memory growth for long-running sessions.
+      if (current.length > 500) {
+        current.splice(0, current.length - 500)
+      }
+      this.processBufferBySession.set(msg.session_id, current)
+    }
+
+    // Persist durable file events so refresh can restore download cards.
+    if (agentMessage.type === 'file') {
+      await sessionService.addMessage(conn.orgId, msg.session_id, {
+        role: 'assistant',
+        content: '',
+        metadata: {
+          agent2ui: agentMessage,
+        },
+      })
+    }
+
     forwardSSE(msg.session_id, 'message', agentMessage)
+  }
+
+  private shouldBufferProcessMessage(type: string): boolean {
+    return (
+      type === 'thinking' ||
+      type === 'plan' ||
+      type === 'plan_step' ||
+      type === 'tool_call' ||
+      type === 'tool_result' ||
+      type === 'mcp_call' ||
+      type === 'mcp_result'
+    )
   }
 
   private async handleFireAndForget(conn: VMConnection, msg: WSFireAndForgetMessage): Promise<void> {
@@ -686,6 +747,13 @@ export class WSServer {
           if (!agentId || !content.trim()) {
             break
           }
+          const normalizedSessionId = normalizeSessionIdForDb(sessionId)
+          const normalizedMemoryType = normalizeMemoryType(params.memory_type)
+          const baseMetadata = ((params.metadata as Record<string, unknown>) ?? {})
+          const metadata =
+            normalizedSessionId === null
+              ? { ...baseMetadata, runtime_session_id: sessionId }
+              : baseMetadata
           const embedding = await this.generateOpenAIEmbedding(content.trim())
           await sql`
             INSERT INTO memories (
@@ -694,13 +762,13 @@ export class WSServer {
             VALUES (
               ${conn.orgId},
               ${agentId},
-              ${sessionId},
+              ${normalizedSessionId},
               ${conn.userId},
               ${content},
               ${embedding ? JSON.stringify(embedding) : null}::vector,
-              ${String(params.memory_type ?? 'episodic')},
+              ${normalizedMemoryType},
               ${Number(params.importance ?? 0.5)},
-              ${sql.json(((params.metadata as Record<string, unknown>) ?? {}) as Parameters<typeof sql.json>[0])},
+              ${sql.json(metadata as Parameters<typeof sql.json>[0])},
               NULL
             )
           `

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle } from 'lucide-react'
@@ -12,7 +12,18 @@ import { FileDownload } from '@/components/agent2ui/media/FileDownload'
 import { useChat } from '@/hooks/useChat'
 import { useSessionStore } from '@/stores/sessionStore'
 import { apiClient } from '@/lib/api'
-import type { ApiResponse, Session, Message as ApiMessage } from '@/types'
+import type {
+  ApiResponse,
+  Session,
+  Message as ApiMessage,
+  Agent2UIMessage,
+  PlanData,
+  ThinkingData,
+  ToolCallData,
+  ToolResultData,
+  McpCallData,
+  McpResultData,
+} from '@/types'
 import {
   TIME_FORMAT_OPTIONS,
   DEFAULT_LOCALE,
@@ -26,6 +37,106 @@ interface DisplayMessage {
   status?: 'sending' | 'sent' | 'error'
   isStreaming?: boolean
   fileData?: { url: string; filename: string; mimeType: string; size?: number }
+  processData?: {
+    messages: Agent2UIMessage[]
+    thinking: ThinkingData | null
+    plan: PlanData | null
+    toolCalls: ToolCallData[]
+  }
+}
+
+function isAgent2UIMessage(value: unknown): value is Agent2UIMessage {
+  if (!value || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
+  return typeof obj.id === 'string' && typeof obj.type === 'string' && obj.data !== undefined
+}
+
+function extractExecutionProcess(metadata: Record<string, unknown>): Agent2UIMessage[] {
+  const payload = metadata.execution_process as { messages?: unknown } | undefined
+  const raw = Array.isArray(payload?.messages) ? payload.messages : []
+  return raw.filter(isAgent2UIMessage)
+}
+
+function buildProcessState(messages: Agent2UIMessage[]): {
+  thinking: ThinkingData | null
+  plan: PlanData | null
+  toolCalls: ToolCallData[]
+} {
+  let thinking: ThinkingData | null = null
+  let plan: PlanData | null = null
+  const toolCalls: ToolCallData[] = []
+
+  for (const msg of messages) {
+    if (msg.type === 'thinking') {
+      thinking = msg.data as ThinkingData
+      continue
+    }
+    if (msg.type === 'plan') {
+      plan = msg.data as PlanData
+      continue
+    }
+    if (msg.type === 'tool_call') {
+      toolCalls.push(msg.data as ToolCallData)
+      continue
+    }
+    if (msg.type === 'tool_result') {
+      const data = msg.data as ToolResultData
+      const idx = toolCalls.findIndex((tc) => tc.toolName === data.toolName && tc.status === 'calling')
+      if (idx >= 0) {
+        toolCalls[idx] = {
+          ...toolCalls[idx],
+          status: data.success ? 'success' : 'error',
+          result: data.result,
+          error: data.error,
+          duration: data.duration,
+        }
+      } else {
+        toolCalls.push({
+          toolName: data.toolName,
+          arguments: {},
+          status: data.success ? 'success' : 'error',
+          result: data.result,
+          error: data.error,
+          duration: data.duration,
+        })
+      }
+      continue
+    }
+    if (msg.type === 'mcp_call') {
+      const data = msg.data as McpCallData
+      toolCalls.push({
+        toolName: data.toolName,
+        arguments: data.arguments,
+        status: data.status as ToolCallData['status'],
+        duration: data.duration,
+      })
+      continue
+    }
+    if (msg.type === 'mcp_result') {
+      const data = msg.data as McpResultData
+      const idx = toolCalls.findIndex((tc) => tc.toolName === data.toolName && tc.status === 'calling')
+      if (idx >= 0) {
+        toolCalls[idx] = {
+          ...toolCalls[idx],
+          status: data.success ? 'success' : 'error',
+          result: data.result,
+          error: data.error,
+          duration: data.duration,
+        }
+      } else {
+        toolCalls.push({
+          toolName: data.toolName,
+          arguments: {},
+          status: data.success ? 'success' : 'error',
+          result: data.result,
+          error: data.error,
+          duration: data.duration,
+        })
+      }
+    }
+  }
+
+  return { thinking, plan, toolCalls }
 }
 
 /**
@@ -43,6 +154,7 @@ export default function ChatSessionPage() {
   const searchParams = useSearchParams()
   const sessionId = params.sessionId as string
   const initialMessage = searchParams.get('initialMessage')
+  const [pendingInitialMessage, setPendingInitialMessage] = useState(initialMessage ?? '')
 
   const [inputValue, setInputValue] = useState('')
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([])
@@ -150,6 +262,34 @@ export default function ChatSessionPage() {
     agent2uiState.isThinking
   )
 
+  // 将文件下载卡片调整到对应答案之后展示，避免在答案前插入。
+  const orderedMessages = useMemo(() => {
+    const result: DisplayMessage[] = []
+    let pendingAssistantFiles: DisplayMessage[] = []
+
+    for (const message of displayMessages) {
+      const isAssistantFile = message.role === 'assistant' && !!message.fileData
+      if (isAssistantFile) {
+        pendingAssistantFiles.push(message)
+        continue
+      }
+
+      result.push(message)
+
+      const isAssistantAnswer = message.role === 'assistant' && !message.fileData
+      if (isAssistantAnswer && pendingAssistantFiles.length > 0) {
+        result.push(...pendingAssistantFiles)
+        pendingAssistantFiles = []
+      }
+    }
+
+    if (pendingAssistantFiles.length > 0) {
+      result.push(...pendingAssistantFiles)
+    }
+
+    return result
+  }, [displayMessages])
+
   // 加载会话数据
   useEffect(() => {
     const loadSession = async () => {
@@ -185,13 +325,40 @@ export default function ChatSessionPage() {
         if (messagesResponse.success && messagesResponse.data) {
           const historyMessages: DisplayMessage[] = messagesResponse.data
             .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
-            .map((m: { id: string; role: string; content: string; createdAt: string }) => ({
-              id: m.id,
-              role: m.role as 'user' | 'assistant',
-              content: m.content,
-              timestamp: new Date(m.createdAt),
-              status: 'sent' as const,
-            }))
+            .map((m: ApiMessage) => {
+              const metadata = (m.metadata ?? {}) as Record<string, unknown>
+              const agent2ui = metadata.agent2ui as
+                | { type?: string; data?: { url?: string; filename?: string; mimeType?: string; size?: number } }
+                | undefined
+
+              const isFileMessage = agent2ui?.type === 'file' && agent2ui.data?.url && agent2ui.data?.filename
+              const fileData = isFileMessage
+                ? {
+                    url: String(agent2ui?.data?.url),
+                    filename: String(agent2ui?.data?.filename),
+                    mimeType: String(agent2ui?.data?.mimeType ?? 'application/octet-stream'),
+                    size: typeof agent2ui?.data?.size === 'number' ? agent2ui.data.size : undefined,
+                  }
+                : undefined
+              const historicalProcessMessages = extractExecutionProcess(metadata)
+              const processData =
+                historicalProcessMessages.length > 0
+                  ? {
+                      messages: historicalProcessMessages,
+                      ...buildProcessState(historicalProcessMessages),
+                    }
+                  : undefined
+
+              return {
+                id: m.id,
+                role: m.role as 'user' | 'assistant',
+                content: fileData ? '' : m.content,
+                timestamp: new Date(m.createdAt),
+                status: 'sent' as const,
+                fileData,
+                processData,
+              }
+            })
 
           setDisplayMessages(historyMessages)
         }
@@ -213,21 +380,38 @@ export default function ChatSessionPage() {
   // 自动发送 initialMessage（从新建会话页面跳转过来时）
   const initialMessageSentRef = useRef(false)
   useEffect(() => {
-    if (!initialMessage || isLoadingSession || initialMessageSentRef.current || isSending) return
+    if (pendingInitialMessage || typeof window === 'undefined' || !sessionId) return
+    const cached = sessionStorage.getItem(`semibot:initialMessage:${sessionId}`)
+    if (cached && cached.trim()) {
+      setPendingInitialMessage(cached)
+    }
+  }, [pendingInitialMessage, sessionId])
+
+  useEffect(() => {
+    if (initialMessage && initialMessage.trim()) {
+      setPendingInitialMessage(initialMessage)
+    }
+  }, [initialMessage])
+
+  useEffect(() => {
+    if (!pendingInitialMessage || isLoadingSession || initialMessageSentRef.current || isSending) return
     initialMessageSentRef.current = true
 
     // 清除 URL 参数，避免刷新重复发送
     router.replace(`/chat/${sessionId}`, { scroll: false })
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem(`semibot:initialMessage:${sessionId}`)
+    }
 
     const userMessage: DisplayMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: initialMessage,
+      content: pendingInitialMessage,
       timestamp: new Date(),
       status: 'sent',
     }
     setDisplayMessages((prev) => [...prev, userMessage])
-    sendMessage(initialMessage).catch((error) => {
+    sendMessage(pendingInitialMessage).catch((error) => {
       console.error('[Chat] 自动发送初始消息失败:', error)
       setDisplayMessages((prev) =>
         prev.map((m) =>
@@ -235,7 +419,7 @@ export default function ChatSessionPage() {
         )
       )
     })
-  }, [initialMessage, isLoadingSession, isSending, sessionId, router, sendMessage])
+  }, [pendingInitialMessage, isLoadingSession, isSending, sessionId, router, sendMessage])
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -341,10 +525,8 @@ export default function ChatSessionPage() {
     )
   }
 
-  // 最后一条 assistant 消息的索引（用于定位 ProcessCard）
-  const lastAssistantIndex = displayMessages.reduce(
-    (last, m, i) => (m.role === 'assistant' ? i : last),
-    -1
+  const liveProcessAnchorIndex = orderedMessages.findIndex(
+    (m) => m.role === 'assistant' && m.isStreaming
   )
 
   return (
@@ -353,7 +535,7 @@ export default function ChatSessionPage() {
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
           {/* 欢迎消息 */}
-          {displayMessages.length === 0 && (
+          {orderedMessages.length === 0 && (
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0">
                 <Bot size={16} className="text-primary-400" />
@@ -366,15 +548,31 @@ export default function ChatSessionPage() {
             </div>
           )}
 
-          {displayMessages.map((message, index) => {
-            // ProcessCard 显示在最后一条 assistant 消息上方
-            const isLastAssistant =
+          {orderedMessages.map((message, index) => {
+            const showHistoricalProcessCard =
               message.role === 'assistant' &&
-              index === lastAssistantIndex
+              !!message.processData &&
+              !message.fileData
+            const showLiveProcessCard =
+              hasProcessData &&
+              index === liveProcessAnchorIndex
             return (
               <div key={message.id}>
-                {hasProcessData && isLastAssistant && (
-                  <div className="mb-4">
+                {showHistoricalProcessCard && message.processData && (
+                  <div className="mb-4 ml-11 max-w-[80%]">
+                    <ProcessCard
+                      isActive={false}
+                      thinking={message.processData.thinking}
+                      isThinking={false}
+                      plan={message.processData.plan}
+                      toolCalls={message.processData.toolCalls}
+                      messages={message.processData.messages}
+                      className="max-w-3xl"
+                    />
+                  </div>
+                )}
+                {showLiveProcessCard && (
+                  <div className="mb-4 ml-11 max-w-[80%]">
                     <ProcessCard
                       isActive={isSending}
                       thinking={agent2uiState.thinking}
@@ -392,8 +590,8 @@ export default function ChatSessionPage() {
           })}
 
           {/* 执行过程卡片：尚无 assistant 消息时显示在末尾（早期思考阶段） */}
-          {hasProcessData && !displayMessages.some((m) => m.role === 'assistant') && (
-            <div className="mt-2">
+          {isSending && hasProcessData && liveProcessAnchorIndex === -1 && (
+            <div className="mt-2 ml-11 max-w-[80%]">
               <ProcessCard
                 isActive={isSending}
                 thinking={agent2uiState.thinking}
