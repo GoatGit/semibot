@@ -400,10 +400,13 @@ Generate a helpful response to the user based on the conversation history and ex
 IMPORTANT RULES:
 1. Respond in the SAME LANGUAGE as the user's request. If the user writes in Chinese, you MUST respond entirely in Chinese.
 2. Be detailed and informative — provide a comprehensive summary of the findings, not just a brief overview.
-3. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
-4. If there were errors, explain what happened and suggest alternatives.
-5. If PDF/XLSX files were generated, mention them and briefly describe their contents.
-6. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
+3. EVIDENCE GROUNDING (CRITICAL): ONLY use facts that are explicitly present in execution results. Do NOT invent numbers, prices, growth rates, dates, target prices, or analyst conclusions that are not shown in tool outputs.
+4. If a requested key metric is missing from tool outputs, say it is unavailable and explicitly recommend the next data source to verify.
+5. For stock/financial research, include a short "风险提示" section and avoid deterministic investment advice. Keep conclusions conditional on evidence quality and recency.
+6. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
+7. If there were errors, explain what happened and suggest alternatives.
+8. If PDF/XLSX files were generated, mention them and describe ONLY sections that are explicitly present in tool outputs (no invented chapter names). If execution output contains a line like "report_summary_sections=...", you MUST use exactly those section names and MUST NOT add extra section names.
+9. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
 """,
         }
 
@@ -472,10 +475,13 @@ Generate a helpful response to the user based on the conversation history and ex
 IMPORTANT RULES:
 1. Respond in the SAME LANGUAGE as the user's request. If the user writes in Chinese, you MUST respond entirely in Chinese.
 2. Be detailed and informative — provide a comprehensive summary of the findings, not just a brief overview.
-3. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
-4. If there were errors, explain what happened and suggest alternatives.
-5. If PDF/XLSX files were generated, mention them and briefly describe their contents.
-6. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
+3. EVIDENCE GROUNDING (CRITICAL): ONLY use facts that are explicitly present in execution results. Do NOT invent numbers, prices, growth rates, dates, target prices, or analyst conclusions that are not shown in tool outputs.
+4. If a requested key metric is missing from tool outputs, say it is unavailable and explicitly recommend the next data source to verify.
+5. For stock/financial research, include a short "风险提示" section and avoid deterministic investment advice. Keep conclusions conditional on evidence quality and recency.
+6. If tool results contain URLs or source links, you MUST include a "参考来源" (References) section at the END of your response listing all source URLs in markdown link format: [标题](url). Each link on its own line.
+7. If there were errors, explain what happened and suggest alternatives.
+8. If PDF/XLSX files were generated, mention them and describe ONLY sections that are explicitly present in tool outputs (no invented chapter names). If execution output contains a line like "report_summary_sections=...", you MUST use exactly those section names and MUST NOT add extra section names.
+9. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
 """,
         }
 

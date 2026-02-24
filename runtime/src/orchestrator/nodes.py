@@ -67,6 +67,32 @@ _TIME_SERIES_PATTERNS = (
     r"last\s*(\d{1,3})\s*years?",
 )
 
+_FINANCE_RESEARCH_PATTERNS = (
+    "股票",
+    "股价",
+    "港股",
+    "美股",
+    "a股",
+    "财报",
+    "估值",
+    "目标价",
+    "research",
+    "stock",
+    "equity",
+    "ticker",
+)
+
+_FINANCE_NOISE_DOMAIN_PATTERNS = (
+    "t.me/",
+    "telegram.",
+    "xueqiu.com",
+    "gswarrants.com.hk",
+    "talkmoney.com.hk",
+    "weixin.qq.com",
+    "mp.weixin.qq.com",
+    "zhuanlan.zhihu.com",
+)
+
 
 def _is_latest_intent(text: str) -> bool:
     if not text:
@@ -119,6 +145,210 @@ def _enhance_time_series_search_query(query: str, years: int, now: datetime) -> 
         "每个年份至少包含1条数值记录，优先官方统计来源（政府/国际组织）并附来源链接。"
     )
     return f"{base}。{constraints}"
+
+
+def _is_finance_research_intent(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    return any(token in lower for token in _FINANCE_RESEARCH_PATTERNS)
+
+
+def _enforce_finance_research_on_plan_steps(
+    steps: list[PlanStep],
+    user_text: str,
+    session_id: str,
+) -> None:
+    if not _is_finance_research_intent(user_text):
+        return
+
+    include_domains = [
+        "finance.yahoo.com",
+        "hk.finance.yahoo.com",
+        "investing.com",
+        "cn.investing.com",
+        "hkexnews.hk",
+        "www.hkexnews.hk",
+        "hkex.com.hk",
+        "www.hkex.com.hk",
+        "nasdaq.com",
+        "sec.gov",
+        "www.sec.gov",
+        "alibabagroup.com",
+        "www.alibabagroup.com",
+        "ir.alibaba.com",
+        "stock.us",
+        "markets.ft.com",
+        "reuters.com",
+        "bloomberg.com",
+        "wsj.com",
+    ]
+    exclude_domains = [
+        "gswarrants.com.hk",
+        "talkmoney.com.hk",
+        "xueqiu.com",
+    ]
+
+    for step in steps:
+        if not _is_search_tool(step.tool):
+            continue
+        query = step.params.get("query")
+        if not isinstance(query, str) or not query.strip():
+            continue
+        step.params["query"] = (
+            f"{query}。优先公司IR/交易所披露/主流财经媒体，"
+            "必须返回可核对的财务指标与日期，避免衍生品权证或营销导流页面。"
+        )
+        tool_name = (step.tool or "").lower()
+        if "tavily" in tool_name:
+            step.params["topic"] = "news"
+            step.params["days"] = 365
+            # Keep domain preferences as a soft hint. Hard include-lists can starve
+            # search for CN/HK equities when aliases are diverse.
+            step.params["include_domains"] = include_domains
+            step.params["exclude_domains"] = exclude_domains
+            step.params["max_results"] = max(int(step.params.get("max_results", 5) or 5), 8)
+        logger.info(
+            "finance_search_query_enforced",
+            extra={
+                "session_id": session_id,
+                "step_id": step.id,
+                "tool": step.tool,
+                "query_preview": step.params["query"][:180],
+            },
+        )
+
+
+def _extract_finance_focus_tokens(user_text: str) -> list[str]:
+    text = user_text or ""
+    lower = text.lower()
+    tokens: list[str] = []
+
+    # Capture entity in patterns like "研究拼多多股票"
+    m = _re.search(r"(?:研究|分析|跟踪)\s*([^\s，。,.]{1,18}?)(?:股票|股价|财报|估值|公司)", text)
+    if m:
+        tokens.append(m.group(1).strip())
+    m2 = _re.search(r"([^\s，。,.]{1,18}?)(?:股票|股价|财报|估值|公司)", text)
+    if m2:
+        tokens.append(m2.group(1).strip())
+
+    # Common stock-code patterns
+    for pat in [r"\b\d{4,5}\.HK\b", r"\b[A-Z]{1,5}\b", r"\b\d{6}\b"]:
+        for mm in _re.finditer(pat, text):
+            tokens.append(mm.group(0))
+
+    # High-value alias enrichment
+    if "拼多多" in text or "pdd" in lower:
+        tokens.extend(["拼多多", "PDD", "PDD Holdings", "Nasdaq:PDD"])
+    if "腾讯" in text or "tencent" in lower:
+        tokens.extend(["腾讯", "Tencent", "0700.HK", "HKEX:700"])
+    if "阿里" in text or "阿里巴巴" in text or "alibaba" in lower or "baba" in lower:
+        tokens.extend([
+            "阿里巴巴",
+            "阿里",
+            "Alibaba",
+            "Alibaba Group",
+            "BABA",
+            "9988.HK",
+            "NYSE:BABA",
+            "HKEX:9988",
+        ])
+
+    # Deduplicate and drop too-short noise
+    seen = set()
+    out: list[str] = []
+    for t in tokens:
+        tt = t.strip()
+        if len(tt) < 2:
+            continue
+        key = tt.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tt)
+    return out
+
+
+def _filter_finance_search_results(
+    results: list[dict[str, Any]],
+    user_text: str,
+) -> list[dict[str, Any]]:
+    if not _is_finance_research_intent(user_text):
+        return results
+    if not results:
+        return results
+
+    focus_tokens = _extract_finance_focus_tokens(user_text)
+    lowered_focus = [t.lower() for t in focus_tokens]
+
+    def _is_noise_domain(url: str) -> bool:
+        lower_url = (url or "").lower()
+        return any(p in lower_url for p in _FINANCE_NOISE_DOMAIN_PATTERNS)
+
+    cleaned: list[dict[str, Any]] = []
+    for item in results:
+        title = str(item.get("title") or "")
+        url = str(item.get("url") or "")
+        content = str(item.get("content") or item.get("snippet") or "")
+        hay = f"{title}\n{url}\n{content}".lower()
+        if _is_noise_domain(url):
+            continue
+        if lowered_focus:
+            if not any(tok in hay for tok in lowered_focus):
+                continue
+        cleaned.append(item)
+
+    # If strict focus drops everything, at least keep non-noise rows.
+    if cleaned:
+        return cleaned
+    fallback = [
+        r for r in results
+        if not any(p in str(r.get("url") or "").lower() for p in _FINANCE_NOISE_DOMAIN_PATTERNS)
+    ]
+    return fallback
+
+
+def _enforce_pdf_tool_preference(
+    steps: list[PlanStep],
+    user_text: str,
+    available_tool_names: set[str],
+    session_id: str,
+) -> None:
+    if "pdf" not in available_tool_names:
+        return
+    lower = (user_text or "").lower()
+    asks_pdf = ("pdf" in lower) or ("报告" in user_text and "生成" in user_text)
+    if not asks_pdf:
+        return
+
+    for step in steps:
+        if step.tool != "code_executor":
+            continue
+        code = step.params.get("code")
+        if not isinstance(code, str):
+            continue
+        code_lower = code.lower()
+        if ".pdf" not in code_lower and "fpdf" not in code_lower and "reportlab" not in code_lower:
+            continue
+
+        filename = "report.pdf"
+        match = _re.search(r"""['"]([^'"]+\.pdf)['"]""", code, _re.IGNORECASE)
+        if match:
+            filename = match.group(1)
+        step.tool = "pdf"
+        step.params = {
+            "filename": filename,
+            "title": "研究报告",
+            "context_data": step.params.get("context_data", ""),
+        }
+        logger.info(
+            "pdf_tool_preference_enforced",
+            extra={
+                "session_id": session_id,
+                "step_id": step.id,
+                "filename": filename,
+            },
+        )
 
 
 def _enforce_freshness_on_plan_steps(
@@ -226,13 +456,33 @@ def _extract_search_results(tool_results: list[ToolCallResult]) -> list[dict[str
                 for item in items:
                     if isinstance(item, dict):
                         search_results.append(item)
+                answer = result_data.get("answer")
+                if isinstance(answer, str) and answer.strip():
+                    search_results.append({
+                        "title": "search_answer_summary",
+                        "url": "",
+                        "content": answer.strip()[:3000],
+                    })
             else:
                 search_results.append(result_data)
         elif isinstance(result_data, list):
             for item in result_data:
                 if isinstance(item, dict):
                     search_results.append(item)
-    return search_results
+    # Drop placeholder/garbage rows that degrade downstream report quality.
+    filtered: list[dict[str, Any]] = []
+    for item in search_results:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        content = str(item.get("content") or item.get("snippet") or "").strip()
+        if title.lower() in {"detailed results:", "detailed results"} and not url and not content:
+            continue
+        if not title and not url and not content:
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def _inject_context_data(
@@ -244,8 +494,24 @@ def _inject_context_data(
     """Inject search results as context_data into a code_executor action."""
     if action.tool not in {"code_executor", "xlsx", "pdf"} or not search_results:
         return
+    filtered_results = _filter_finance_search_results(search_results, user_request or "")
+    # If finance filtering becomes too strict and leaves too little context,
+    # fall back to broad non-empty rows to avoid template-only reports.
+    if len(filtered_results) < 2:
+        broad: list[dict[str, Any]] = []
+        for item in search_results:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            url = str(item.get("url") or "").strip()
+            content = str(item.get("content") or item.get("snippet") or "").strip()
+            if not title and not url and not content:
+                continue
+            broad.append(item)
+        if len(broad) >= len(filtered_results):
+            filtered_results = broad
     payload = {
-        "results": search_results,
+        "results": filtered_results,
         "user_request": user_request or "",
         "generated_at": datetime.now().isoformat(),
     }
@@ -259,6 +525,7 @@ def _inject_context_data(
             "step_id": action.id,
             "context_data_len": len(context_json),
             "search_results_count": len(search_results),
+            "filtered_results_count": len(filtered_results),
             "had_existing": bool(existing),
         },
     )
@@ -485,6 +752,10 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             effective_memory = f"{memory_context}\n\n{evolved_skills_context}" if memory_context else evolved_skills_context
 
         # Call LLM to generate plan
+        available_tool_names = {
+            str((schema.get("function") or {}).get("name") or schema.get("name") or "")
+            for schema in available_skills
+        }
         plan_response = await llm_provider.generate_plan(
             messages=messages,
             memory=effective_memory,
@@ -515,6 +786,17 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             steps=plan.steps,
             user_text=user_text,
             now=datetime.now(),
+            session_id=state["session_id"],
+        )
+        _enforce_finance_research_on_plan_steps(
+            steps=plan.steps,
+            user_text=user_text,
+            session_id=state["session_id"],
+        )
+        _enforce_pdf_tool_preference(
+            steps=plan.steps,
+            user_text=user_text,
+            available_tool_names=available_tool_names,
             session_id=state["session_id"],
         )
 

@@ -350,6 +350,7 @@ class PdfGeneratorTool(BaseTool):
 
         code = f"""
 import json
+import re
 from fpdf import FPDF
 
 data = json.load(open('context.json', encoding='utf-8'))
@@ -385,33 +386,186 @@ if generated_at:
     pdf.multi_cell(0, 7, text='Generated at: ' + generated_at[:40])
 pdf.ln(2)
 
+def _norm(s):
+    return str(s or '').replace('\\n', ' ').strip()
+
+def _is_placeholder_text(s):
+    t = _norm(s)
+    if not t:
+        return True
+    if t in {'...', '…', '-', '--', 'n/a', 'N/A'}:
+        return True
+    if len(t) <= 6 and set(t) <= set('.-_~ '):
+        return True
+    return False
+
+def _is_stock_research_request(text):
+    t = (text or '').lower()
+    keys = ['股票', '股价', '港股', '美股', 'a股', 'target price', 'ticker', 'stock', 'equity', '估值', '财报']
+    return any(k in t for k in keys)
+
+def _extract_evidence_points(items, limit=12):
+    points = []
+    # Keep only lines that look like factual evidence (numbers + finance keywords).
+    kw = re.compile(r'(营收|收入|利润|净利|eps|市盈率|估值|目标价|评级|回购|分红|指引|同比|环比|guidance|growth|revenue|margin|earnings|target|valuation|pe|ebitda)', re.IGNORECASE)
+    num = re.compile(r'(\\d[\\d,\\.]*\\s*(%|亿|万|hk\\$|usd|rmb|港元|美元|人民币)?)', re.IGNORECASE)
+    for i, row in enumerate(items):
+        if not isinstance(row, dict):
+            continue
+        title = _norm(row.get('title') or row.get('name') or f'Result {{i+1}}')
+        content = _norm(row.get('content') or row.get('snippet'))
+        if not content or _is_placeholder_text(content):
+            continue
+        for seg in re.split(r'[。；;\\n]', content):
+            s = _norm(seg)
+            if len(s) < 12:
+                continue
+            has_num = bool(num.search(s))
+            has_kw = bool(kw.search(s))
+            has_year = bool(re.search(r'\\b(19|20)\\d{{2}}\\b', s))
+            if has_num and (has_kw or has_year):
+                points.append((title, s[:180]))
+                if len(points) >= limit:
+                    return points
+    return points
+
+def _extract_summary_points(items, limit=5):
+    points = []
+    seen = set()
+    for i, row in enumerate(items):
+        if not isinstance(row, dict):
+            continue
+        title = _norm(row.get('title') or row.get('name') or '')
+        content = _norm(row.get('content') or row.get('snippet'))
+        candidates = []
+        if title and len(title) >= 4 and not _is_placeholder_text(title):
+            candidates.append(title)
+        if content:
+            for seg in re.split(r'[。；;\\n]', content):
+                s = _norm(seg)
+                if len(s) < 10:
+                    continue
+                if s.lower().startswith('http'):
+                    continue
+                if s.count('|') > 5:
+                    continue
+                if _is_placeholder_text(s):
+                    continue
+                candidates.append(s)
+                if len(candidates) >= 3:
+                    break
+        for c in candidates:
+            key = c[:80].lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            points.append(c[:180])
+            if len(points) >= limit:
+                return points
+    return points
+
+def _section_title(text):
+    if use_cjk:
+        pdf.set_font('HiraginoGB', size=13)
+    else:
+        pdf.set_font('Helvetica', size=13)
+    pdf.multi_cell(0, 8, text=text)
+    if use_cjk:
+        pdf.set_font('HiraginoGB', size=11)
+    else:
+        pdf.set_font('Helvetica', size=11)
+
 if rows:
-    limit = min(len(rows), 20)
-    for i, row in enumerate(rows[:limit], start=1):
-        if isinstance(row, dict):
-            title_text = str(row.get('title') or row.get('name') or f'Result {{i}}')
-            url = str(row.get('url') or '')
-            content = str(row.get('content') or row.get('snippet') or '')
-            content = content.replace('\\n', ' ').strip()
-            if len(content) > 400:
-                content = content[:400] + '...'
-            pdf.multi_cell(0, 7, text=f'{{i}}. ' + title_text[:160])
-            if content:
-                pdf.multi_cell(0, 7, text=content)
-            if url:
-                shown = url[:120]
-                pdf.cell(0, 7, text=shown, link=url, new_x='LMARGIN', new_y='NEXT')
-            pdf.ln(1)
+    structured = [r for r in rows if isinstance(r, dict)]
+    source_rows = []
+    for r in structured:
+        title_text = _norm(r.get('title') or r.get('name') or '')
+        url_text = _norm(r.get('url'))
+        content_text = _norm(r.get('content') or r.get('snippet'))
+        if _is_placeholder_text(title_text) and _is_placeholder_text(content_text):
+            continue
+        if not title_text and not url_text and not content_text:
+            continue
+        source_rows.append(r)
+        if len(source_rows) >= 10:
+            break
+
+    _section_title('报告范围与方法')
+    pdf.multi_cell(0, 7, text='本报告基于检索到的公开网页信息自动整理，重点输出可追溯证据。以下内容不构成投资建议。')
+    pdf.ln(1)
+
+    _section_title('执行摘要')
+    summary_points = _extract_summary_points(structured, limit=5)
+    if summary_points:
+        for p in summary_points:
+            pdf.multi_cell(0, 7, text='- ' + p)
+    else:
+        # Use source titles as a weak-but-useful fallback to avoid empty template output.
+        fallback_titles = []
+        for row in source_rows:
+            t = _norm(row.get('title') or row.get('name') or '')
+            if t and not _is_placeholder_text(t):
+                fallback_titles.append(t[:120])
+            if len(fallback_titles) >= 4:
+                break
+        if fallback_titles:
+            for t in fallback_titles:
+                pdf.multi_cell(0, 7, text='- 来源显示重点：' + t)
         else:
-            raw = str(row).replace('\\n', ' ')
-            if len(raw) > 300:
-                raw = raw[:300] + '...'
-            pdf.multi_cell(0, 7, text=f'{{i}}. ' + raw)
+            pdf.multi_cell(0, 7, text='本次检索命中结果有限，未提取到高质量可归纳摘要。建议补充公司公告/交易所披露后再生成完整版研究结论。')
+    pdf.ln(1)
+
+    _section_title('检索证据摘要')
+    for i, row in enumerate(source_rows, start=1):
+        title_text = _norm(row.get('title') or row.get('name') or f'Source {{i}}')
+        url = _norm(row.get('url'))
+        content = _norm(row.get('content') or row.get('snippet'))
+        if len(content) > 280:
+            content = content[:280] + '...'
+        pdf.multi_cell(0, 7, text=f'{{i}}. ' + title_text[:150])
+        if content:
+            pdf.multi_cell(0, 7, text=content)
+        if url:
+            shown = url[:110]
+            pdf.cell(0, 7, text=shown, link=url, new_x='LMARGIN', new_y='NEXT')
+        pdf.ln(1)
+
+    evidence = _extract_evidence_points(structured)
+    _section_title('关键发现（仅基于检索证据）')
+    if evidence:
+        for i, (src_title, point) in enumerate(evidence, start=1):
+            pdf.multi_cell(0, 7, text=f'- 发现{{i}}（{{src_title[:36]}}）：{{point}}')
+    else:
+        pdf.multi_cell(0, 7, text='未能从检索结果中提取到足够的结构化财务数值证据，建议补充公司公告/交易所披露后再做定量结论。')
+    pdf.ln(1)
+
+    _section_title('风险与不确定性')
+    pdf.multi_cell(0, 7, text='1) 数据来源可能存在转载和时效差异；2) 部分站点为观点类内容，需交叉验证；3) 对目标价/预测应以最新财报和公告为准。')
+    pdf.ln(1)
+
+    _section_title('数据可得性声明')
+    pdf.multi_cell(0, 7, text='当前检索结果主要来自公开网页快照，未直接接入交易所完整披露表格或公司IR原始文件。若用于投资决策，请以最新公告与财报原文复核。')
+    pdf.ln(1)
+
+    _section_title('参考来源')
+    shown = set()
+    for row in source_rows:
+        url = _norm(row.get('url'))
+        if not url or url in shown:
+            continue
+        shown.add(url)
+        pdf.cell(0, 7, text=url[:120], link=url, new_x='LMARGIN', new_y='NEXT')
 else:
-    pdf.multi_cell(0, 7, text='No structured rows available in context_data.results')
+    _section_title('执行摘要')
+    pdf.multi_cell(0, 7, text='当前未检索到可用于总结的结构化内容，报告仅包含任务说明。建议先执行检索步骤后再生成报告。')
+    pdf.ln(1)
+    _section_title('参考来源')
+    pdf.multi_cell(0, 7, text='暂无来源')
 
 pdf.output({safe_filename!r})
 print("pdf generated")
+print("report_summary_sections=报告范围与方法|执行摘要|检索证据摘要|关键发现（仅基于检索证据）|风险与不确定性|数据可得性声明|参考来源")
+print("report_summary_source_count=" + str(len(rows) if isinstance(rows, list) else 0))
 """
         executor = CodeExecutorTool()
         return await executor.execute(
