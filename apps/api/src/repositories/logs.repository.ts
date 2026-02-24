@@ -353,7 +353,10 @@ export async function upsertUsageRecord(
     costUsd: number
   }>
 ): Promise<UsageRecordRow> {
-  const result = await sql`
+  const userId = updates.userId ?? null
+  const agentId = updates.agentId ?? null
+
+  const insertPrefix = sql`
     INSERT INTO usage_records (
       org_id, user_id, agent_id, period_type, period_start, period_end,
       tokens_input, tokens_output, api_calls, tool_calls,
@@ -361,8 +364,8 @@ export async function upsertUsageRecord(
     )
     VALUES (
       ${orgId},
-      ${updates.userId ?? null},
-      ${updates.agentId ?? null},
+      ${userId},
+      ${agentId},
       ${periodType},
       ${periodStart}::timestamptz,
       ${periodEnd}::timestamptz,
@@ -375,20 +378,61 @@ export async function upsertUsageRecord(
       ${updates.errorsCount ?? 0},
       ${updates.costUsd ?? 0}
     )
-    ON CONFLICT (org_id, period_type, period_start)
-    WHERE user_id IS NULL AND agent_id IS NULL
-    DO UPDATE SET
-      tokens_input = usage_records.tokens_input + EXCLUDED.tokens_input,
-      tokens_output = usage_records.tokens_output + EXCLUDED.tokens_output,
-      api_calls = usage_records.api_calls + EXCLUDED.api_calls,
-      tool_calls = usage_records.tool_calls + EXCLUDED.tool_calls,
-      sessions_count = usage_records.sessions_count + EXCLUDED.sessions_count,
-      messages_count = usage_records.messages_count + EXCLUDED.messages_count,
-      errors_count = usage_records.errors_count + EXCLUDED.errors_count,
-      cost_usd = usage_records.cost_usd + EXCLUDED.cost_usd,
-      updated_at = NOW()
-    RETURNING *
   `
+
+  let result
+  if (agentId) {
+    result = await sql`
+      ${insertPrefix}
+      ON CONFLICT (org_id, agent_id, period_type, period_start)
+      WHERE agent_id IS NOT NULL
+      DO UPDATE SET
+        tokens_input = usage_records.tokens_input + EXCLUDED.tokens_input,
+        tokens_output = usage_records.tokens_output + EXCLUDED.tokens_output,
+        api_calls = usage_records.api_calls + EXCLUDED.api_calls,
+        tool_calls = usage_records.tool_calls + EXCLUDED.tool_calls,
+        sessions_count = usage_records.sessions_count + EXCLUDED.sessions_count,
+        messages_count = usage_records.messages_count + EXCLUDED.messages_count,
+        errors_count = usage_records.errors_count + EXCLUDED.errors_count,
+        cost_usd = usage_records.cost_usd + EXCLUDED.cost_usd,
+        updated_at = NOW()
+      RETURNING *
+    `
+  } else if (userId) {
+    result = await sql`
+      ${insertPrefix}
+      ON CONFLICT (org_id, user_id, period_type, period_start)
+      WHERE user_id IS NOT NULL AND agent_id IS NULL
+      DO UPDATE SET
+        tokens_input = usage_records.tokens_input + EXCLUDED.tokens_input,
+        tokens_output = usage_records.tokens_output + EXCLUDED.tokens_output,
+        api_calls = usage_records.api_calls + EXCLUDED.api_calls,
+        tool_calls = usage_records.tool_calls + EXCLUDED.tool_calls,
+        sessions_count = usage_records.sessions_count + EXCLUDED.sessions_count,
+        messages_count = usage_records.messages_count + EXCLUDED.messages_count,
+        errors_count = usage_records.errors_count + EXCLUDED.errors_count,
+        cost_usd = usage_records.cost_usd + EXCLUDED.cost_usd,
+        updated_at = NOW()
+      RETURNING *
+    `
+  } else {
+    result = await sql`
+      ${insertPrefix}
+      ON CONFLICT (org_id, period_type, period_start)
+      WHERE user_id IS NULL AND agent_id IS NULL
+      DO UPDATE SET
+        tokens_input = usage_records.tokens_input + EXCLUDED.tokens_input,
+        tokens_output = usage_records.tokens_output + EXCLUDED.tokens_output,
+        api_calls = usage_records.api_calls + EXCLUDED.api_calls,
+        tool_calls = usage_records.tool_calls + EXCLUDED.tool_calls,
+        sessions_count = usage_records.sessions_count + EXCLUDED.sessions_count,
+        messages_count = usage_records.messages_count + EXCLUDED.messages_count,
+        errors_count = usage_records.errors_count + EXCLUDED.errors_count,
+        cost_usd = usage_records.cost_usd + EXCLUDED.cost_usd,
+        updated_at = NOW()
+      RETURNING *
+    `
+  }
 
   return result[0] as unknown as UsageRecordRow
 }

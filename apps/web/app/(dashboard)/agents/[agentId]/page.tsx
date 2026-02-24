@@ -22,6 +22,7 @@ interface AgentFormValues {
   model: string
   temperature: number
   maxTokens: number
+  runtimeType: 'semigraph' | 'openclaw'
 }
 
 const EMPTY_VALUES: AgentFormValues = {
@@ -31,6 +32,7 @@ const EMPTY_VALUES: AgentFormValues = {
   model: '',
   temperature: 0.7,
   maxTokens: 4096,
+  runtimeType: 'semigraph',
 }
 
 export default function AgentDetailPage() {
@@ -106,7 +108,10 @@ export default function AgentDetailPage() {
       try {
         setIsLoading(true)
         setError(null)
-        const response = await apiClient.get<ApiResponse<Agent & { mcpServerIds?: string[] }>>(`/agents/${agentId}`)
+        const response = await apiClient.get<ApiResponse<Agent & {
+          mcpServerIds?: string[]
+          runtimeType?: 'semigraph' | 'openclaw'
+        }>>(`/agents/${agentId}`)
         if (!response.success || !response.data || cancelled) {
           return
         }
@@ -119,6 +124,7 @@ export default function AgentDetailPage() {
           model: agent.config?.model || '',
           temperature: agent.config?.temperature ?? 0.7,
           maxTokens: agent.config?.maxTokens ?? 4096,
+          runtimeType: agent.runtimeType ?? 'semigraph',
         })
         setSelectedSkills(agent.skills || [])
         setSelectedMcpServerIds(agent.mcpServerIds || [])
@@ -158,6 +164,7 @@ export default function AgentDetailPage() {
         name: values.name.trim(),
         description: values.description.trim(),
         systemPrompt: values.systemPrompt.trim(),
+        runtimeType: values.runtimeType,
         config: {
           model: values.model,
           temperature: values.temperature,
@@ -272,6 +279,22 @@ export default function AgentDetailPage() {
                           ? '暂无可用模型'
                           : '请选择模型'
                     }
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">执行引擎</label>
+                  <Select
+                    value={values.runtimeType}
+                    onChange={(val) => setValues((prev) => ({
+                      ...prev,
+                      runtimeType: (val === 'openclaw' ? 'openclaw' : 'semigraph'),
+                    }))}
+                    disabled={isSaving}
+                    options={[
+                      { value: 'semigraph', label: 'Semigraph' },
+                      { value: 'openclaw', label: 'OpenClaw' },
+                    ]}
                   />
                 </div>
 

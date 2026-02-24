@@ -362,6 +362,7 @@ async function handleChatViaExecutionPlane(
     session_id: sessionId,
     runtime_type: runtimeType,
     agent_id: agent.id,
+    openclaw_config: agent.openclawConfig ?? {},
     agent_config: {
       system_prompt: (() => {
         const n = new Date()

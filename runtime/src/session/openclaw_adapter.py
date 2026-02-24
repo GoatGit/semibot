@@ -10,7 +10,10 @@ from typing import Any
 from uuid import uuid4
 
 from src.session.runtime_adapter import RuntimeAdapter
+from src.utils.logging import get_logger
 from src.ws.client import ControlPlaneClient
+
+logger = get_logger(__name__)
 
 
 class OpenClawBridgeAdapter(RuntimeAdapter):
@@ -20,18 +23,13 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
         self.start_payload = start_payload
         self.process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[Any] | None = None
+        self._stderr_task: asyncio.Task[Any] | None = None
         self._stopping = False
         self._snapshot_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._io_lock = asyncio.Lock()
 
     async def start(self) -> None:
-        cmd = self._bridge_command()
-        self.process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        self._reader_task = asyncio.create_task(self._read_bridge_events())
+        await self._spawn_bridge()
         await self._send_command(
             {
                 "type": "start",
@@ -70,6 +68,10 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
             self._reader_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reader_task
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stderr_task
 
         if self.process and self.process.returncode is None:
             self.process.terminate()
@@ -83,6 +85,8 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
             if not fut.done():
                 fut.set_exception(RuntimeError("bridge stopped"))
         self._snapshot_futures.clear()
+        self._reader_task = None
+        self._stderr_task = None
 
     def _bridge_command(self) -> list[str]:
         override = os.getenv("OPENCLAW_BRIDGE_CMD", "").strip()
@@ -94,19 +98,73 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
         return ["node", str(bridge_entry)]
 
     async def _send_command(self, payload: dict[str, Any]) -> None:
+        async with self._io_lock:
+            recovered = await self._ensure_bridge_for_command(payload)
+            if not self.process or not self.process.stdin:
+                await self.client.send_sse_event(
+                    self.session_id,
+                    {
+                        "type": "execution_error",
+                        "code": "OPENCLAW_BRIDGE_NOT_RUNNING",
+                        "error": "OpenClaw bridge process is not running",
+                    },
+                )
+                return
+
+            if recovered and payload.get("type") != "start":
+                await self._write_command(
+                    {
+                        "type": "start",
+                        "session_id": self.session_id,
+                        "payload": self._start_payload_for_bridge(),
+                    }
+                )
+
+            await self._write_command(payload)
+
+    async def _write_command(self, payload: dict[str, Any]) -> None:
         if not self.process or not self.process.stdin:
-            await self.client.send_sse_event(
-                self.session_id,
-                {
-                    "type": "execution_error",
-                    "code": "OPENCLAW_BRIDGE_NOT_RUNNING",
-                    "error": "OpenClaw bridge process is not running",
-                },
-            )
             return
         data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
         self.process.stdin.write(data)
         await self.process.stdin.drain()
+
+    async def _spawn_bridge(self) -> None:
+        if self.process and self.process.returncode is None and self.process.stdin and self.process.stdout:
+            return
+
+        cmd = self._bridge_command()
+        self.process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        self._reader_task = asyncio.create_task(self._read_bridge_events())
+        self._stderr_task = asyncio.create_task(self._read_bridge_stderr())
+
+    async def _ensure_bridge_for_command(self, payload: dict[str, Any]) -> bool:
+        if self._stopping:
+            return False
+
+        is_running = bool(self.process and self.process.returncode is None and self.process.stdin and self.process.stdout)
+        if is_running:
+            return False
+
+        try:
+            await self._spawn_bridge()
+            return True
+        except Exception as exc:
+            await self.client.send_sse_event(
+                self.session_id,
+                {
+                    "type": "execution_error",
+                    "code": "OPENCLAW_BRIDGE_START_FAILED",
+                    "error": str(exc),
+                    "command_type": str(payload.get("type", "")),
+                },
+            )
+            return False
 
     async def _read_bridge_events(self) -> None:
         if not self.process or not self.process.stdout:
@@ -146,6 +204,23 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
                     },
                 )
 
+    async def _read_bridge_stderr(self) -> None:
+        if not self.process or not self.process.stderr:
+            return
+        try:
+            while True:
+                line = await self.process.stderr.readline()
+                if not line:
+                    break
+                raw = line.decode("utf-8", errors="replace").strip()
+                if not raw:
+                    continue
+                logger.warning("openclaw_bridge_stderr", extra={"session_id": self.session_id, "line": raw})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("openclaw_bridge_stderr_reader_error", extra={"session_id": self.session_id, "error": str(exc)})
+
     async def _dispatch_bridge_message(self, msg: dict[str, Any]) -> None:
         msg_type = str(msg.get("type", ""))
         if msg_type == "snapshot_response":
@@ -179,6 +254,7 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
             "text",
             "tool_call",
             "tool_result",
+            "file_created",
             "execution_complete",
             "execution_error",
         }:

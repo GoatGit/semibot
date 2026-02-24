@@ -165,8 +165,6 @@ def _enforce_finance_research_on_plan_steps(
     include_domains = [
         "finance.yahoo.com",
         "hk.finance.yahoo.com",
-        "investing.com",
-        "cn.investing.com",
         "hkexnews.hk",
         "www.hkexnews.hk",
         "hkex.com.hk",
@@ -177,11 +175,11 @@ def _enforce_finance_research_on_plan_steps(
         "alibabagroup.com",
         "www.alibabagroup.com",
         "ir.alibaba.com",
-        "stock.us",
         "markets.ft.com",
         "reuters.com",
         "bloomberg.com",
         "wsj.com",
+        "cnbc.com",
     ]
     exclude_domains = [
         "gswarrants.com.hk",
@@ -198,16 +196,20 @@ def _enforce_finance_research_on_plan_steps(
         step.params["query"] = (
             f"{query}。优先公司IR/交易所披露/主流财经媒体，"
             "必须返回可核对的财务指标与日期，避免衍生品权证或营销导流页面。"
+            "至少返回3个不同来源域名，并包含至少1个公司/交易所官方来源。"
         )
         tool_name = (step.tool or "").lower()
         if "tavily" in tool_name:
             step.params["topic"] = "news"
             step.params["days"] = 365
-            # Keep domain preferences as a soft hint. Hard include-lists can starve
-            # search for CN/HK equities when aliases are diverse.
-            step.params["include_domains"] = include_domains
+            step.params["search_depth"] = "advanced"
+            # Keep include_domains only as a weak fallback to avoid starving results.
+            # Do not force strict allow-lists for finance, otherwise single-source
+            # degeneration happens frequently (e.g. only one quote portal hit).
+            if not step.params.get("include_domains"):
+                step.params["include_domains"] = include_domains
             step.params["exclude_domains"] = exclude_domains
-            step.params["max_results"] = max(int(step.params.get("max_results", 5) or 5), 8)
+            step.params["max_results"] = max(int(step.params.get("max_results", 5) or 5), 12)
         logger.info(
             "finance_search_query_enforced",
             extra={
@@ -495,9 +497,50 @@ def _inject_context_data(
     if action.tool not in {"code_executor", "xlsx", "pdf"} or not search_results:
         return
     filtered_results = _filter_finance_search_results(search_results, user_request or "")
-    # If finance filtering becomes too strict and leaves too little context,
-    # fall back to broad non-empty rows to avoid template-only reports.
-    if len(filtered_results) < 2:
+    # If finance filtering becomes too strict (too few rows or too low domain
+    # diversity), fall back to broad non-empty rows to avoid template-only reports.
+    unique_domains = set()
+    for item in filtered_results:
+        try:
+            from urllib.parse import urlparse as _urlparse
+            host = (_urlparse(str(item.get("url") or "")).hostname or "").lower()
+            if host:
+                unique_domains.add(host)
+        except Exception:
+            continue
+    if len(filtered_results) < 2 or len(unique_domains) < 2:
+        is_finance = _is_finance_research_intent(user_request or "")
+        finance_focus = [x.lower() for x in _extract_finance_focus_tokens(user_request or "")]
+        finance_domain_hints = (
+            "finance.",
+            "investing.com",
+            "reuters.com",
+            "bloomberg.com",
+            "wsj.com",
+            "ft.com",
+            "sec.gov",
+            "hkex",
+            "alibabagroup.com",
+            "aastocks.com",
+            "yahoo.com",
+            "nasdaq.com",
+        )
+        finance_kw = (
+            "股价",
+            "股票",
+            "财报",
+            "估值",
+            "市值",
+            "目标价",
+            "评级",
+            "revenue",
+            "earnings",
+            "valuation",
+            "price target",
+            "eps",
+            "p/e",
+            "pe ratio",
+        )
         broad: list[dict[str, Any]] = []
         for item in search_results:
             if not isinstance(item, dict):
@@ -507,6 +550,15 @@ def _inject_context_data(
             content = str(item.get("content") or item.get("snippet") or "").strip()
             if not title and not url and not content:
                 continue
+            if is_finance:
+                hay = f"{title}\n{url}\n{content}".lower()
+                domain_ok = any(h in url.lower() for h in finance_domain_hints)
+                kw_ok = any(k in hay for k in finance_kw)
+                focus_ok = (not finance_focus) or any(t in hay for t in finance_focus)
+                if not focus_ok:
+                    continue
+                if not (domain_ok or kw_ok):
+                    continue
             broad.append(item)
         if len(broad) >= len(filtered_results):
             filtered_results = broad

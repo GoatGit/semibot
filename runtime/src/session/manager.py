@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 from typing import Any
@@ -25,6 +26,7 @@ class SessionManager:
         self.user_id = str(init_data.get("user_id", ""))
         self.org_id = str(init_data.get("org_id", ""))
         self.adapters: dict[str, RuntimeAdapter] = {}
+        self.session_ready_events: dict[str, asyncio.Event] = {}
 
         self.client.set_active_sessions_provider(self.get_active_sessions)
 
@@ -42,6 +44,8 @@ class SessionManager:
         runtime_type = str(data.get("runtime_type", "semigraph"))
         adapter = self._create_adapter(runtime_type, session_id, data)
         self.adapters[session_id] = adapter
+        ready_event = asyncio.Event()
+        self.session_ready_events[session_id] = ready_event
 
         self.client.register_session_handlers(
             session_id,
@@ -49,8 +53,16 @@ class SessionManager:
             cancel=lambda payload, sid=session_id: self._on_cancel(sid, payload),
         )
 
-        await adapter.start()
-        logger.info("session_started", extra={"session_id": session_id, "runtime_type": runtime_type})
+        try:
+            await adapter.start()
+            ready_event.set()
+            logger.info("session_started", extra={"session_id": session_id, "runtime_type": runtime_type})
+        except Exception:
+            ready_event.set()
+            self.adapters.pop(session_id, None)
+            self.client.unregister_session_handlers(session_id)
+            self.session_ready_events.pop(session_id, None)
+            raise
 
     async def _enrich_skill_packages(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
         raw_skills = data.get("skill_index")
@@ -103,11 +115,28 @@ class SessionManager:
         if not adapter:
             return
 
+        self.session_ready_events.pop(session_id, None)
         self.client.unregister_session_handlers(session_id)
         await adapter.stop()
         logger.info("session_stopped", extra={"session_id": session_id})
 
     async def _on_user_message(self, session_id: str, payload: dict[str, Any]) -> None:
+        ready_event = self.session_ready_events.get(session_id)
+        if ready_event and not ready_event.is_set():
+            try:
+                await asyncio.wait_for(ready_event.wait(), timeout=15)
+            except asyncio.TimeoutError:
+                logger.warning("session_start_wait_timeout", extra={"session_id": session_id})
+                await self.client.send_sse_event(
+                    session_id,
+                    {
+                        "type": "execution_error",
+                        "code": "SESSION_START_TIMEOUT",
+                        "error": "session initialization timed out",
+                    },
+                )
+                return
+
         adapter = self.adapters.get(session_id)
         if not adapter:
             return

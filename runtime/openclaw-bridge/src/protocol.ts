@@ -10,6 +10,7 @@ export type BridgeCommandType =
 export type BridgeOutboundType =
   | 'thinking'
   | 'text'
+  | 'file_created'
   | 'tool_call'
   | 'tool_result'
   | 'execution_complete'
@@ -37,6 +38,12 @@ export type SdkCommandInput = {
 
 export type SdkCommandOutput = {
   text: string
+  files?: Array<{
+    url: string
+    filename?: string
+    mime_type?: string
+    size?: number
+  }>
   usage?: {
     tokens_in?: number
     tokens_out?: number
@@ -108,6 +115,7 @@ export function parseSdkCommandOutput(raw: string): SdkCommandOutput {
   if (!isRecord(parsed)) return { text: raw.trim() }
   const text = typeof parsed.text === 'string' ? parsed.text : ''
   const usageRaw = parsed.usage
+  const filesRaw = parsed.files
   const usage =
     isRecord(usageRaw)
       ? {
@@ -115,5 +123,17 @@ export function parseSdkCommandOutput(raw: string): SdkCommandOutput {
           tokens_out: typeof usageRaw.tokens_out === 'number' ? usageRaw.tokens_out : undefined,
         }
       : undefined
-  return { text, usage }
+  const files = Array.isArray(filesRaw)
+    ? filesRaw
+        .map((item) => (isRecord(item) ? item : null))
+        .filter((item): item is Record<string, unknown> => Boolean(item))
+        .map((item) => ({
+          url: typeof item.url === 'string' ? item.url : '',
+          filename: typeof item.filename === 'string' ? item.filename : undefined,
+          mime_type: typeof item.mime_type === 'string' ? item.mime_type : undefined,
+          size: typeof item.size === 'number' ? item.size : undefined,
+        }))
+        .filter((item) => item.url)
+    : undefined
+  return { text, usage, files }
 }

@@ -9,6 +9,10 @@ export type OpenClawEvent = {
   tool_name?: string
   input?: unknown
   output?: unknown
+  filename?: string
+  mime_type?: string
+  size?: number
+  url?: string
   error?: string
   error_code?: string
   final_response?: string
@@ -19,7 +23,13 @@ export function toSemibotSSE(event: BridgeInboundEvent): Record<string, unknown>
     return event
   }
 
-  if (event.type === 'text' || event.type === 'thinking' || event.type === 'tool_call' || event.type === 'tool_result') {
+  if (
+    event.type === 'text' ||
+    event.type === 'thinking' ||
+    event.type === 'tool_call' ||
+    event.type === 'tool_result' ||
+    event.type === 'file_created'
+  ) {
     return event
   }
 
@@ -43,6 +53,14 @@ export function translateOpenClawEvent(event: OpenClawEvent): Record<string, unk
         type: 'tool_result',
         tool_name: event.tool_name ?? 'tool',
         output: event.output ?? {},
+      }
+    case 'file_created':
+      return {
+        type: 'file_created',
+        filename: event.filename ?? 'file',
+        mime_type: event.mime_type ?? 'application/octet-stream',
+        size: event.size,
+        url: event.url ?? '',
       }
     case 'done':
       return {

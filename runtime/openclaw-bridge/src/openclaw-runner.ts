@@ -151,16 +151,38 @@ class SdkOpenClawRunner implements OpenClawRunner {
         text: 'OpenClaw SDK runner generating response...',
       })
 
+      const sdkStartedAt = Date.now()
+      const heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.round((Date.now() - sdkStartedAt) / 1000))
+        this.deps.emit({
+          kind: 'reasoning',
+          text: `OpenClaw SDK runner executing... (${elapsedSec}s)`,
+        })
+      }, 8000)
+
       const generated = await this.sdk.generate({
         message,
         memoryContext,
         loadedSkillCount: this.deps.getLoadedSkillCount(),
         model: this.model,
         toolProfile: this.toolProfile,
+      }).finally(() => {
+        clearInterval(heartbeat)
       })
 
       const text = generated.text || 'OpenClaw SDK returned empty response'
       this.lastResponse = text
+
+      for (const file of generated.files ?? []) {
+        this.deps.emit({
+          kind: 'file_created',
+          filename: file.filename ?? 'file',
+          mime_type: file.mime_type ?? 'application/octet-stream',
+          size: file.size,
+          url: file.url,
+        })
+      }
+
       this.deps.emit({
         kind: 'assistant_message',
         text,
@@ -247,7 +269,7 @@ class SdkOpenClawRunner implements OpenClawRunner {
 }
 
 export function createOpenClawRunner(deps: RunnerDeps): OpenClawRunner {
-  const mode = process.env.OPENCLAW_RUNNER_MODE ?? 'mock'
+  const mode = process.env.OPENCLAW_RUNNER_MODE ?? 'sdk'
   if (mode === 'sdk') {
     return new SdkOpenClawRunner(deps)
   }

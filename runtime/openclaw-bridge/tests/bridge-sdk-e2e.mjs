@@ -15,7 +15,7 @@ function startBridge() {
     `const i=JSON.parse(d||'{}');` +
     `const msg=String(i.message||'');` +
     `const mem=(Array.isArray(i.memory_context)&&i.memory_context[0])?String(i.memory_context[0]):'none';` +
-    `process.stdout.write(JSON.stringify({text:'SDK:'+msg+':'+mem,usage:{tokens_in:9,tokens_out:4}}));` +
+    `process.stdout.write(JSON.stringify({text:'SDK:'+msg+':'+mem,files:[{url:'https://files.example.com/alibaba.pdf',filename:'alibaba.pdf',mime_type:'application/pdf',size:2048}],usage:{tokens_in:9,tokens_out:4}}));` +
     `});"`
 
   const child = spawn('node', ['dist/main.js'], {
@@ -122,6 +122,15 @@ async function main() {
   )
 
   assert(collector.lines.some((x) => x.type === 'text' && String(x.content).includes('SDK:hello-sdk:memo-sdk')), 'expected sdk text output')
+  assert(
+    collector.lines.some(
+      (x) =>
+        x.type === 'file_created' &&
+        x.url === 'https://files.example.com/alibaba.pdf' &&
+        x.filename === 'alibaba.pdf'
+    ),
+    'expected file_created output from sdk files payload'
+  )
   assert(
     collector.lines.some(
       (x) =>

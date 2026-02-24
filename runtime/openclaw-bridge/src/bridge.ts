@@ -84,8 +84,9 @@ export function startBridgeLoop(): void {
       runtime.skillLoader.hydrateFromIndex(cmd.payload?.skill_index)
       await runtime.runner.onStart(cmd.payload ?? {})
 
-      const toLoad = runtime.skillLoader.nextRequiredSkill()
-      if (toLoad) {
+      while (true) {
+        const toLoad = runtime.skillLoader.nextRequiredSkill()
+        if (!toLoad) break
         const response = (await requestControlPlane(sessionId, 'get_skill_package', {
           skill_id: toLoad.id,
           version: toLoad.version ?? 'latest',

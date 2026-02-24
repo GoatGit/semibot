@@ -294,10 +294,10 @@ export const API_KEY_PREFIX_DISPLAY_LENGTH = 10
 export const DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://localhost:5432/semibot'
 
 /** 数据库连接池最小连接数 */
-export const DB_POOL_MIN = 2
+export const DB_POOL_MIN = Math.max(0, Number(process.env.DB_POOL_MIN ?? 2))
 
 /** 数据库连接池最大连接数 */
-export const DB_POOL_MAX = 10
+export const DB_POOL_MAX = Math.max(DB_POOL_MIN || 0, Number(process.env.DB_POOL_MAX ?? 10))
 
 // ═══════════════════════════════════════════════════════════════
 // 日志配置
