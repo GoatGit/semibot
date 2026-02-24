@@ -76,7 +76,7 @@ function ensureModelContextWindow() {
 function runAgent(message) {
   ensureModelContextWindow()
   const sessionId = `semibot-sdk-${randomUUID()}`
-  const timeoutMs = Math.max(5000, Number(process.env.OPENCLAW_AGENT_TIMEOUT_MS || 420000))
+  const timeoutMs = Math.max(420000, Number(process.env.OPENCLAW_AGENT_TIMEOUT_MS || 0))
   const timeoutSeconds = Math.max(5, Math.ceil(timeoutMs / 1000))
   const finalMessage = `${String(message || '').trim()}\n\n[Execution note]\nWhen calling web_search, use search_lang='zh-hans' for Chinese queries (or 'en'). Never use 'zh'.\nIf user asks for a PDF/XLSX/CSV file, you must actually generate the file artifact and return it as attachment/media instead of plain text template.`
   return new Promise((resolve, reject) => {

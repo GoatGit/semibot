@@ -21,6 +21,19 @@ type RunnerDeps = {
   getLoadedSkillCount: GetLoadedSkillCountFn
 }
 
+function messageRequiresArtifact(message: string): boolean {
+  const text = String(message || '').toLowerCase()
+  return (
+    text.includes('.pdf') ||
+    text.includes('.xlsx') ||
+    text.includes('.csv') ||
+    text.includes('生成pdf') ||
+    text.includes('生成 pdf') ||
+    text.includes('生成表格') ||
+    text.includes('download')
+  )
+}
+
 class MockOpenClawRunner implements OpenClawRunner {
   private lastMessage = ''
   private lastResponse = ''
@@ -170,10 +183,34 @@ class SdkOpenClawRunner implements OpenClawRunner {
         clearInterval(heartbeat)
       })
 
-      const text = generated.text || 'OpenClaw SDK returned empty response'
+      let final = generated
+      if (messageRequiresArtifact(message) && (final.files ?? []).length === 0) {
+        this.deps.emit({
+          kind: 'reasoning',
+          text: 'OpenClaw did not return attachment, retrying artifact generation...',
+        })
+        const retry = await this.sdk.generate({
+          message: [
+            'User requires a downloadable file artifact.',
+            `Original request: ${message}`,
+            'Your previous response did not include any attachment/mediaUrl.',
+            'Retry now and MUST return the file as an attachment/mediaUrl (for example PDF/XLSX/CSV).',
+            'Do not output template-only text without artifact.',
+          ].join('\n'),
+          memoryContext,
+          loadedSkillCount: this.deps.getLoadedSkillCount(),
+          model: this.model,
+          toolProfile: this.toolProfile,
+        })
+        if ((retry.files ?? []).length > 0 || String(retry.text ?? '').trim()) {
+          final = retry
+        }
+      }
+
+      const text = final.text || 'OpenClaw SDK returned empty response'
       this.lastResponse = text
 
-      for (const file of generated.files ?? []) {
+      for (const file of final.files ?? []) {
         this.deps.emit({
           kind: 'file_created',
           filename: file.filename ?? 'file',
@@ -181,6 +218,15 @@ class SdkOpenClawRunner implements OpenClawRunner {
           size: file.size,
           url: file.url,
         })
+      }
+
+      if (messageRequiresArtifact(message) && (final.files ?? []).length === 0) {
+        this.deps.emit({
+          kind: 'error',
+          error_code: 'OPENCLAW_ARTIFACT_MISSING',
+          error: 'OpenClaw did not return a downloadable file artifact for this request.',
+        })
+        return
       }
 
       this.deps.emit({
@@ -199,8 +245,8 @@ class SdkOpenClawRunner implements OpenClawRunner {
 
       await this.deps.fireAndForget('usage_report', {
         model: this.model,
-        tokens_in: Math.max(1, generated.usage?.tokens_in ?? message.length),
-        tokens_out: Math.max(1, generated.usage?.tokens_out ?? text.length),
+        tokens_in: Math.max(1, final.usage?.tokens_in ?? message.length),
+        tokens_out: Math.max(1, final.usage?.tokens_out ?? text.length),
       })
 
       this.deps.emit({

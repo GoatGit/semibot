@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { loginByApi } from './helpers/auth'
 
-test.setTimeout(240_000)
+test.setTimeout(600_000)
 
 function resolveApiBase(): string {
   const fromEnv = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL

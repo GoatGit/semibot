@@ -177,7 +177,7 @@ class CommandSdkProvider implements OpenClawSdkProvider {
 
 export function createSdkProvider(): OpenClawSdkProvider {
   const envCmd = (process.env.OPENCLAW_SDK_CMD ?? '').trim()
-  const timeoutMs = Math.max(500, Number(process.env.OPENCLAW_SDK_TIMEOUT_MS ?? 480000))
+  const timeoutMs = Math.max(480000, Number(process.env.OPENCLAW_SDK_TIMEOUT_MS ?? 0))
   if (envCmd && !looksLikeInstallCommand(envCmd)) {
     return new CommandSdkProvider(envCmd, timeoutMs)
   }
