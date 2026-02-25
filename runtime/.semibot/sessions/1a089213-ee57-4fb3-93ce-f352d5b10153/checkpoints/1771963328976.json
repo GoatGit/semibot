@@ -1,0 +1,33 @@
+{
+  "id": "1771963328976",
+  "session_id": "1a089213-ee57-4fb3-93ce-f352d5b10153",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "请记住：我最喜欢的编程语言是 Rust",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "好的，我已经记住了，您最喜欢的编程语言是 Rust。\n\n这是一个很棒的选择！Rust 以其卓越的内存安全性、高性能和对并发编程的强大支持而闻名。如果您之后想讨论 Rust 的相关话题、寻找学习资源，或者需要我用 Rust 的思维来帮助分析问题，请随时告诉我。",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "user",
+      "content": "我刚才说最喜欢什么编程语言？直接回答语言名称",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "Rust",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "我刚才说最喜欢什么编程语言？直接回答语言名称",
+  "updated_at": 1771963328
+}

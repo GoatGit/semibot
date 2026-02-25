@@ -87,6 +87,22 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
         duration: event.duration as number | undefined,
       })
 
+    // OpenClaw bridge compatibility
+    case 'tool_call':
+      return mkMessage('tool_call', {
+        toolName: (event.tool_name as string) ?? '',
+        arguments: (event.input as Record<string, unknown>) ?? {},
+        status: 'calling',
+      })
+
+    case 'tool_result':
+      return mkMessage('tool_result', {
+        toolName: (event.tool_name as string) ?? '',
+        result: event.output ?? event.result,
+        success: (event.success as boolean) ?? true,
+        error: event.error as string | undefined,
+      })
+
     case 'skill_call_start':
       return mkMessage('skill_call', {
         skillId: (event.skill_id as string) ?? '',
@@ -124,6 +140,9 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
       })
 
     case 'text_chunk':
+      return mkMessage('text', { content: (event.content as string) ?? '' })
+
+    case 'text':
       return mkMessage('text', { content: (event.content as string) ?? '' })
 
     case 'file_created':

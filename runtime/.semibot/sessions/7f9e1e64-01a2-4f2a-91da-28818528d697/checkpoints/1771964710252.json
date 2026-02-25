@@ -1,0 +1,21 @@
+{
+  "id": "1771964710252",
+  "session_id": "7f9e1e64-01a2-4f2a-91da-28818528d697",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "请用一句话解释区块链的工作原理",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "区块链是一个由众多参与者共同维护的、按时间顺序将数据区块以密码学方式链接形成的去中心化分布式账本，确保数据不可篡改和透明可追溯。",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "请用一句话解释区块链的工作原理",
+  "updated_at": 1771964710
+}

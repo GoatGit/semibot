@@ -1,0 +1,21 @@
+{
+  "id": "1771959623050",
+  "session_id": "6fda88c5-9dbc-4e52-82e7-4a4cbce7742d",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "请用一句话解释区块链的工作原理",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "区块链的工作原理可以概括为：它是一个由众多参与者共同维护的分布式数字账本，数据被打包成按时间顺序加密链接的“区块”，一旦记录便难以篡改。",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "请用一句话解释区块链的工作原理",
+  "updated_at": 1771959623
+}

@@ -181,7 +181,13 @@ class OpenClawBridgeAdapter(RuntimeAdapter):
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                await self._dispatch_bridge_message(msg)
+                try:
+                    await self._dispatch_bridge_message(msg)
+                except Exception as exc:
+                    logger.warning(
+                        "openclaw_bridge_dispatch_failed",
+                        extra={"session_id": self.session_id, "error": str(exc)},
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:

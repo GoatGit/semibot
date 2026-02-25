@@ -1,0 +1,21 @@
+{
+  "id": "1771961102235",
+  "session_id": "71b67a9d-5eeb-4909-b08f-98fd8d12573f",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "请用一句话解释区块链的工作原理",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "区块链是一种去中心化的分布式账本技术，通过加密算法将交易数据打包成按时间顺序链接的区块，并由网络中的多个节点共同验证和存储，以确保数据的不可篡改性和透明性。",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "请用一句话解释区块链的工作原理",
+  "updated_at": 1771961102
+}

@@ -233,6 +233,11 @@ export function closeSSEConnection(connectionId: string): void {
 
   unregisterSSEConnection(connectionId)
   sseConnections.delete(connectionId)
+
+  // Ensure clients can terminate promptly when runtime reports completion/error.
+  if (!connection.res.writableEnded) {
+    connection.res.end()
+  }
 }
 
 export function sendSSEEvent(

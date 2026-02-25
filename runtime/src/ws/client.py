@@ -111,13 +111,12 @@ class ControlPlaneClient:
             raise
 
     async def send_sse_event(self, session_id: str, payload: dict[str, Any]) -> None:
-        await self._send_raw(
-            {
-                "type": "sse_event",
-                "session_id": session_id,
-                "data": json.dumps(payload, ensure_ascii=False),
-            }
-        )
+        message = {
+            "type": "sse_event",
+            "session_id": session_id,
+            "data": json.dumps(payload, ensure_ascii=False),
+        }
+        await self._send_with_retry(message, op_name="send_sse_event", session_id=session_id)
 
     async def send_runtime_event(self, session_id: str, event: dict[str, Any]) -> None:
         event_type = event.get("event")
@@ -126,19 +125,42 @@ class ControlPlaneClient:
         await self.send_sse_event(session_id, flattened)
 
     async def fire_and_forget(self, session_id: str, method: str, **params: Any) -> None:
-        await self._send_raw(
-            {
-                "type": "fire_and_forget",
-                "session_id": session_id,
-                "method": method,
-                "params": params,
-            }
-        )
+        message = {
+            "type": "fire_and_forget",
+            "session_id": session_id,
+            "method": method,
+            "params": params,
+        }
+        await self._send_with_retry(message, op_name="fire_and_forget", session_id=session_id)
 
     async def _send_raw(self, payload: dict[str, Any]) -> None:
         if not self.ws:
             raise RuntimeError("WS not connected")
         await self.ws.send(json.dumps(payload, ensure_ascii=False))
+
+    async def _send_with_retry(self, payload: dict[str, Any], *, op_name: str, session_id: str) -> None:
+        retries = [0.2, 0.5, 1.0, 2.0, 3.0]
+        last_error: Exception | None = None
+        for idx, delay in enumerate(retries):
+            try:
+                await self._send_raw(payload)
+                return
+            except Exception as exc:  # noqa: BLE001 - preserve exact runtime/network errors
+                last_error = exc
+                logger.warning(
+                    "control_plane_send_retry",
+                    extra={
+                        "op": op_name,
+                        "session_id": session_id,
+                        "attempt": idx + 1,
+                        "retry_in_s": delay,
+                        "error": str(exc),
+                    },
+                )
+                await asyncio.sleep(delay)
+        raise RuntimeError(
+            f"{op_name} failed after retries for session {session_id}: {str(last_error) if last_error else 'unknown'}"
+        )
 
     async def _listen_loop(self) -> None:
         while self.ws:

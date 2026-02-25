@@ -1,0 +1,21 @@
+{
+  "id": "1771963198328",
+  "session_id": "1a6f5d16-0b30-4ac0-a722-2374e991155b",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "请记住：我最喜欢的编程语言是 Rust",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "已记录您的偏好：您最喜欢的编程语言是 Rust。\n\n在后续的对话中，当涉及编程语言选择、技术建议或相关讨论时，我会优先考虑 Rust 的视角。",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "请记住：我最喜欢的编程语言是 Rust",
+  "updated_at": 1771963198
+}

@@ -126,6 +126,7 @@ async function main() {
     collector.lines.some(
       (x) =>
         x.type === 'file_created' &&
+        typeof x.url === 'string' &&
         x.url === 'https://files.example.com/alibaba.pdf' &&
         x.filename === 'alibaba.pdf'
     ),

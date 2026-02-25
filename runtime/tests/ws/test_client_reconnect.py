@@ -22,6 +22,18 @@ class FakeWS:
         return await self._recv.get()
 
 
+class FlakySendWS(FakeWS):
+    def __init__(self, recv_messages: list[dict], fail_count: int):
+        super().__init__(recv_messages)
+        self._remaining_failures = fail_count
+
+    async def send(self, payload: str) -> None:
+        if self._remaining_failures > 0:
+            self._remaining_failures -= 1
+            raise RuntimeError("simulated send failure")
+        await super().send(payload)
+
+
 @pytest.mark.asyncio
 async def test_reconnect_restores_completed_pending_request(monkeypatch):
     ws = FakeWS(
@@ -51,6 +63,24 @@ async def test_reconnect_restores_completed_pending_request(monkeypatch):
         client._listen_task.cancel()
     if client._heartbeat_task:
         client._heartbeat_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_send_sse_event_retries_transient_failure(monkeypatch):
+    ws = FlakySendWS([], fail_count=2)
+    client = ControlPlaneClient("ws://localhost/ws/vm", "u1", "t1", "jwt")
+    client.ws = ws
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("src.ws.client.asyncio.sleep", no_sleep)
+
+    await client.send_sse_event("s1", {"type": "thinking", "content": "ok"})
+
+    sent_sse = [m for m in ws.sent if m.get("type") == "sse_event"]
+    assert len(sent_sse) == 1
+    assert sent_sse[0]["session_id"] == "s1"
 
 
 @pytest.mark.asyncio

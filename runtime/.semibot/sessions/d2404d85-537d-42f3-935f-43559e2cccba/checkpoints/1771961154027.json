@@ -1,0 +1,21 @@
+{
+  "id": "1771961154027",
+  "session_id": "d2404d85-537d-42f3-935f-43559e2cccba",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "请记住：我最喜欢的编程语言是 Rust",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "已记住：您最喜欢的编程语言是 Rust。这是一个出色的选择！Rust 以其内存安全、并发性和高性能而闻名，非常适合系统编程、WebAssembly 和高性能服务等场景。\n\n如果您未来有任何关于 Rust 的问题（例如学习资源、项目实践、生态系统更新或与其他技术的对比），请随时提出。我会基于您这一偏好，在后续讨论中优先考虑 Rust 的视角。",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "请记住：我最喜欢的编程语言是 Rust",
+  "updated_at": 1771961154
+}

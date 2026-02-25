@@ -76,9 +76,10 @@ function ensureModelContextWindow() {
 function runAgent(message) {
   ensureModelContextWindow()
   const sessionId = `semibot-sdk-${randomUUID()}`
-  const timeoutMs = Math.max(420000, Number(process.env.OPENCLAW_AGENT_TIMEOUT_MS || 0))
+  // Align with OpenClaw CLI default (600s) to avoid premature cut-off on deep research tasks.
+  const timeoutMs = Math.max(600000, Number(process.env.OPENCLAW_AGENT_TIMEOUT_MS || 600000))
   const timeoutSeconds = Math.max(5, Math.ceil(timeoutMs / 1000))
-  const finalMessage = `${String(message || '').trim()}\n\n[Execution note]\nWhen calling web_search, use search_lang='zh-hans' for Chinese queries (or 'en'). Never use 'zh'.\nIf user asks for a PDF/XLSX/CSV file, you must actually generate the file artifact and return it as attachment/media instead of plain text template.`
+  const finalMessage = `${String(message || '').trim()}\n\n[Execution note]\nPrefer web_search tool and avoid web_fetch unless absolutely necessary.\nWhen calling web_search, use search_lang='zh-hans' for Chinese queries (or 'en'). Never use 'zh'.\nIf search tools fail twice or are unavailable, stop further retries and continue with best-effort summary + explicit data gaps.\nIf user asks for a PDF/XLSX/CSV file, you must actually generate the file artifact. Return it using a standalone line: MEDIA:<path-or-url>. Do not return template-only text without MEDIA output.`
   return new Promise((resolve, reject) => {
     const child = spawn(
       'openclaw',
@@ -102,6 +103,15 @@ function runAgent(message) {
     }
     const timer = setTimeout(() => {
       if (settled) return
+      // If OpenClaw has already streamed any stdout, prefer returning partial output
+      // instead of hard-failing the whole request.
+      if ((stdout || '').trim()) {
+        settled = true
+        clearTimeout(timer)
+        child.kill('SIGKILL')
+        resolve(stdout)
+        return
+      }
       const elapsed = Date.now() - startedAt
       const stderrPreview = (stderr || '').trim().slice(0, 600)
       fail(new Error(`openclaw agent timeout after ${elapsed}ms (session=${sessionId}) ${stderrPreview}`.trim()))
@@ -204,6 +214,29 @@ function extractFileLinksFromText(text) {
   return found
 }
 
+function extractMediaDirectives(text) {
+  const content = String(text || '')
+  if (!content) return []
+  const lines = content.split('\n')
+  const found = []
+  const seen = new Set()
+  for (const raw of lines) {
+    const line = String(raw || '').trim()
+    if (!line) continue
+    if (!line.toUpperCase().startsWith('MEDIA:')) continue
+    const ref = line.slice('MEDIA:'.length).trim()
+    if (!ref || seen.has(ref)) continue
+    seen.add(ref)
+    const filename = inferFilename(ref, 'attachment')
+    found.push({
+      url: ref,
+      filename,
+      mime_type: normalizeMimeType(filename),
+    })
+  }
+  return found
+}
+
 function parseAgentOutput(raw) {
   const trimmed = String(raw || '').trim()
   if (!trimmed) return { text: '', files: [] }
@@ -238,6 +271,11 @@ function parseAgentOutput(raw) {
     if (typeof parsed?.text === 'string' && parsed.text.trim()) texts.push(parsed.text.trim())
     if (typeof parsed?.message === 'string' && parsed.message.trim()) texts.push(parsed.message.trim())
     const text = texts.join('\n\n').trim()
+    for (const media of extractMediaDirectives(text)) {
+      if (!files.some((f) => f.url === media.url)) {
+        files.push(media)
+      }
+    }
     for (const linked of extractFileLinksFromText(text)) {
       if (!files.some((f) => f.url === linked.url)) {
         files.push(linked)
@@ -273,11 +311,17 @@ function parseAgentOutput(raw) {
   if (lines.length > 0) {
     const last = lines[lines.length - 1]
     if (!last.startsWith('{') && !last.startsWith('[')) {
-      return { text: last, files: extractFileLinksFromText(last) }
+      return {
+        text: last,
+        files: [...extractMediaDirectives(last), ...extractFileLinksFromText(last)],
+      }
     }
   }
 
-  return { text: trimmed, files: extractFileLinksFromText(trimmed) }
+  return {
+    text: trimmed,
+    files: [...extractMediaDirectives(trimmed), ...extractFileLinksFromText(trimmed)],
+  }
 }
 
 async function main() {

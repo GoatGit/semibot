@@ -70,7 +70,7 @@ If stdout is plain text (not JSON), bridge treats it as `text`.
 - `SDK_COMMAND_SPAWN_FAILED`
   - failed to spawn shell command
 - `SDK_COMMAND_TIMEOUT`
-  - command did not complete within `OPENCLAW_SDK_TIMEOUT_MS` (default `15000`)
+  - command did not complete within `OPENCLAW_SDK_TIMEOUT_MS` (default `600000`, and always >= `OPENCLAW_AGENT_TIMEOUT_MS + 60000`)
 - `SDK_COMMAND_FAILED`
   - command exited with non-zero code
 - `SDK_OUTPUT_INVALID`

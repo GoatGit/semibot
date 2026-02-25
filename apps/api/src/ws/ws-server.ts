@@ -232,7 +232,11 @@ export class WSServer {
       }))
 
       ws.on('message', (message: unknown) => {
-        void this.handleMessage(conn, String(message))
+        void this.handleMessage(conn, String(message)).catch((error: unknown) => {
+          wsLogger.error('处理 VM 消息失败', error as Error, {
+            userId: conn.userId,
+          })
+        })
       })
 
       ws.on('close', () => {
@@ -602,19 +606,27 @@ export class WSServer {
       this.processBufferBySession.delete(msg.session_id)
       let messageId = uuidv4()
       if (finalResponse) {
-        const saved = await sessionService.addMessage(conn.orgId, msg.session_id, {
-          role: 'assistant',
-          content: finalResponse,
-          metadata: processMessages.length > 0
-            ? {
-                execution_process: {
-                  version: 1,
-                  messages: processMessages,
-                },
-              }
-            : undefined,
-        })
-        messageId = saved.id
+        try {
+          const saved = await sessionService.addMessage(conn.orgId, msg.session_id, {
+            role: 'assistant',
+            content: finalResponse,
+            metadata: processMessages.length > 0
+              ? {
+                  execution_process: {
+                    version: 1,
+                    messages: processMessages,
+                  },
+                }
+              : undefined,
+          })
+          messageId = saved.id
+        } catch (error) {
+          wsLogger.error('execution_complete 落库失败', error as Error, {
+            sessionId: msg.session_id,
+            userId: conn.userId,
+            finalResponseLength: finalResponse.length,
+          })
+        }
       }
 
       forwardSSE(msg.session_id, 'execution_complete', {
