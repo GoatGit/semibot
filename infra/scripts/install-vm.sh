@@ -292,6 +292,15 @@ install_app() {
     su - "$DEPLOY_USER" -c "cd $DEPLOY_DIR/runtime/openclaw-bridge && pnpm install && pnpm build" 2>/dev/null || true
   fi
 
+  # OpenClaw CLI（sdk-runner 通过 spawn('openclaw') 调用）
+  if command -v openclaw &>/dev/null; then
+    info "OpenClaw CLI 已安装: $(openclaw --version 2>/dev/null || echo 'unknown')"
+  else
+    info "安装 OpenClaw CLI ..."
+    npm install -g openclaw
+    info "OpenClaw CLI 已安装"
+  fi
+
   info "应用构建完成"
 }
 
@@ -300,6 +309,37 @@ install_app() {
 # =============================================================================
 setup_systemd() {
   title "7/8 Systemd 服务"
+
+  # 检测是否使用外部数据库/缓存服务
+  local need_infra=true
+  if [ -f "$DEPLOY_DIR/.env.local" ]; then
+    set -a
+    source "$DEPLOY_DIR/.env.local"
+    set +a
+  fi
+
+  local skip_pg=false
+  local skip_redis=false
+  if [ -n "${DATABASE_URL:-}" ]; then
+    local pg_host
+    pg_host="$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/]+).*|\1|')"
+    if [ -n "$pg_host" ] && [ "$pg_host" != "localhost" ] && [ "$pg_host" != "127.0.0.1" ]; then
+      info "检测到外部 PostgreSQL ($pg_host)"
+      skip_pg=true
+    fi
+  fi
+  if [ -n "${REDIS_URL:-}" ]; then
+    local redis_host
+    redis_host="$(echo "$REDIS_URL" | sed -E 's|.*@([^:/]+).*|\1|')"
+    if [ -n "$redis_host" ] && [ "$redis_host" != "localhost" ] && [ "$redis_host" != "127.0.0.1" ]; then
+      info "检测到外部 Redis ($redis_host)"
+      skip_redis=true
+    fi
+  fi
+  if [ "$skip_pg" = true ] && [ "$skip_redis" = true ]; then
+    need_infra=false
+    info "PostgreSQL 和 Redis 均使用外部服务，跳过 semibot-infra 服务"
+  fi
 
   # --- semibot-api ---
   cat > /etc/systemd/system/semibot-api.service << EOF
@@ -416,7 +456,8 @@ WantedBy=multi-user.target
 EOF
 
   # --- 基础设施 (PostgreSQL + Redis via Docker) ---
-  cat > /etc/systemd/system/semibot-infra.service << EOF
+  if [ "$need_infra" = true ]; then
+    cat > /etc/systemd/system/semibot-infra.service << EOF
 [Unit]
 Description=Semibot Infrastructure (PostgreSQL + Redis)
 After=docker.service
@@ -432,9 +473,11 @@ ExecStop=/bin/bash -c 'docker stop semibot-postgres semibot-redis'
 [Install]
 WantedBy=multi-user.target
 EOF
+  fi
 
   # --- 聚合 target ---
-  cat > /etc/systemd/system/semibot.target << EOF
+  if [ "$need_infra" = true ]; then
+    cat > /etc/systemd/system/semibot.target << EOF
 [Unit]
 Description=Semibot Full Stack
 Requires=semibot-infra.service semibot-api.service semibot-web.service semibot-runtime.service
@@ -443,16 +486,34 @@ After=semibot-infra.service
 [Install]
 WantedBy=multi-user.target
 EOF
+  else
+    cat > /etc/systemd/system/semibot.target << EOF
+[Unit]
+Description=Semibot Full Stack
+Requires=semibot-api.service semibot-web.service semibot-runtime.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
 
   systemctl daemon-reload
-  systemctl enable semibot-infra semibot-api semibot-web semibot-runtime semibot.target
+  if [ "$need_infra" = true ]; then
+    systemctl enable semibot-infra semibot-api semibot-web semibot-runtime semibot.target
+  else
+    systemctl enable semibot-api semibot-web semibot-runtime semibot.target
+  fi
 
   info "Systemd 服务已配置"
   echo -e "  ${BOLD}semibot-api${NC}      API 服务"
   echo -e "  ${BOLD}semibot-web${NC}      Web 前端"
   echo -e "  ${BOLD}semibot-runtime${NC}  SemiGraph Runtime"
   echo -e "  ${BOLD}semibot-openclaw${NC} OpenClaw Bridge (可选，与 runtime 互斥)"
-  echo -e "  ${BOLD}semibot-infra${NC}    PostgreSQL + Redis"
+  if [ "$need_infra" = true ]; then
+    echo -e "  ${BOLD}semibot-infra${NC}    PostgreSQL + Redis"
+  else
+    echo -e "  ${BOLD}semibot-infra${NC}    已跳过（使用外部服务）"
+  fi
   echo -e "  ${BOLD}semibot.target${NC}   全部启动"
 }
 

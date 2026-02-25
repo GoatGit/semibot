@@ -156,35 +156,37 @@ export async function findAll(options: {
   const pageSize = Math.min(options.pageSize || DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
   const offset = (page - 1) * pageSize
 
-  // 构建查询条件
-  const conditions: string[] = []
+  // 构建查询条件（使用 sql fragment 防止 SQL 注入）
+  const conditions = []
 
   if (options.skillDefinitionId) {
-    conditions.push(`skill_definition_id = '${options.skillDefinitionId}'`)
+    conditions.push(sql`skill_definition_id = ${options.skillDefinitionId}`)
   }
 
   if (options.status) {
-    conditions.push(`status = '${options.status}'`)
+    conditions.push(sql`status = ${options.status}`)
   }
 
   if (options.operation) {
-    conditions.push(`operation = '${options.operation}'`)
+    conditions.push(sql`operation = ${options.operation}`)
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const whereClause = conditions.length > 0
+    ? sql`WHERE ${conditions.reduce((acc, cond, i) => i === 0 ? cond : sql`${acc} AND ${cond}`)}`
+    : sql``
 
   // 查询总数
   const countResult = await sql<[{ count: string }]>`
     SELECT COUNT(*) as count
     FROM skill_install_logs
-    ${sql.unsafe(whereClause)}
+    ${whereClause}
   `
   const total = parseInt(countResult[0].count, 10)
 
   // 查询数据
   const rows = await sql<SkillInstallLogRow[]>`
     SELECT * FROM skill_install_logs
-    ${sql.unsafe(whereClause)}
+    ${whereClause}
     ORDER BY started_at DESC
     LIMIT ${pageSize}
     OFFSET ${offset}
@@ -243,26 +245,28 @@ export async function count(options?: {
   status?: InstallStatus
   operation?: InstallOperation
 }): Promise<number> {
-  const conditions: string[] = []
+  const conditions = []
 
   if (options?.skillDefinitionId) {
-    conditions.push(`skill_definition_id = '${options.skillDefinitionId}'`)
+    conditions.push(sql`skill_definition_id = ${options.skillDefinitionId}`)
   }
 
   if (options?.status) {
-    conditions.push(`status = '${options.status}'`)
+    conditions.push(sql`status = ${options.status}`)
   }
 
   if (options?.operation) {
-    conditions.push(`operation = '${options.operation}'`)
+    conditions.push(sql`operation = ${options.operation}`)
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const whereClause = conditions.length > 0
+    ? sql`WHERE ${conditions.reduce((acc, cond, i) => i === 0 ? cond : sql`${acc} AND ${cond}`)}`
+    : sql``
 
   const result = await sql<[{ count: string }]>`
     SELECT COUNT(*) as count
     FROM skill_install_logs
-    ${sql.unsafe(whereClause)}
+    ${whereClause}
   `
 
   return parseInt(result[0].count, 10)
@@ -275,12 +279,12 @@ export async function getLatest(
   skillDefinitionId: string,
   operation?: InstallOperation
 ): Promise<SkillInstallLog | null> {
-  const operationClause = operation ? `AND operation = '${operation}'` : ''
+  const operationClause = operation ? sql`AND operation = ${operation}` : sql``
 
   const rows = await sql<SkillInstallLogRow[]>`
     SELECT * FROM skill_install_logs
     WHERE skill_definition_id = ${skillDefinitionId}
-    ${sql.unsafe(operationClause)}
+    ${operationClause}
     ORDER BY started_at DESC
     LIMIT 1
   `

@@ -253,22 +253,24 @@ export async function remove(id: string): Promise<boolean> {
  * 统计技能定义数量
  */
 export async function count(options?: { isActive?: boolean; isPublic?: boolean }): Promise<number> {
-  const conditions: string[] = []
+  const conditions = []
 
   if (options?.isActive !== undefined) {
-    conditions.push(`is_active = ${options.isActive}`)
+    conditions.push(sql`is_active = ${options.isActive}`)
   }
 
   if (options?.isPublic !== undefined) {
-    conditions.push(`is_public = ${options.isPublic}`)
+    conditions.push(sql`is_public = ${options.isPublic}`)
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const whereClause = conditions.length > 0
+    ? sql`WHERE ${conditions.reduce((acc, cond, i) => i === 0 ? cond : sql`${acc} AND ${cond}`)}`
+    : sql``
 
   const result = await sql<[{ count: string }]>`
     SELECT COUNT(*) as count
     FROM skill_definitions
-    ${sql.unsafe(whereClause)}
+    ${whereClause}
   `
 
   return parseInt(result[0].count, 10)

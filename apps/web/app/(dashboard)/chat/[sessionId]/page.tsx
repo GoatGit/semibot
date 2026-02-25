@@ -688,7 +688,7 @@ export default function ChatSessionPage() {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept={CHAT_UPLOAD_ALLOWED_EXTENSIONS.join(',')}
+                accept="text/*,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.*,application/vnd.ms-excel,.csv,.json,.yaml,.yml,.toml,.ini,.cfg,.log,.env,.sql,.sh"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files) {

@@ -180,6 +180,15 @@ setup_python_venv() {
     pnpm build 2>/dev/null || true
   fi
 
+  # OpenClaw CLI（sdk-runner 通过 spawn('openclaw') 调用）
+  if command -v openclaw &>/dev/null; then
+    info "OpenClaw CLI 已安装: $(openclaw --version 2>/dev/null || echo 'unknown')"
+  else
+    info "安装 OpenClaw CLI ..."
+    npm install -g openclaw
+    info "OpenClaw CLI 已安装"
+  fi
+
   info "Python 环境就绪"
 }
 
@@ -202,6 +211,28 @@ start_infra_containers() {
     set +a
   fi
 
+  # 判断是否使用外部服务（host 不是 localhost/127.0.0.1 则视为外部）
+  local skip_pg=false
+  local skip_redis=false
+
+  if [ -n "${DATABASE_URL:-}" ]; then
+    local pg_host
+    pg_host="$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/]+).*|\1|')"
+    if [ -n "$pg_host" ] && [ "$pg_host" != "localhost" ] && [ "$pg_host" != "127.0.0.1" ]; then
+      info "检测到外部 PostgreSQL ($pg_host)，跳过本地容器"
+      skip_pg=true
+    fi
+  fi
+
+  if [ -n "${REDIS_URL:-}" ]; then
+    local redis_host
+    redis_host="$(echo "$REDIS_URL" | sed -E 's|.*@([^:/]+).*|\1|')"
+    if [ -n "$redis_host" ] && [ "$redis_host" != "localhost" ] && [ "$redis_host" != "127.0.0.1" ]; then
+      info "检测到外部 Redis ($redis_host)，跳过本地容器"
+      skip_redis=true
+    fi
+  fi
+
   local pg_user="${POSTGRES_USER:-semibot}"
   local pg_pass="${POSTGRES_PASSWORD:-semibot}"
   local pg_db="${POSTGRES_DB:-semibot}"
@@ -210,7 +241,9 @@ start_infra_containers() {
   local redis_port="${REDIS_PORT:-6379}"
 
   # PostgreSQL
-  if docker ps --format '{{.Names}}' | grep -q "semibot-postgres"; then
+  if [ "$skip_pg" = true ]; then
+    : # 已跳过
+  elif docker ps --format '{{.Names}}' | grep -q "semibot-postgres"; then
     info "PostgreSQL 容器已运行"
   else
     if docker ps -a --format '{{.Names}}' | grep -q "semibot-postgres"; then
@@ -243,7 +276,9 @@ start_infra_containers() {
   fi
 
   # Redis
-  if docker ps --format '{{.Names}}' | grep -q "semibot-redis"; then
+  if [ "$skip_redis" = true ]; then
+    : # 已跳过
+  elif docker ps --format '{{.Names}}' | grep -q "semibot-redis"; then
     info "Redis 容器已运行"
   else
     if docker ps -a --format '{{.Names}}' | grep -q "semibot-redis"; then
