@@ -23,14 +23,53 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# PID 文件目录
-PID_DIR="$PROJECT_ROOT/.pids"
 LOG_DIR="$PROJECT_ROOT/.logs"
 
 # 默认参数
 RUNTIME_MODE="semigraph"
 SKIP_INFRA=false
 SERVICES="all"  # all | api | web | runtime | infra
+
+# 服务端口映射
+get_service_port() {
+  case "$1" in
+    api)     echo "${API_PORT:-3001}" ;;
+    web)     echo "${WEB_PORT:-3000}" ;;
+    runtime) echo "${RUNTIME_PORT:-8801}" ;;
+  esac
+}
+
+# 检查端口是否有进程监听
+is_port_listening() {
+  lsof -ti ":$1" &>/dev/null
+}
+
+# 获取监听指定端口的 PID 列表
+get_port_pids() {
+  lsof -ti ":$1" 2>/dev/null || true
+}
+
+# 停止监听指定端口的所有进程
+kill_port() {
+  local port="$1"
+  local pids
+  pids="$(get_port_pids "$port")"
+  if [ -n "$pids" ]; then
+    echo "$pids" | xargs kill 2>/dev/null || true
+    # 等待进程退出
+    local retries=0
+    while is_port_listening "$port" && [ $retries -lt 10 ]; do
+      sleep 0.5
+      ((retries++))
+    done
+    # 如果还没退出，强制 kill
+    if is_port_listening "$port"; then
+      get_port_pids "$port" | xargs kill -9 2>/dev/null || true
+    fi
+    return 0
+  fi
+  return 1
+}
 
 # =============================================================================
 # 参数解析
@@ -132,6 +171,12 @@ start_infra() {
     return
   fi
 
+  if ! docker info &>/dev/null; then
+    warn "Docker daemon 未运行，跳过容器启动"
+    warn "请先启动 Docker Desktop 或 dockerd"
+    return
+  fi
+
   local pg_user="${POSTGRES_USER:-semibot}"
   local pg_pass="${POSTGRES_PASSWORD:-semibot}"
   local pg_db="${POSTGRES_DB:-semibot}"
@@ -202,46 +247,50 @@ start_infra() {
 # API 服务
 # =============================================================================
 start_api() {
-  mkdir -p "$PID_DIR" "$LOG_DIR"
+  mkdir -p "$LOG_DIR"
+  local port
+  port="$(get_service_port api)"
 
-  if [ -f "$PID_DIR/api.pid" ] && kill -0 "$(cat "$PID_DIR/api.pid")" 2>/dev/null; then
-    info "API 已在运行 (PID $(cat "$PID_DIR/api.pid"))"
+  if is_port_listening "$port"; then
+    info "API 已在运行 (port $port)"
     return
   fi
 
-  info "启动 API 服务 (port ${API_PORT:-3001}) ..."
+  info "启动 API 服务 (port $port) ..."
   cd "$PROJECT_ROOT"
   nohup pnpm --filter @semibot/api dev > "$LOG_DIR/api.log" 2>&1 &
-  echo $! > "$PID_DIR/api.pid"
-  info "API 已启动 (PID $!)"
+  info "API 启动中 ..."
 }
 
 # =============================================================================
 # Web 服务
 # =============================================================================
 start_web() {
-  mkdir -p "$PID_DIR" "$LOG_DIR"
+  mkdir -p "$LOG_DIR"
+  local port
+  port="$(get_service_port web)"
 
-  if [ -f "$PID_DIR/web.pid" ] && kill -0 "$(cat "$PID_DIR/web.pid")" 2>/dev/null; then
-    info "Web 已在运行 (PID $(cat "$PID_DIR/web.pid"))"
+  if is_port_listening "$port"; then
+    info "Web 已在运行 (port $port)"
     return
   fi
 
-  info "启动 Web 服务 (port ${WEB_PORT:-3000}) ..."
+  info "启动 Web 服务 (port $port) ..."
   cd "$PROJECT_ROOT"
   nohup pnpm --filter @semibot/web dev > "$LOG_DIR/web.log" 2>&1 &
-  echo $! > "$PID_DIR/web.pid"
-  info "Web 已启动 (PID $!)"
+  info "Web 启动中 ..."
 }
 
 # =============================================================================
 # Runtime 服务
 # =============================================================================
 start_runtime() {
-  mkdir -p "$PID_DIR" "$LOG_DIR"
+  mkdir -p "$LOG_DIR"
+  local port
+  port="$(get_service_port runtime)"
 
-  if [ -f "$PID_DIR/runtime.pid" ] && kill -0 "$(cat "$PID_DIR/runtime.pid")" 2>/dev/null; then
-    info "Runtime 已在运行 (PID $(cat "$PID_DIR/runtime.pid"))"
+  if is_port_listening "$port"; then
+    info "Runtime 已在运行 (port $port)"
     return
   fi
 
@@ -258,8 +307,7 @@ start_runtime() {
       fi
       cd "$runtime_dir"
       nohup "$venv_python" -m src.main > "$LOG_DIR/runtime.log" 2>&1 &
-      echo $! > "$PID_DIR/runtime.pid"
-      info "SemiGraph Runtime 已启动 (PID $!)"
+      info "SemiGraph Runtime 启动中 ..."
       ;;
 
     openclaw)
@@ -271,8 +319,7 @@ start_runtime() {
       fi
       cd "$bridge_dir"
       nohup pnpm dev > "$LOG_DIR/runtime.log" 2>&1 &
-      echo $! > "$PID_DIR/runtime.pid"
-      info "OpenClaw Bridge 已启动 (PID $!)"
+      info "OpenClaw Bridge 启动中 ..."
       ;;
 
     *)
@@ -290,18 +337,11 @@ stop_all() {
   echo -e "\n${CYAN}${BOLD}停止 Semibot 服务${NC}\n"
 
   for service in api web runtime; do
-    local pid_file="$PID_DIR/$service.pid"
-    if [ -f "$pid_file" ]; then
-      local pid
-      pid="$(cat "$pid_file")"
-      if kill -0 "$pid" 2>/dev/null; then
-        # 终止进程树
-        kill -- -"$(ps -o pgid= -p "$pid" | tr -d ' ')" 2>/dev/null || kill "$pid" 2>/dev/null || true
-        info "$service 已停止 (PID $pid)"
-      else
-        info "$service 未在运行"
-      fi
-      rm -f "$pid_file"
+    local port
+    port="$(get_service_port "$service")"
+    if is_port_listening "$port"; then
+      kill_port "$port"
+      info "$service 已停止 (port $port)"
     else
       info "$service 未在运行"
     fi
@@ -323,11 +363,14 @@ stop_all() {
 show_status() {
   echo -e "\n${CYAN}${BOLD}Semibot 服务状态${NC}\n"
 
-  # 应用服务
+  # 应用服务 — 基于端口检测
   for service in api web runtime; do
-    local pid_file="$PID_DIR/$service.pid"
-    if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-      echo -e "  ${GREEN}●${NC} $service  ${DIM}PID $(cat "$pid_file")${NC}"
+    local port
+    port="$(get_service_port "$service")"
+    if is_port_listening "$port"; then
+      local pids
+      pids="$(get_port_pids "$port" | tr '\n' ',' | sed 's/,$//')"
+      echo -e "  ${GREEN}●${NC} $service  ${DIM}port $port  PID $pids${NC}"
     else
       echo -e "  ${RED}○${NC} $service  ${DIM}未运行${NC}"
     fi
@@ -344,19 +387,6 @@ show_status() {
     fi
   done
 
-  echo ""
-
-  # 端口检查
-  echo -e "${DIM}端口监听:${NC}"
-  for port_info in "3000:Web" "3001:API" "8801:Runtime" "5432:PostgreSQL" "6379:Redis"; do
-    local port="${port_info%%:*}"
-    local name="${port_info##*:}"
-    if lsof -i ":$port" &>/dev/null; then
-      echo -e "  ${GREEN}●${NC} :$port  $name"
-    else
-      echo -e "  ${RED}○${NC} :$port  $name"
-    fi
-  done
   echo ""
 }
 
