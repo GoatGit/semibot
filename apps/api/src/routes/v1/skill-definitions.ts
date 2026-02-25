@@ -307,7 +307,7 @@ router.delete(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const { id } = req.params
 
-    await skillDefinitionRepo.remove(id)
+    await skillDefinitionRepo.softDelete(id)
 
     res.json({
       success: true,

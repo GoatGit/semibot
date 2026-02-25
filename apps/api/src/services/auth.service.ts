@@ -160,73 +160,74 @@ function getPermissionsByRole(role: string): string[] {
 export async function register(input: RegisterInput): Promise<AuthResult> {
   const { email, password, name, orgName } = input
 
-  // 检查邮箱是否已存在
-  const existingUser = await sql`
-    SELECT id FROM users WHERE email = ${email}
-  `
-
-  if (existingUser.length > 0) {
-    throw { code: AUTH_EMAIL_EXISTS }
-  }
-
-  // 创建密码哈希
+  // 创建密码哈希（在事务外执行，避免长时间持有事务锁）
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS)
-
-  // 生成组织 slug
   const orgSlug = generateSlug(orgName)
 
-  // 先创建临时 UUID 作为 owner_id
-  const tempOwnerId = crypto.randomUUID()
+  try {
+    const { user, org } = await sql.begin(async (tx: any) => {
+      // 创建用户（依赖 users.email UNIQUE 约束防止并发竞态）
+      const userResult = await tx`
+        INSERT INTO users (email, password_hash, name, role)
+        VALUES (${email}, ${passwordHash}, ${name}, 'owner')
+        RETURNING id, email, name, role
+      `
+      const newUser = userResult[0] as { id: string; email: string; name: string; role: string }
 
-  // 创建组织
-  const orgResult = await sql`
-    INSERT INTO organizations (name, slug, owner_id)
-    VALUES (${orgName}, ${orgSlug}, ${tempOwnerId}::uuid)
-    RETURNING id, name, slug
-  `
-  const org = orgResult[0] as { id: string; name: string; slug: string }
+      // 创建组织
+      const orgResult = await tx`
+        INSERT INTO organizations (name, slug, owner_id)
+        VALUES (${orgName}, ${orgSlug}, ${newUser.id})
+        RETURNING id, name, slug
+      `
+      const newOrg = orgResult[0] as { id: string; name: string; slug: string }
 
-  // 创建用户
-  const userResult = await sql`
-    INSERT INTO users (email, password_hash, name, org_id, role)
-    VALUES (${email}, ${passwordHash}, ${name}, ${org.id}, 'owner')
-    RETURNING id, email, name, org_id, role
-  `
-  const user = userResult[0] as { id: string; email: string; name: string; org_id: string; role: string }
+      // 更新用户的 org_id
+      await tx`
+        UPDATE users SET org_id = ${newOrg.id} WHERE id = ${newUser.id}
+      `
 
-  // 更新组织的 owner_id
-  await sql`
-    UPDATE organizations SET owner_id = ${user.id} WHERE id = ${org.id}
-  `
+      return {
+        user: { ...newUser, org_id: newOrg.id },
+        org: newOrg,
+      }
+    })
 
-  // 生成 Token
-  const tokenPayload = {
-    userId: user.id,
-    orgId: user.org_id,
-    role: user.role,
-    permissions: getPermissionsByRole(user.role),
-  }
-
-  const token = generateAccessToken(tokenPayload)
-  const refreshToken = generateRefreshToken(tokenPayload)
-  const expiresAt = new Date(Date.now() + JWT_EXPIRES_IN_SECONDS * 1000).toISOString()
-
-  return {
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
+    // 生成 Token（在事务外执行）
+    const tokenPayload = {
+      userId: user.id,
       orgId: user.org_id,
       role: user.role,
-    },
-    organization: {
-      id: org.id,
-      name: org.name,
-      slug: org.slug,
-    },
-    token,
-    refreshToken,
-    expiresAt,
+      permissions: getPermissionsByRole(user.role),
+    }
+
+    const token = generateAccessToken(tokenPayload)
+    const refreshToken = generateRefreshToken(tokenPayload)
+    const expiresAt = new Date(Date.now() + JWT_EXPIRES_IN_SECONDS * 1000).toISOString()
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        orgId: user.org_id,
+        role: user.role,
+      },
+      organization: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+      },
+      token,
+      refreshToken,
+      expiresAt,
+    }
+  } catch (error: unknown) {
+    // PostgreSQL unique violation (23505) on users.email
+    if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === '23505') {
+      throw { code: AUTH_EMAIL_EXISTS }
+    }
+    throw error
   }
 }
 

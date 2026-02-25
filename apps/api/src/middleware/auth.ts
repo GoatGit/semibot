@@ -32,6 +32,8 @@ export interface AuthUser {
 
 export interface AuthRequest extends Request {
   user?: AuthUser
+  /** 原始 JWT token，用于 logout 时加入黑名单 */
+  token?: string
 }
 
 interface JWTPayload {
@@ -236,6 +238,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
         }
 
         req.user = result.user
+        req.token = token
         next()
       })
       .catch(() => {
@@ -248,6 +251,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
         }
 
         req.user = result.user
+        req.token = token
         next()
       })
   }

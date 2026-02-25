@@ -75,7 +75,7 @@ export async function createApiKey(
       ${input.name},
       ${keyPrefix},
       ${keyHash},
-      ${JSON.stringify(permissions)},
+      ${sql.json(permissions as Parameters<typeof sql.json>[0])},
       ${expiresAt}
     )
     RETURNING id, name, key_prefix, permissions, rate_limit, expires_at, is_active, created_at

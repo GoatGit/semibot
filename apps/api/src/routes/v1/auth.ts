@@ -75,7 +75,7 @@ function handleError(res: Response, error: unknown): void {
  * POST /auth/register
  * 用户注册
  */
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', authRateLimit, async (req: Request, res: Response) => {
   try {
     const validation = registerSchema.safeParse(req.body)
 
@@ -122,7 +122,7 @@ router.post('/register', async (req: Request, res: Response) => {
  * POST /auth/login
  * 用户登录
  */
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authRateLimit, async (req: Request, res: Response) => {
   try {
     const validation = loginSchema.safeParse(req.body)
 
@@ -163,7 +163,7 @@ router.post('/login', async (req: Request, res: Response) => {
  * POST /auth/refresh
  * 刷新 Token
  */
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post('/refresh', authRateLimit, async (req: Request, res: Response) => {
   try {
     const validation = refreshSchema.safeParse(req.body)
 
@@ -278,7 +278,8 @@ router.post('/reset-password', authRateLimit, async (req: Request, res: Response
  */
 router.post('/logout', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    await authService.logout(req.user!.userId)
+    const { refreshToken } = req.body ?? {}
+    await authService.logout(req.user!.userId, req.token, refreshToken)
 
     res.json({
       success: true,
