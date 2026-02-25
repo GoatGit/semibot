@@ -78,6 +78,12 @@ export const MCP_SERVER_LIMIT_EXCEEDED = 'MCP_SERVER_LIMIT_EXCEEDED'
 export const MCP_CONNECTION_FAILED = 'MCP_CONNECTION_FAILED'
 export const MCP_TOOL_CALL_FAILED = 'MCP_TOOL_CALL_FAILED'
 
+// Chat Upload 相关
+export const CHAT_UPLOAD_TOO_LARGE = 'CHAT_UPLOAD_TOO_LARGE'
+export const CHAT_UPLOAD_INVALID_TYPE = 'CHAT_UPLOAD_INVALID_TYPE'
+export const CHAT_UPLOAD_TOO_MANY_FILES = 'CHAT_UPLOAD_TOO_MANY_FILES'
+export const CHAT_UPLOAD_NO_FILE = 'CHAT_UPLOAD_NO_FILE'
+
 // Session 相关
 export const SESSION_NOT_FOUND = 'SESSION_NOT_FOUND'
 export const SESSION_ALREADY_COMPLETED = 'SESSION_ALREADY_COMPLETED'
@@ -201,6 +207,12 @@ export const ERROR_HTTP_STATUS: Record<string, number> = {
   [WEBHOOK_LIMIT_EXCEEDED]: 400,
   [WEBHOOK_DISABLED]: 400,
 
+  // Chat Upload 错误
+  [CHAT_UPLOAD_TOO_LARGE]: 413,
+  [CHAT_UPLOAD_INVALID_TYPE]: 400,
+  [CHAT_UPLOAD_TOO_MANY_FILES]: 400,
+  [CHAT_UPLOAD_NO_FILE]: 400,
+
   // 限流错误 -> 429
   [RATE_LIMIT_EXCEEDED]: 429,
   [RATE_LIMIT_USER]: 429,
@@ -293,6 +305,12 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [WEBHOOK_NOT_FOUND]: 'Webhook 不存在',
   [WEBHOOK_LIMIT_EXCEEDED]: 'Webhook 数量已达上限',
   [WEBHOOK_DISABLED]: 'Webhook 已被禁用',
+
+  // Chat Upload 错误
+  [CHAT_UPLOAD_TOO_LARGE]: '上传文件超过大小限制 (最大 10MB)',
+  [CHAT_UPLOAD_INVALID_TYPE]: '不支持的文件类型',
+  [CHAT_UPLOAD_TOO_MANY_FILES]: '上传文件数量超过限制 (最多 5 个)',
+  [CHAT_UPLOAD_NO_FILE]: '未检测到上传文件',
 
   // 限流错误
   [RATE_LIMIT_EXCEEDED]: '请求过于频繁，请稍后重试',
@@ -390,6 +408,12 @@ export const ERROR_MESSAGES_I18N: Record<SupportedLocale, Record<string, string>
     [WEBHOOK_NOT_FOUND]: 'Webhook not found',
     [WEBHOOK_LIMIT_EXCEEDED]: 'Webhook limit exceeded',
     [WEBHOOK_DISABLED]: 'Webhook is disabled',
+
+    // Chat Upload 错误
+    [CHAT_UPLOAD_TOO_LARGE]: 'Upload file exceeds size limit (max 10MB)',
+    [CHAT_UPLOAD_INVALID_TYPE]: 'Unsupported file type',
+    [CHAT_UPLOAD_TOO_MANY_FILES]: 'Too many files (max 5)',
+    [CHAT_UPLOAD_NO_FILE]: 'No file detected',
 
     // 限流错误
     [RATE_LIMIT_EXCEEDED]: 'Too many requests, please try again later',

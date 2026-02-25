@@ -39,9 +39,20 @@ import { getWSServer } from '../ws/ws-server'
 import { registerSSEConnection, unregisterSSEConnection } from '../relay/sse-relay'
 import { ensureUserVM } from '../scheduler/vm-scheduler'
 
+export interface ChatAttachment {
+  id: string
+  filename: string
+  mimeType: string
+  size: number
+  textContent?: string
+  base64?: string
+  isImage: boolean
+}
+
 export interface ChatInput {
   message: string
   parentMessageId?: string
+  attachments?: ChatAttachment[]
 }
 
 export interface SSEConnection {
@@ -312,11 +323,23 @@ async function handleChatViaExecutionPlane(
 
   const connection = createSSEConnection(res, sessionId, userId, orgId)
 
-  // 先写入用户消息
+  // 先写入用户消息（附件元信息存入 metadata，不含 textContent/base64）
+  const messageMetadata: Record<string, unknown> = {}
+  if (input.attachments && input.attachments.length > 0) {
+    messageMetadata.attachments = input.attachments.map((att) => ({
+      id: att.id,
+      filename: att.filename,
+      mimeType: att.mimeType,
+      size: att.size,
+      isImage: att.isImage,
+    }))
+  }
+
   await sessionService.addMessage(orgId, sessionId, {
     role: 'user',
     content: input.message,
     parentId: input.parentMessageId,
+    ...(Object.keys(messageMetadata).length > 0 ? { metadata: messageMetadata } : {}),
   })
 
   const historyMessages = await sessionService.getSessionMessages(orgId, sessionId)
@@ -379,13 +402,39 @@ async function handleChatViaExecutionPlane(
     sub_agents: [],
   })
 
+  // 构造增强消息：将文件内容拼接到发送给 Runtime 的 message 中
+  let enhancedMessage = input.message
+  const imageAttachments: Array<{ filename: string; base64: string; mimeType: string }> = []
+
+  if (input.attachments && input.attachments.length > 0) {
+    const textParts: string[] = []
+    for (const att of input.attachments) {
+      if (att.isImage && att.base64) {
+        imageAttachments.push({
+          filename: att.filename,
+          base64: att.base64,
+          mimeType: att.mimeType,
+        })
+        textParts.push(`[图片: ${att.filename} (${formatBytes(att.size)})]`)
+      } else if (att.textContent) {
+        textParts.push(`--- 📎 文件: ${att.filename} (${formatBytes(att.size)}) ---\n${att.textContent}`)
+      } else {
+        textParts.push(`[附件: ${att.filename} (${formatBytes(att.size)}) - 无法提取内容]`)
+      }
+    }
+    if (textParts.length > 0) {
+      enhancedMessage = `${input.message}\n\n${textParts.join('\n---\n')}`
+    }
+  }
+
   wsServer.sendUserMessage(userId, sessionId, {
-    message: input.message,
+    message: enhancedMessage,
     history,
     metadata: {
       org_id: orgId,
       user_id: userId,
       connection_id: connection.id,
+      ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
     },
   })
 
@@ -415,4 +464,10 @@ export async function startNewChat(
   })
 
   await handleChat(orgId, userId, session.id, input, res)
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }

@@ -50,7 +50,7 @@ export interface UseChatReturn {
   /** 是否正在发送 */
   isSending: boolean
   /** 发送消息 */
-  sendMessage: (message: string, parentMessageId?: string) => Promise<void>
+  sendMessage: (message: string, parentMessageId?: string, files?: File[]) => Promise<void>
   /** 停止生成 */
   stopGeneration: () => void
   /** 重试最后一条消息 */
@@ -188,7 +188,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   /**
    * 发送消息
    */
-  const sendMessage = useCallback(async (message: string, parentMessageId?: string) => {
+  const sendMessage = useCallback(async (message: string, parentMessageId?: string, files?: File[]) => {
     if (!message.trim() || isSending) {
       return
     }
@@ -209,7 +209,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     agent2ui.reset()
     setIsSending(true)
 
-    // 添加用户消息到本地
+    // 添加用户消息到本地（含附件元信息）
     const userMessageId = `user-${Date.now()}`
     addMessage({
       id: userMessageId,
@@ -217,32 +217,65 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       role: 'user',
       content: message,
       createdAt: new Date().toISOString(),
+      metadata: files?.length ? {
+        attachments: files.map((f) => ({
+          filename: f.name,
+          size: f.size,
+          mimeType: f.type,
+          isImage: f.type.startsWith('image/'),
+        })),
+      } : undefined,
     })
 
     // 构建 SSE URL 和请求体（直连后端，绕过 Next.js proxy）
     let url: string
-    let body: unknown
+    let fetchOptions: RequestInit
 
-    if (sessionId) {
-      url = `${SSE_BASE_URL}/chat/sessions/${sessionId}`
-      body = { message, parentMessageId }
-    } else if (agentId) {
-      url = `${SSE_BASE_URL}/chat/start`
-      body = { agentId, message }
-    } else {
-      console.error('[Chat] 缺少 sessionId 或 agentId')
-      setIsSending(false)
-      return
-    }
+    const hasFiles = files && files.length > 0
 
-    // 创建 AbortController 用于中止请求
-    const controller = new AbortController()
-    abortRef.current = controller
+    if (hasFiles) {
+      // Multipart 模式
+      const formData = new FormData()
+      formData.append('message', message)
+      if (parentMessageId) formData.append('parentMessageId', parentMessageId)
 
-    // 发起 SSE 请求
-    try {
+      if (sessionId) {
+        url = `${SSE_BASE_URL}/chat/sessions/${sessionId}`
+      } else if (agentId) {
+        url = `${SSE_BASE_URL}/chat/start`
+        formData.append('agentId', agentId)
+      } else {
+        setIsSending(false)
+        return
+      }
+
+      files.forEach((f) => formData.append('files', f))
+
       const token = getAuthToken()
-      const response = await fetch(url, {
+      fetchOptions = {
+        method: 'POST',
+        headers: {
+          'Accept': 'text/event-stream',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: formData,
+      }
+    } else {
+      // JSON 模式
+      let body: unknown
+      if (sessionId) {
+        url = `${SSE_BASE_URL}/chat/sessions/${sessionId}`
+        body = { message, parentMessageId }
+      } else if (agentId) {
+        url = `${SSE_BASE_URL}/chat/start`
+        body = { agentId, message }
+      } else {
+        setIsSending(false)
+        return
+      }
+
+      const token = getAuthToken()
+      fetchOptions = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -250,8 +283,17 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
-      })
+      }
+    }
+
+    // 创建 AbortController 用于中止请求
+    const controller = new AbortController()
+    abortRef.current = controller
+    fetchOptions.signal = controller.signal
+
+    // 发起 SSE 请求
+    try {
+      const response = await fetch(url, fetchOptions)
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({}))

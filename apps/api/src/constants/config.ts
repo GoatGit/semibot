@@ -287,6 +287,34 @@ export const MAX_SKILL_NAME_LENGTH = 100
 export const API_KEY_PREFIX_DISPLAY_LENGTH = 10
 
 // ═══════════════════════════════════════════════════════════════
+// 聊天文件上传配置
+// ═══════════════════════════════════════════════════════════════
+
+/** 聊天上传临时目录 */
+export const CHAT_UPLOAD_TEMP_DIR = process.env.CHAT_UPLOAD_TEMP_DIR ?? '/tmp/semibot/chat-uploads'
+
+/** 聊天上传单文件最大大小 (字节) - 10MB */
+export const CHAT_UPLOAD_MAX_SIZE_BYTES = 10 * 1024 * 1024
+
+/** 聊天上传最大文件数 */
+export const CHAT_UPLOAD_MAX_FILES = 5
+
+/** 聊天上传文本内容截断长度 (字符) */
+export const CHAT_UPLOAD_TEXT_TRUNCATE_LENGTH = 50000
+
+/** 聊天上传允许的扩展名 */
+export const CHAT_UPLOAD_ALLOWED_EXTENSIONS = [
+  // 文本/代码
+  '.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml',
+  '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs', '.c', '.cpp', '.h',
+  '.html', '.css', '.sql', '.sh', '.log', '.env', '.toml', '.ini', '.cfg',
+  // 文档
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.pptx',
+  // 图片
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp',
+]
+
+// ═══════════════════════════════════════════════════════════════
 // 数据库配置
 // ═══════════════════════════════════════════════════════════════
 

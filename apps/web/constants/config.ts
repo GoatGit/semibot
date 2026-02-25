@@ -204,3 +204,22 @@ export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
 
 /** 时区 */
 export const DEFAULT_LOCALE = 'zh-CN'
+
+// ═══════════════════════════════════════════════════════════════
+// 聊天文件上传配置
+// ═══════════════════════════════════════════════════════════════
+
+/** 聊天上传最大文件数 */
+export const CHAT_UPLOAD_MAX_FILES = 5
+
+/** 聊天上传单文件最大大小 (字节) - 10MB */
+export const CHAT_UPLOAD_MAX_SIZE_BYTES = 10 * 1024 * 1024
+
+/** 聊天上传允许的扩展名 */
+export const CHAT_UPLOAD_ALLOWED_EXTENSIONS = [
+  '.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml',
+  '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs', '.c', '.cpp', '.h',
+  '.html', '.css', '.sql', '.sh', '.log', '.env', '.toml', '.ini', '.cfg',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.pptx',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp',
+]

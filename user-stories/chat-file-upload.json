@@ -1,0 +1,111 @@
+{
+  "stories": [
+    {
+      "id": "UPLOAD-001",
+      "title": "聊天输入区显示文件上传按钮",
+      "description": "用户在聊天页面可以看到附件按钮（Paperclip 图标），点击后弹出文件选择对话框",
+      "acceptance_criteria": [
+        {
+          "id": "UPLOAD-001-AC1",
+          "description": "聊天页面输入区域包含 aria-label='添加附件' 的按钮",
+          "status": "passing"
+        },
+        {
+          "id": "UPLOAD-001-AC2",
+          "description": "页面包含 type='file' 的隐藏 input 元素，且 accept 属性包含 .pdf,.txt,.png 等允许的扩展名",
+          "status": "passing"
+        }
+      ]
+    },
+    {
+      "id": "UPLOAD-002",
+      "title": "选择文件后显示预览条",
+      "description": "用户选择文件后，输入框上方显示文件预览条，包含文件名和移除按钮",
+      "acceptance_criteria": [
+        {
+          "id": "UPLOAD-002-AC1",
+          "description": "通过 file input 选择一个 .txt 文件后，输入框上方出现包含该文件名的预览标签",
+          "status": "passing"
+        },
+        {
+          "id": "UPLOAD-002-AC2",
+          "description": "预览标签中包含 X 关闭按钮，点击后该文件从预览条中移除",
+          "status": "passing"
+        },
+        {
+          "id": "UPLOAD-002-AC3",
+          "description": "选择图片文件后，预览标签中显示 img 缩略图元素",
+          "status": "passing"
+        }
+      ]
+    },
+    {
+      "id": "UPLOAD-003",
+      "title": "文件校验：数量和大小限制",
+      "description": "前端校验文件数量不超过 5 个，单文件不超过 10MB，不支持的扩展名被拒绝",
+      "acceptance_criteria": [
+        {
+          "id": "UPLOAD-003-AC1",
+          "description": "选择超过 5 个文件时，显示包含'最多上传 5 个文件'的错误提示",
+          "status": "passing"
+        },
+        {
+          "id": "UPLOAD-003-AC2",
+          "description": "选择不支持的文件类型（如 .exe）时，显示包含'不支持的文件类型'的错误提示",
+          "status": "passing"
+        }
+      ]
+    },
+    {
+      "id": "UPLOAD-004",
+      "title": "带附件发送消息使用 multipart 请求",
+      "description": "有文件时 sendMessage 使用 FormData（multipart/form-data）发送，无文件时使用 JSON",
+      "acceptance_criteria": [
+        {
+          "id": "UPLOAD-004-AC1",
+          "description": "选择文件并发送消息后，拦截到的 POST 请求 Content-Type 包含 multipart/form-data",
+          "status": "passing"
+        },
+        {
+          "id": "UPLOAD-004-AC2",
+          "description": "不选择文件直接发送消息时，拦截到的 POST 请求 Content-Type 为 application/json",
+          "status": "passing"
+        },
+        {
+          "id": "UPLOAD-004-AC3",
+          "description": "发送带附件的消息后，文件预览条被清空，输入框被清空",
+          "status": "passing"
+        }
+      ]
+    },
+    {
+      "id": "UPLOAD-005",
+      "title": "用户消息气泡中显示附件标签",
+      "description": "发送带附件的消息后，用户消息气泡底部显示附件标签（文件名、大小、图标）",
+      "acceptance_criteria": [
+        {
+          "id": "UPLOAD-005-AC1",
+          "description": "发送带 .txt 文件的消息后，用户消息气泡中出现包含该文件名的附件标签",
+          "status": "passing"
+        },
+        {
+          "id": "UPLOAD-005-AC2",
+          "description": "附件标签中显示文件大小（如 '1KB' 或 '2.5MB'）",
+          "status": "passing"
+        }
+      ]
+    },
+    {
+      "id": "UPLOAD-006",
+      "title": "历史消息中恢复附件标签",
+      "description": "刷新页面后，历史消息中的附件元信息从 metadata.attachments 恢复并正确显示",
+      "acceptance_criteria": [
+        {
+          "id": "UPLOAD-006-AC1",
+          "description": "mock 历史消息 API 返回带 metadata.attachments 的用户消息时，页面渲染出附件标签",
+          "status": "passing"
+        }
+      ]
+    }
+  ]
+}

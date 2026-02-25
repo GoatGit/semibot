@@ -4,6 +4,13 @@ import { create } from 'zustand'
  * Session Store - 会话状态管理
  */
 
+export interface MessageAttachment {
+  filename: string
+  mimeType: string
+  size: number
+  isImage: boolean
+}
+
 export interface Message {
   id: string
   sessionId: string
@@ -11,6 +18,7 @@ export interface Message {
   content: string
   toolCalls?: ToolCall[]
   toolCallId?: string
+  metadata?: { attachments?: MessageAttachment[] }
   createdAt: string
 }
 

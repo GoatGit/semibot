@@ -3,13 +3,14 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
-import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle } from 'lucide-react'
+import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
 import { CitationList } from '@/components/agent2ui/text/CitationList'
 import { ProcessCard } from '@/components/agent2ui/process/ProcessCard'
 import { FileDownload } from '@/components/agent2ui/media/FileDownload'
 import { useChat } from '@/hooks/useChat'
+import { useFileUpload } from '@/hooks/useFileUpload'
 import { useSessionStore } from '@/stores/sessionStore'
 import { apiClient } from '@/lib/api'
 import type {
@@ -27,6 +28,7 @@ import type {
 import {
   TIME_FORMAT_OPTIONS,
   DEFAULT_LOCALE,
+  CHAT_UPLOAD_ALLOWED_EXTENSIONS,
 } from '@/constants/config'
 
 interface DisplayMessage {
@@ -36,6 +38,7 @@ interface DisplayMessage {
   timestamp: Date
   status?: 'sending' | 'sent' | 'error'
   isStreaming?: boolean
+  metadata?: Record<string, unknown>
   fileData?: { url: string; filename: string; mimeType: string; size?: number }
   processData?: {
     messages: Agent2UIMessage[]
@@ -160,7 +163,11 @@ export default function ChatSessionPage() {
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([])
   const [isLoadingSession, setIsLoadingSession] = useState(true)
   const [sessionError, setSessionError] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const { files, addFiles, removeFile, clearFiles, hasFiles } = useFileUpload()
 
   const { setCurrentSession: setStoreSession } = useSessionStore()
 
@@ -355,6 +362,7 @@ export default function ChatSessionPage() {
                 content: fileData ? '' : m.content,
                 timestamp: new Date(m.createdAt),
                 status: 'sent' as const,
+                metadata,
                 fileData,
                 processData,
               }
@@ -440,11 +448,21 @@ export default function ChatSessionPage() {
       content: inputValue.trim(),
       timestamp: new Date(),
       status: 'sending',
+      metadata: hasFiles ? {
+        attachments: files.map((f) => ({
+          filename: f.file.name,
+          size: f.file.size,
+          mimeType: f.file.type,
+          isImage: f.file.type.startsWith('image/'),
+        })),
+      } : undefined,
     }
 
     setDisplayMessages((prev) => [...prev, userMessage])
     const messageContent = inputValue.trim()
+    const filesToSend = hasFiles ? files.map((f) => f.file) : undefined
     setInputValue('')
+    clearFiles()
 
     try {
       // 清理上一轮残留的 isStreaming 标记，防止新消息追加到旧板块
@@ -460,9 +478,8 @@ export default function ChatSessionPage() {
       )
 
       // 发送消息到 API
-      await sendMessage(messageContent)
+      await sendMessage(messageContent, undefined, filesToSend)
     } catch (error) {
-      console.error('[Chat] 发送失败:', error)
       setDisplayMessages((prev) =>
         prev.map((m) =>
           m.id === userMessage.id ? { ...m, status: 'error' as const } : m
@@ -629,22 +646,73 @@ export default function ChatSessionPage() {
 
           <div
             className={clsx(
-              'flex items-end gap-3 p-3 rounded-xl',
+              'flex flex-col rounded-xl',
               'bg-bg-elevated border border-border-default',
               'focus-within:border-primary-500 focus-within:shadow-glow-primary',
               'transition-all duration-fast'
             )}
           >
-            <button
-              className={clsx(
-                'p-2 rounded-lg',
-                'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
-                'transition-colors duration-fast'
-              )}
-              aria-label="添加附件"
-            >
-              <Paperclip size={20} />
-            </button>
+            {/* 文件预览条 */}
+            {hasFiles && (
+              <div className="flex flex-wrap gap-2 px-3 pt-3">
+                {files.map((f) => (
+                  <div
+                    key={f.id}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded bg-bg-base border border-border-subtle text-xs text-text-secondary"
+                  >
+                    {f.preview ? (
+                      <img src={f.preview} alt={f.file.name} className="w-6 h-6 rounded object-cover" />
+                    ) : (
+                      <FileText size={14} className="text-text-tertiary" />
+                    )}
+                    <span className="max-w-[120px] truncate">{f.file.name}</span>
+                    <button
+                      onClick={() => removeFile(f.id)}
+                      className="p-0.5 rounded hover:bg-interactive-hover text-text-tertiary hover:text-text-primary"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 上传错误提示 */}
+            {uploadError && (
+              <div className="px-3 pt-2 text-xs text-error-400">{uploadError}</div>
+            )}
+
+            <div className="flex items-end gap-3 p-3">
+              {/* 隐藏的文件输入 */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={CHAT_UPLOAD_ALLOWED_EXTENSIONS.join(',')}
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) {
+                    const error = addFiles(e.target.files)
+                    setUploadError(error)
+                    if (error) setTimeout(() => setUploadError(null), 3000)
+                  }
+                  e.target.value = ''
+                }}
+              />
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSending}
+                className={clsx(
+                  'p-2 rounded-lg',
+                  'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
+                  'transition-colors duration-fast',
+                  'disabled:opacity-50'
+                )}
+                aria-label="添加附件"
+              >
+                <Paperclip size={20} />
+              </button>
 
             <textarea
               value={inputValue}
@@ -680,11 +748,12 @@ export default function ChatSessionPage() {
             <Button
               size="sm"
               onClick={isSending ? handleStop : handleSendMessage}
-              disabled={!isSending && !inputValue.trim()}
+              disabled={!isSending && !inputValue.trim() && !hasFiles}
               leftIcon={isSending ? <StopCircle size={16} /> : <Send size={16} />}
             >
               {isSending ? '停止' : '发送'}
             </Button>
+            </div>
           </div>
 
           <p className="text-xs text-text-tertiary text-center mt-2">
@@ -702,6 +771,12 @@ interface MessageBubbleProps {
 
 function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user'
+  const attachments = (message.metadata?.attachments ?? []) as Array<{
+    filename: string
+    size: number
+    mimeType: string
+    isImage: boolean
+  }>
 
   return (
     <div
@@ -733,9 +808,25 @@ function MessageBubble({ message }: MessageBubbleProps) {
         )}
       >
         {isUser ? (
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">
-            {message.content}
-          </p>
+          <>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">
+              {message.content}
+            </p>
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {attachments.map((att) => (
+                  <div
+                    key={att.filename}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary-700/50 text-xs text-primary-100"
+                  >
+                    {att.isImage ? <ImageIcon size={12} /> : <FileText size={12} />}
+                    <span className="max-w-[100px] truncate">{att.filename}</span>
+                    <span className="text-primary-300">({formatFileSize(att.size)})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         ) : message.fileData ? (
           <FileDownload data={message.fileData} />
         ) : (
@@ -767,4 +858,10 @@ function MessageBubble({ message }: MessageBubbleProps) {
       </div>
     </div>
   )
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
