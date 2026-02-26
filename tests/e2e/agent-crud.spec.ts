@@ -8,6 +8,24 @@ test.describe('Agent Management', () => {
   // 每个测试前先登录
   test.beforeEach(async ({ page }) => {
     await loginByApi(page)
+    await page.route('**/api/v1/llm-providers/models**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: [
+            {
+              modelId: 'gpt-4o',
+              displayName: 'GPT-4o',
+              displayNameSource: 'provider',
+              providerName: 'OpenAI',
+              providerType: 'openai',
+            },
+          ],
+        }),
+      })
+    })
   })
 
   test.describe('List Agents', () => {
