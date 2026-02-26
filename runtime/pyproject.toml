@@ -1,6 +1,6 @@
 [project]
-name = "semibot-runtime"
-version = "0.1.0"
+name = "semibot"
+version = "2.0.0"
 description = "Semibot Agent Runtime - AI Agent Execution Engine"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,6 +37,8 @@ dependencies = [
     "opentelemetry-sdk>=1.26.0",
     "fpdf2>=2.7.0",
     "websockets>=12.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
 ]
 
 [project.optional-dependencies]
@@ -50,12 +52,16 @@ dev = [
     "black>=24.8.0",
 ]
 
+[project.scripts]
+semibot = "semibot.__main__:run"
+semibot-api = "src.server.main:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src", "semibot"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -12,7 +12,11 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamable_http_client
+try:
+    from mcp.client.streamable_http import streamable_http_client
+except ImportError:
+    # MCP SDK variant naming compatibility.
+    from mcp.client.streamable_http import streamablehttp_client as streamable_http_client
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.constants.config import (

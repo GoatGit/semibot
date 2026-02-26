@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.events.runtime_emitter import RuntimeEventEmitter, emit_runtime_event
 from src.orchestrator.state import AgentState
 
 
@@ -55,6 +56,7 @@ class BaseAgent(ABC):
         llm_provider: Any = None,
         skill_registry: Any = None,
         memory_system: Any = None,
+        event_emitter: RuntimeEventEmitter | None = None,
     ):
         """
         Initialize the Agent.
@@ -69,6 +71,7 @@ class BaseAgent(ABC):
         self.llm_provider = llm_provider
         self.skill_registry = skill_registry
         self.memory_system = memory_system
+        self.event_emitter = event_emitter
 
     @property
     def id(self) -> str:
@@ -144,9 +147,41 @@ class BaseAgent(ABC):
         Returns:
             Final agent state after complete execution
         """
-        state = await self.pre_execute(state)
-        state = await self.execute(state)
-        state = await self.post_execute(state)
+        payload = {
+            "agent_id": self.id,
+            "agent_name": self.name,
+            "session_id": state.get("session_id", "") if isinstance(state, dict) else "",
+        }
+        await emit_runtime_event(
+            self.event_emitter,
+            event_type="agent.lifecycle.pre_execute",
+            source="runtime.base_agent",
+            subject=self.id,
+            payload=payload,
+        )
+
+        try:
+            state = await self.pre_execute(state)
+            state = await self.execute(state)
+            state = await self.post_execute(state)
+        except Exception as exc:
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="agent.lifecycle.failed",
+                source="runtime.base_agent",
+                subject=self.id,
+                payload={**payload, "error": str(exc)},
+                risk_hint="medium",
+            )
+            raise
+
+        await emit_runtime_event(
+            self.event_emitter,
+            event_type="agent.lifecycle.post_execute",
+            source="runtime.base_agent",
+            subject=self.id,
+            payload=payload,
+        )
         return state
 
     def get_available_skills(self) -> list[str]:

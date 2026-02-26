@@ -23,8 +23,8 @@ class SessionManager:
         vm_token = os.getenv("VM_TOKEN", "")
         self.init_data = dict(init_data)
         self.init_data["api_keys"] = decrypt_api_keys(init_data.get("api_keys"), vm_token)
-        self.user_id = str(init_data.get("user_id", ""))
-        self.org_id = str(init_data.get("org_id", ""))
+        self.user_id = str(init_data.get("user_id", "local"))
+        self.org_id = str(init_data.get("org_id", "local"))
         self.adapters: dict[str, RuntimeAdapter] = {}
         self.session_ready_events: dict[str, asyncio.Event] = {}
 
@@ -167,6 +167,7 @@ class SessionManager:
             return
         checkpoint = snapshot.get("checkpoint")
         short_term = snapshot.get("short_term_memory")
+        queue_state = snapshot.get("queue_state")
         if not isinstance(checkpoint, dict) and not isinstance(short_term, dict):
             return
         await self.client.fire_and_forget(
@@ -176,6 +177,7 @@ class SessionManager:
             short_term_memory=short_term if isinstance(short_term, dict) else {},
             conversation_state=snapshot.get("conversation_state") if isinstance(snapshot.get("conversation_state"), dict) else {},
             file_manifest=snapshot.get("file_manifest") if isinstance(snapshot.get("file_manifest"), dict) else {},
+            queue_state=queue_state if isinstance(queue_state, dict) else {},
         )
 
     def get_active_sessions(self) -> list[str]:

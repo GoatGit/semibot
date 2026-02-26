@@ -1,0 +1,876 @@
+"""FastAPI app for Event Engine management APIs."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import time
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
+
+from src.events.event_engine import EventEngine
+from src.events.event_router import EventRouter
+from src.events.event_store import EventStore
+from src.events.models import Event
+from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
+from src.events.runtime_action_executor import RuntimeActionExecutor
+from src.local_runtime import run_task_once
+from src.server.feishu import (
+    maybe_url_verification,
+    normalize_message_event,
+    parse_card_action,
+    verify_callback_token,
+)
+from src.server.feishu_notifier import FeishuNotifier, SendFn
+from src.skills.bootstrap import create_default_registry
+
+
+class EmitEventRequest(BaseModel):
+    event_type: str
+    source: str = "api"
+    subject: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = None
+    risk_hint: str | None = None
+
+
+class ReplayEventRequest(BaseModel):
+    event_id: str
+
+
+class HeartbeatRequest(BaseModel):
+    source: str = "system.api"
+    subject: str | None = "system"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeishuOutboundTestRequest(BaseModel):
+    title: str = "Semibot 测试消息"
+    content: str = "这是一条来自 Semibot 的测试通知。"
+    channel: str = "default"
+
+
+class RunTaskRequest(BaseModel):
+    task: str
+    agent_id: str = "semibot"
+    session_id: str | None = None
+    model: str | None = None
+    system_prompt: str | None = None
+
+
+class ChatRequest(BaseModel):
+    message: str
+    agent_id: str = "semibot"
+    session_id: str | None = None
+    model: str | None = None
+    system_prompt: str | None = None
+    stream: bool = False
+
+
+def create_app(
+    *,
+    db_path: str | None = None,
+    rules_path: str | None = None,
+    heartbeat_interval_seconds: float | None = None,
+    cron_jobs: list[dict[str, Any]] | None = None,
+    feishu_verify_token: str | None = None,
+    feishu_webhook_url: str | None = None,
+    feishu_webhook_urls: dict[str, str] | None = None,
+    feishu_notify_event_types: set[str] | None = None,
+    feishu_templates: dict[str, dict[str, str]] | None = None,
+    feishu_send_fn: SendFn | None = None,
+) -> FastAPI:
+    db = db_path or str(Path("~/.semibot/semibot.db").expanduser())
+    rules = rules_path or str(Path("~/.semibot/rules").expanduser())
+    feishu_notifier: FeishuNotifier | None = None
+
+    async def _runtime_event_sink(runtime_event: dict[str, Any]) -> None:
+        if not feishu_notifier:
+            return
+        event_name = str(runtime_event.get("event") or "")
+        data = runtime_event.get("data")
+        payload = data if isinstance(data, dict) else {}
+        if event_name == "rule.notify":
+            await feishu_notifier.send_notify_payload(payload)
+
+    action_executor = RuntimeActionExecutor(runtime_event_sink=_runtime_event_sink)
+    engine = EventEngine(
+        store=EventStore(db_path=db),
+        router=EventRouter(action_executor),
+        rules_path=rules,
+    )
+    if feishu_webhook_url or feishu_webhook_urls:
+        feishu_notifier = FeishuNotifier(
+            webhook_url=feishu_webhook_url,
+            webhook_urls=feishu_webhook_urls,
+            subscribed_event_types=feishu_notify_event_types,
+            templates=feishu_templates,
+            send_fn=feishu_send_fn,
+        )
+        engine.bus.subscribe(feishu_notifier.handle_event)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        engine.start_rule_watch(poll_interval=1.0)
+        if heartbeat_interval_seconds and heartbeat_interval_seconds > 0:
+            engine.start_heartbeat(interval_seconds=heartbeat_interval_seconds)
+        if cron_jobs:
+            normalized_jobs = [
+                {str(key): value for key, value in item.items()}
+                for item in cron_jobs
+                if isinstance(item, dict)
+            ]
+            if normalized_jobs:
+                engine.start_cron_jobs(normalized_jobs)
+        try:
+            yield
+        finally:
+            await engine.stop_triggers()
+            await engine.stop_rule_watch()
+
+    app = FastAPI(title="Semibot Event API", version="2.0.0", lifespan=lifespan)
+
+    def _latest_queue_state() -> dict[str, Any]:
+        queue_events = engine.list_events(limit=1, event_type="rule.queue.telemetry")
+        if not queue_events:
+            return {
+                "queued_depth": 0,
+                "active_jobs": 0,
+                "accepted_jobs": 0,
+                "dropped_jobs": 0,
+                "completed_jobs": 0,
+                "failed_jobs": 0,
+                "running_workers": 0,
+                "configured_workers": 0,
+                "queue_maxsize": 0,
+            }
+        payload = queue_events[0].payload
+        return payload if isinstance(payload, dict) else {}
+
+    def _encode_cursor(created_at: str, event_id: str) -> str:
+        raw = f"{created_at}|{event_id}".encode()
+        return base64.urlsafe_b64encode(raw).decode("ascii")
+
+    def _decode_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+        if not cursor:
+            return None, None
+        try:
+            raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+            created_at, event_id = raw.split("|", 1)
+            return created_at, event_id
+        except Exception:
+            return None, None
+
+    def _event_to_item(event: Event) -> dict[str, Any]:
+        return {
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "source": event.source,
+            "subject": event.subject,
+            "payload": event.payload,
+            "risk_hint": event.risk_hint,
+            "timestamp": event.timestamp.isoformat(),
+        }
+
+    def _event_items_with_cursor(
+        *,
+        cursor: str | None,
+        event_type: str | None,
+        event_types: list[str] | None,
+        limit: int,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        cursor_created_at, cursor_event_id = _decode_cursor(cursor)
+        events = engine.list_events_after(
+            cursor_created_at=cursor_created_at,
+            cursor_event_id=cursor_event_id,
+            event_type=event_type,
+            event_types=event_types,
+            limit=limit,
+        )
+        items = [_event_to_item(event) for event in events]
+        if not events:
+            return items, cursor
+        last = events[-1]
+        return items, _encode_cursor(last.timestamp.isoformat(), last.event_id)
+
+    def _parse_csv(value: str | None) -> list[str]:
+        if not value:
+            return []
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def _resolve_event_filters(
+        event_type: str | None, event_types: str | None
+    ) -> tuple[str | None, list[str] | None]:
+        parsed = _parse_csv(event_types)
+        if parsed:
+            return None, parsed
+        return event_type, None
+
+    def _resolve_cursor(cursor: str | None, resume_from: str | None) -> str | None:
+        return resume_from or cursor
+
+    def _normalize_channels(channels: str | None) -> set[str]:
+        allowed = {"summary", "queue", "events", "top_event_types"}
+        requested = set(_parse_csv(channels)) if channels else set()
+        if not requested:
+            return allowed
+        normalized = {item for item in requested if item in allowed}
+        return normalized or allowed
+
+    def _collect_runtime_index(limit: int = 1000) -> tuple[dict[str, str], set[str]]:
+        sessions: dict[str, str] = {}
+        agents: set[str] = set()
+        for event in engine.list_events(limit=limit):
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            session_id = payload.get("session_id")
+            agent_id = payload.get("agent_id")
+
+            if isinstance(session_id, str) and session_id and session_id not in sessions:
+                sessions[session_id] = event.timestamp.isoformat()
+
+            if isinstance(agent_id, str) and agent_id:
+                agents.add(agent_id)
+
+        if not agents:
+            agents.add("semibot")
+        return sessions, agents
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, Any]:
+        return {"ok": True, "version": "2.0.0"}
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        return {"ok": True, "version": "2.0.0"}
+
+    @app.get("/v1/skills")
+    async def list_skills() -> dict[str, Any]:
+        registry = create_default_registry()
+        return {
+            "tools": registry.list_tools(),
+            "skills": registry.list_skills(),
+        }
+
+    @app.get("/v1/sessions")
+    async def list_sessions(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+        sessions, _ = _collect_runtime_index(limit=limit * 10)
+        items = [
+            {"session_id": session_id, "last_seen_at": last_seen_at}
+            for session_id, last_seen_at in list(sessions.items())[:limit]
+        ]
+        return {"items": items}
+
+    @app.delete("/v1/sessions/{session_id}")
+    async def delete_session(session_id: str) -> dict[str, Any]:
+        event = Event(
+            event_id=f"evt_session_delete_{uuid4().hex}",
+            event_type="session.deleted",
+            source="api",
+            subject=session_id,
+            payload={"session_id": session_id},
+            risk_hint="low",
+            timestamp=datetime.now(UTC),
+        )
+        await engine.emit(event)
+        return {"deleted": True, "session_id": session_id}
+
+    @app.get("/v1/agents")
+    async def list_agents(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+        _, agents = _collect_runtime_index(limit=limit * 10)
+        return {"items": [{"agent_id": agent_id} for agent_id in sorted(agents)[:limit]]}
+
+    @app.get("/v1/memories/search")
+    async def memories_search(
+        query: str = Query(..., min_length=1),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        keyword = query.strip().lower()
+        scanned = engine.list_events(limit=max(limit * 5, limit))
+        matched: list[dict[str, Any]] = []
+        for event in scanned:
+            haystack = " ".join(
+                [
+                    event.event_type,
+                    event.subject or "",
+                    json.dumps(event.payload, ensure_ascii=False),
+                ]
+            ).lower()
+            if keyword in haystack:
+                matched.append(
+                    {
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "subject": event.subject,
+                        "payload": event.payload,
+                        "timestamp": event.timestamp.isoformat(),
+                    }
+                )
+            if len(matched) >= limit:
+                break
+
+        return {
+            "query": query,
+            "items": matched,
+        }
+
+    @app.post("/v1/skills/install")
+    async def install_skill(payload: dict[str, Any]) -> dict[str, Any]:
+        source = payload.get("source")
+        return {
+            "accepted": False,
+            "source": source,
+            "reason": "skill install API placeholder; use local skill manager in current phase",
+        }
+
+    @app.get("/v1/events")
+    async def list_events(
+        event_type: str | None = Query(default=None),
+        event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        resolved_event_type, resolved_event_types = _resolve_event_filters(event_type, event_types)
+        events = engine.list_events(
+            limit=limit,
+            event_type=resolved_event_type,
+            event_types=resolved_event_types,
+        )
+        return {"items": [_event_to_item(event) for event in events]}
+
+    @app.get("/v1/events/{event_id}")
+    async def get_event(event_id: str) -> dict[str, Any]:
+        event = engine.store.get(event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="event_not_found")
+        return {
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "source": event.source,
+            "subject": event.subject,
+            "payload": event.payload,
+            "risk_hint": event.risk_hint,
+            "timestamp": event.timestamp.isoformat(),
+        }
+
+    @app.post("/v1/events")
+    async def emit_event(req: EmitEventRequest) -> dict[str, Any]:
+        event = Event(
+            event_id=f"evt_api_{uuid4().hex}",
+            event_type=req.event_type,
+            source=req.source,
+            subject=req.subject,
+            payload=req.payload,
+            idempotency_key=req.idempotency_key,
+            risk_hint=req.risk_hint,
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+        return {"event_id": event.event_id, "matched_rules": len(outcomes)}
+
+    @app.post("/v1/tasks/run")
+    async def run_task(req: RunTaskRequest) -> dict[str, Any]:
+        result = await run_task_once(
+            task=req.task,
+            db_path=db,
+            rules_path=rules,
+            agent_id=req.agent_id,
+            session_id=req.session_id,
+            model=req.model,
+            system_prompt=req.system_prompt,
+        )
+        return {"task": req.task, **result}
+
+    @app.post("/v1/chat")
+    async def chat(req: ChatRequest):
+        if not req.stream:
+            result = await run_task_once(
+                task=req.message,
+                db_path=db,
+                rules_path=rules,
+                agent_id=req.agent_id,
+                session_id=req.session_id,
+                model=req.model,
+                system_prompt=req.system_prompt,
+            )
+            return {
+                "message": req.message,
+                **result,
+            }
+
+        async def _stream():
+            start = {
+                "event": "start",
+                "session_id": req.session_id,
+                "agent_id": req.agent_id,
+            }
+            yield f"data: {json.dumps(start, ensure_ascii=False)}\n\n"
+            result = await run_task_once(
+                task=req.message,
+                db_path=db,
+                rules_path=rules,
+                agent_id=req.agent_id,
+                session_id=req.session_id,
+                model=req.model,
+                system_prompt=req.system_prompt,
+            )
+            for event in result.get("runtime_events", []):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            final_payload = {
+                "event": "done",
+                "status": result.get("status"),
+                "final_response": result.get("final_response"),
+                "error": result.get("error"),
+                "session_id": result.get("session_id"),
+                "agent_id": result.get("agent_id"),
+            }
+            yield f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    @app.post("/v1/webhooks/{event_type}")
+    async def ingest_webhook(event_type: str, request: Request) -> dict[str, Any]:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        payload = body.get("payload")
+        event_payload = payload if isinstance(payload, dict) else body
+        event = Event(
+            event_id=str(body.get("event_id") or f"evt_webhook_{uuid4().hex}"),
+            event_type=event_type,
+            source=str(body.get("source") or "webhook"),
+            subject=body.get("subject"),
+            payload=event_payload if isinstance(event_payload, dict) else {},
+            idempotency_key=body.get("idempotency_key"),
+            risk_hint=body.get("risk_hint"),
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+        return {
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "matched_rules": len(outcomes),
+        }
+
+    @app.post("/v1/system/heartbeat")
+    async def emit_heartbeat(req: HeartbeatRequest) -> dict[str, Any]:
+        event = Event(
+            event_id=f"evt_heartbeat_{uuid4().hex}",
+            event_type="health.heartbeat.manual",
+            source=req.source,
+            subject=req.subject,
+            payload=req.payload,
+            risk_hint="low",
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+        return {"event_id": event.event_id, "matched_rules": len(outcomes)}
+
+    @app.post("/v1/integrations/feishu/events")
+    async def ingest_feishu_events(request: Request) -> dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        challenge = maybe_url_verification(payload)
+        if challenge:
+            if not verify_callback_token(payload, feishu_verify_token):
+                raise HTTPException(status_code=401, detail="invalid_feishu_token")
+            return {"challenge": challenge}
+
+        if not verify_callback_token(payload, feishu_verify_token):
+            raise HTTPException(status_code=401, detail="invalid_feishu_token")
+
+        normalized = normalize_message_event(payload)
+        if not normalized:
+            return {"accepted": False, "reason": "unsupported_feishu_event"}
+
+        event = Event(
+            event_id=f"evt_feishu_{uuid4().hex}",
+            event_type=normalized["event_type"],
+            source=normalized["source"],
+            subject=normalized["subject"],
+            payload=normalized["payload"],
+            idempotency_key=normalized["idempotency_key"],
+            risk_hint="low",
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+        return {
+            "accepted": True,
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "matched_rules": len(outcomes),
+        }
+
+    @app.post("/v1/integrations/feishu/card-actions")
+    async def ingest_feishu_card_actions(request: Request) -> dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        if not verify_callback_token(payload, feishu_verify_token):
+            raise HTTPException(status_code=401, detail="invalid_feishu_token")
+
+        parsed = parse_card_action(payload)
+        approval = None
+        if parsed["approval_id"] and parsed["decision"] in {"approved", "rejected"}:
+            approval = await engine.resolve_approval(parsed["approval_id"], parsed["decision"])
+
+        approval_action_event_id: str | None = None
+        if parsed["approval_id"] and parsed["decision"] in {"approved", "rejected"}:
+            approval_action_event = Event(
+                event_id=f"evt_approval_action_{uuid4().hex}",
+                event_type="approval.action",
+                source="feishu.gateway",
+                subject=parsed["approval_id"],
+                payload={
+                    "approval_id": parsed["approval_id"],
+                    "decision": parsed["decision"],
+                    "trace_id": parsed["trace_id"],
+                    "resolved": approval is not None,
+                    "raw": payload,
+                },
+                risk_hint="low",
+                timestamp=datetime.now(UTC),
+            )
+            await engine.emit(approval_action_event)
+            approval_action_event_id = approval_action_event.event_id
+
+        event = Event(
+            event_id=f"evt_feishu_action_{uuid4().hex}",
+            event_type="chat.card.action",
+            source="feishu.gateway",
+            subject=parsed["approval_id"],
+            payload={
+                "approval_id": parsed["approval_id"],
+                "decision": parsed["decision"] or parsed["raw_decision"],
+                "trace_id": parsed["trace_id"],
+                "resolved": approval is not None,
+                "raw": payload,
+            },
+            risk_hint="low",
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+
+        return {
+            "accepted": True,
+            "approval_id": parsed["approval_id"],
+            "decision": parsed["decision"] or parsed["raw_decision"],
+            "resolved": approval is not None,
+            "status": approval.status if approval else None,
+            "approval_action_event_id": approval_action_event_id,
+            "event_id": event.event_id,
+            "matched_rules": len(outcomes),
+        }
+
+    @app.post("/v1/integrations/feishu/outbound/test")
+    async def send_feishu_test(req: FeishuOutboundTestRequest) -> dict[str, Any]:
+        if not feishu_notifier:
+            raise HTTPException(status_code=400, detail="feishu_webhook_not_configured")
+        sent = await feishu_notifier.send_markdown(
+            title=req.title,
+            content=req.content,
+            channel=req.channel,
+        )
+        return {"sent": sent}
+
+    @app.post("/v1/events/replay")
+    async def replay_event(req: ReplayEventRequest) -> dict[str, Any]:
+        outcomes = await engine.replay_event(req.event_id)
+        return {
+            "event_id": req.event_id,
+            "matched_rules": len(outcomes),
+            "outcomes": [
+                {
+                    "run_id": item.run_id,
+                    "rule_id": item.rule_id,
+                    "decision": item.decision,
+                    "status": item.status,
+                    "reason": item.reason,
+                    "approval_id": item.approval_id,
+                    "errors": item.errors,
+                }
+                for item in outcomes
+            ],
+        }
+
+    @app.get("/v1/rules")
+    async def list_rules() -> dict[str, Any]:
+        loaded = load_rules(rules)
+        return {"items": rules_to_json(loaded)}
+
+    @app.post("/v1/rules/{rule_id}/enable")
+    async def enable_rule(rule_id: str) -> dict[str, Any]:
+        updated = set_rule_active(rules, rule_id, active=True)
+        if not updated:
+            raise HTTPException(status_code=404, detail="rule_not_found")
+        return {"rule_id": rule_id, "is_active": True}
+
+    @app.post("/v1/rules/{rule_id}/disable")
+    async def disable_rule(rule_id: str) -> dict[str, Any]:
+        updated = set_rule_active(rules, rule_id, active=False)
+        if not updated:
+            raise HTTPException(status_code=404, detail="rule_not_found")
+        return {"rule_id": rule_id, "is_active": False}
+
+    @app.get("/v1/approvals")
+    async def list_approvals(
+        status: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        items = engine.list_approvals(status=status, limit=limit)
+        return {
+            "items": [
+                {
+                    "approval_id": item.approval_id,
+                    "rule_id": item.rule_id,
+                    "event_id": item.event_id,
+                    "risk_level": item.risk_level,
+                    "status": item.status,
+                    "created_at": item.created_at.isoformat(),
+                    "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+                }
+                for item in items
+            ]
+        }
+
+    @app.get("/v1/metrics/events")
+    async def event_metrics(since: str | None = Query(default=None)) -> dict[str, Any]:
+        since_dt: datetime | None = None
+        if since:
+            try:
+                normalized = since.replace("Z", "+00:00")
+                since_dt = datetime.fromisoformat(normalized)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"invalid since: {exc}") from exc
+        return engine.metrics(since=since_dt)
+
+    @app.get("/v1/dashboard/summary")
+    async def dashboard_summary() -> dict[str, Any]:
+        metrics = engine.metrics()
+        return {
+            "events_total": metrics["events_total"],
+            "rule_runs_total": metrics["rule_runs_total"],
+            "rule_runs_failed": metrics["rule_runs_failed"],
+            "approvals_pending": metrics["approvals_pending"],
+            "approvals_total": metrics["approvals_total"],
+            "top_event_types": metrics["top_event_types"],
+            "queue_state": _latest_queue_state(),
+        }
+
+    @app.get("/v1/dashboard/rule-runs")
+    async def dashboard_rule_runs(
+        rule_id: str | None = Query(default=None),
+        event_id: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        runs = engine.list_rule_runs(rule_id=rule_id, event_id=event_id, status=status, limit=limit)
+        return {
+            "items": [
+                {
+                    "run_id": run.run_id,
+                    "rule_id": run.rule_id,
+                    "event_id": run.event_id,
+                    "decision": run.decision,
+                    "reason": run.reason,
+                    "status": run.status,
+                    "action_trace_id": run.action_trace_id,
+                    "duration_ms": run.duration_ms,
+                    "created_at": run.created_at.isoformat(),
+                }
+                for run in runs
+            ]
+        }
+
+    @app.get("/v1/dashboard/queue")
+    async def dashboard_queue() -> dict[str, Any]:
+        return _latest_queue_state()
+
+    @app.get("/v1/dashboard/events")
+    async def dashboard_events(
+        cursor: str | None = Query(default=None),
+        resume_from: str | None = Query(default=None),
+        event_type: str | None = Query(default=None),
+        event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        resolved_event_type, resolved_event_types = _resolve_event_filters(event_type, event_types)
+        effective_cursor = _resolve_cursor(cursor, resume_from)
+        items, next_cursor = _event_items_with_cursor(
+            cursor=effective_cursor,
+            event_type=resolved_event_type,
+            event_types=resolved_event_types,
+            limit=limit,
+        )
+        return {"items": items, "next_cursor": next_cursor}
+
+    @app.get("/v1/dashboard/live")
+    async def dashboard_live(
+        interval: float = Query(default=1.0, ge=0.1, le=10.0),
+        max_ticks: int | None = Query(default=None, ge=1, le=3600),
+        channels: str | None = Query(
+            default=None, description="summary,queue,events,top_event_types"
+        ),
+        mode: str = Query(default="snapshot_delta", pattern="^(snapshot_delta|delta)$"),
+        delta_only: bool = Query(default=False),
+        heartbeat_interval: float = Query(default=5.0, ge=0.5, le=60.0),
+        cursor: str | None = Query(default=None),
+        resume_from: str | None = Query(default=None),
+        event_type: str | None = Query(default=None),
+        event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        event_limit: int = Query(default=100, ge=1, le=500),
+    ) -> StreamingResponse:
+        selected_channels = _normalize_channels(channels)
+        resolved_event_type, resolved_event_types = _resolve_event_filters(event_type, event_types)
+        effective_cursor = _resolve_cursor(cursor, resume_from)
+
+        async def event_generator():
+            ticks = 0
+            current_cursor = effective_cursor
+            previous_summary: dict[str, Any] | None = None
+            previous_queue: dict[str, Any] | None = None
+            previous_top: list[dict[str, Any]] | None = None
+            last_emit_monotonic = time.monotonic()
+
+            if mode == "snapshot_delta":
+                snapshot_metrics = engine.metrics()
+                snapshot_payload: dict[str, Any] = {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "stream_mode": "snapshot",
+                }
+
+                if "summary" in selected_channels:
+                    snapshot_payload["summary"] = {
+                        "events_total": snapshot_metrics["events_total"],
+                        "rule_runs_total": snapshot_metrics["rule_runs_total"],
+                        "rule_runs_failed": snapshot_metrics["rule_runs_failed"],
+                        "approvals_pending": snapshot_metrics["approvals_pending"],
+                    }
+                    previous_summary = snapshot_payload["summary"]
+
+                if "queue" in selected_channels:
+                    snapshot_payload["queue_state"] = _latest_queue_state()
+                    previous_queue = snapshot_payload["queue_state"]
+
+                if "top_event_types" in selected_channels:
+                    snapshot_payload["top_event_types"] = snapshot_metrics["top_event_types"]
+                    previous_top = snapshot_payload["top_event_types"]
+
+                if "events" in selected_channels:
+                    snapshot_events = engine.list_events(
+                        limit=event_limit,
+                        event_type=resolved_event_type,
+                        event_types=resolved_event_types,
+                    )
+                    snapshot_payload["events"] = [
+                        _event_to_item(event) for event in snapshot_events
+                    ]
+                    if snapshot_events:
+                        newest = snapshot_events[0]
+                        current_cursor = _encode_cursor(
+                            newest.timestamp.isoformat(), newest.event_id
+                        )
+                    snapshot_payload["next_cursor"] = current_cursor
+
+                yield f"data: {json.dumps(snapshot_payload, ensure_ascii=False)}\n\n"
+                ticks += 1
+                last_emit_monotonic = time.monotonic()
+                if max_ticks is not None and ticks >= max_ticks:
+                    return
+
+            while True:
+                metrics = engine.metrics()
+                payload: dict[str, Any] = {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "stream_mode": "delta",
+                }
+                emitted = False
+
+                if "summary" in selected_channels:
+                    current_summary = {
+                        "events_total": metrics["events_total"],
+                        "rule_runs_total": metrics["rule_runs_total"],
+                        "rule_runs_failed": metrics["rule_runs_failed"],
+                        "approvals_pending": metrics["approvals_pending"],
+                    }
+                    if (not delta_only) or (previous_summary != current_summary):
+                        payload["summary"] = current_summary
+                        emitted = True
+                    previous_summary = current_summary
+
+                if "queue" in selected_channels:
+                    current_queue = _latest_queue_state()
+                    if (not delta_only) or (previous_queue != current_queue):
+                        payload["queue_state"] = current_queue
+                        emitted = True
+                    previous_queue = current_queue
+
+                if "top_event_types" in selected_channels:
+                    current_top = metrics["top_event_types"]
+                    if (not delta_only) or (previous_top != current_top):
+                        payload["top_event_types"] = current_top
+                        emitted = True
+                    previous_top = current_top
+
+                if "events" in selected_channels:
+                    events, next_cursor = _event_items_with_cursor(
+                        cursor=current_cursor,
+                        event_type=resolved_event_type,
+                        event_types=resolved_event_types,
+                        limit=event_limit,
+                    )
+                    current_cursor = next_cursor
+                    if (not delta_only) or events:
+                        payload["events"] = events
+                        payload["next_cursor"] = current_cursor
+                        emitted = True
+
+                if emitted:
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    ticks += 1
+                    last_emit_monotonic = time.monotonic()
+                    if max_ticks is not None and ticks >= max_ticks:
+                        break
+                elif time.monotonic() - last_emit_monotonic >= heartbeat_interval:
+                    yield ": ping\n\n"
+                    last_emit_monotonic = time.monotonic()
+
+                await asyncio.sleep(interval)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
+    @app.post("/v1/approvals/{approval_id}/approve")
+    async def approve(approval_id: str) -> dict[str, Any]:
+        approval = await engine.resolve_approval(approval_id, "approved")
+        if not approval:
+            raise HTTPException(status_code=404, detail="approval_not_found")
+        return {"approval_id": approval.approval_id, "status": approval.status}
+
+    @app.post("/v1/approvals/{approval_id}/reject")
+    async def reject(approval_id: str) -> dict[str, Any]:
+        approval = await engine.resolve_approval(approval_id, "rejected")
+        if not approval:
+            raise HTTPException(status_code=404, detail="approval_not_found")
+        return {"approval_id": approval.approval_id, "status": approval.status}
+
+    return app

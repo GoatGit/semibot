@@ -1,6 +1,6 @@
 """Semibot Agent Runtime - AI Agent Execution Engine."""
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "create_agent_graph",

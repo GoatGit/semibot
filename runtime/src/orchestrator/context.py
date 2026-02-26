@@ -95,23 +95,25 @@ class RuntimeSessionContext:
 
     This context is created at the start of each runtime session and contains
     all necessary information for execution, including:
-    - Session identifiers (org_id, user_id, agent_id, session_id)
+    - Session identifiers (agent_id, session_id)
     - Agent configuration
     - Available capabilities (skills, tools, MCP servers)
     - Execution policies
 
-    The context is immutable during a session and is passed to all nodes
-    in the execution graph.
+    `org_id` / `user_id` are retained as optional compatibility fields
+    for legacy modules and can default to local single-user values.
     """
 
     # Identifiers
-    org_id: str
-    user_id: str
     agent_id: str
     session_id: str
 
     # Agent configuration
     agent_config: AgentConfig
+
+    # Compatibility identifiers (legacy modules)
+    org_id: str = "local"
+    user_id: str = "local"
 
     # Capability inventory
     available_skills: list[SkillDefinition] = field(default_factory=list)

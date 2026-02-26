@@ -1,67 +1,12 @@
-from __future__ import annotations
-
-import asyncio
-import os
-
-from src.session.manager import SessionManager
-from src.skills.code_executor import set_file_manager
-from src.storage.file_manager import FileManager
-from src.utils.logging import get_logger
-from src.ws.client import ControlPlaneClient
-
-logger = get_logger(__name__)
-
-
-async def _run() -> None:
-    control_plane_ws = os.getenv("CONTROL_PLANE_WS", "ws://localhost:3001/ws/vm")
-    user_id = os.getenv("VM_USER_ID", "")
-    ticket = os.getenv("VM_TICKET", "")
-    token = os.getenv("VM_TOKEN", "")
-    node_env = os.getenv("NODE_ENV", "development").lower()
-    standby_enabled = os.getenv("RUNTIME_DEV_STANDBY", "true").lower() == "true"
-
-    if not user_id or not token:
-        if node_env == "production" or not standby_enabled:
-            raise RuntimeError("VM_USER_ID 和 VM_TOKEN 必须配置")
-        logger.warning(
-            "runtime_dev_standby_mode",
-            extra={
-                "reason": "missing_vm_identity",
-                "required": ["VM_USER_ID", "VM_TOKEN"],
-                "hint": "set RUNTIME_DEV_STANDBY=false to fail fast",
-            },
-        )
-        while True:
-            await asyncio.sleep(3600)
-
-    file_manager = FileManager()
-    set_file_manager(file_manager)
-    file_manager.start_cleanup_loop()
-
-    client = ControlPlaneClient(
-        control_plane_url=control_plane_ws,
-        user_id=user_id,
-        ticket=ticket,
-        token=token,
-    )
-
-    init_data = await client.connect()
-    manager = SessionManager(client=client, init_data=init_data)
-
-    client.register_vm_handlers(
-        start_session=manager.start_session,
-        stop_session=manager.stop_session,
-        config_update=manager._on_config_update,
-    )
-
-    logger.info("execution_plane_started", extra={"user_id": user_id})
-
-    while True:
-        await asyncio.sleep(3600)
-
-
 def main() -> None:
-    asyncio.run(_run())
+    """Single-process local runtime entrypoint.
+
+    V2 local mode no longer requires Control Plane auth/WebSocket bootstrap.
+    This command simply forwards to the Semibot CLI.
+    """
+    from src.cli import main as cli_main
+
+    cli_main()
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
 """Agent state type definitions for LangGraph orchestration."""
 
-from typing import Annotated, Any, Literal
-from typing_extensions import TypedDict
-from pydantic import BaseModel, Field
 from operator import add
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 from src.orchestrator.context import RuntimeSessionContext
 
@@ -81,7 +82,7 @@ class AgentState(TypedDict):
     Attributes:
         session_id: Unique session identifier for tracking
         agent_id: The agent being executed
-        org_id: Organization ID for multi-tenancy
+        org_id: Compatibility field for legacy modules (defaults to local)
         context: Runtime session context with agent config and capabilities
         messages: Conversation history (accumulates via reducer)
         current_step: Current state in the state machine
@@ -137,9 +138,9 @@ class AgentState(TypedDict):
 def create_initial_state(
     session_id: str,
     agent_id: str,
-    org_id: str,
     user_message: str,
     context: "RuntimeSessionContext",
+    org_id: str = "local",
     history_messages: list[dict[str, str]] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentState:
@@ -149,9 +150,9 @@ def create_initial_state(
     Args:
         session_id: Unique session identifier
         agent_id: The agent to execute
-        org_id: Organization ID
         user_message: The user's input message
         context: Runtime session context with agent config and capabilities
+        org_id: Compatibility field for legacy modules (defaults to local)
         history_messages: Optional full conversation history from API layer
         metadata: Optional additional metadata
 
@@ -171,7 +172,9 @@ def create_initial_state(
             Message(role="user", content=user_message, name=None, tool_call_id=None)
         ]
     else:
-        initial_messages = [Message(role="user", content=user_message, name=None, tool_call_id=None)]
+        initial_messages = [
+            Message(role="user", content=user_message, name=None, tool_call_id=None)
+        ]
 
     return AgentState(
         session_id=session_id,

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from src.orchestrator.state import PlanStep, ToolCallResult
 from src.orchestrator.context import RuntimeSessionContext
 from src.orchestrator.capability import CapabilityGraph
+from src.events.runtime_emitter import RuntimeEventEmitter, emit_runtime_event
 from src.utils.logging import get_logger
 from src.constants.config import SANDBOX_REQUIRED_TOOLS
 
@@ -50,6 +51,7 @@ class UnifiedActionExecutor:
         mcp_client: Any = None,
         approval_hook: Callable[[str, dict[str, Any], ExecutionMetadata], Awaitable[bool]] | None = None,
         audit_logger: Any = None,
+        event_emitter: RuntimeEventEmitter | None = None,
     ):
         """
         Initialize the unified executor.
@@ -66,6 +68,7 @@ class UnifiedActionExecutor:
         self.mcp_client = mcp_client
         self.approval_hook = approval_hook
         self.audit_logger = audit_logger
+        self.event_emitter = event_emitter or runtime_context.metadata.get("event_emitter")
 
         # Build capability graph
         self.capability_graph = CapabilityGraph(runtime_context)
@@ -101,6 +104,18 @@ class UnifiedActionExecutor:
         params = action.params
 
         if not tool_name:
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject="unknown",
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "error": "no_tool_name",
+                },
+                risk_hint="low",
+            )
             return ToolCallResult(
                 tool_name="unknown",
                 params=params,
@@ -117,6 +132,19 @@ class UnifiedActionExecutor:
             },
         )
 
+        await emit_runtime_event(
+            self.event_emitter,
+            event_type="tool.exec.started",
+            source="runtime.unified_executor",
+            subject=tool_name,
+            payload={
+                "session_id": self.runtime_context.session_id,
+                "action_id": action.id,
+                "tool_name": tool_name,
+                "params": params,
+            },
+        )
+
         # Validate action against capability graph
         if not self.capability_graph.validate_action(tool_name):
             logger.error(
@@ -125,6 +153,18 @@ class UnifiedActionExecutor:
                     "session_id": self.runtime_context.session_id,
                     "tool_name": tool_name,
                 },
+            )
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "error": "not_in_capability_graph",
+                },
+                risk_hint="medium",
             )
             return ToolCallResult(
                 tool_name=tool_name,
@@ -136,6 +176,18 @@ class UnifiedActionExecutor:
         # Get capability and metadata
         capability = self.capability_graph.get_capability(tool_name)
         if not capability:
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "error": "capability_not_found",
+                },
+                risk_hint="medium",
+            )
             return ToolCallResult(
                 tool_name=tool_name,
                 params=params,
@@ -206,6 +258,19 @@ class UnifiedActionExecutor:
                             reason="Approval denied by user",
                         )
 
+                    await emit_runtime_event(
+                        self.event_emitter,
+                        event_type="tool.exec.failed",
+                        source="runtime.unified_executor",
+                        subject=tool_name,
+                        payload={
+                            "session_id": self.runtime_context.session_id,
+                            "action_id": action.id,
+                            "tool_name": tool_name,
+                            "error": "approval_denied",
+                        },
+                        risk_hint="high",
+                    )
                     return ToolCallResult(
                         tool_name=tool_name,
                         params=params,
@@ -227,6 +292,19 @@ class UnifiedActionExecutor:
                         "session_id": self.runtime_context.session_id,
                         "tool_name": tool_name,
                     },
+                )
+                await emit_runtime_event(
+                    self.event_emitter,
+                    event_type="tool.exec.failed",
+                    source="runtime.unified_executor",
+                    subject=tool_name,
+                    payload={
+                        "session_id": self.runtime_context.session_id,
+                        "action_id": action.id,
+                        "tool_name": tool_name,
+                        "error": f"approval_hook_failed:{e}",
+                    },
+                    risk_hint="high" if metadata.is_high_risk else "medium",
                 )
                 return ToolCallResult(
                     tool_name=tool_name,
@@ -262,6 +340,22 @@ class UnifiedActionExecutor:
                         error=result.error or "Unknown error",
                     )
 
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.completed" if result.success else "tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "tool_name": tool_name,
+                    "success": result.success,
+                    "duration_ms": result.duration_ms,
+                    "error": result.error,
+                },
+                risk_hint="high" if metadata.is_high_risk else "low",
+            )
+
             return result
         except Exception as e:
             logger.error(
@@ -283,6 +377,20 @@ class UnifiedActionExecutor:
                     duration_ms=0,
                     error=str(e),
                 )
+
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "tool_name": tool_name,
+                    "error": str(e),
+                },
+                risk_hint="high" if tool_name in self.high_risk_tools else "medium",
+            )
 
             return ToolCallResult(
                 tool_name=tool_name,

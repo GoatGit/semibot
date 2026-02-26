@@ -1,4 +1,4 @@
-"""Execution-plane runtime entry point.
+"""Semibot local runtime entry point.
 
 Usage:
     python -m src.main
