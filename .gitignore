@@ -42,3 +42,6 @@ yarn-error.log*
 # Test coverage
 coverage/
 .nyc_output/
+
+# Runtime artifacts
+runtime/test-results/
