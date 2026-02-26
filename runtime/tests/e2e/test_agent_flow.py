@@ -1,269 +1,142 @@
-"""End-to-end tests for agent execution flow."""
+"""V2 end-to-end tests for event -> rule -> action flow."""
 
+import json
+from pathlib import Path
+from typing import Any
+
+import httpx
 import pytest
 
-from src.orchestrator.state import AgentState
+from src.server.api import create_app
+
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_collab]
 
 
-class TestAgentFlowE2E:
-    """End-to-end tests for complete agent execution flows."""
-
-    @pytest.mark.asyncio
-    async def test_simple_greeting_flow(self, e2e_context, initial_state):
-        """Test a simple greeting request flow."""
-        # This test verifies the basic flow: start -> plan -> respond -> end
-        from src.orchestrator.nodes import start_node, plan_node, respond_node
-
-        # Step 1: Start node
-        result = await start_node(initial_state, e2e_context)
-        assert result["current_step"] == "plan"
-
-        # Update state
-        updated_state = AgentState(**{**initial_state, **result})
-
-        # Step 2: Plan node - LLM decides to respond directly
-        e2e_context["llm_provider"].generate_plan = pytest.AsyncMock(
-            return_value={
-                "goal": "Greet the user",
-                "steps": [{"action": "respond", "params": {"message": "Hello!"}}],
-            }
-        )
-        result = await plan_node(updated_state, e2e_context)
-        assert result.get("plan") is not None
-        assert result["plan"]["goal"] == "Greet the user"
-
-        # Update state
-        updated_state = AgentState(**{**updated_state, **result})
-
-        # Step 3: Respond node
-        result = await respond_node(updated_state, e2e_context)
-        assert result["current_step"] == "complete"
-
-    @pytest.mark.asyncio
-    async def test_tool_execution_flow(self, e2e_context, state_with_plan):
-        """Test flow with tool execution: plan -> act -> observe -> reflect -> respond."""
-        from src.orchestrator.nodes import act_node, observe_node, reflect_node, respond_node
-
-        # Step 1: Act node - execute the search tool
-        result = await act_node(state_with_plan, e2e_context)
-        assert "tool_results" in result or "current_step" in result
-
-        # Update state
-        updated_state = AgentState(**{**state_with_plan, **result})
-
-        # Step 2: Observe node - check results
-        result = await observe_node(updated_state, e2e_context)
-        assert "current_step" in result
-
-        # If observation leads to reflect
-        if result.get("current_step") == "reflect":
-            updated_state = AgentState(**{**updated_state, **result})
-
-            # Step 3: Reflect node
-            result = await reflect_node(updated_state, e2e_context)
-            assert "reflection" in result or "current_step" in result
-
-            updated_state = AgentState(**{**updated_state, **result})
-
-            # Step 4: Respond node
-            result = await respond_node(updated_state, e2e_context)
-            assert result["current_step"] == "complete"
-
-    @pytest.mark.asyncio
-    async def test_error_handling_flow(self, e2e_context, state_with_error):
-        """Test flow handles errors gracefully."""
-        from src.orchestrator.nodes import start_node, respond_node
-
-        # Start node should handle error state
-        result = await start_node(state_with_error, e2e_context)
-
-        # The flow should still proceed
-        assert "current_step" in result
-
-        # Eventually should respond with error message
-        updated_state = AgentState(**{**state_with_error, **result})
-        result = await respond_node(updated_state, e2e_context)
-        assert result["current_step"] == "complete"
-
-    @pytest.mark.asyncio
-    async def test_multi_step_plan_execution(self, e2e_context, initial_state):
-        """Test execution of a multi-step plan."""
-        from src.orchestrator.nodes import plan_node, act_node, observe_node
-
-        # Setup multi-step plan
-        e2e_context["llm_provider"].generate_plan = pytest.AsyncMock(
-            return_value={
-                "goal": "Complete multi-step task",
-                "steps": [
-                    {"action": "search", "params": {"query": "step 1"}},
-                    {"action": "analyze", "params": {"data": "step 2"}},
-                    {"action": "respond", "params": {}},
-                ],
-            }
-        )
-
-        # Plan phase
-        result = await plan_node(initial_state, e2e_context)
-        assert result["plan"] is not None
-        assert len(result["plan"]["steps"]) == 3
-
-        # Act phase - first step
-        updated_state = AgentState(**{**initial_state, **result})
-        updated_state = AgentState(**{**updated_state, "current_step": "act"})
-
-        result = await act_node(updated_state, e2e_context)
-        assert "tool_results" in result or "current_step" in result
-
-    @pytest.mark.asyncio
-    async def test_iteration_limit(self, e2e_context, initial_state):
-        """Test that iteration limit is respected."""
-        from src.constants.config import MAX_ITERATIONS
-        from src.orchestrator.nodes import observe_node
-
-        # Set iteration to max
-        state_at_limit = AgentState(**{**initial_state, "iteration": MAX_ITERATIONS})
-
-        result = await observe_node(state_at_limit, e2e_context)
-
-        # Should transition to reflect/respond, not continue acting
-        assert result.get("current_step") in ["reflect", "respond", "complete", None]
-
-
-class TestEdgeRouting:
-    """Tests for edge routing decisions."""
-
-    def test_route_after_plan_to_act(self):
-        """Test routing to act when plan has action steps."""
-        from src.orchestrator.edges import route_after_plan
-
-        state = AgentState(
-            session_id="test",
-            agent_id="test",
-            org_id="test",
-            messages=[],
-            plan={
-                "goal": "Do something",
-                "steps": [{"action": "search", "params": {}}],
-                "current_step_index": 0,
-            },
-            tool_results=[],
-            reflection=None,
-            error=None,
-            current_step="plan",
-            iteration=0,
-            memory_context="",
-            metadata={},
-        )
-
-        route = route_after_plan(state)
-        assert route in ["act", "delegate", "respond"]
-
-    def test_route_after_plan_to_respond(self):
-        """Test routing to respond when plan only has respond step."""
-        from src.orchestrator.edges import route_after_plan
-
-        state = AgentState(
-            session_id="test",
-            agent_id="test",
-            org_id="test",
-            messages=[],
-            plan={
-                "goal": "Just respond",
-                "steps": [{"action": "respond", "params": {}}],
-                "current_step_index": 0,
-            },
-            tool_results=[],
-            reflection=None,
-            error=None,
-            current_step="plan",
-            iteration=0,
-            memory_context="",
-            metadata={},
-        )
-
-        route = route_after_plan(state)
-        assert route == "respond"
-
-    def test_route_after_observe_to_reflect(self):
-        """Test routing to reflect when all steps complete."""
-        from src.orchestrator.edges import route_after_observe
-
-        state = AgentState(
-            session_id="test",
-            agent_id="test",
-            org_id="test",
-            messages=[],
-            plan={
-                "goal": "Done",
-                "steps": [{"action": "search", "params": {}}],
-                "current_step_index": 1,  # Past last step
-            },
-            tool_results=[{"success": True}],
-            reflection=None,
-            error=None,
-            current_step="observe",
-            iteration=1,
-            memory_context="",
-            metadata={},
-        )
-
-        route = route_after_observe(state)
-        assert route == "reflect"
-
-
-class TestStateTransitions:
-    """Tests for state transitions during execution."""
-
-    @pytest.mark.asyncio
-    async def test_state_immutability(self, e2e_context, initial_state):
-        """Test that node functions return new state, not mutate."""
-        from src.orchestrator.nodes import start_node
-
-        original_step = initial_state.current_step
-
-        result = await start_node(initial_state, e2e_context)
-
-        # Original state should be unchanged
-        assert initial_state.current_step == original_step
-        # Result should have new value
-        assert result["current_step"] != original_step
-
-    @pytest.mark.asyncio
-    async def test_message_preservation(self, e2e_context, initial_state):
-        """Test that messages are preserved through transitions."""
-        from src.orchestrator.nodes import start_node, plan_node
-
-        original_messages = initial_state.messages.copy()
-
-        result = await start_node(initial_state, e2e_context)
-        updated_state = AgentState(**{**initial_state, **result})
-
-        result = await plan_node(updated_state, e2e_context)
-
-        # Messages should still be there (unless intentionally modified)
-        assert len(updated_state.messages) >= len(original_messages)
-
-    @pytest.mark.asyncio
-    async def test_iteration_increment(self, e2e_context, initial_state):
-        """Test that iteration counter increments properly."""
-        from src.orchestrator.nodes import act_node
-
-        state_with_plan = AgentState(
-            **{
-                **initial_state,
-                "plan": {
-                    "goal": "Test",
-                    "steps": [{"action": "test", "params": {}}],
-                    "current_step_index": 0,
+def _write_rules(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "rule_chat_notify",
+                    "name": "rule_chat_notify",
+                    "event_type": "chat.message.received",
+                    "action_mode": "auto",
+                    "actions": [
+                        {
+                            "action_type": "notify",
+                            "params": {
+                                "channel": "ops",
+                                "title": "新群消息",
+                                "content": "收到一条需要处理的群消息",
+                            },
+                        }
+                    ],
+                    "is_active": True,
                 },
-                "current_step": "act",
-            }
+                {
+                    "id": "rule_webhook_alert",
+                    "name": "rule_webhook_alert",
+                    "event_type": "ops.alert",
+                    "action_mode": "auto",
+                    "actions": [{"action_type": "notify"}],
+                    "is_active": True,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_e2e_chat_event_triggers_notify(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict[str, Any]] = []
+
+    async def _send(url: str, payload: dict[str, Any], timeout: float) -> None:
+        sent.append({"url": url, "payload": payload, "timeout": timeout})
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        feishu_webhook_urls={"default": "https://default/hook", "ops": "https://ops/hook"},
+        feishu_send_fn=_send,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.post(
+            "/v1/events",
+            json={
+                "event_type": "chat.message.received",
+                "source": "e2e",
+                "subject": "chat:ops",
+                "payload": {"text": "请处理今日库存异常"},
+            },
         )
+        assert resp.status_code == 200
+        assert resp.json()["matched_rules"] == 1
 
-        original_iteration = state_with_plan.iteration
+        events = await client.get("/v1/events?event_type=chat.message.received&limit=5")
+        assert events.status_code == 200
+        assert len(events.json()["items"]) == 1
 
-        result = await act_node(state_with_plan, e2e_context)
+    assert len(sent) == 1
+    assert sent[0]["url"] == "https://ops/hook"
+    assert sent[0]["payload"]["card"]["header"]["title"]["content"] == "新群消息"
 
-        # Iteration should increment after action
-        if "iteration" in result:
-            assert result["iteration"] >= original_iteration
+
+@pytest.mark.asyncio
+async def test_e2e_webhook_to_rule_and_metrics(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.post(
+            "/v1/webhooks/ops.alert",
+            json={"source": "monitor", "subject": "service:a", "payload": {"error_rate": 0.8}},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["event_type"] == "ops.alert"
+        assert resp.json()["matched_rules"] == 1
+
+        metrics = await client.get("/v1/metrics/events")
+        assert metrics.status_code == 200
+        payload = metrics.json()
+        assert payload["events_total"] >= 1
+        assert payload["rule_runs_total"] >= 1
+
+        runs = await client.get("/v1/dashboard/rule-runs?limit=10")
+        assert runs.status_code == 200
+        assert len(runs.json()["items"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_e2e_events_cursor_resume_flow(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        for i in range(3):
+            resp = await client.post(
+                "/v1/events",
+                json={"event_type": "ops.alert", "source": "e2e", "payload": {"i": i}},
+            )
+            assert resp.status_code == 200
+
+        first = await client.get("/v1/dashboard/events?limit=2")
+        assert first.status_code == 200
+        first_payload = first.json()
+        assert len(first_payload["items"]) >= 1
+        cursor = first_payload["next_cursor"]
+        assert cursor is not None
+
+        second = await client.get(f"/v1/dashboard/events?resume_from={cursor}&limit=10")
+        assert second.status_code == 200
+        second_payload = second.json()
+        assert "items" in second_payload

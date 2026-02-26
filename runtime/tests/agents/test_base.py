@@ -129,3 +129,25 @@ class TestBaseAgent:
         result = await agent.run(sample_agent_state)
 
         assert result.get("executed") is True
+
+    @pytest.mark.asyncio
+    async def test_run_emits_lifecycle_events(self, sample_agent_config, sample_agent_state):
+        """Test run() emits pre/post lifecycle events when emitter is configured."""
+
+        class DummyEmitter:
+            def __init__(self):
+                self.events = []
+
+            async def emit(self, event):
+                self.events.append(event)
+
+        class TestAgent(BaseAgent):
+            async def execute(self, state):
+                return state
+
+        emitter = DummyEmitter()
+        agent = TestAgent(config=sample_agent_config, event_emitter=emitter)
+        await agent.run(sample_agent_state)
+
+        event_types = [event.event_type for event in emitter.events]
+        assert event_types == ["agent.lifecycle.pre_execute", "agent.lifecycle.post_execute"]

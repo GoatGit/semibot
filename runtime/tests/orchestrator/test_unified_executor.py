@@ -471,3 +471,36 @@ async def test_disconnected_mcp_server(runtime_context, mock_skill_registry, moc
 
     assert result.success is False
     assert "not in capability graph" in result.error
+
+
+@pytest.mark.asyncio
+async def test_emits_tool_exec_events(runtime_context, mock_skill_registry):
+    """Test tool execution emits started/completed runtime events."""
+
+    class DummyEmitter:
+        def __init__(self):
+            self.events = []
+
+        async def emit(self, event):
+            self.events.append(event)
+
+    emitter = DummyEmitter()
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+        event_emitter=emitter,
+    )
+
+    action = PlanStep(
+        id="step_emit",
+        title="Emit test",
+        tool="test_skill",
+        params={"input": "ping"},
+    )
+    result = await executor.execute(action)
+
+    assert result.success is True
+    assert len(emitter.events) >= 2
+    event_types = [event.event_type for event in emitter.events]
+    assert "tool.exec.started" in event_types
+    assert "tool.exec.completed" in event_types
