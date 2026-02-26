@@ -20,6 +20,10 @@ import evolvedSkillsRouter from './evolved-skills'
 import webhooksRouter from './webhooks'
 import vmRouter from './vm'
 import filesRouter from './files'
+import runtimeRouter from './runtime'
+import eventsRouter from './events'
+import rulesRouter from './rules'
+import approvalsRouter from './approvals'
 
 const router: Router = Router()
 
@@ -55,5 +59,9 @@ router.use('/evolved-skills', evolvedSkillsRouter)
 router.use('/webhooks', webhooksRouter)
 router.use('/vm', vmRouter)
 router.use('/files', filesRouter)
+router.use('/runtime', runtimeRouter)
+router.use('/events', eventsRouter)
+router.use('/rules', rulesRouter)
+router.use('/approvals', approvalsRouter)
 
 export default router

@@ -52,11 +52,26 @@ export const MESSAGE_BUBBLE_MAX_WIDTH_PERCENT = 80
 // 布局配置
 // ═══════════════════════════════════════════════════════════════
 
+/** 新建会话路径 */
+export const NEW_CHAT_PATH = '/chat/new' as const
+
 /** 不需要显示详情画布的路径 */
-export const PATHS_WITHOUT_DETAIL = ['/settings', '/agents', '/', '/skills', '/mcp', '/chat/new'] as const
+export const PATHS_WITHOUT_DETAIL = [
+  '/dashboard',
+  '/settings',
+  '/config',
+  '/agents',
+  '/skills',
+  '/mcp',
+  '/tools',
+  '/events',
+  '/rules',
+  '/approvals',
+  NEW_CHAT_PATH,
+] as const
 
 /** 首页路径 */
-export const HOME_PATH = '/'
+export const HOME_PATH = '/dashboard'
 
 /** 侧边导航宽度 (像素) */
 export const SIDEBAR_NAV_WIDTH_PX = 224 // w-56 = 14rem = 224px

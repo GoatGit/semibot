@@ -15,8 +15,8 @@ export default defineConfig({
   // 测试文件匹配模式
   testMatch: '**/*.spec.ts',
 
-  // 完全并行运行测试
-  fullyParallel: true,
+  // Next.js dev server 在高并发下容易出现热更新抖动，默认串行文件级执行
+  fullyParallel: false,
 
   // CI 环境下禁止 test.only
   forbidOnly: !!process.env.CI,
@@ -24,8 +24,8 @@ export default defineConfig({
   // CI 环境下重试失败的测试
   retries: process.env.CI ? 2 : 0,
 
-  // CI 环境下限制并行 worker 数量
-  workers: process.env.CI ? 1 : undefined,
+  // 控制并发，降低本地 dev server 抖动导致的偶发失败
+  workers: process.env.CI ? 1 : 2,
 
   // 测试报告配置
   reporter: [
@@ -100,7 +100,9 @@ export default defineConfig({
   webServer: {
     command: 'pnpm --filter @semibot/web dev',
     url: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    // 默认不复用本地已运行的 dev server，避免命中陈旧构建导致前端 JS 404
+    // 如需复用可显式设置 PW_REUSE_SERVER=1
+    reuseExistingServer: process.env.PW_REUSE_SERVER === '1',
     timeout: 120000,
     cwd: '../..',
   },

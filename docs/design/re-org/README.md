@@ -70,6 +70,9 @@ A：官方文档显示它是自研的 Control UI（由 Gateway 提供静态页�
 **Q：Semibot WebUI 该复用原有框架，还是换新的开源方案？**  
 A：当前阶段建议复用原有 `Next.js + React + Tailwind`。这是最低迁移成本、最快交付和最稳妥方案。WebUI 仅承担可视化管理（规则、审批、回放、观测），核心运行时仍以 `CLI + Python` 为主。暂不建议为此切换到新框架（如 Vite+Lit/TUI），避免重构期并行引入第二类风险。
 
+**Q：会话里报错“执行平面未就绪（状态: provisioning）”是什么意思？**  
+A：表示控制平面已下发启动，但执行平面进程尚未成功连回 `/ws/vm`。重构后已修复一个关键兼容问题：`python -m src.main` 在带 `VM_USER_ID/VM_TOKEN` 环境变量且无子命令时，会自动进入执行平面模式（而不是报 CLI 参数错误）。若仍出现该报错，先检查 `/tmp/semibot-runtime-<user_id>.log`、`GET /api/v1/vm/status`，必要时调用 `POST /api/v1/vm/rebootstrap`。
+
 ## 文档索引
 
 ### 架构与核心
@@ -77,6 +80,7 @@ A：当前阶段建议复用原有 `Next.js + React + Tailwind`。这是最低�
 | 文档 | 内容 |
 |------|------|
 | [架构设计](./architecture.md) | 新架构总览、组件设计、技术选型 |
+| [前端重构设计](./frontend-design.md) | Web UI 信息架构、页面设计、状态流与落地里程碑 |
 | [核心特性](./core-pillars.md) | 四大特性的机制落点与可验证指标 |
 | [记忆系统](./memory-system.md) | 短期记忆 + 长期记忆 + 沉淀器 |
 | [术语表](./glossary.md) | 关键概念与判定术语 |

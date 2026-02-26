@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAgent2UI } from './useAgent2UI'
 import { useSessionStore } from '@/stores/sessionStore'
 import type { Agent2UIMessage, SSEDoneData, SSEErrorData } from '@/types'
+import { AUTH_DISABLED } from '@/lib/auth-mode'
 
 // ═══════════════════════════════════════════════════════════════
 // 常量
@@ -23,6 +24,7 @@ const SSE_BASE_URL =
 
 /** 获取认证 Token */
 function getAuthToken(): string | undefined {
+  if (AUTH_DISABLED) return undefined
   if (typeof window === 'undefined') return undefined
   return localStorage.getItem('auth_token') ?? undefined
 }

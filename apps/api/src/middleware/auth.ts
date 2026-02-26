@@ -70,6 +70,32 @@ function getJWTSecret(): string {
 const JWT_SECRET = getJWTSecret()
 
 /**
+ * V2 单机模式默认关闭鉴权。
+ * 如需临时恢复鉴权，显式设置：
+ * - SEMIBOT_ENABLE_AUTH=true
+ *
+ * 兼容旧变量：
+ * - SEMIBOT_DISABLE_AUTH=false
+ */
+function isAuthDisabled(): boolean {
+  const enableAuth = process.env.SEMIBOT_ENABLE_AUTH
+  const disableAuth = process.env.SEMIBOT_DISABLE_AUTH
+
+  if (enableAuth !== undefined) return enableAuth !== 'true'
+  if (disableAuth !== undefined) return disableAuth !== 'false'
+  return true
+}
+
+function buildSingleUserContext(): AuthUser {
+  return {
+    userId: process.env.SEMIBOT_SINGLE_USER_ID || '22222222-2222-2222-2222-222222222222',
+    orgId: process.env.SEMIBOT_SINGLE_ORG_ID || '11111111-1111-1111-1111-111111111111',
+    role: 'owner',
+    permissions: ['*'],
+  }
+}
+
+/**
  * 发送认证错误响应
  */
 function sendAuthError(res: Response, code: string): void {
@@ -197,6 +223,12 @@ async function checkTokenBlacklist(token: string): Promise<boolean> {
  * - JWT: Authorization: Bearer eyJxxx
  */
 export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (isAuthDisabled()) {
+    req.user = buildSingleUserContext()
+    next()
+    return
+  }
+
   const token = extractToken(req)
 
   if (!token) {
@@ -261,6 +293,12 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
  * 可选认证中间件 - 如果有 Token 则验证，没有则跳过
  */
 export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (isAuthDisabled()) {
+    req.user = buildSingleUserContext()
+    next()
+    return
+  }
+
   const token = extractToken(req)
 
   if (!token) {

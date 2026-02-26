@@ -16,6 +16,7 @@ import {
   type LLMModelInfo,
   type LLMProvider,
   registerProvider,
+  clearProviders,
   getProvider,
   getAvailableProviders,
 } from './llm/index'
@@ -58,6 +59,16 @@ function initializeProviders(): void {
 
 // 立即初始化
 initializeProviders()
+
+/**
+ * 运行时重载 Provider（用于 LLM 配置更新后生效）
+ */
+export function reloadProviders(): void {
+  clearProviders()
+  isInitialized = false
+  initializeProviders()
+  llmLogger.info('Providers 已重载')
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 默认配置

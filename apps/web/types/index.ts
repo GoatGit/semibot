@@ -249,3 +249,51 @@ export interface ExecutionLog {
   metadata: Record<string, unknown>
   createdAt: string
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Event Engine 类型（前端）
+// ═══════════════════════════════════════════════════════════════
+
+export type RiskLevel = 'low' | 'medium' | 'high'
+
+export interface EventRecord {
+  id: string
+  eventType: string
+  source: string
+  subject?: string
+  payload?: Record<string, unknown>
+  riskHint?: RiskLevel
+  createdAt: string
+}
+
+export type RuleActionType = 'notify' | 'run_agent' | 'execute_plan' | 'write_memory'
+export type RuleActionMode = 'ask' | 'suggest' | 'auto' | 'skip'
+
+export interface RuleAction {
+  actionType: RuleActionType
+  params?: Record<string, unknown>
+}
+
+export interface EventRule {
+  id: string
+  name: string
+  eventType: string
+  actionMode: RuleActionMode
+  riskLevel: RiskLevel
+  priority: number
+  isActive: boolean
+  dedupeWindowSeconds?: number
+  cooldownSeconds?: number
+  attentionBudgetPerDay?: number
+}
+
+export interface ApprovalRecord {
+  id: string
+  eventId?: string
+  eventType?: string
+  status: 'pending' | 'approved' | 'rejected' | 'expired'
+  riskLevel: RiskLevel
+  reason?: string
+  createdAt: string
+  resolvedAt?: string
+}

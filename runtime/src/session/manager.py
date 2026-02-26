@@ -153,13 +153,33 @@ class SessionManager:
     async def _on_config_update(self, payload: dict[str, Any]) -> None:
         if not isinstance(payload, dict):
             return
+        # 更新 VM 级 init_data，影响后续新建会话
+        api_keys = payload.get("api_keys")
+        if isinstance(api_keys, dict):
+            existing = self.init_data.get("api_keys")
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            for provider, key in api_keys.items():
+                if isinstance(provider, str) and provider.strip() and isinstance(key, str):
+                    if key.strip():
+                        merged[provider] = key
+                    else:
+                        merged.pop(provider, None)
+            self.init_data["api_keys"] = merged
+
+        llm_config = payload.get("llm_config")
+        if isinstance(llm_config, dict):
+            self.init_data["llm_config"] = llm_config
+
         session_id = str(payload.get("session_id", ""))
-        if not session_id:
+        if session_id:
+            adapter = self.adapters.get(session_id)
+            if adapter:
+                await adapter.update_config(payload)
             return
-        adapter = self.adapters.get(session_id)
-        if not adapter:
-            return
-        await adapter.update_config(payload)
+
+        # 无 session_id 时，广播应用到所有活跃会话
+        for adapter in self.adapters.values():
+            await adapter.update_config(payload)
 
     async def _sync_snapshot_if_supported(self, session_id: str, adapter: RuntimeAdapter) -> None:
         snapshot = await adapter.get_snapshot()

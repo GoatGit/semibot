@@ -30,7 +30,9 @@ export function DetailCanvas() {
     exitMaximize
   } = useLayoutStore()
 
-  const isPathWithoutDetail = PATHS_WITHOUT_DETAIL.some((p) => currentPath === p || (p !== '/' && currentPath.startsWith(p)))
+  const isPathWithoutDetail = PATHS_WITHOUT_DETAIL.some(
+    (p) => currentPath === p || currentPath.startsWith(`${p}/`)
+  )
 
   // 折叠状态下，若当前路径不需要详情画布，完全不渲染
   if (detailCanvasMode === 'collapsed' && isPathWithoutDetail) {

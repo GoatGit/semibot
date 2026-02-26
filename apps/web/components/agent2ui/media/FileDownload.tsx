@@ -2,6 +2,7 @@
 
 import clsx from 'clsx'
 import { Download, File, FileText, FileImage, FileVideo, FileAudio, FileArchive } from 'lucide-react'
+import { AUTH_DISABLED } from '@/lib/auth-mode'
 
 interface FileDownloadProps {
   data: {
@@ -81,7 +82,7 @@ export function FileDownload({ data }: FileDownloadProps) {
   const handleDownload = async () => {
     const downloadUrl = resolveDownloadUrl()
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+      const token = !AUTH_DISABLED && typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
       const response = await fetch(downloadUrl, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       })

@@ -36,6 +36,12 @@ class FakeWS {
 describe('ws-server handshake', () => {
   const originalOpenAI = process.env.OPENAI_API_KEY
   const originalAnthropic = process.env.ANTHROPIC_API_KEY
+  const originalGoogle = process.env.GOOGLE_AI_API_KEY
+  const originalCustom = process.env.CUSTOM_LLM_API_KEY
+  const originalOpenAIBase = process.env.OPENAI_API_BASE_URL
+  const originalCustomBase = process.env.CUSTOM_LLM_API_BASE_URL
+  const originalDefaultModel = process.env.DEFAULT_LLM_MODEL
+  const originalFallbackModel = process.env.FALLBACK_LLM_MODEL
   const originalNodeEnv = process.env.NODE_ENV
 
   beforeEach(() => {
@@ -43,6 +49,12 @@ describe('ws-server handshake', () => {
     process.env.NODE_ENV = 'test'
     process.env.OPENAI_API_KEY = 'sk-openai-test'
     process.env.ANTHROPIC_API_KEY = 'sk-anthropic-test'
+    process.env.GOOGLE_AI_API_KEY = 'sk-google-test'
+    process.env.CUSTOM_LLM_API_KEY = 'sk-custom-test'
+    process.env.OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+    process.env.CUSTOM_LLM_API_BASE_URL = 'https://custom.example.com/v1'
+    process.env.DEFAULT_LLM_MODEL = 'gpt-4o'
+    process.env.FALLBACK_LLM_MODEL = 'gpt-4.1-mini'
   })
 
   afterEach(() => {
@@ -51,6 +63,24 @@ describe('ws-server handshake', () => {
 
     if (originalAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY
     else process.env.ANTHROPIC_API_KEY = originalAnthropic
+
+    if (originalGoogle === undefined) delete process.env.GOOGLE_AI_API_KEY
+    else process.env.GOOGLE_AI_API_KEY = originalGoogle
+
+    if (originalCustom === undefined) delete process.env.CUSTOM_LLM_API_KEY
+    else process.env.CUSTOM_LLM_API_KEY = originalCustom
+
+    if (originalOpenAIBase === undefined) delete process.env.OPENAI_API_BASE_URL
+    else process.env.OPENAI_API_BASE_URL = originalOpenAIBase
+
+    if (originalCustomBase === undefined) delete process.env.CUSTOM_LLM_API_BASE_URL
+    else process.env.CUSTOM_LLM_API_BASE_URL = originalCustomBase
+
+    if (originalDefaultModel === undefined) delete process.env.DEFAULT_LLM_MODEL
+    else process.env.DEFAULT_LLM_MODEL = originalDefaultModel
+
+    if (originalFallbackModel === undefined) delete process.env.FALLBACK_LLM_MODEL
+    else process.env.FALLBACK_LLM_MODEL = originalFallbackModel
 
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV
     else process.env.NODE_ENV = originalNodeEnv
@@ -79,6 +109,16 @@ describe('ws-server handshake', () => {
     expect(typeof init.data.api_keys.openai.ciphertext).toBe('string')
     expect(init.data.api_keys.openai.ciphertext).not.toContain('sk-openai-test')
     expect(init.data.api_keys.anthropic.alg).toBe('aes-256-gcm')
+    expect(init.data.api_keys.google.alg).toBe('aes-256-gcm')
+    expect(init.data.api_keys.custom.alg).toBe('aes-256-gcm')
+    expect(init.data.llm_config).toMatchObject({
+      default_model: 'gpt-4o',
+      fallback_model: 'gpt-4.1-mini',
+      providers: {
+        openai: { base_url: 'https://api.openai.com/v1' },
+        custom: { base_url: 'https://custom.example.com/v1' },
+      },
+    })
   })
 
   it('rejects connection when user_id is missing', () => {

@@ -10,7 +10,7 @@ import {
   DEFAULT_MAX_RETRIES,
   RETRY_BASE_DELAY_MS,
 } from '@semibot/shared-config'
-import { useAuthStore } from '@/stores/authStore'
+import { AUTH_DISABLED } from '@/lib/auth-mode'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -39,7 +39,8 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 export function getApiBaseUrl(): string {
   // 优先使用环境变量
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL
+    const normalized = process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '')
+    return normalized.endsWith(API_BASE_PATH) ? normalized : `${normalized}${API_BASE_PATH}`
   }
 
   // 浏览器环境使用相对路径
@@ -55,6 +56,7 @@ export function getApiBaseUrl(): string {
  * 获取认证 Token
  */
 function getAuthToken(): string | null {
+  if (AUTH_DISABLED) return null
   if (typeof window === 'undefined') return null
   return localStorage.getItem('auth_token')
 }
@@ -88,26 +90,30 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function parseJsonSafe<T = unknown>(text: string): T | Record<string, never> {
+  if (!text) return {}
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return {}
+  }
+}
+
+function extractErrorMessage(data: unknown, fallback: string): string {
+  if (data && typeof data === 'object') {
+    const payload = data as { error?: { message?: string }; message?: string }
+    if (payload.error?.message) return payload.error.message
+    if (payload.message) return payload.message
+  }
+  return fallback
+}
+
 /**
  * 判断是否应该重试
  * 注意：429 限流不重试，重试只会加剧限流形成恶性循环
  */
 function shouldRetry(status: number): boolean {
   return status >= 500
-}
-
-/**
- * 处理认证过期：清除状态并跳转登录页
- */
-function handleAuthExpired(): void {
-  if (typeof window === 'undefined') return
-
-  // 防止重复跳转
-  if (window.location.pathname === '/login') return
-
-  useAuthStore.getState().logout()
-  const redirect = encodeURIComponent(window.location.pathname + window.location.search)
-  window.location.href = `/login?redirect=${redirect}`
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -145,15 +151,11 @@ async function request<T>(
 
   // 构建请求头
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(customHeaders as Record<string, string>),
   }
 
-  // 登录/注册等认证接口不应携带旧 token
-  const isAuthEndpoint = path === '/auth/login' || path === '/auth/register' || path === '/auth/refresh'
-
   const token = getAuthToken()
-  if (token && !isAuthEndpoint) {
+  if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
 
@@ -165,6 +167,9 @@ async function request<T>(
   }
 
   if (body && method !== 'GET') {
+    if (!headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json'
+    }
     requestInit.body = JSON.stringify(body)
   }
 
@@ -185,14 +190,10 @@ async function request<T>(
 
       clearTimeout(timeoutId)
 
-      // 解析响应
-      const data = await response.json()
-
-      // 认证过期，跳转登录页（但登录/注册接口的 401 不应触发跳转）
-      if (response.status === 401 && !isAuthEndpoint) {
-        handleAuthExpired()
-        throw new Error('认证已过期')
-      }
+      // 解析响应（兼容 204/空响应）
+      const isNoContent = response.status === 204 || response.status === 205
+      const rawText = isNoContent ? '' : await response.text()
+      const data = parseJsonSafe(rawText)
 
       // 请求失败：先判断是否可重试，再抛出错误
       if (!response.ok) {
@@ -206,7 +207,7 @@ async function request<T>(
           continue
         }
 
-        const errorMessage = data?.error?.message || data?.message || response.statusText
+        const errorMessage = extractErrorMessage(data, response.statusText)
         throw Object.assign(new Error(errorMessage), {
           response: { status: response.status, data }
         })
@@ -290,7 +291,10 @@ export const apiClient = {
     } = options
 
     // 上传直连后端，绕过 Next.js rewrite 代理（代理可能破坏 multipart body）
-    const directBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
+    const directBaseRaw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
+    const directBase = directBaseRaw.replace(/\/$/, '').endsWith('/api/v1')
+      ? directBaseRaw.replace(/\/$/, '')
+      : `${directBaseRaw.replace(/\/$/, '')}/api/v1`
     const url = `${directBase}${path}`
 
     const headers: Record<string, string> = {
@@ -319,7 +323,8 @@ export const apiClient = {
 
         clearTimeout(timeoutId)
 
-        const data = await response.json()
+        const rawText = await response.text()
+        const data = parseJsonSafe(rawText)
 
         if (!response.ok) {
           if (retry && shouldRetry(response.status) && attempt < maxRetries) {
@@ -328,9 +333,7 @@ export const apiClient = {
             attempt++
             continue
           }
-          const message = (data as Record<string, unknown>)?.error
-            ? ((data as Record<string, { message?: string }>).error?.message || response.statusText)
-            : response.statusText
+          const message = extractErrorMessage(data, response.statusText)
           throw Object.assign(new Error(message), { response: { status: response.status, data } })
         }
 

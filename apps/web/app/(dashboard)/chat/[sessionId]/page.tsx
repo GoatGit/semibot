@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
-import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon } from 'lucide-react'
+import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
 import { CitationList } from '@/components/agent2ui/text/CitationList'
@@ -28,6 +28,7 @@ import type {
 import {
   TIME_FORMAT_OPTIONS,
   DEFAULT_LOCALE,
+  NEW_CHAT_PATH,
   CHAT_UPLOAD_ALLOWED_EXTENSIONS,
 } from '@/constants/config'
 
@@ -161,6 +162,7 @@ export default function ChatSessionPage() {
 
   const [inputValue, setInputValue] = useState('')
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([])
+  const [sessionMeta, setSessionMeta] = useState<Session | null>(null)
   const [isLoadingSession, setIsLoadingSession] = useState(true)
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -181,7 +183,6 @@ export default function ChatSessionPage() {
   } = useChat({
     sessionId,
     onMessage: (message) => {
-      console.log('[Chat] onMessage 收到消息:', message.type, message.data)
       // 处理文件消息
       if (message.type === 'file') {
         const fileData = message.data as { url: string; filename: string; mimeType: string; size?: number }
@@ -314,6 +315,7 @@ export default function ChatSessionPage() {
         }
 
         const session = sessionResponse.data
+        setSessionMeta(session)
         setStoreSession({
           id: session.id,
           agentId: session.agentId,
@@ -548,6 +550,45 @@ export default function ChatSessionPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
+      <div className="border-b border-border-subtle bg-bg-surface">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => router.push('/chat')}
+                className="p-1 rounded-md text-text-tertiary hover:bg-interactive-hover hover:text-text-primary"
+                aria-label="返回会话列表"
+              >
+                <ArrowLeft size={16} />
+              </button>
+              <h1 className="text-sm font-semibold text-text-primary truncate">
+                {sessionMeta?.title || '未命名会话'}
+              </h1>
+            </div>
+            <p className="text-xs text-text-tertiary pl-7 mt-0.5">
+              会话 {sessionId.slice(0, 8)}...
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={clsx(
+                'px-2 py-1 rounded-full text-xs',
+                sessionMeta?.status === 'active'
+                  ? 'bg-success-500/10 text-success-500'
+                  : 'bg-interactive-hover text-text-secondary'
+              )}
+            >
+              {sessionMeta?.status || 'active'}
+            </span>
+            <Button size="xs" variant="secondary" onClick={() => router.push(NEW_CHAT_PATH)}>
+              新建
+            </Button>
+          </div>
+        </div>
+      </div>
+
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
@@ -688,7 +729,7 @@ export default function ChatSessionPage() {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept="text/*,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.*,application/vnd.ms-excel,.csv,.json,.yaml,.yml,.toml,.ini,.cfg,.log,.env,.sql,.sh"
+                accept={CHAT_UPLOAD_ALLOWED_EXTENSIONS.join(',')}
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files) {

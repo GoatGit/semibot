@@ -23,7 +23,6 @@ import { Card, CardContent } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { apiClient } from '@/lib/api'
-import { useAuthStore } from '@/stores/authStore'
 
 interface ApiResponse<T> {
   success: boolean
@@ -366,9 +365,6 @@ export default function McpPage() {
   const [editingServerId, setEditingServerId] = useState<string | null>(null)
   const [formState, setFormState] = useState(EMPTY_FORM)
 
-  const user = useAuthStore((s) => s.user)
-  const isAdmin = user?.role === 'admin' || user?.role === 'owner'
-
   const loadServers = useCallback(async () => {
     try {
       setLoading(true)
@@ -609,33 +605,29 @@ export default function McpPage() {
                           </div>
                         </div>
                       </div>
-                      {(!server.isSystem || isAdmin) && (
-                        <Tooltip content="删除">
-                          <button
-                            onClick={() => handleDelete(server.id)}
-                            disabled={saving}
-                            className="p-1.5 text-text-tertiary hover:text-error-500 flex-shrink-0"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </Tooltip>
-                      )}
+                      <Tooltip content="删除">
+                        <button
+                          onClick={() => handleDelete(server.id)}
+                          disabled={saving}
+                          className="p-1.5 text-text-tertiary hover:text-error-500 flex-shrink-0"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </Tooltip>
                     </div>
 
                     {/* 工具和资源列表 */}
                     <ToolsList tools={server.tools || []} resources={server.resources} />
 
                     <div className="mt-3 pt-3 border-t border-border-subtle flex items-center justify-end gap-2">
-                      {(!server.isSystem || isAdmin) && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => openEditModal(server)}
-                          disabled={saving}
-                        >
-                          编辑
-                        </Button>
-                      )}
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => openEditModal(server)}
+                        disabled={saving}
+                      >
+                        编辑
+                      </Button>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -666,7 +658,7 @@ export default function McpPage() {
             setFormState(EMPTY_FORM)
           }}
           submitLabel="创建"
-          showIsSystem={isAdmin}
+          showIsSystem={true}
         />
       )}
 
@@ -683,7 +675,7 @@ export default function McpPage() {
             setFormState(EMPTY_FORM)
           }}
           submitLabel="保存"
-          showIsSystem={isAdmin}
+          showIsSystem={true}
         />
       )}
     </div>

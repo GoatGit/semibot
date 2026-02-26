@@ -24,6 +24,9 @@ class DummyClient:
 
 
 class DummyAdapter(RuntimeAdapter):
+    def __init__(self) -> None:
+        self.config_updates: list[dict[str, Any]] = []
+
     async def start(self) -> None:
         return None
 
@@ -36,6 +39,9 @@ class DummyAdapter(RuntimeAdapter):
 
     async def stop(self) -> None:
         return None
+
+    async def update_config(self, payload: dict[str, Any]) -> None:
+        self.config_updates.append(dict(payload))
 
 
 @pytest.mark.asyncio
@@ -105,3 +111,50 @@ def test_session_manager_decrypts_init_api_keys(monkeypatch):
     )
 
     assert manager.init_data["api_keys"]["openai"] == "sk-openai-plain"
+
+
+@pytest.mark.asyncio
+async def test_config_update_merges_init_data_and_broadcasts_to_all_adapters() -> None:
+    manager = SessionManager(
+        client=DummyClient(),
+        init_data={
+            "user_id": "u1",
+            "org_id": "o1",
+            "api_keys": {"openai": "sk-openai-old"},
+        },
+    )
+    adapter_a = DummyAdapter()
+    adapter_b = DummyAdapter()
+    manager.adapters["s1"] = adapter_a
+    manager.adapters["s2"] = adapter_b
+
+    await manager._on_config_update(
+        {
+            "api_keys": {
+                "custom": "sk-custom-new",
+            },
+            "llm_config": {
+                "default_model": "gpt-4.1",
+            },
+        }
+    )
+
+    assert manager.init_data["api_keys"]["openai"] == "sk-openai-old"
+    assert manager.init_data["api_keys"]["custom"] == "sk-custom-new"
+    assert manager.init_data["llm_config"]["default_model"] == "gpt-4.1"
+    assert len(adapter_a.config_updates) == 1
+    assert len(adapter_b.config_updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_config_update_targets_single_session_when_session_id_present() -> None:
+    manager = SessionManager(client=DummyClient(), init_data={"user_id": "u1", "org_id": "o1"})
+    adapter_a = DummyAdapter()
+    adapter_b = DummyAdapter()
+    manager.adapters["s1"] = adapter_a
+    manager.adapters["s2"] = adapter_b
+
+    await manager._on_config_update({"session_id": "s2", "llm_config": {"default_model": "gpt-4o"}})
+
+    assert len(adapter_a.config_updates) == 0
+    assert len(adapter_b.config_updates) == 1

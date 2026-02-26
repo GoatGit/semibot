@@ -4,14 +4,24 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useAuthStore } from '@/stores/authStore'
+import { AUTH_DISABLED } from '@/lib/auth-mode'
+
+const SINGLE_USER_DEFAULT = {
+  id: process.env.NEXT_PUBLIC_SINGLE_USER_ID || '22222222-2222-2222-2222-222222222222',
+  email: process.env.NEXT_PUBLIC_SINGLE_USER_EMAIL || 'admin@semibot.local',
+  name: process.env.NEXT_PUBLIC_SINGLE_USER_NAME || 'Semibot Admin',
+  role: 'owner' as const,
+  orgId: process.env.NEXT_PUBLIC_SINGLE_ORG_ID || '11111111-1111-1111-1111-111111111111',
+  orgName: process.env.NEXT_PUBLIC_SINGLE_ORG_NAME || 'Semibot',
+}
 
 describe('Auth Store', () => {
   beforeEach(() => {
     // 重置 store 状态
     useAuthStore.setState({
-      user: null,
+      user: AUTH_DISABLED ? SINGLE_USER_DEFAULT : null,
       tokens: null,
-      isAuthenticated: false,
+      isAuthenticated: AUTH_DISABLED,
       isLoading: false,
       error: null,
     })
@@ -21,9 +31,13 @@ describe('Auth Store', () => {
     it('should have correct initial state', () => {
       const state = useAuthStore.getState()
 
-      expect(state.user).toBeNull()
+      if (AUTH_DISABLED) {
+        expect(state.user).toEqual(SINGLE_USER_DEFAULT)
+      } else {
+        expect(state.user).toBeNull()
+      }
       expect(state.tokens).toBeNull()
-      expect(state.isAuthenticated).toBe(false)
+      expect(state.isAuthenticated).toBe(AUTH_DISABLED)
       expect(state.isLoading).toBe(false)
       expect(state.error).toBeNull()
     })
@@ -113,9 +127,13 @@ describe('Auth Store', () => {
       useAuthStore.getState().logout()
       const state = useAuthStore.getState()
 
-      expect(state.user).toBeNull()
+      if (AUTH_DISABLED) {
+        expect(state.user).toEqual(SINGLE_USER_DEFAULT)
+      } else {
+        expect(state.user).toBeNull()
+      }
       expect(state.tokens).toBeNull()
-      expect(state.isAuthenticated).toBe(false)
+      expect(state.isAuthenticated).toBe(AUTH_DISABLED)
     })
   })
 

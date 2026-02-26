@@ -5,8 +5,6 @@ const rawApiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 const API_BASE = rawApiBase.replace(/\/$/, '').endsWith('/api/v1')
   ? rawApiBase.replace(/\/$/, '')
   : `${rawApiBase.replace(/\/$/, '')}/api/v1`
-const TEST_EMAIL = process.env.E2E_TEST_EMAIL || '12611171@qq.com'
-const TEST_PASSWORD = process.env.E2E_TEST_PASSWORD || 'test123'
 
 type TimelineEvent = {
   event: string
@@ -115,13 +113,8 @@ async function withApiRetry<T>(name: string, fn: () => Promise<T>, maxAttempts =
 }
 
 async function apiLogin(request: APIRequestContext): Promise<string> {
-  const res = await withApiRetry('apiLogin', () => request.post(`${API_BASE}/auth/login`, {
-    data: { email: TEST_EMAIL, password: TEST_PASSWORD },
-  }))
-  expect(res.ok(), `Login failed: ${res.status()}`).toBeTruthy()
-  const body = await res.json()
-  expect(body.success).toBe(true)
-  return body.data.token as string
+  // V2 无鉴权模式：返回占位 token，兼容后续 Authorization 字段构造。
+  return 'no-auth-e2e'
 }
 
 async function getActiveAgentId(request: APIRequestContext, token: string): Promise<string> {

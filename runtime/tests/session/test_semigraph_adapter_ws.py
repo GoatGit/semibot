@@ -195,6 +195,61 @@ def test_semigraph_adapter_registers_package_python_tool():
     assert adapter.skill_registry.get_tool("pkg-skill-demo") is not None
 
 
+def test_semigraph_adapter_uses_runtime_init_llm_config_for_custom_provider():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-llm-init",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={
+            "api_keys": {"custom": "sk-custom"},
+            "llm_config": {
+                "default_model": "qwen-plus",
+                "providers": {
+                    "custom": {
+                        "base_url": "https://custom.example.com/v1",
+                    },
+                },
+            },
+            "memory_dir": "/tmp/semibot-test-memory",
+        },
+        start_payload={"agent_id": "agent-1", "agent_config": {}, "mcp_servers": []},
+    )
+
+    assert adapter.llm_provider is not None
+    assert adapter.llm_provider.config.model == "qwen-plus"
+    assert adapter.llm_provider.config.base_url == "https://custom.example.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_semigraph_adapter_update_config_rebuilds_llm_provider():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-llm-update",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={"api_keys": {}, "memory_dir": "/tmp/semibot-test-memory"},
+        start_payload={"agent_id": "agent-1", "agent_config": {}, "mcp_servers": []},
+    )
+    assert adapter.llm_provider is None
+
+    await adapter.update_config(
+        {
+            "api_keys": {"custom": "sk-custom-new"},
+            "llm_config": {
+                "default_model": "qwen-plus",
+                "providers": {
+                    "custom": {"base_url": "https://custom.example.com/v1"},
+                },
+            },
+        }
+    )
+
+    assert adapter.llm_provider is not None
+    assert adapter.llm_provider.config.model == "qwen-plus"
+    assert adapter.llm_provider.config.base_url == "https://custom.example.com/v1"
+
+
 @pytest.mark.asyncio
 async def test_semigraph_adapter_injects_event_engine_into_runtime_context(monkeypatch):
     import src.session.semigraph_adapter as mod

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { STORAGE_KEYS } from '@/constants/config'
+import { AUTH_DISABLED } from '@/lib/auth-mode'
 
 /**
  * Auth Store - 认证状态管理
@@ -50,13 +51,22 @@ interface AuthState {
   isTokenExpired: () => boolean
 }
 
+const SINGLE_USER_DEFAULT: User = {
+  id: process.env.NEXT_PUBLIC_SINGLE_USER_ID || '22222222-2222-2222-2222-222222222222',
+  email: process.env.NEXT_PUBLIC_SINGLE_USER_EMAIL || 'admin@semibot.local',
+  name: process.env.NEXT_PUBLIC_SINGLE_USER_NAME || 'Semibot Admin',
+  role: 'owner',
+  orgId: process.env.NEXT_PUBLIC_SINGLE_ORG_ID || '11111111-1111-1111-1111-111111111111',
+  orgName: process.env.NEXT_PUBLIC_SINGLE_ORG_NAME || 'Semibot',
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       // 初始状态
-      user: null,
+      user: AUTH_DISABLED ? SINGLE_USER_DEFAULT : null,
       tokens: null,
-      isAuthenticated: false,
+      isAuthenticated: AUTH_DISABLED,
       isLoading: false,
       error: null,
 
@@ -84,6 +94,16 @@ export const useAuthStore = create<AuthState>()(
 
       // 登出
       logout: () => {
+        if (AUTH_DISABLED) {
+          set({
+            user: SINGLE_USER_DEFAULT,
+            tokens: null,
+            isAuthenticated: true,
+            error: null,
+          })
+          return
+        }
+
         // 清除 cookie（用于中间件认证）
         if (typeof document !== 'undefined') {
           document.cookie = 'auth_token=; path=/; max-age=0; samesite=strict'
@@ -153,6 +173,24 @@ export const useAuthStore = create<AuthState>()(
         tokens: state.tokens,
         isAuthenticated: state.isAuthenticated,
       }),
+      merge: (persistedState, currentState) => {
+        const merged = {
+          ...currentState,
+          ...(persistedState as Partial<AuthState> | undefined),
+        }
+
+        if (AUTH_DISABLED) {
+          return {
+            ...merged,
+            user: merged.user ?? SINGLE_USER_DEFAULT,
+            tokens: null,
+            isAuthenticated: true,
+            error: null,
+          }
+        }
+
+        return merged
+      },
     }
   )
 )

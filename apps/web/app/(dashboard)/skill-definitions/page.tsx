@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import clsx from 'clsx'
 import { Search, Plus, RefreshCw, Package, Pencil, Trash2, Loader2, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -11,7 +10,6 @@ import { Modal } from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { apiClient } from '@/lib/api'
-import { useAuthStore } from '@/stores/authStore'
 import type { SkillDefinition } from '@semibot/shared-types'
 
 interface ApiResponse<T> {
@@ -25,6 +23,29 @@ interface ApiResponse<T> {
   }
 }
 
+interface ApiErrorPayload {
+  error?: {
+    message?: string
+  }
+  message?: string
+}
+
+type ApiError = Error & {
+  response?: {
+    data?: ApiErrorPayload
+  }
+}
+
+function getApiErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object') {
+    const apiError = err as ApiError
+    if (apiError.response?.data?.error?.message) return apiError.response.data.error.message
+    if (apiError.response?.data?.message) return apiError.response.data.message
+    if (apiError.message) return apiError.message
+  }
+  return fallback
+}
+
 export default function SkillDefinitionsPage() {
   const [definitions, setDefinitions] = useState<SkillDefinition[]>([])
   const [loading, setLoading] = useState(true)
@@ -33,9 +54,6 @@ export default function SkillDefinitionsPage() {
   const [selectedDefinition, setSelectedDefinition] = useState<SkillDefinition | null>(null)
   const [showInstallDialog, setShowInstallDialog] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
-
-  const user = useAuthStore((s) => s.user)
-  const isAdmin = user?.role === 'admin' || user?.role === 'owner'
 
   // 安装表单状态
   const [installSourceType, setInstallSourceType] = useState<'anthropic' | 'git' | 'url'>('anthropic')
@@ -75,7 +93,11 @@ export default function SkillDefinitionsPage() {
       setActionLoading(true)
       setError(null)
 
-      const payload: any = {
+      const payload: {
+        sourceType: 'anthropic' | 'git' | 'url'
+        enableRetry: boolean
+        sourceUrl?: string
+      } = {
         sourceType: installSourceType,
         enableRetry: true,
       }
@@ -89,9 +111,9 @@ export default function SkillDefinitionsPage() {
       setShowInstallDialog(false)
       setInstallSourceUrl('')
       await loadDefinitions()
-    } catch (err: any) {
+    } catch (err) {
       console.error('[SkillDefinitions] 安装失败:', err)
-      setError(err.response?.data?.error?.message || '安装失败')
+      setError(getApiErrorMessage(err, '安装失败'))
     } finally {
       setActionLoading(false)
     }
@@ -116,9 +138,9 @@ export default function SkillDefinitionsPage() {
       setError(null)
       await apiClient.delete(`/skill-definitions/${id}`)
       await loadDefinitions()
-    } catch (err: any) {
+    } catch (err) {
       console.error('[SkillDefinitions] 删除失败:', err)
-      setError(err.response?.data?.error?.message || '删除失败')
+      setError(getApiErrorMessage(err, '删除失败'))
     } finally {
       setActionLoading(false)
     }
@@ -147,9 +169,9 @@ export default function SkillDefinitionsPage() {
       setShowEditDialog(false)
       setEditingDefinition(null)
       await loadDefinitions()
-    } catch (err: any) {
+    } catch (err) {
       console.error('[SkillDefinitions] 更新失败:', err)
-      setError(err.response?.data?.error?.message || '更新失败')
+      setError(getApiErrorMessage(err, '更新失败'))
     } finally {
       setActionLoading(false)
     }
@@ -283,30 +305,26 @@ export default function SkillDefinitionsPage() {
                     >
                       安装
                     </Button>
-                    {isAdmin && (
-                      <>
-                        <Tooltip content="编辑">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => openEditDialog(definition)}
-                            disabled={actionLoading}
-                          >
-                            <Pencil size={14} />
-                          </Button>
-                        </Tooltip>
-                        <Tooltip content="删除">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleDeleteDefinition(definition.id)}
-                            disabled={actionLoading}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </Tooltip>
-                      </>
-                    )}
+                    <Tooltip content="编辑">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => openEditDialog(definition)}
+                        disabled={actionLoading}
+                      >
+                        <Pencil size={14} />
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="删除">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleDeleteDefinition(definition.id)}
+                        disabled={actionLoading}
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </Tooltip>
                   </div>
                 </CardContent>
               </Card>

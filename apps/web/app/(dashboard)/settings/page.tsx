@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import clsx from 'clsx'
-import { User, Palette, ChevronRight, Loader2, Lock } from 'lucide-react'
+import { User, Palette, Loader2, Lock, SlidersHorizontal, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
@@ -35,33 +36,56 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="flex flex-1 min-h-0">
-      <nav className="w-56 flex-shrink-0 border-r border-border-subtle p-4">
-        <h1 className="text-lg font-semibold text-text-primary mb-6">设置</h1>
-        <div className="space-y-1">
+    <div className="flex-1 overflow-y-auto bg-bg-base">
+      <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
+        <Card className="border-border-default">
+          <CardContent className="p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-semibold text-text-primary">个人设置</h1>
+                <p className="mt-1 text-sm text-text-secondary">
+                  管理个人资料、登录安全和界面偏好。
+                </p>
+              </div>
+              <Link
+                href="/config"
+                className={clsx(
+                  'inline-flex items-center gap-2 rounded-md border border-border-default px-3 py-2 text-sm',
+                  'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
+                )}
+              >
+                <SlidersHorizontal size={14} />
+                平台配置
+                <ArrowRight size={14} />
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="flex flex-wrap items-center gap-2">
           {sections.map((section) => (
             <button
               key={section.id}
               onClick={() => setActiveSection(section.id)}
               className={clsx(
-                'flex items-center gap-3 w-full px-3 py-2 rounded-md text-sm',
+                'inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm',
+                'border transition-colors duration-fast',
                 activeSection === section.id
-                  ? 'bg-interactive-active text-text-primary'
-                  : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
+                  ? 'border-primary-500 bg-primary-500/10 text-primary-400'
+                  : 'border-border-default text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
               )}
             >
               {section.icon}
               {section.label}
-              {activeSection === section.id && <ChevronRight size={16} className="ml-auto" />}
             </button>
           ))}
         </div>
-      </nav>
 
-      <div className="flex-1 overflow-y-auto p-6">
+        <div className="rounded-xl border border-border-default bg-bg-surface p-6">
         {activeSection === 'profile' && <ProfileSection />}
         {activeSection === 'password' && <PasswordSection />}
         {activeSection === 'preferences' && <PreferencesSection />}
+        </div>
       </div>
     </div>
   )

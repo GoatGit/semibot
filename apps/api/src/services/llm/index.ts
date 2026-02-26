@@ -140,6 +140,13 @@ export function registerProvider(provider: LLMProvider): void {
 }
 
 /**
+ * 清空 Provider 注册表（用于运行时重载配置）
+ */
+export function clearProviders(): void {
+  providers.clear()
+}
+
+/**
  * 获取 Provider
  */
 export function getProvider(name: string): LLMProvider | undefined {

@@ -81,6 +81,18 @@ pytest --cov=src --cov-report=html
 ## Run
 
 ```bash
+# One-command install + start helper
+./scripts/install_and_start.sh install
+# During install it will guide you to configure OPENAI_API_KEY
+# (saved to ~/.semibot/env.sh)
+
+# Configure/check environment at any time
+./scripts/install_and_start.sh setup-env
+./scripts/install_and_start.sh doctor
+
+./scripts/install_and_start.sh init
+./scripts/install_and_start.sh chat
+
 # Initialize local runtime home (~/.semibot by default)
 semibot init
 
@@ -104,6 +116,15 @@ semibot-api
 
 # Python module entry
 python -m semibot run "写一份周报"
+
+# Execution-plane daemon mode (control-plane bootstrap uses this)
+# When VM_USER_ID + VM_TOKEN are present and no CLI args are given,
+# `python -m src.main` will auto-start WS execution-plane mode.
+VM_USER_ID=... \
+VM_TOKEN=... \
+VM_TICKET=... \
+CONTROL_PLANE_WS=ws://127.0.0.1:3001/ws/vm \
+python -m src.main
 
 # Run task via HTTP API
 curl -X POST http://127.0.0.1:8765/v1/tasks/run \
@@ -129,7 +150,22 @@ curl "http://127.0.0.1:8765/v1/memories/search?query=plan"
 Set environment variables:
 
 ```bash
+# Required for chat/run
 OPENAI_API_KEY=your_key
+# Or custom compatible provider key (requires base URL)
+CUSTOM_LLM_API_KEY=your_key
+# Optional endpoint overrides (custom/OpenAI-compatible gateways)
+OPENAI_API_BASE_URL=https://api.openai.com/v1
+# Required when CUSTOM_LLM_API_KEY is set
+CUSTOM_LLM_API_BASE_URL=https://your-gateway.example.com/v1
+# Model name used by runtime (default: gpt-4o)
+CUSTOM_LLM_MODEL_NAME=gpt-4o
+
+# Optional (recommended for research tasks)
+TAVILY_API_KEY=your_key
+SERPAPI_API_KEY=your_key
+
+# Runtime paths and integrations
 ANTHROPIC_API_KEY=your_key
 SEMIBOT_EVENTS_DB_PATH=~/.semibot/semibot.db
 SEMIBOT_RULES_PATH=~/.semibot/rules

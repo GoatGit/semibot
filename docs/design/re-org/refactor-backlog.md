@@ -17,12 +17,16 @@
 - 增加规则文件加载与热更新
 - 增加 `replay_manager.py`
 - 增加核心测试：幂等、审批、回放、决策路径
+- Web UI：完成无鉴权模式收口（不再跳转登录页）
+- Web UI：配置中心与 runtime 配置统一（LLM/Tools/Skills）
 
 ## P2（协作增强）
 
 - 飞书 Gateway 接入
 - 群聊卡片模板与审批回传
 - Supervisor-Worker 群聊协作视图
+- Web UI：新增 `events/rules/approvals` 三页与回放链路
+- Web UI：Dashboard 增加实时态势与待审批队列
 
 ## P3（进化增强）
 
@@ -40,4 +44,3 @@
 
 - 风险：文档实现偏移  
 防线：每阶段完成后对照 `acceptance-criteria.md` 打勾验收
-

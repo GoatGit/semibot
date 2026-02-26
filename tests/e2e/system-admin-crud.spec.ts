@@ -13,48 +13,33 @@ import { test, expect, type Page } from '@playwright/test'
 // 辅助函数
 // ═══════════════════════════════════════════════════════════════
 
-// 缓存 token，避免每个测试都调用登录 API 触发限流
-let cachedToken: string | null = null
+// 无鉴权模式下仅作为兼容字段传递
+let cachedToken: string | null = 'no-auth-e2e'
 
-/** 登录 - 通过 API 获取 token（带缓存），直接设置 cookie + localStorage */
+/** V2 单用户模式登录占位：仅写入本地默认用户态 */
 async function login(page: Page) {
-  await page.goto('/login', { waitUntil: 'domcontentloaded' })
-
-  if (!cachedToken) {
-    const loginResult = await page.evaluate(async () => {
-      const maxRetries = 5
-      for (let i = 0; i < maxRetries; i++) {
-        const res = await fetch('/api/v1/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: '12611171@qq.com', password: 'test123' }),
-        })
-        const data = await res.json()
-        if (data.success && data.data?.token) {
-          return { success: true, token: data.data.token }
-        }
-        if (res.status === 429) {
-          await new Promise((r) => setTimeout(r, 3000 * (i + 1)))
-          continue
-        }
-        return { success: false, error: data.error?.message }
-      }
-      return { success: false, error: '登录重试次数已用完' }
-    })
-
-    if (!loginResult.success || !loginResult.token) {
-      throw new Error(`Login failed: ${loginResult.error}`)
-    }
-    cachedToken = loginResult.token
-  }
-
-  await page.evaluate((token) => {
-    document.cookie = `auth_token=${token}; path=/; max-age=86400; samesite=strict`
-    localStorage.setItem('auth_token', token)
-  }, cachedToken)
-
+  await page.goto('/dashboard', { waitUntil: 'domcontentloaded' })
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'auth-storage',
+      JSON.stringify({
+        state: {
+          user: {
+            id: 'e2e-single-user',
+            email: 'admin@semibot.local',
+            name: 'Semibot Admin',
+            role: 'owner',
+            orgId: '11111111-1111-1111-1111-111111111111',
+            orgName: 'Semibot',
+          },
+          tokens: null,
+          isAuthenticated: true,
+        },
+        version: 0,
+      })
+    )
+  })
   await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 10000 })
 }
 
 /** 通过 page.evaluate 发起带认证的 API 请求 */

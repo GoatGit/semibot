@@ -61,6 +61,21 @@ interface EncryptedSecretPayload {
   ciphertext: string
 }
 
+interface RuntimeProviderConfig {
+  base_url: string
+}
+
+interface RuntimeLLMConfigPayload {
+  default_model: string
+  fallback_model: string
+  providers: {
+    openai: RuntimeProviderConfig
+    anthropic: RuntimeProviderConfig
+    google: RuntimeProviderConfig
+    custom: RuntimeProviderConfig
+  }
+}
+
 interface WSRequestMessage {
   type: 'request'
   id: string
@@ -174,6 +189,28 @@ export class WSServer {
     })
   }
 
+  /**
+   * 广播运行时 LLM 配置更新到所有在线执行平面连接。
+   * - 无 session_id: Runtime 侧会更新 init_data（影响后续新会话）
+   * - 若有活跃会话，Runtime 会将更新应用到当前会话的 adapter
+   */
+  broadcastLLMConfigUpdate(data: { llm_config: RuntimeLLMConfigPayload; api_keys: Record<string, string> }): void {
+    for (const conn of this.connections.values()) {
+      if (conn.status !== 'ready') continue
+      try {
+        conn.ws.send(JSON.stringify({
+          type: 'config_update',
+          data,
+        }))
+      } catch (error) {
+        wsLogger.warn('广播 LLM 配置到执行平面失败', {
+          userId: conn.userId,
+          error: (error as Error).message,
+        })
+      }
+    }
+  }
+
   close(): void {
     clearInterval(this.heartbeatTimer)
     for (const conn of this.connections.values()) {
@@ -228,6 +265,7 @@ export class WSServer {
           user_id: auth.userId,
           org_id: auth.orgId,
           api_keys: this.getEncryptedInitApiKeys(auth.token),
+          llm_config: this.getRuntimeLLMConfig(),
         },
       }))
 
@@ -255,7 +293,30 @@ export class WSServer {
     const apiKeys: Record<string, EncryptedSecretPayload> = {}
     if (process.env.OPENAI_API_KEY) apiKeys.openai = this.encryptSecret(process.env.OPENAI_API_KEY, vmToken)
     if (process.env.ANTHROPIC_API_KEY) apiKeys.anthropic = this.encryptSecret(process.env.ANTHROPIC_API_KEY, vmToken)
+    if (process.env.GOOGLE_AI_API_KEY) apiKeys.google = this.encryptSecret(process.env.GOOGLE_AI_API_KEY, vmToken)
+    if (process.env.CUSTOM_LLM_API_KEY) apiKeys.custom = this.encryptSecret(process.env.CUSTOM_LLM_API_KEY, vmToken)
     return apiKeys
+  }
+
+  private getRuntimeLLMConfig(): RuntimeLLMConfigPayload {
+    return {
+      default_model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
+      fallback_model: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
+      providers: {
+        openai: {
+          base_url: process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1',
+        },
+        anthropic: {
+          base_url: process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com/v1',
+        },
+        google: {
+          base_url: process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+        },
+        custom: {
+          base_url: process.env.CUSTOM_LLM_API_BASE_URL || '',
+        },
+      },
+    }
   }
 
   private encryptSecret(secretValue: string, vmToken: string): EncryptedSecretPayload {

@@ -6,6 +6,7 @@ import clsx from 'clsx'
 import { Plus, Trash2, MessageSquare, Bot, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { apiClient } from '@/lib/api'
+import { NEW_CHAT_PATH } from '@/constants/config'
 import type { ApiResponse, Session } from '@/types'
 
 /**
@@ -52,7 +53,7 @@ export default function ChatPage() {
 
   // 创建新会话
   const handleCreateSession = () => {
-    router.push('/chat/new')
+    router.push(NEW_CHAT_PATH)
   }
 
   // 选择会话

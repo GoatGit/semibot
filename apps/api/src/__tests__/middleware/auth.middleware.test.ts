@@ -40,6 +40,8 @@ describe('Auth Middleware', () => {
   let mockNext: NextFunction
 
   beforeEach(() => {
+    process.env.SEMIBOT_ENABLE_AUTH = 'true'
+
     mockReq = {
       headers: {},
     }
@@ -51,6 +53,7 @@ describe('Auth Middleware', () => {
   })
 
   afterEach(() => {
+    delete process.env.SEMIBOT_ENABLE_AUTH
     vi.clearAllMocks()
   })
 

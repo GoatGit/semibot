@@ -83,6 +83,26 @@ semibot/
 
 ## 快速开始
 
+### V2 Runtime（推荐先体验）
+
+```bash
+cd runtime
+
+# 安装依赖 + 引导配置 OPENAI_API_KEY
+./scripts/install_and_start.sh install
+
+# 检查环境配置
+./scripts/install_and_start.sh doctor
+
+# 启动交互
+./scripts/install_and_start.sh chat
+```
+
+说明：
+- `chat/run` 需要至少一个 LLM key：`OPENAI_API_KEY` 或 `CUSTOM_LLM_API_KEY`
+- 使用 `CUSTOM_LLM_API_KEY` 时，需要同时配置 `CUSTOM_LLM_API_BASE_URL`
+- 研究类任务建议配置 `TAVILY_API_KEY` 或 `SERPAPI_API_KEY`
+
 ### 环境要求
 
 - Node.js >= 20.0.0

@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useLayoutStore } from '@/stores/layoutStore'
+import { HOME_PATH } from '@/constants/config'
 
 describe('Layout Store', () => {
   beforeEach(() => {
@@ -12,7 +13,7 @@ describe('Layout Store', () => {
       navBarExpanded: true,
       detailCanvasMode: 'collapsed',
       hasDetailContent: false,
-      currentPath: '/',
+      currentPath: HOME_PATH,
     })
   })
 
@@ -23,7 +24,7 @@ describe('Layout Store', () => {
       expect(state.navBarExpanded).toBe(true)
       expect(state.detailCanvasMode).toBe('collapsed')
       expect(state.hasDetailContent).toBe(false)
-      expect(state.currentPath).toBe('/')
+      expect(state.currentPath).toBe(HOME_PATH)
     })
   })
 
@@ -107,9 +108,9 @@ describe('Layout Store', () => {
     it('should set current path and expand nav bar on home', () => {
       useLayoutStore.setState({ navBarExpanded: false })
 
-      useLayoutStore.getState().setCurrentPath('/')
+      useLayoutStore.getState().setCurrentPath(HOME_PATH)
 
-      expect(useLayoutStore.getState().currentPath).toBe('/')
+      expect(useLayoutStore.getState().currentPath).toBe(HOME_PATH)
       expect(useLayoutStore.getState().navBarExpanded).toBe(true)
     })
 

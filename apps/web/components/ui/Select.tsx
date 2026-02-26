@@ -206,7 +206,7 @@ export function Select({
             'py-1'
           )}
         >
-          {options.map((item, i) => {
+          {options.map((item) => {
             if (isGroup(item)) {
               return (
                 <div key={item.label}>

@@ -2,23 +2,23 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLayoutStore } from '@/stores/layoutStore'
-import { useAuthStore } from '@/stores/authStore'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { MS_PER_DAY, RELATIVE_TIME_DAYS_THRESHOLD } from '@/constants/config'
+import { MS_PER_DAY, RELATIVE_TIME_DAYS_THRESHOLD, NEW_CHAT_PATH } from '@/constants/config'
 import clsx from 'clsx'
 import {
-  Home,
+  LayoutDashboard,
   Bot,
-  Settings,
+  SlidersHorizontal,
   Plus,
   MessageSquare,
   Sparkles,
   Puzzle,
-  User,
-  LogOut,
+  Wrench,
+  Activity,
+  Workflow,
+  ShieldCheck,
 } from 'lucide-react'
-import { useRouter } from 'next/navigation'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Session } from '@/types'
 
@@ -29,10 +29,16 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { icon: <Home size={20} />, label: '首页', href: '/' },
+  { icon: <LayoutDashboard size={20} />, label: '仪表盘', href: '/dashboard' },
+  { icon: <MessageSquare size={20} />, label: '会话', href: '/chat' },
+  { icon: <Activity size={20} />, label: '事件', href: '/events' },
+  { icon: <Workflow size={20} />, label: '规则', href: '/rules' },
+  { icon: <ShieldCheck size={20} />, label: '审批', href: '/approvals' },
   { icon: <Bot size={20} />, label: 'Agents', href: '/agents' },
   { icon: <Sparkles size={20} />, label: 'Skills', href: '/skills' },
   { icon: <Puzzle size={20} />, label: 'MCP', href: '/mcp' },
+  { icon: <Wrench size={20} />, label: 'Tools', href: '/tools' },
+  { icon: <SlidersHorizontal size={20} />, label: '配置', href: '/config' },
 ]
 
 /**
@@ -49,12 +55,8 @@ const NAVBAR_SESSION_LIMIT = 10
 
 export function NavBar() {
   const { navBarExpanded } = useLayoutStore()
-  const { user, logout } = useAuthStore()
   const pathname = usePathname()
-  const router = useRouter()
   const [isHovered, setIsHovered] = useState(false)
-  const [showUserMenu, setShowUserMenu] = useState(false)
-  const userMenuRef = useRef<HTMLDivElement>(null)
   const [sessions, setSessions] = useState<Session[]>([])
   const [isLoadingSessions, setIsLoadingSessions] = useState(false)
   const [sessionPage, setSessionPage] = useState(1)
@@ -62,18 +64,6 @@ export function NavBar() {
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-
-  // 点击外部关闭用户菜单
-  useEffect(() => {
-    if (!showUserMenu) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setShowUserMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showUserMenu])
 
   // 加载最近会话列表
   useEffect(() => {
@@ -214,8 +204,8 @@ export function NavBar() {
         <NavButton
           icon={<Plus size={20} />}
           label="新建会话"
-          href="/chat/new"
-          active={pathname === '/chat/new'}
+          href={NEW_CHAT_PATH}
+          active={pathname === NEW_CHAT_PATH}
           expanded={isExpanded}
           variant="primary"
         />
@@ -258,69 +248,6 @@ export function NavBar() {
         )}
       </div>
 
-      {/* 用户菜单 */}
-      <div className="border-t border-border-subtle p-2">
-        <div className="relative" ref={userMenuRef}>
-          <button
-            type="button"
-            data-testid="user-menu"
-            aria-label="用户"
-            onClick={() => setShowUserMenu((prev) => !prev)}
-            className={clsx(
-              'flex items-center gap-3 w-full h-10 px-3 rounded-md',
-              'transition-colors duration-fast',
-              'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
-            )}
-          >
-            <div className="w-7 h-7 rounded-full bg-primary-500/20 flex items-center justify-center">
-              <User size={14} className="text-primary-400" />
-            </div>
-            {isExpanded && (
-              <span className="text-sm font-medium truncate">
-                {user?.name || '用户'}
-              </span>
-            )}
-          </button>
-
-          {showUserMenu && (
-            <div
-              className={clsx(
-                'absolute bottom-full left-0 mb-2 w-full',
-                'bg-bg-elevated border border-border-default rounded-lg shadow-lg',
-                'z-20'
-              )}
-            >
-              <Link
-                href="/settings"
-                className={clsx(
-                  'flex items-center gap-2 w-full px-3 py-2 text-sm',
-                  'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
-                )}
-                onClick={() => setShowUserMenu(false)}
-              >
-                <Settings size={14} />
-                设置
-              </Link>
-              <div className="border-t border-border-subtle" />
-              <button
-                type="button"
-                className={clsx(
-                  'flex items-center gap-2 w-full px-3 py-2 text-sm',
-                  'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
-                )}
-                onClick={() => {
-                  logout()
-                  setShowUserMenu(false)
-                  router.push('/login')
-                }}
-              >
-                <LogOut size={14} />
-                退出登录
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
     </nav>
   )
 }

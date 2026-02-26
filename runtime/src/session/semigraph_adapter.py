@@ -139,18 +139,45 @@ class SemiGraphAdapter(RuntimeAdapter):
 
     def _create_llm_provider(self) -> OpenAIProvider | None:
         api_keys = self.init_data.get("api_keys") or {}
-        api_key = (
-            api_keys.get("openai")
-            or api_keys.get("custom")
-            or os.getenv("OPENAI_API_KEY")
-            or os.getenv("CUSTOM_LLM_API_KEY")
-        )
+        llm_config = self.init_data.get("llm_config") or {}
+        providers_cfg = llm_config.get("providers") if isinstance(llm_config, dict) else {}
+
+        openai_key = api_keys.get("openai") or os.getenv("OPENAI_API_KEY")
+        custom_key = api_keys.get("custom") or os.getenv("CUSTOM_LLM_API_KEY")
+        api_key = openai_key or custom_key
         if not api_key:
             return None
 
         cfg = self.start_payload.get("agent_config") or {}
-        model = cfg.get("model") or os.getenv("CUSTOM_LLM_MODEL_NAME") or "gpt-4o"
-        base_url = os.getenv("OPENAI_API_BASE_URL") or os.getenv("CUSTOM_LLM_API_BASE_URL") or None
+        model = (
+            cfg.get("model")
+            or (llm_config.get("default_model") if isinstance(llm_config, dict) else None)
+            or os.getenv("CUSTOM_LLM_MODEL_NAME")
+            or "gpt-4o"
+        )
+
+        openai_cfg = providers_cfg.get("openai") if isinstance(providers_cfg, dict) else {}
+        custom_cfg = providers_cfg.get("custom") if isinstance(providers_cfg, dict) else {}
+
+        base_url: str | None = None
+        if openai_key:
+            if isinstance(openai_cfg, dict):
+                base_url = (
+                    openai_cfg.get("base_url")
+                    or openai_cfg.get("baseUrl")
+                    or None
+                )
+            base_url = base_url or os.getenv("OPENAI_API_BASE_URL")
+        else:
+            if isinstance(custom_cfg, dict):
+                base_url = (
+                    custom_cfg.get("base_url")
+                    or custom_cfg.get("baseUrl")
+                    or None
+                )
+            base_url = base_url or os.getenv("CUSTOM_LLM_API_BASE_URL")
+
+        base_url = base_url or os.getenv("OPENAI_API_BASE_URL") or os.getenv("CUSTOM_LLM_API_BASE_URL") or None
         if (
             base_url
             and "openai.azure.com" not in base_url
@@ -1010,7 +1037,24 @@ class SemiGraphAdapter(RuntimeAdapter):
     async def update_config(self, payload: dict[str, Any]) -> None:
         if not isinstance(payload, dict):
             return
+        api_keys = payload.get("api_keys")
+        if isinstance(api_keys, dict):
+            existing = self.init_data.get("api_keys")
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            for provider, key in api_keys.items():
+                if isinstance(provider, str) and provider.strip() and isinstance(key, str):
+                    if key.strip():
+                        merged[provider] = key
+                    else:
+                        merged.pop(provider, None)
+            self.init_data["api_keys"] = merged
+
+        llm_config = payload.get("llm_config")
+        if isinstance(llm_config, dict):
+            self.init_data["llm_config"] = llm_config
+
         self.start_payload = {**self.start_payload, **payload}
+        self.llm_provider = self._create_llm_provider()
         logger.info("semigraph_config_updated", extra={"session_id": self.session_id})
 
     async def get_snapshot(self) -> dict[str, Any] | None:

@@ -8,3 +8,6 @@ export { useSession, type SessionState, type UseSessionReturn, type LoadSessions
 export { useChat, type UseChatOptions, type UseChatReturn } from './useChat'
 export { useAgents, useAgent, type Agent, type AgentConfig, type CreateAgentInput, type UpdateAgentInput } from './useAgents'
 export { useMcpServers, useMcpServer, type McpServer, type McpTool, type McpResource, type CreateMcpServerInput, type UpdateMcpServerInput } from './useMcpServers'
+export { useEvents } from './useEvents'
+export { useRules } from './useRules'
+export { useApprovals } from './useApprovals'
