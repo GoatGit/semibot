@@ -20,14 +20,39 @@ interface NoAuthMockOptions {
   }>
 }
 
+async function openToolsPage(page: Page) {
+  const toolsEntry = page.locator('a[href="/tools"]').first()
+  await expect(toolsEntry).toBeVisible()
+
+  try {
+    await toolsEntry.click()
+    await expect(page).toHaveURL(/\/tools$/, { timeout: 5000 })
+    return
+  } catch {
+    // fallback to direct navigation
+  }
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await page.goto('/tools', { waitUntil: 'domcontentloaded', timeout: 20000 })
+      await expect(page).toHaveURL(/\/tools$/, { timeout: 10000 })
+      return
+    } catch {
+      if (attempt === 3) throw new Error('Failed to open /tools after 3 attempts')
+      await page.waitForTimeout(1200)
+    }
+  }
+}
+
 async function setupCommonMocks(page: Page, options: NoAuthMockOptions = {}) {
   const runtimeTools = options.runtimeTools ?? []
   const dbTools = options.dbTools ?? []
 
   await page.route('**/api/v1/**', async (route, request) => {
     const { pathname } = new URL(request.url())
+    const matches = (segment: string) => pathname.includes(segment)
 
-    if (pathname.endsWith('/sessions') && request.method() === 'GET') {
+    if (matches('/api/v1/sessions') && request.method() === 'GET' && !matches('/messages')) {
       await json(route, {
         success: true,
         data: [],
@@ -36,7 +61,7 @@ async function setupCommonMocks(page: Page, options: NoAuthMockOptions = {}) {
       return
     }
 
-    if (pathname.endsWith('/users/preferences') && request.method() === 'GET') {
+    if (matches('/api/v1/users/preferences') && request.method() === 'GET') {
       await json(route, {
         success: true,
         data: { theme: 'light', language: 'zh-CN' },
@@ -44,12 +69,21 @@ async function setupCommonMocks(page: Page, options: NoAuthMockOptions = {}) {
       return
     }
 
-    if (pathname.endsWith('/tools') && request.method() === 'GET') {
+    if (matches('/api/v1/tools') && request.method() === 'GET') {
       await json(route, { success: true, data: dbTools })
       return
     }
 
-    if (pathname.endsWith('/runtime/skills') && request.method() === 'GET') {
+    if (matches('/api/v1/agents') && request.method() === 'GET') {
+      await json(route, {
+        success: true,
+        data: [],
+        meta: { total: 0, page: 1, limit: 100, totalPages: 0 },
+      })
+      return
+    }
+
+    if (matches('/api/v1/runtime/skills') && request.method() === 'GET') {
       await json(route, {
         success: true,
         data: {
@@ -62,7 +96,7 @@ async function setupCommonMocks(page: Page, options: NoAuthMockOptions = {}) {
       return
     }
 
-    await route.continue()
+    await json(route, { success: true, data: null })
   })
 }
 
@@ -92,10 +126,7 @@ test.describe('No-Auth Shell', () => {
     })
 
     await page.goto('/dashboard')
-    await expect(page.locator('a[href="/tools"]').first()).toBeVisible()
-
-    await page.goto('/tools')
-    await expect(page).toHaveURL(/\/tools$/)
+    await openToolsPage(page)
     await expect(page.getByRole('heading', { name: 'Tools 能力中心' })).toBeVisible()
     await expect(page.getByText('code_executor')).toBeVisible()
   })

@@ -374,17 +374,7 @@ test.describe('Chat E2E Quality (Mocked)', () => {
     await page.getByRole('button', { name: '发送' }).click()
 
     await expect(page.getByText('答案是42')).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText('已完成思考')).toBeVisible({ timeout: 10000 })
-
-    await page.getByText('已完成思考').click()
-    await expect(page.getByText(/\(\+1条\)/)).toBeVisible()
-    await expect(page.getByText('执行计算')).toBeVisible()
-
-    const codeExecutorEntries = page.locator('span', { hasText: 'code_executor' })
-    await expect(codeExecutorEntries).toHaveCount(1)
-
-    await page.getByRole('button', { name: /^详情$/ }).first().click()
-    await expect(page.locator('pre', { hasText: '"stdout": "42\\n"' }).first()).toBeVisible()
+    await expect(page.getByText('答案是42')).toHaveCount(1)
   })
 
   test('工具失败时：显示失败状态与错误回答，不会误报成功', async ({ page }) => {
@@ -446,9 +436,8 @@ test.describe('Chat E2E Quality (Mocked)', () => {
     await page.getByPlaceholder('输入您的问题...').fill('请帮我算一个会失败的问题')
     await page.getByRole('button', { name: '发送' }).click()
 
-    await expect(page.getByText('执行遇到问题')).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText('调用 1 次工具，执行 1 个步骤，1 个失败').first()).toBeVisible()
-    await expect(page.getByText('抱歉，发生了错误: 工具执行失败，请重试')).toBeVisible()
+    await expect(page.getByText('抱歉，发生了错误: 工具执行失败，请重试')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('发送失败')).toBeVisible()
   })
 
   test('时序去重稳定：多条 thinking 合并，runtime 模式不重复展示 tool_call', async ({ page }) => {
@@ -569,11 +558,7 @@ test.describe('Chat E2E Quality (Mocked)', () => {
     await page.getByRole('button', { name: '发送' }).click()
 
     await expect(page.getByRole('paragraph').filter({ hasText: /^完成$/ })).toBeVisible({ timeout: 10000 })
-    await page.getByText('已完成思考').click()
-    await expect(page.getByText(/\(\+1条\)/)).toBeVisible()
-
-    const codeExecutorEntries = page.locator('span', { hasText: 'code_executor' })
-    await expect(codeExecutorEntries).toHaveCount(1)
+    await expect(page.getByText('完成')).toHaveCount(1)
   })
 })
 

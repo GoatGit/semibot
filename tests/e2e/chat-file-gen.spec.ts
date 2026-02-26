@@ -1,5 +1,10 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
 
+test.skip(
+  !process.env.RUN_LIVE_E2E,
+  'Set RUN_LIVE_E2E=1 after API/Runtime are up to run real file generation E2E.'
+)
+
 /**
  * US-003 / US-004: 真实环境 E2E 测试
  * 聊天流程中通过 code_executor 生成 PDF / XLSX 文件

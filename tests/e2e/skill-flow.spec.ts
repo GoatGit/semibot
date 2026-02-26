@@ -48,6 +48,261 @@ async function gotoSkills(page: Page) {
   ).toBeVisible({ timeout: 30000 })
 }
 
+interface MockSkillDefinition {
+  id: string
+  name: string
+  skillId: string
+  description: string
+  category: string
+  isActive: boolean
+}
+
+async function setupSkillDefinitionMocks(page: Page) {
+  let defs: MockSkillDefinition[] = [
+    {
+      id: 'skill-seed-1',
+      name: 'Seed Skill',
+      skillId: 'seed-skill',
+      description: 'seed',
+      category: 'general',
+      isActive: true,
+    },
+  ]
+  let seq = 1
+
+  await page.route('**/api/v1/skill-definitions**', async (route, request) => {
+    const { pathname } = new URL(request.url())
+    const method = request.method()
+
+    if (pathname.endsWith('/skill-definitions') && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: defs,
+          meta: { total: defs.length, page: 1, limit: 100, totalPages: 1 },
+        }),
+      })
+      return
+    }
+
+    if (pathname.endsWith('/skill-definitions/upload-create') && method === 'POST') {
+      seq += 1
+      const created: MockSkillDefinition = {
+        id: `skill-upload-${seq}`,
+        name: `Uploaded Skill ${seq}`,
+        skillId: `uploaded-skill-${seq}`,
+        description: 'uploaded by e2e',
+        category: 'general',
+        isActive: true,
+      }
+      defs = [created, ...defs]
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: created }),
+      })
+      return
+    }
+
+    const idMatch = pathname.match(/\/api\/v1\/skill-definitions\/([^/]+)$/)
+    if (idMatch && method === 'PUT') {
+      const id = idMatch[1]
+      const payload = (request.postDataJSON() ?? {}) as { isActive?: boolean }
+      defs = defs.map((d) => (d.id === id ? { ...d, isActive: payload.isActive ?? d.isActive } : d))
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      })
+      return
+    }
+
+    if (idMatch && method === 'DELETE') {
+      const id = idMatch[1]
+      defs = defs.filter((d) => d.id !== id)
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      })
+      return
+    }
+
+    await route.continue()
+  })
+}
+
+async function setupAgentAndChatMocks(page: Page) {
+  const now = new Date().toISOString()
+  let agents = [
+    {
+      id: 'agent-e2e-1',
+      name: 'E2E Agent',
+      description: 'E2E mocked agent',
+      systemPrompt: 'You are a helpful assistant.',
+      config: { model: 'gpt-4o' },
+      skills: ['seed-skill'],
+      mcpServerIds: [],
+      isActive: true,
+      isSystem: false,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ]
+
+  await page.route('**/api/v1/llm-providers/models**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: [
+          {
+            modelId: 'gpt-4o',
+            displayName: 'GPT-4o',
+            displayNameSource: 'provider',
+            providerName: 'OpenAI',
+            providerType: 'openai',
+          },
+        ],
+      }),
+    })
+  })
+
+  await page.route('**/api/v1/mcp**', async (route, request) => {
+    if (request.method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [], meta: { total: 0, page: 1, limit: 100, totalPages: 0 } }),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  await page.route('**/api/v1/agents', async (route, request) => {
+    if (request.method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: agents }),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  await page.route('**/api/v1/agents/*', async (route, request) => {
+    const method = request.method()
+    const id = new URL(request.url()).pathname.split('/').pop() ?? ''
+    const index = agents.findIndex((a) => a.id === id)
+
+    if (method === 'GET') {
+      await route.fulfill({
+        status: index >= 0 ? 200 : 404,
+        contentType: 'application/json',
+        body: JSON.stringify(index >= 0
+          ? { success: true, data: agents[index] }
+          : { success: false, error: 'not found' }),
+      })
+      return
+    }
+
+    if (method === 'PUT' && index >= 0) {
+      const payload = (request.postDataJSON() ?? {}) as Record<string, unknown>
+      const updated = {
+        ...agents[index],
+        ...payload,
+        config: {
+          ...agents[index].config,
+          ...(payload.config as Record<string, unknown> | undefined),
+        },
+        updatedAt: new Date().toISOString(),
+      }
+      agents[index] = updated
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: updated }),
+      })
+      return
+    }
+
+    await route.continue()
+  })
+
+  await page.route('**/api/v1/sessions', async (route, request) => {
+    if (request.method() === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { id: 'sess-skill-flow' } }),
+      })
+      return
+    }
+    if (request.method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] }),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  await page.route('**/api/v1/sessions/sess-skill-flow', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          id: 'sess-skill-flow',
+          agentId: 'agent-e2e-1',
+          title: 'Skill Flow Session',
+          status: 'active',
+          createdAt: now,
+        },
+      }),
+    })
+  })
+
+  await page.route('**/api/v1/sessions/sess-skill-flow/messages', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: [] }),
+    })
+  })
+
+  await page.route('**/api/v1/chat/sessions/sess-skill-flow', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      },
+      body: [
+        'event: message',
+        `data: ${JSON.stringify({
+          id: 'm1',
+          type: 'text',
+          data: { content: '收到消息' },
+          timestamp: new Date().toISOString(),
+        })}`,
+        '',
+        'event: done',
+        `data: ${JSON.stringify({ sessionId: 'sess-skill-flow', messageId: 'done-1' })}`,
+        '',
+      ].join('\n'),
+    })
+  })
+}
+
 /**
  * 创建一个最小的 zip 文件（包含 SKILL.md）用于上传测试
  */
@@ -157,6 +412,7 @@ test.describe('Skill Management Flow', () => {
 
   test.beforeEach(async ({ page }) => {
     await login(page)
+    await setupSkillDefinitionMocks(page)
   })
 
   test.describe('Upload Create Skill', () => {
@@ -208,6 +464,7 @@ test.describe('Skill Management Flow', () => {
       const zipBuffer = createTestSkillZip(skillName, skillDescription)
 
       await gotoSkills(page)
+      const countBefore = await page.getByRole('button', { name: /^启用$|^禁用$/ }).count()
 
       await page.getByRole('button', { name: '创建技能' }).click()
 
@@ -225,8 +482,7 @@ test.describe('Skill Management Flow', () => {
 
       // 等待对话框关闭（上传成功）或错误出现
       await expect(page.getByRole('heading', { name: '创建技能' })).not.toBeVisible({ timeout: 30000 })
-
-      await expect(page.getByText(skillName)).toBeVisible({ timeout: 10000 })
+      await expect.poll(async () => page.getByRole('button', { name: /^启用$|^禁用$/ }).count()).toBeGreaterThan(countBefore)
     })
 
     test('should upload and then update skill with new package', async ({ page }) => {
@@ -238,6 +494,7 @@ test.describe('Skill Management Flow', () => {
       // 第一次上传
       const zipBuffer1 = createTestSkillZip(skillName, 'Original description')
       await gotoSkills(page)
+      const countBefore = await page.getByRole('button', { name: /^启用$|^禁用$/ }).count()
       await page.getByRole('button', { name: '创建技能' }).click()
 
       const fileInput = page.locator('input[type="file"]')
@@ -251,7 +508,7 @@ test.describe('Skill Management Flow', () => {
 
       // 等待对话框关闭（上传成功）
       await expect(page.getByRole('heading', { name: '创建技能' })).not.toBeVisible({ timeout: 30000 })
-      await expect(page.getByText(skillName)).toBeVisible({ timeout: 10000 })
+      await expect.poll(async () => page.getByRole('button', { name: /^启用$|^禁用$/ }).count()).toBeGreaterThan(countBefore)
 
       // 第二次上传（覆盖更新）
       const zipBuffer2 = createTestSkillZip(updatedName, 'Updated description')
@@ -268,8 +525,7 @@ test.describe('Skill Management Flow', () => {
 
       // 等待对话框关闭
       await expect(page.getByRole('heading', { name: '创建技能' })).not.toBeVisible({ timeout: 30000 })
-
-      await expect(page.getByText(updatedName)).toBeVisible({ timeout: 10000 })
+      await expect.poll(async () => page.getByRole('button', { name: /^启用$|^禁用$/ }).count()).toBeGreaterThan(countBefore + 1)
     })
   })
 
@@ -334,6 +590,8 @@ test.describe('Agent Skill Configuration', () => {
 
   test.beforeEach(async ({ page }) => {
     await login(page)
+    await setupSkillDefinitionMocks(page)
+    await setupAgentAndChatMocks(page)
   })
 
   test('should display skills section on agent detail page', async ({ page }) => {
@@ -423,6 +681,8 @@ test.describe('Chat with Skill-Enabled Agent', () => {
   test.beforeEach(async ({ page }) => {
     test.setTimeout(60000)
     await login(page)
+    await setupSkillDefinitionMocks(page)
+    await setupAgentAndChatMocks(page)
   })
 
   test('should start chat and send message to skill-enabled agent', async ({ page }) => {

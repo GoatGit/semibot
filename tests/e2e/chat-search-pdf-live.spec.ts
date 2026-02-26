@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { loginByApi } from './helpers/auth'
 
+test.skip(
+  !process.env.RUN_LIVE_E2E,
+  'Set RUN_LIVE_E2E=1 after API/Runtime are up to run live search+pdf scenario.'
+)
+
 test.setTimeout(600_000)
 
 function resolveApiBase(): string {

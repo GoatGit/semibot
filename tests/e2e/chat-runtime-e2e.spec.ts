@@ -19,6 +19,11 @@
 import { expect, test, type Page } from '@playwright/test'
 import { loginByApi } from './helpers/auth'
 
+test.skip(
+  !process.env.RUN_LIVE_E2E,
+  'Set RUN_LIVE_E2E=1 after API/Runtime are up to run runtime comparison E2E.'
+)
+
 /* ------------------------------------------------------------------ */
 /*  常量 & 工具函数                                                    */
 /* ------------------------------------------------------------------ */

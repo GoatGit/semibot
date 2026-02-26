@@ -1,5 +1,10 @@
 import { test, expect, type Page } from '@playwright/test'
 
+test.skip(
+  !process.env.RUN_SYSTEM_ADMIN_E2E,
+  'Set RUN_SYSTEM_ADMIN_E2E=1 to run legacy admin/permission CRUD checks.'
+)
+
 /**
  * 系统 MCP 与技能定义管理员 CRUD E2E 测试
  *

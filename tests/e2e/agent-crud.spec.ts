@@ -1,5 +1,25 @@
 import { test, expect } from '@playwright/test'
 import { loginByApi } from './helpers/auth'
+import type { Agent } from '../../apps/web/types'
+
+function createSeedAgents(): Agent[] {
+  const now = new Date().toISOString()
+  return Array.from({ length: 7 }).map((_, index) => ({
+    id: `agent-seed-${index + 1}`,
+    name: `Seed Agent ${index + 1}`,
+    description: `Seed description ${index + 1}`,
+    systemPrompt: 'You are a helpful assistant.',
+    config: { model: 'gpt-4o' },
+    capabilities: [],
+    tools: [],
+    skills: [],
+    memoryEnabled: false,
+    isActive: index % 2 === 0,
+    isSystem: false,
+    createdAt: now,
+    updatedAt: now,
+  }))
+}
 
 /**
  * Agent 管理 CRUD E2E 测试
@@ -7,6 +27,122 @@ import { loginByApi } from './helpers/auth'
 test.describe('Agent Management', () => {
   // 每个测试前先登录
   test.beforeEach(async ({ page }) => {
+    let agents = createSeedAgents()
+
+    await page.route('**/api/v1/agents', async (route) => {
+      const req = route.request()
+      const method = req.method()
+
+      if (method === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: agents }),
+        })
+        return
+      }
+
+      if (method === 'POST') {
+        const payload = req.postDataJSON() as {
+          name?: string
+          description?: string
+          systemPrompt?: string
+          config?: { model?: string }
+          isActive?: boolean
+        }
+        const now = new Date().toISOString()
+        const created: Agent = {
+          id: `agent-${Date.now()}`,
+          name: payload?.name ?? 'Unnamed Agent',
+          description: payload?.description ?? '',
+          systemPrompt: payload?.systemPrompt ?? '',
+          config: { model: payload?.config?.model ?? 'gpt-4o' },
+          capabilities: [],
+          tools: [],
+          skills: [],
+          memoryEnabled: false,
+          isActive: payload?.isActive ?? true,
+          isSystem: false,
+          createdAt: now,
+          updatedAt: now,
+        }
+        agents = [created, ...agents]
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: created }),
+        })
+        return
+      }
+
+      await route.continue()
+    })
+
+    await page.route('**/api/v1/agents/*', async (route) => {
+      const req = route.request()
+      const method = req.method()
+      const path = new URL(req.url()).pathname
+      const agentId = path.split('/').pop() ?? ''
+      const index = agents.findIndex((a) => a.id === agentId)
+
+      if (method === 'GET') {
+        if (index < 0) {
+          await route.fulfill({
+            status: 404,
+            contentType: 'application/json',
+            body: JSON.stringify({ success: false, error: 'Not found' }),
+          })
+          return
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: agents[index] }),
+        })
+        return
+      }
+
+      if (method === 'PUT') {
+        if (index < 0) {
+          await route.fulfill({
+            status: 404,
+            contentType: 'application/json',
+            body: JSON.stringify({ success: false, error: 'Not found' }),
+          })
+          return
+        }
+        const payload = (req.postDataJSON() ?? {}) as Record<string, unknown>
+        const updated = {
+          ...agents[index],
+          ...payload,
+          config: {
+            ...agents[index].config,
+            ...(typeof payload.config === 'object' && payload.config ? payload.config as Record<string, unknown> : {}),
+          },
+          updatedAt: new Date().toISOString(),
+        } as Agent
+        agents[index] = updated
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: updated }),
+        })
+        return
+      }
+
+      if (method === 'DELETE') {
+        agents = agents.filter((a) => a.id !== agentId)
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+        return
+      }
+
+      await route.continue()
+    })
+
     await loginByApi(page)
     await page.route('**/api/v1/llm-providers/models**', async (route) => {
       await route.fulfill({
@@ -242,12 +378,13 @@ test.describe('Agent Management', () => {
           .or(page.getByTestId('edit-agent-btn'))
           .first()
           .click()
+        await expect(page).toHaveURL(/\/agents\/[a-zA-Z0-9-]+/i, { timeout: 10000 })
 
         // 验证编辑表单可见
         await expect(
           page.getByRole('dialog')
             .or(page.locator('[data-testid="agent-form"]'))
-            .or(page.getByRole('heading', { name: /edit agent|编辑代理|修改代理/i }))
+            .or(page.getByRole('heading', { name: /edit agent|编辑\s*agent|编辑代理|修改代理/i }))
         ).toBeVisible()
       }
     })
@@ -269,11 +406,12 @@ test.describe('Agent Management', () => {
           .or(page.getByTestId('edit-agent-btn'))
           .first()
           .click()
+        await expect(page).toHaveURL(/\/agents\/[a-zA-Z0-9-]+/i, { timeout: 10000 })
 
         // 修改名称
         const updatedName = `Updated ${Date.now()}`
-        const nameInput = page.getByLabel(/name|名称/i)
-          .or(page.getByPlaceholder(/agent name|代理名称/i))
+        const nameInput = page.getByPlaceholder(/输入 agent 名称|agent name|代理名称/i)
+          .or(page.getByLabel(/name|名称/i))
 
         await nameInput.clear()
         await nameInput.fill(updatedName)
@@ -281,14 +419,8 @@ test.describe('Agent Management', () => {
         // 保存
         await page.getByRole('button', { name: /save|保存|update|更新/i }).click()
 
-        // 验证更新成功
-        await expect(
-          page.getByText(/success|成功|updated/i)
-            .or(page.getByText(updatedName))
-        ).toBeVisible()
-
-        // 验证名称已更新
-        await page.goto('/agents')
+        // 保存后回到列表并验证名称已更新
+        await expect(page).toHaveURL(/\/agents$/, { timeout: 15000 })
         await expect(page.getByText(updatedName)).toBeVisible()
       }
     })
@@ -310,10 +442,11 @@ test.describe('Agent Management', () => {
           .or(page.getByTestId('edit-agent-btn'))
           .first()
           .click()
+        await expect(page).toHaveURL(/\/agents\/[a-zA-Z0-9-]+/i, { timeout: 10000 })
 
         // 修改名称
-        const nameInput = page.getByLabel(/name|名称/i)
-          .or(page.getByPlaceholder(/agent name|代理名称/i))
+        const nameInput = page.getByPlaceholder(/输入 agent 名称|agent name|代理名称/i)
+          .or(page.getByLabel(/name|名称/i))
 
         await nameInput.clear()
         await nameInput.fill('Modified name')

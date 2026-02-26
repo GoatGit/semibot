@@ -114,6 +114,7 @@ test.describe('Chat Flow', () => {
 
   test.describe('Create New Session', () => {
     test('should create a new chat session', async ({ page }) => {
+      test.setTimeout(90_000)
       await mockSessionList(page, [])
       await page.route('**/api/v1/agents**', async (route) => {
         await route.fulfill({
@@ -144,8 +145,7 @@ test.describe('Chat Flow', () => {
       await mockSessionDetail(page, 'sess-created', [])
       await mockChatSSE(page, 'sess-created', ['你好，我是测试助手。'])
 
-      await page.goto('/chat')
-      await page.getByRole('link', { name: '新建会话' }).click()
+      await page.goto('/chat/new', { waitUntil: 'domcontentloaded', timeout: 60_000 })
       await expect(page).toHaveURL(/\/chat\/new/)
 
       await page.getByRole('button', { name: /通用助手/ }).click()
