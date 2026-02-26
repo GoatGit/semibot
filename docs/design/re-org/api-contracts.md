@@ -129,3 +129,294 @@
 }
 ```
 
+## 7. `POST /v1/webhooks/{event_type}`
+
+用途：外部系统（飞书/钉钉/内部系统）推送事件入口。
+
+请求（支持两种）：
+
+```json
+{
+  "subject": "chat:group_001",
+  "payload": { "text": "请分析这个问题" },
+  "source": "webhook",
+  "idempotency_key": "wx:msg:123"
+}
+```
+
+或直接把整个 body 作为 payload：
+
+```json
+{
+  "event": { "msg_id": "123" },
+  "header": { "app_id": "cli_xxx" }
+}
+```
+
+响应：
+
+```json
+{
+  "event_id": "evt_webhook_xxx",
+  "event_type": "chat.message.received",
+  "matched_rules": 1
+}
+```
+
+## 8. `POST /v1/system/heartbeat`
+
+用途：手工或外部守护进程上报心跳，进入统一事件流。
+
+请求：
+
+```json
+{
+  "source": "system.api",
+  "subject": "node:local",
+  "payload": { "cpu": 0.23 }
+}
+```
+
+响应：
+
+```json
+{
+  "event_id": "evt_heartbeat_xxx",
+  "matched_rules": 0
+}
+```
+
+## 9. `GET /v1/dashboard/live`
+
+新增关键参数：
+
+- `mode=snapshot_delta|delta`（默认 `snapshot_delta`）
+- `resume_from`（游标别名，等价 `cursor`）
+- `event_types`（逗号分隔多类型过滤）
+
+## 10. `POST /v1/integrations/feishu/events`
+
+用途：飞书事件回调入口（URL 验证 + 群消息事件）。
+
+URL 验证请求：
+
+```json
+{
+  "type": "url_verification",
+  "token": "token_123",
+  "challenge": "abc"
+}
+```
+
+URL 验证响应：
+
+```json
+{
+  "challenge": "abc"
+}
+```
+
+消息事件请求（示例）：
+
+```json
+{
+  "token": "token_123",
+  "header": {
+    "event_id": "evt_f_001",
+    "event_type": "im.message.receive_v1"
+  },
+  "event": {
+    "message": {
+      "message_id": "om_001",
+      "chat_id": "oc_group_001",
+      "message_type": "text",
+      "content": "{\"text\":\"hello\"}"
+    }
+  }
+}
+```
+
+响应：
+
+```json
+{
+  "accepted": true,
+  "event_id": "evt_feishu_xxx",
+  "event_type": "chat.message.received",
+  "matched_rules": 1
+}
+```
+
+## 11. `POST /v1/integrations/feishu/card-actions`
+
+用途：飞书卡片审批/动作回传入口。
+
+请求：
+
+```json
+{
+  "token": "token_123",
+  "action": {
+    "value": {
+      "approval_id": "appr_xxx",
+      "decision": "approve"
+    }
+  }
+}
+```
+
+响应：
+
+```json
+{
+  "accepted": true,
+  "approval_id": "appr_xxx",
+  "decision": "approved",
+  "resolved": true,
+  "status": "approved",
+  "approval_action_event_id": "evt_approval_action_xxx",
+  "event_id": "evt_feishu_action_xxx",
+  "matched_rules": 0
+}
+```
+
+## 12. `POST /v1/tasks/run`
+
+用途：单次任务执行入口（CLI/WebUI 可直接调用），走本地 Orchestrator + Event Engine。
+
+请求：
+
+```json
+{
+  "task": "研究阿里巴巴股票并生成PDF报告",
+  "agent_id": "analyst",
+  "session_id": "optional_session",
+  "model": "gpt-4o",
+  "system_prompt": "你是资深投研分析师"
+}
+```
+
+响应：
+
+```json
+{
+  "task": "研究阿里巴巴股票并生成PDF报告",
+  "status": "completed",
+  "session_id": "sess_demo",
+  "agent_id": "analyst",
+  "final_response": "报告已生成",
+  "error": null,
+  "tool_results": [],
+  "runtime_events": [],
+  "llm_configured": true
+}
+```
+
+## 13. `POST /v1/chat`
+
+用途：统一聊天入口，可选流式 SSE。
+
+请求：
+
+```json
+{
+  "message": "帮我做一个执行计划",
+  "agent_id": "semibot",
+  "stream": false
+}
+```
+
+响应（非流式）：
+
+```json
+{
+  "message": "帮我做一个执行计划",
+  "status": "completed",
+  "session_id": "sess_chat",
+  "agent_id": "semibot",
+  "final_response": "已生成计划",
+  "error": null
+}
+```
+
+当 `stream=true` 时，返回 `text/event-stream`，事件流包含 `start` 和 `done`。
+
+## 14. `GET /v1/skills`
+
+用途：列出当前可用内置 tools/skills。
+
+响应：
+
+```json
+{
+  "tools": ["code_executor", "pdf", "xlsx"],
+  "skills": []
+}
+```
+
+## 15. `GET /health`
+
+用途：健康检查别名（与 `/healthz` 一致）。
+
+## 16. `GET /v1/sessions` / `DELETE /v1/sessions/{session_id}`
+
+用途：本地运行时会话查询与清理入口。
+
+`GET /v1/sessions` 响应：
+
+```json
+{
+  "items": [
+    {
+      "session_id": "sess_1",
+      "last_seen_at": "2026-02-26T18:00:00+00:00"
+    }
+  ]
+}
+```
+
+`DELETE /v1/sessions/{session_id}` 响应：
+
+```json
+{
+  "deleted": true,
+  "session_id": "sess_1"
+}
+```
+
+## 17. `GET /v1/agents`
+
+用途：列出当前运行中出现过的 agent（最小实现）。
+
+## 18. `GET /v1/memories/search`
+
+用途：本地记忆查询（当前阶段基于事件与 payload 文本检索，后续可切换到 Memory Adapter）。
+
+## 19. `POST /v1/skills/install`
+
+用途：技能安装占位接口；当前阶段建议使用本地 skill 管理流程。
+
+说明：
+- 网关会额外写入一条 `approval.action` 事件（`approval_action_event_id`），用于审批行为审计与回放。
+
+## 12. `POST /v1/integrations/feishu/outbound/test`
+
+用途：发送测试卡片，验证 Semibot 到飞书 webhook 的出站连通性。
+
+请求：
+
+```json
+{
+  "title": "Semibot 测试",
+  "content": "这是一条测试通知",
+  "channel": "default"
+}
+```
+
+响应：
+
+```json
+{
+  "sent": true
+}
+```

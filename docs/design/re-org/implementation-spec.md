@@ -16,6 +16,10 @@ semibot/
     approval_manager.py
     attention_budget.py
     replay_manager.py
+    trigger_scheduler.py
+  server/
+    feishu.py
+    feishu_notifier.py
 ```
 
 职责说明：
@@ -28,6 +32,9 @@ semibot/
 - `approval_manager.py`：审批请求与状态变更  
 - `attention_budget.py`：预算与冷却窗口  
 - `replay_manager.py`：事件回放  
+- `trigger_scheduler.py`：heartbeat/cron 周期事件触发  
+- `server/feishu.py`：飞书入站事件归一化与 token 校验  
+- `server/feishu_notifier.py`：飞书出站卡片通知（审批/结果）  
 
 ## 2. 核心接口（签名）
 
@@ -106,3 +113,13 @@ async def handle_event(self, event):
 - `BaseAgent.run()` 触发 `agent.lifecycle.*`  
 - `UnifiedActionExecutor.execute()` 触发 `tool.exec.*`  
 - `AuditLogger` 写入 event_rule_runs 与 approval_requests  
+- `Feishu Gateway`（`/v1/integrations/feishu/*`）负责把群消息/卡片动作映射为标准事件  
+- `SEMIBOT_FEISHU_WEBHOOK_URL` 可开启事件到飞书的出站通知  
+
+## 7. 关键配置（环境变量）
+
+- `SEMIBOT_FEISHU_VERIFY_TOKEN`：飞书回调 token 校验
+- `SEMIBOT_FEISHU_WEBHOOK_URL`：默认出站 webhook
+- `SEMIBOT_FEISHU_WEBHOOKS_JSON`：多通道 webhook 映射（JSON）
+- `SEMIBOT_FEISHU_NOTIFY_EVENT_TYPES`：出站订阅事件（逗号分隔）
+- `SEMIBOT_FEISHU_TEMPLATES_JSON`：按事件类型配置卡片模板（JSON）

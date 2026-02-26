@@ -93,6 +93,8 @@ A：当前阶段建议复用原有 `Next.js + React + Tailwind`。这是最低�
 | [模块级设计](./module-design.md) | 类职责、依赖方向、接入点 |
 | [API 契约](./api-contracts.md) | 事件/规则/审批接口 schema |
 | [测试用例模板](./test-cases.md) | 单元、集成、E2E 测试基线 |
+| [CI 门禁](./ci-gates.md) | Core + E2E 分组与分支保护建议 |
+| [分支保护手册](./branch-protection.md) | GitHub Required Checks 实操配置 |
 | [边界清单](./engine-orchestrator-boundary.md) | Event Engine 与 Orchestrator 边界与集成步骤 |
 
 ### 集成与扩展

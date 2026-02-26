@@ -96,10 +96,10 @@ GET    /health                  # 健康检查
 **验证标准：**
 - [ ] `apps/api/` 目录可完全删除
 - [ ] `packages/` 目录可完全删除
-- [ ] 单 `python -m semibot` 启动全部功能
-- [ ] CLI 交互式对话正常
-- [ ] FastAPI 端点功能正常
-- [ ] LangGraph 状态机编排正常
+- [x] 单 `python -m semibot` 启动全部功能
+- [x] CLI 交互式对话正常
+- [x] FastAPI 端点功能正常
+- [x] LangGraph 状态机编排正常
 
 ---
 
@@ -150,9 +150,10 @@ $ semibot chat
 
 **验证标准：**
 - [ ] 代码中无 `org_id` / `user_id` 残留
-- [ ] 无 JWT/API Key 相关代码
-- [ ] `pip install semibot && semibot chat` 一行启动
-- [ ] 首次运行自动初始化
+- [x] 无 JWT/API Key 相关代码（本地 CLI/API 主链路）
+- [x] `pip install semibot && semibot chat` 一行启动（本地包入口已切换 `semibot`）
+- [x] 首次运行自动初始化
+- [x] 本地 CLI/API 执行链路不再要求传入 `org_id` / `user_id`（默认 `local`）
 
 ---
 
