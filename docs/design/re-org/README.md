@@ -110,6 +110,7 @@ cd runtime
 | [架构设计](./architecture.md) | 新架构总览、组件设计、技术选型 |
 | [前端重构设计](./frontend-design.md) | Web UI 信息架构、页面设计、状态流与落地里程碑 |
 | [核心特性](./core-pillars.md) | 四大特性的机制落点与可验证指标 |
+| [CLI 设计](./cli-design.md) | Semibot V2 命令体系、输出规范与实施里程碑 |
 | [记忆系统](./memory-system.md) | 短期记忆 + 长期记忆 + 沉淀器 |
 | [术语表](./glossary.md) | 关键概念与判定术语 |
 

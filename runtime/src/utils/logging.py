@@ -8,7 +8,7 @@ import structlog
 
 
 def setup_logging(
-    level: str = "INFO",
+    level: str = "CRITICAL",
     json_format: bool = False,
 ) -> None:
     """
@@ -21,8 +21,9 @@ def setup_logging(
     # Configure standard library logging
     logging.basicConfig(
         format="%(message)s",
-        stream=sys.stdout,
+        stream=sys.stderr,
         level=getattr(logging, level.upper()),
+        force=True,
     )
 
     # Configure structlog

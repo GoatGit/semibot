@@ -7,7 +7,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from src.events.models import ApprovalRequest, Event, RuleRun
 
@@ -639,6 +639,127 @@ class EventStore:
                 {"event_type": str(row["event_type"]), "count": int(row["cnt"])} for row in top_rows
             ],
         }
+
+    def cleanup_events(self, *, before: datetime, dry_run: bool = False) -> dict[str, int]:
+        """
+        Clean event artifacts before timestamp.
+
+        Returns counts for events, rule runs and approvals.
+        """
+        cutoff = _to_iso(before) or ""
+        with self._connect() as conn:
+            event_rows = conn.execute(
+                "SELECT id FROM events WHERE created_at < ?",
+                (cutoff,),
+            ).fetchall()
+            event_ids = [str(row["id"]) for row in event_rows]
+            if not event_ids:
+                return {"events": 0, "rule_runs": 0, "approvals": 0}
+
+            placeholders = ", ".join(["?"] * len(event_ids))
+            params = tuple(event_ids)
+            rule_runs_count = conn.execute(
+                f"SELECT COUNT(*) AS c FROM event_rule_runs WHERE event_id IN ({placeholders})",
+                params,
+            ).fetchone()
+            approvals_count = conn.execute(
+                f"SELECT COUNT(*) AS c FROM approval_requests WHERE event_id IN ({placeholders})",
+                params,
+            ).fetchone()
+            counts = {
+                "events": len(event_ids),
+                "rule_runs": int(rule_runs_count["c"] if rule_runs_count else 0),
+                "approvals": int(approvals_count["c"] if approvals_count else 0),
+            }
+            if dry_run:
+                return counts
+
+            conn.execute(
+                f"DELETE FROM event_rule_runs WHERE event_id IN ({placeholders})",
+                params,
+            )
+            conn.execute(
+                f"DELETE FROM approval_requests WHERE event_id IN ({placeholders})",
+                params,
+            )
+            conn.execute(
+                f"DELETE FROM events WHERE id IN ({placeholders})",
+                params,
+            )
+            return counts
+
+    def list_session_events(self, session_id: str, *, limit: int = 200) -> list[Event]:
+        """List events for one session ID ordered by time asc."""
+        payload_pattern = f'%"session_id": "{session_id}"%'
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, event_type, source, subject, payload, idempotency_key, risk_hint, created_at
+                FROM events
+                WHERE subject = ? OR payload LIKE ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, payload_pattern, limit),
+            ).fetchall()
+        return [
+            Event(
+                event_id=row["id"],
+                event_type=row["event_type"],
+                source=row["source"],
+                subject=row["subject"],
+                payload=json.loads(row["payload"]),
+                timestamp=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                idempotency_key=row["idempotency_key"],
+                risk_hint=row["risk_hint"],
+            )
+            for row in rows
+        ]
+
+    def list_sessions(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """List inferred sessions from events payload/subject."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, event_type, subject, payload, created_at
+                FROM events
+                WHERE event_type IN ('chat.message.received', 'task.completed', 'task.failed')
+                ORDER BY created_at DESC
+                LIMIT 10000
+                """,
+            ).fetchall()
+        buckets: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else {}
+            session_id = payload.get("session_id") if isinstance(payload, dict) else None
+            if not isinstance(session_id, str) or not session_id.strip():
+                if isinstance(row["subject"], str) and row["subject"].strip():
+                    session_id = row["subject"].strip()
+                else:
+                    continue
+            session_id = session_id.strip()
+            created_at = str(row["created_at"])
+            bucket = buckets.get(session_id)
+            if bucket is None:
+                buckets[session_id] = {
+                    "session_id": session_id,
+                    "first_event_at": created_at,
+                    "last_event_at": created_at,
+                    "events_count": 1,
+                }
+            else:
+                bucket["events_count"] = int(bucket["events_count"]) + 1
+                if created_at < str(bucket["first_event_at"]):
+                    bucket["first_event_at"] = created_at
+                if created_at > str(bucket["last_event_at"]):
+                    bucket["last_event_at"] = created_at
+
+        items = sorted(
+            buckets.values(),
+            key=lambda item: str(item["last_event_at"]),
+            reverse=True,
+        )
+        return items[:limit]
 
     def _count_with_optional_since(
         self,

@@ -67,4 +67,3 @@ async def run_execution_plane() -> None:
                 client.unregister_session_handlers(session_id)
         with suppress(Exception):
             await client.close()
-

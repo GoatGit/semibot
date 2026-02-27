@@ -22,6 +22,28 @@ Semibot Runtime is a Python-based local execution engine for AI agents. It provi
 
 ### Setup
 
+#### Quick Install (Recommended)
+
+```bash
+cd /Users/yanghuaiyuan/Documents/AI/semibot-z1/runtime
+./scripts/install.sh
+```
+
+The installer will:
+
+1. Create `.venv`
+2. Try `pip install -e .`
+3. Fall back to linking `scripts/semibot` into `~/.local/bin` if offline build deps are unavailable
+4. Auto-add Semibot path to your shell profile (`~/.zshrc` / `~/.bashrc` / `~/.profile`)
+
+Disable auto profile update if needed:
+
+```bash
+AUTO_UPDATE_PROFILE=0 ./scripts/install.sh
+```
+
+#### Manual Setup
+
 ```bash
 # 1. Install Python 3.11+ (if not already installed)
 # macOS:
@@ -108,8 +130,12 @@ semibot skill list
 # Search local memory/events
 semibot memory search "Alibaba"
 
-# Start local HTTP API
-semibot serve --host 127.0.0.1 --port 8765
+# Start local runtime service in background (pm2 managed)
+semibot serve start --host 127.0.0.1 --port 8765
+
+# Restart / stop runtime service
+semibot serve restart
+semibot serve stop
 
 # Alternative entrypoint for API only
 semibot-api

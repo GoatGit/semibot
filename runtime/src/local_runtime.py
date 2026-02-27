@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import re
 import time
+import tomllib
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.bootstrap import default_config_path
 from src.events.event_engine import EventEngine
 from src.events.event_router import EventRouter
 from src.events.event_store import EventStore
@@ -24,17 +29,256 @@ from src.orchestrator.context import (
 from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
+from src.security.api_key_cipher import decrypt_api_keys
 from src.skills.bootstrap import create_default_registry
 from src.skills.registry import SkillRegistry
+from src.utils.logging import get_logger
+from src.ws.client import ControlPlaneClient
+
+DEFAULT_CONTROL_PLANE_WS = "ws://127.0.0.1:3001/ws/vm"
+logger = get_logger(__name__)
+
+_CONTROL_PLANE_BOOTSTRAP_LOCK: asyncio.Lock | None = None
+_CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT = 0.0
+_CONTROL_PLANE_BOOTSTRAP_RETRY_COOLDOWN_SECONDS = 15.0
+_LOCAL_ENV_BOOTSTRAP_DONE = False
+
+_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _as_non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _runtime_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _parse_env_value(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        return ""
+    if " #" in value:
+        value = value.split(" #", maxsplit=1)[0].strip()
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    return value
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", maxsplit=1)
+        key = key.strip()
+        if not _ENV_KEY_PATTERN.match(key):
+            continue
+        if os.getenv(key):
+            continue
+        os.environ[key] = _parse_env_value(value)
+
+
+def _maybe_load_local_env_files() -> None:
+    global _LOCAL_ENV_BOOTSTRAP_DONE
+    if _LOCAL_ENV_BOOTSTRAP_DONE:
+        return
+    _LOCAL_ENV_BOOTSTRAP_DONE = True
+
+    env_files = [
+        _repo_root() / ".env.local",
+        _repo_root() / ".env",
+        _runtime_root() / ".env.local",
+        _runtime_root() / ".env",
+    ]
+    for env_file in env_files:
+        _load_env_file(env_file)
+
+
+def _load_llm_config() -> dict[str, Any]:
+    config_path = os.getenv("SEMIBOT_CONFIG_PATH")
+    resolved_path = Path(config_path).expanduser() if config_path else default_config_path()
+    if not resolved_path.exists():
+        return {}
+    try:
+        with resolved_path.open("rb") as file:
+            parsed = tomllib.load(file)
+    except Exception:
+        return {}
+    llm = parsed.get("llm") if isinstance(parsed, dict) else None
+    return llm if isinstance(llm, dict) else {}
+
+
+def _set_env_if_missing(name: str, value: str | None) -> None:
+    if not value:
+        return
+    if os.getenv(name):
+        return
+    os.environ[name] = value
+
+
+def _apply_llm_config_to_env(llm_config: dict[str, Any]) -> None:
+    if not isinstance(llm_config, dict):
+        return
+
+    _set_env_if_missing("CUSTOM_LLM_MODEL_NAME", _as_non_empty_str(llm_config.get("default_model")))
+
+    providers = llm_config.get("providers")
+    if not isinstance(providers, dict):
+        return
+
+    openai_cfg = providers.get("openai")
+    if isinstance(openai_cfg, dict):
+        openai_base_url = (
+            _as_non_empty_str(openai_cfg.get("base_url"))
+            or _as_non_empty_str(openai_cfg.get("baseUrl"))
+        )
+        _set_env_if_missing("OPENAI_API_BASE_URL", openai_base_url)
+
+    custom_cfg = providers.get("custom")
+    if isinstance(custom_cfg, dict):
+        custom_base_url = (
+            _as_non_empty_str(custom_cfg.get("base_url"))
+            or _as_non_empty_str(custom_cfg.get("baseUrl"))
+        )
+        _set_env_if_missing("CUSTOM_LLM_API_BASE_URL", custom_base_url)
+
+
+def _control_plane_bootstrap_lock() -> asyncio.Lock:
+    global _CONTROL_PLANE_BOOTSTRAP_LOCK
+    if _CONTROL_PLANE_BOOTSTRAP_LOCK is None:
+        _CONTROL_PLANE_BOOTSTRAP_LOCK = asyncio.Lock()
+    return _CONTROL_PLANE_BOOTSTRAP_LOCK
+
+
+async def _maybe_bootstrap_llm_from_control_plane() -> None:
+    global _CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT
+    if os.getenv("OPENAI_API_KEY") or os.getenv("CUSTOM_LLM_API_KEY"):
+        return
+
+    vm_user_id = _as_non_empty_str(os.getenv("VM_USER_ID"))
+    vm_token = _as_non_empty_str(os.getenv("VM_TOKEN"))
+    if not vm_user_id or not vm_token:
+        return
+
+    async with _control_plane_bootstrap_lock():
+        if os.getenv("OPENAI_API_KEY") or os.getenv("CUSTOM_LLM_API_KEY"):
+            return
+        now = time.monotonic()
+        if (
+            _CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT > 0
+            and now - _CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT < _CONTROL_PLANE_BOOTSTRAP_RETRY_COOLDOWN_SECONDS
+        ):
+            return
+        _CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT = now
+
+        control_plane_ws = (
+            _as_non_empty_str(os.getenv("CONTROL_PLANE_WS"))
+            or DEFAULT_CONTROL_PLANE_WS
+        )
+        ticket = _as_non_empty_str(os.getenv("VM_TICKET")) or ""
+        client = ControlPlaneClient(
+            control_plane_url=control_plane_ws,
+            user_id=vm_user_id,
+            ticket=ticket,
+            token=vm_token,
+        )
+
+        init_data: dict[str, Any] = {}
+        try:
+            init_data = await client.connect()
+        except Exception as exc:
+            logger.warning(
+                "control_plane_llm_bootstrap_failed",
+                extra={"error": str(exc), "control_plane_ws": control_plane_ws},
+            )
+            return
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+        api_keys = decrypt_api_keys(init_data.get("api_keys"), vm_token)
+        if isinstance(api_keys, dict):
+            _set_env_if_missing("OPENAI_API_KEY", _as_non_empty_str(api_keys.get("openai")))
+            _set_env_if_missing("CUSTOM_LLM_API_KEY", _as_non_empty_str(api_keys.get("custom")))
+
+        llm_config = init_data.get("llm_config")
+        if isinstance(llm_config, dict):
+            _apply_llm_config_to_env(llm_config)
+
+        logger.debug(
+            "control_plane_llm_bootstrap_complete",
+            extra={
+                "has_openai": bool(os.getenv("OPENAI_API_KEY")),
+                "has_custom": bool(os.getenv("CUSTOM_LLM_API_KEY")),
+            },
+        )
 
 
 def _create_llm_provider(model: str | None = None) -> OpenAIProvider | None:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("CUSTOM_LLM_API_KEY")
+    llm_config = _load_llm_config()
+
+    openai_key = (
+        _as_non_empty_str(os.getenv("OPENAI_API_KEY"))
+        or _as_non_empty_str(llm_config.get("openai_api_key"))
+    )
+    custom_key = (
+        _as_non_empty_str(os.getenv("CUSTOM_LLM_API_KEY"))
+        or _as_non_empty_str(llm_config.get("custom_api_key"))
+    )
+    generic_key = _as_non_empty_str(llm_config.get("api_key"))
+    api_key = openai_key or custom_key or generic_key
     if not api_key:
         return None
 
-    resolved_model = model or os.getenv("CUSTOM_LLM_MODEL_NAME") or "gpt-4o"
-    base_url = os.getenv("OPENAI_API_BASE_URL") or os.getenv("CUSTOM_LLM_API_BASE_URL") or None
+    resolved_model = (
+        model
+        or _as_non_empty_str(os.getenv("CUSTOM_LLM_MODEL_NAME"))
+        or _as_non_empty_str(llm_config.get("default_model"))
+        or _as_non_empty_str(llm_config.get("model"))
+        or "gpt-4o"
+    )
+
+    openai_base_url = (
+        _as_non_empty_str(os.getenv("OPENAI_API_BASE_URL"))
+        or _as_non_empty_str(llm_config.get("openai_api_base_url"))
+        or _as_non_empty_str(llm_config.get("openai_base_url"))
+    )
+    custom_base_url = (
+        _as_non_empty_str(os.getenv("CUSTOM_LLM_API_BASE_URL"))
+        or _as_non_empty_str(llm_config.get("custom_api_base_url"))
+        or _as_non_empty_str(llm_config.get("custom_base_url"))
+    )
+    generic_base_url = (
+        _as_non_empty_str(llm_config.get("api_base_url"))
+        or _as_non_empty_str(llm_config.get("base_url"))
+    )
+    if openai_key:
+        base_url = openai_base_url or generic_base_url or custom_base_url
+    elif custom_key:
+        base_url = custom_base_url or generic_base_url or openai_base_url
+    else:
+        base_url = generic_base_url or openai_base_url or custom_base_url
+
     if base_url and "openai.azure.com" not in base_url and not base_url.rstrip("/").endswith("/v1"):
         base_url = f"{base_url.rstrip('/')}/v1"
 
@@ -138,6 +382,9 @@ async def run_task_once(
 
     async def _runtime_event_sink(event: dict[str, Any]) -> None:
         runtime_events.append(event)
+
+    _maybe_load_local_env_files()
+    await _maybe_bootstrap_llm_from_control_plane()
 
     skill_registry = create_default_registry()
     event_engine = EventEngine(
