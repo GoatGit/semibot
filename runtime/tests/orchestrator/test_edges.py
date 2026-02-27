@@ -11,6 +11,7 @@ from src.orchestrator.edges import (
     route_from_start,
     should_continue,
 )
+from src.orchestrator.context import SubAgentDefinition
 from src.orchestrator.state import ExecutionPlan, PlanStep
 
 
@@ -41,7 +42,15 @@ class TestRouteAfterPlan:
             requires_delegation=True,
             delegate_to="specialist",
         )
-        state = {**sample_agent_state, "plan": plan}
+        runtime_context = sample_agent_state["context"]
+        runtime_context.available_sub_agents = [
+            SubAgentDefinition(
+                id="specialist",
+                name="Specialist Agent",
+                description="Handles specialist tasks",
+            )
+        ]
+        state = {**sample_agent_state, "plan": plan, "context": runtime_context}
 
         result = route_after_plan(state)
 

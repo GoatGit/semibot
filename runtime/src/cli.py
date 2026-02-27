@@ -89,11 +89,38 @@ def _print_json(payload: dict[str, Any]) -> None:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return
     if OUTPUT_FORMAT == "table":
-        for key, value in payload.items():
-            rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-            print(f"{key}: {rendered}")
+        _print_table_payload(payload)
         return
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _print_table_payload(payload: dict[str, Any]) -> None:
+    def emit_value(key: str, value: Any, indent: int = 0) -> None:
+        prefix = "  " * indent
+        if isinstance(value, dict):
+            print(f"{prefix}{key}:")
+            for child_key, child_value in value.items():
+                emit_value(str(child_key), child_value, indent + 1)
+            return
+        if isinstance(value, list):
+            print(f"{prefix}{key}:")
+            if not value:
+                print(f"{prefix}  - (empty)")
+                return
+            for idx, item in enumerate(value, start=1):
+                if isinstance(item, dict):
+                    print(f"{prefix}  - [{idx}]")
+                    for child_key, child_value in item.items():
+                        emit_value(str(child_key), child_value, indent + 2)
+                else:
+                    rendered = item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)
+                    print(f"{prefix}  - {rendered}")
+            return
+        rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        print(f"{prefix}{key}: {rendered}")
+
+    for top_key, top_value in payload.items():
+        emit_value(str(top_key), top_value, 0)
 
 
 def _clr(text: str, code: str) -> str:
@@ -1115,6 +1142,43 @@ def _chat_in_session_via_runtime(
     return _http_json_request(method="POST", url=url, payload=payload, timeout=300.0)
 
 
+def _runtime_list_approvals(base_url: str, *, status: str | None = "pending", limit: int = 20) -> dict[str, Any]:
+    query_parts = [f"limit={max(1, min(limit, 200))}"]
+    if status:
+        query_parts.append(f"status={status}")
+    query = "&".join(query_parts)
+    return _http_json_request(method="GET", url=f"{base_url}/v1/approvals?{query}", timeout=10.0)
+
+
+def _runtime_resolve_approval(base_url: str, approval_id: str, decision: str) -> dict[str, Any]:
+    action = "approve" if decision == "approve" else "reject"
+    return _http_json_request(
+        method="POST",
+        url=f"{base_url}/v1/approvals/{approval_id}/{action}",
+        payload={},
+        timeout=10.0,
+    )
+
+
+def _extract_pending_approval_ids(result: dict[str, Any]) -> list[str]:
+    runtime_events = result.get("runtime_events")
+    if not isinstance(runtime_events, list):
+        return []
+    ids: list[str] = []
+    for item in runtime_events:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("event") or "") != "approval.requested":
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        approval_id = data.get("approval_id")
+        if isinstance(approval_id, str) and approval_id:
+            ids.append(approval_id)
+    return ids
+
+
 def _is_http_not_found_error(error: Exception) -> bool:
     text = str(error).lower()
     return "http 404" in text or "not found" in text
@@ -1180,7 +1244,53 @@ def cmd_chat(args: argparse.Namespace) -> int:
     else:
         _print_chat_session_intro(session_id=resolved_session_id, runtime_url=runtime_url)
 
+    def _handle_approval_command(raw: str) -> bool:
+        text = raw.strip()
+        if not text.startswith("/"):
+            return False
+        if text.lower() == "/approvals":
+            try:
+                payload = _runtime_list_approvals(runtime_url, status="pending", limit=20)
+                items = payload.get("items")
+                if not isinstance(items, list) or not items:
+                    print("Semibot> 当前没有待审批项。")
+                    return True
+                print(f"Semibot> 待审批 {len(items)} 项：")
+                for row in items:
+                    if not isinstance(row, dict):
+                        continue
+                    print(
+                        f"- {row.get('approval_id', 'unknown')} "
+                        f"(risk={row.get('risk_level', 'unknown')}, status={row.get('status', 'unknown')})"
+                    )
+            except Exception as exc:
+                print(f"Semibot> 读取审批列表失败: {exc}")
+            return True
+
+        approve_match = re.match(r"^/approve\s+([A-Za-z0-9_-]+)$", text, flags=re.IGNORECASE)
+        if approve_match:
+            approval_id = approve_match.group(1)
+            try:
+                payload = _runtime_resolve_approval(runtime_url, approval_id, "approve")
+                print(f"Semibot> 已通过审批 {payload.get('approval_id', approval_id)} ({payload.get('status', 'approved')})")
+            except Exception as exc:
+                print(f"Semibot> 审批失败: {exc}")
+            return True
+
+        reject_match = re.match(r"^/reject\s+([A-Za-z0-9_-]+)$", text, flags=re.IGNORECASE)
+        if reject_match:
+            approval_id = reject_match.group(1)
+            try:
+                payload = _runtime_resolve_approval(runtime_url, approval_id, "reject")
+                print(f"Semibot> 已拒绝审批 {payload.get('approval_id', approval_id)} ({payload.get('status', 'rejected')})")
+            except Exception as exc:
+                print(f"Semibot> 拒绝审批失败: {exc}")
+            return True
+        return False
+
     if args.message:
+        if _handle_approval_command(args.message):
+            return EXIT_SUCCESS
         show_indicator = bool(sys.stdout.isatty() and not args.json)
         try:
             result = _run_with_wait_indicator(
@@ -1206,6 +1316,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
             final_response = _sanitize_terminal_text(str(result.get("final_response") or ""))
             error = _sanitize_terminal_text(str(result.get("error") or ""))
             print(final_response if final_response else f"I encountered an error: {error}")
+            pending = _extract_pending_approval_ids(result)
+            if pending:
+                print(f"Semibot> 待审批: {', '.join(pending)}")
+                print("Semibot> 继续执行前请运行: /approve <id> 或 /reject <id>")
         return EXIT_SUCCESS if result.get("status") == "completed" else EXIT_EXTERNAL_ERROR
 
     session_initialized = False
@@ -1224,6 +1338,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
             continue
         if user_input.lower() in {"exit", "quit", "q"}:
             break
+        if _handle_approval_command(user_input):
+            continue
 
         show_indicator = bool(sys.stdout.isatty() and not args.json)
         try:
@@ -1262,6 +1378,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
             final_response = _sanitize_terminal_text(str(result.get("final_response") or ""))
             error = _sanitize_terminal_text(str(result.get("error") or ""))
             print(f"Semibot> {final_response if final_response else f'I encountered an error: {error}'}")
+            pending = _extract_pending_approval_ids(result)
+            if pending:
+                print(f"Semibot> 待审批: {', '.join(pending)}")
+                print("Semibot> 执行 /approve <id> 后再重新发起原任务。")
 
     return EXIT_SUCCESS
 
@@ -3626,7 +3746,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         choices=["json", "table", "yaml", "ndjson"],
-        default="json",
+        default="table",
         help="Output format",
     )
     parser.add_argument("--trace-id", default=None, help="Optional trace ID for audit correlation")
@@ -4155,7 +4275,7 @@ def main() -> None:
     global COLOR_ENABLED, OUTPUT_FORMAT
     parser = build_parser()
     args = parser.parse_args()
-    OUTPUT_FORMAT = "json" if getattr(args, "json", False) else getattr(args, "output", "json")
+    OUTPUT_FORMAT = "json" if getattr(args, "json", False) else getattr(args, "output", "table")
     COLOR_ENABLED = not bool(getattr(args, "no_color", False) or os.getenv("NO_COLOR"))
     setup_logging(level=str(getattr(args, "log_level", "CRITICAL")), json_format=False)
     _bootstrap_from_args(args)

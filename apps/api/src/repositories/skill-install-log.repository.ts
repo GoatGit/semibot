@@ -238,6 +238,18 @@ export async function remove(id: string): Promise<boolean> {
 }
 
 /**
+ * 根据技能定义 ID 删除安装日志
+ */
+export async function removeByDefinition(skillDefinitionId: string): Promise<number> {
+  const result = await sql`
+    DELETE FROM skill_install_logs
+    WHERE skill_definition_id = ${skillDefinitionId}
+  `
+
+  return result.count ?? 0
+}
+
+/**
  * 统计安装日志数量
  */
 export async function count(options?: {

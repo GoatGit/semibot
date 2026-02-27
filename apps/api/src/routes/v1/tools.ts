@@ -21,10 +21,12 @@ const updateToolSchema = z.object({
       timeout: z.number().min(1000).max(300000).optional(),
       retryAttempts: z.number().min(0).max(5).optional(),
       requiresApproval: z.boolean().optional(),
+      riskLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
       rateLimit: z.number().min(1).max(1000).optional(),
       apiEndpoint: z.string().url().optional(),
       apiKey: z.string().max(500).optional(),
-      permissions: z.array(z.string().min(1).max(100)).max(50).optional(),
+      rootPath: z.string().max(1000).optional(),
+      maxReadBytes: z.number().int().min(1).max(10_000_000).optional(),
     })
     .optional(),
   isActive: z.boolean().optional(),

@@ -191,14 +191,11 @@ export default function DashboardPage() {
             <div className="relative p-6 md:p-8">
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-3">
-                  <Badge variant="outline" className="border-primary-500/30 text-primary-300">
-                    控制台
-                  </Badge>
                   <h1 className="text-2xl md:text-3xl font-semibold text-text-primary">
-                    Semibot 新版工作台
+                    Semibot - A semi bot
                   </h1>
                   <p className="text-text-secondary max-w-2xl">
-                    统一查看会话、智能体与能力配置。入口聚合到一套 UI，保留旧功能并提升可见性。
+                    能干活、能提醒、能协作、能自己变强的数字员工。
                   </p>
                 </div>
                 <Button

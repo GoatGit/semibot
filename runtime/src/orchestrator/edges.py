@@ -10,6 +10,30 @@ from typing import Literal
 from src.orchestrator.state import AgentState
 
 
+def _can_delegate(state: AgentState) -> bool:
+    """Check whether delegation is actually available in current runtime context."""
+    plan = state.get("plan")
+    if not plan or not plan.requires_delegation or not plan.delegate_to:
+        return False
+
+    runtime_context = state.get("context")
+    if not runtime_context:
+        # Backward-compatibility: if no runtime context is attached,
+        # preserve old behavior and allow delegation routing.
+        return True
+
+    policy = getattr(runtime_context, "runtime_policy", None)
+    if policy is not None and getattr(policy, "enable_delegation", True) is False:
+        return False
+
+    available_sub_agents = getattr(runtime_context, "available_sub_agents", None) or []
+    if not available_sub_agents:
+        return False
+
+    delegate_to = str(plan.delegate_to)
+    return any(getattr(sub_agent, "id", None) == delegate_to for sub_agent in available_sub_agents)
+
+
 def route_after_plan(
     state: AgentState,
 ) -> Literal["act", "delegate", "respond"]:
@@ -41,8 +65,8 @@ def route_after_plan(
     if plan.steps and any(step.tool for step in plan.steps):
         return "act"
 
-    # Check if delegation is required
-    if plan.requires_delegation and plan.delegate_to:
+    # Check if delegation is required and available
+    if _can_delegate(state):
         return "delegate"
 
     # No steps - simple question, direct response

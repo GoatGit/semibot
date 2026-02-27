@@ -32,6 +32,7 @@ import {
 } from '../constants/config'
 import { pushMessage, getMessagesSince } from '../lib/sse-buffer'
 import { chatLogger } from '../lib/logger'
+import { runtimeRequest } from '../lib/runtime-client'
 import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/shared-types'
 import type { Agent } from './agent.service'
 import type { Session } from './session.service'
@@ -68,6 +69,27 @@ export interface SSEConnection {
 const sseConnections = new Map<string, SSEConnection>()
 const VM_READY_WAIT_MS = Math.max(0, Number(process.env.CHAT_VM_READY_WAIT_MS ?? 5000))
 const VM_READY_POLL_MS = Math.max(200, Number(process.env.CHAT_VM_READY_POLL_MS ?? 1000))
+const CHAT_DIRECT_RUNTIME = process.env.CHAT_DIRECT_RUNTIME !== 'false'
+
+type ApprovalCommand =
+  | { kind: 'approve'; approvalId: string }
+  | { kind: 'reject'; approvalId: string }
+  | { kind: 'list' }
+  | { kind: 'none' }
+
+interface ApprovalCommandResult {
+  text: string
+  approvalId?: string
+}
+
+interface PendingApprovalResumeContext {
+  orgId: string
+  userId: string
+  sessionId: string
+  input: ChatInput
+  agent: Agent
+  createdAt: number
+}
 
 type SkillFileInventory = {
   has_skill_md: boolean
@@ -82,9 +104,137 @@ type SkillRequires = {
   env_vars: string[]
 }
 
+const pendingApprovalResumes = new Map<string, PendingApprovalResumeContext>()
+const APPROVAL_RESUME_TTL_MS = 24 * 60 * 60 * 1000
+
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((v): v is string => typeof v === 'string').map((s) => s.trim()).filter(Boolean)
+}
+
+function parseApprovalCommand(message: string): ApprovalCommand {
+  const trimmed = message.trim()
+  if (!trimmed.startsWith('/')) return { kind: 'none' }
+
+  const approve = trimmed.match(/^\/approve\s+([A-Za-z0-9_-]+)$/i)
+  if (approve) return { kind: 'approve', approvalId: approve[1] }
+
+  const reject = trimmed.match(/^\/reject\s+([A-Za-z0-9_-]+)$/i)
+  if (reject) return { kind: 'reject', approvalId: reject[1] }
+
+  if (/^\/approvals$/i.test(trimmed)) return { kind: 'list' }
+  return { kind: 'none' }
+}
+
+async function executeApprovalCommand(command: ApprovalCommand): Promise<ApprovalCommandResult> {
+  if (command.kind === 'none') return { text: '' }
+  if (command.kind === 'approve') {
+    const result = await runtimeRequest<{ approval_id: string; status: string }>(
+      `/v1/approvals/${encodeURIComponent(command.approvalId)}/approve`,
+      { method: 'POST' }
+    )
+    return {
+      text: `审批已通过：${result.approval_id}（${result.status}）`,
+      approvalId: result.approval_id,
+    }
+  }
+  if (command.kind === 'reject') {
+    const result = await runtimeRequest<{ approval_id: string; status: string }>(
+      `/v1/approvals/${encodeURIComponent(command.approvalId)}/reject`,
+      { method: 'POST' }
+    )
+    return {
+      text: `审批已拒绝：${result.approval_id}（${result.status}）`,
+      approvalId: result.approval_id,
+    }
+  }
+
+  const list = await runtimeRequest<{
+    items?: Array<{ approval_id?: string; status?: string; risk_level?: string; event_id?: string }>
+  }>('/v1/approvals', {
+    method: 'GET',
+    query: { status: 'pending', limit: 20 },
+  })
+  const items = Array.isArray(list.items) ? list.items : []
+  if (items.length === 0) {
+    return { text: '当前没有待审批项。' }
+  }
+  const lines = items.map((item) => {
+    const id = item.approval_id || 'unknown'
+    const risk = item.risk_level || 'unknown'
+    const eventId = item.event_id || 'unknown'
+    return `- ${id} | risk=${risk} | event=${eventId}`
+  })
+  return {
+    text: `待审批列表（${items.length}）：\n${lines.join('\n')}\n可执行：/approve <id> 或 /reject <id>`,
+  }
+}
+
+function extractApprovalIds(runtimeEvents: unknown): string[] {
+  const events = Array.isArray(runtimeEvents) ? runtimeEvents : []
+  const approvalIds = new Set<string>()
+  for (const event of events) {
+    if (!event || typeof event !== 'object') continue
+    const record = event as { event?: string; data?: { approval_id?: string } }
+    if (record.event !== 'approval.requested') continue
+    const approvalId = record.data?.approval_id
+    if (approvalId) approvalIds.add(String(approvalId))
+  }
+  return Array.from(approvalIds)
+}
+
+function cleanupPendingApprovalResumes(): void {
+  const now = Date.now()
+  for (const [approvalId, entry] of pendingApprovalResumes.entries()) {
+    if (now - entry.createdAt > APPROVAL_RESUME_TTL_MS) {
+      pendingApprovalResumes.delete(approvalId)
+    }
+  }
+}
+
+function rememberPendingApprovalResumes(
+  approvalIds: string[],
+  context: Omit<PendingApprovalResumeContext, 'createdAt'>
+): void {
+  if (approvalIds.length === 0) return
+  cleanupPendingApprovalResumes()
+  const payload: PendingApprovalResumeContext = {
+    ...context,
+    createdAt: Date.now(),
+  }
+  for (const approvalId of approvalIds) {
+    pendingApprovalResumes.set(approvalId, payload)
+  }
+}
+
+function consumePendingApprovalResume(
+  approvalId: string,
+  expectedSessionId?: string
+): PendingApprovalResumeContext | undefined {
+  cleanupPendingApprovalResumes()
+  const context = pendingApprovalResumes.get(approvalId)
+  if (!context) return undefined
+  if (expectedSessionId && context.sessionId !== expectedSessionId) {
+    return undefined
+  }
+  pendingApprovalResumes.delete(approvalId)
+  return context
+}
+
+function removePendingApprovalResume(approvalId: string): void {
+  pendingApprovalResumes.delete(approvalId)
+}
+
+function appendApprovalHints(
+  finalResponse: string,
+  runtimeEvents: unknown
+): string {
+  const approvalIds = extractApprovalIds(runtimeEvents)
+  if (approvalIds.length === 0) return finalResponse
+
+  const hint = `\n\n发现待审批操作：${approvalIds.join(', ')}。\n可在聊天中执行：/approve <id> 或 /reject <id>`
+  if (finalResponse.trim()) return `${finalResponse}${hint}`
+  return `操作需要人工审批。${hint}`
 }
 
 async function resolveSkillMetadata(pkg: skillPackageRepo.SkillPackage): Promise<{
@@ -289,7 +439,64 @@ export async function handleChat(
   }
 
   const session = await sessionService.getSession(orgId, sessionId)
+  const approvalCommand = parseApprovalCommand(input.message)
+  if (approvalCommand.kind !== 'none') {
+    const connection = createSSEConnection(res, sessionId, userId, orgId)
+    await sessionService.addMessage(orgId, sessionId, {
+      role: 'user',
+      content: input.message,
+      parentId: input.parentMessageId,
+    })
+
+    try {
+      const commandResult = await executeApprovalCommand(approvalCommand)
+      const assistant = await sessionService.addMessage(orgId, sessionId, {
+        role: 'assistant',
+        content: commandResult.text,
+      })
+      sendAgent2UIMessage(connection, 'text', { content: commandResult.text })
+
+      let doneMessageId = assistant.id
+      if (approvalCommand.kind === 'approve' && commandResult.approvalId) {
+        const pending = consumePendingApprovalResume(commandResult.approvalId, sessionId)
+        if (pending) {
+          const resumeResult = await dispatchRuntimeChatResult({
+            orgId: pending.orgId,
+            userId: pending.userId,
+            sessionId: pending.sessionId,
+            input: pending.input,
+            agent: pending.agent,
+            connection,
+            persistUserMessage: false,
+            runtimeErrorMode: 'assistant_message',
+          })
+          if (resumeResult.assistantMessageId) {
+            doneMessageId = resumeResult.assistantMessageId
+          }
+        }
+      }
+      if (approvalCommand.kind === 'reject' && commandResult.approvalId) {
+        removePendingApprovalResume(commandResult.approvalId)
+      }
+
+      sendSSEEvent(connection, 'done', { sessionId, messageId: doneMessageId })
+    } catch (error) {
+      sendSSEEvent(connection, 'error', {
+        code: 'APPROVAL_COMMAND_FAILED',
+        message: (error as Error).message,
+      })
+    } finally {
+      closeSSEConnection(connection.id)
+    }
+    return
+  }
+
   const agent = await agentService.getAgent(orgId, session.agentId)
+
+  if (CHAT_DIRECT_RUNTIME) {
+    await handleChatViaRuntimeHttp(orgId, userId, sessionId, input, res, agent)
+    return
+  }
 
   await handleChatViaExecutionPlane(orgId, userId, sessionId, input, res, agent, session)
 }
@@ -452,6 +659,218 @@ async function handleChatViaExecutionPlane(
       }
     }
   })
+}
+
+function getRuntimeBaseUrls(): string[] {
+  const fallbackUrls = ['http://127.0.0.1:8765', 'http://127.0.0.1:8901', 'http://127.0.0.1:8801']
+  const configured = (process.env.RUNTIME_URL || '')
+    .split(',')
+    .map((value) => value.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+  return Array.from(new Set([...configured, ...fallbackUrls]))
+}
+
+function buildEnhancedMessage(input: ChatInput): { text: string } {
+  if (!input.attachments || input.attachments.length === 0) {
+    return { text: input.message }
+  }
+
+  const textParts: string[] = []
+  for (const att of input.attachments) {
+    if (att.isImage && att.base64) {
+      textParts.push(`[图片: ${att.filename} (${formatBytes(att.size)})]`)
+    } else if (att.textContent) {
+      textParts.push(`--- 📎 文件: ${att.filename} (${formatBytes(att.size)}) ---\n${att.textContent}`)
+    } else {
+      textParts.push(`[附件: ${att.filename} (${formatBytes(att.size)}) - 无法提取内容]`)
+    }
+  }
+  return {
+    text: `${input.message}\n\n${textParts.join('\n---\n')}`,
+  }
+}
+
+interface RuntimeDispatchOptions {
+  orgId: string
+  userId: string
+  sessionId: string
+  input: ChatInput
+  agent: Agent
+  connection: SSEConnection
+  persistUserMessage: boolean
+  runtimeErrorMode?: 'sse_error' | 'assistant_message'
+}
+
+interface RuntimeDispatchResult {
+  ok: boolean
+  assistantMessageId?: string
+}
+
+async function addAssistantTextMessage(
+  orgId: string,
+  sessionId: string,
+  connection: SSEConnection,
+  content: string
+): Promise<string> {
+  const assistant = await sessionService.addMessage(orgId, sessionId, {
+    role: 'assistant',
+    content,
+  })
+  sendAgent2UIMessage(connection, 'text', { content })
+  return assistant.id
+}
+
+async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promise<RuntimeDispatchResult> {
+  const {
+    orgId,
+    userId,
+    sessionId,
+    input,
+    agent,
+    connection,
+    persistUserMessage,
+    runtimeErrorMode = 'sse_error',
+  } = options
+
+  if (persistUserMessage) {
+    const messageMetadata: Record<string, unknown> = {}
+    if (input.attachments && input.attachments.length > 0) {
+      messageMetadata.attachments = input.attachments.map((att) => ({
+        id: att.id,
+        filename: att.filename,
+        mimeType: att.mimeType,
+        size: att.size,
+        isImage: att.isImage,
+      }))
+    }
+
+    await sessionService.addMessage(orgId, sessionId, {
+      role: 'user',
+      content: input.message,
+      parentId: input.parentMessageId,
+      ...(Object.keys(messageMetadata).length > 0 ? { metadata: messageMetadata } : {}),
+    })
+  }
+
+  const enhanced = buildEnhancedMessage(input)
+  const runtimeErrors: string[] = []
+  let runtimeResult: Record<string, unknown> | null = null
+
+  for (const baseUrl of getRuntimeBaseUrls()) {
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/chat/sessions/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: enhanced.text,
+          agent_id: agent.id,
+          model: agent.config?.model,
+          system_prompt: agent.systemPrompt,
+          stream: false,
+        }),
+      })
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '')
+        runtimeErrors.push(`${baseUrl}: HTTP ${response.status}${body ? ` ${body}` : ''}`)
+        continue
+      }
+
+      runtimeResult = (await response.json()) as Record<string, unknown>
+      break
+    } catch (error) {
+      runtimeErrors.push(`${baseUrl}: ${(error as Error).message}`)
+    }
+  }
+
+  if (!runtimeResult) {
+    const runtimeError = `Runtime 不可用: ${runtimeErrors.join('; ') || 'unknown error'}`
+    if (runtimeErrorMode === 'assistant_message') {
+      const assistantMessageId = await addAssistantTextMessage(
+        orgId,
+        sessionId,
+        connection,
+        `审批已通过，但自动继续执行失败：${runtimeError}`
+      )
+      return { ok: true, assistantMessageId }
+    }
+    sendSSEEvent(connection, 'error', {
+      code: 'RUNTIME_UNAVAILABLE',
+      message: runtimeError,
+    })
+    return { ok: false }
+  }
+
+  const status = String(runtimeResult.status || '')
+  const rawFinalResponse = String(runtimeResult.final_response || '')
+  const error = runtimeResult.error ? String(runtimeResult.error) : ''
+  const runtimeEvents = runtimeResult.runtime_events
+  const approvalIds = extractApprovalIds(runtimeEvents)
+  const finalResponse = appendApprovalHints(rawFinalResponse, runtimeEvents)
+
+  if (approvalIds.length > 0) {
+    rememberPendingApprovalResumes(approvalIds, {
+      orgId,
+      userId,
+      sessionId,
+      input,
+      agent,
+    })
+  }
+
+  if ((status !== 'completed' || error) && approvalIds.length === 0) {
+    if (runtimeErrorMode === 'assistant_message') {
+      const assistantMessageId = await addAssistantTextMessage(
+        orgId,
+        sessionId,
+        connection,
+        `审批已通过，但自动继续执行失败：${error || `Runtime 执行失败（status=${status || 'unknown'}）`}`
+      )
+      return { ok: true, assistantMessageId }
+    }
+    sendSSEEvent(connection, 'error', {
+      code: 'RUNTIME_EXECUTION_ERROR',
+      message: error || `Runtime 执行失败（status=${status || 'unknown'}）`,
+    })
+    return { ok: false }
+  }
+
+  const content =
+    finalResponse.trim() ||
+    (approvalIds.length > 0
+      ? `该请求包含高风险操作，等待审批：${approvalIds.join(', ')}。`
+      : '任务已执行完成。')
+
+  const assistantMessageId = await addAssistantTextMessage(orgId, sessionId, connection, content)
+  return { ok: true, assistantMessageId }
+}
+
+async function handleChatViaRuntimeHttp(
+  orgId: string,
+  userId: string,
+  sessionId: string,
+  input: ChatInput,
+  res: Response,
+  agent: Agent
+): Promise<void> {
+  const connection = createSSEConnection(res, sessionId, userId, orgId)
+  const result = await dispatchRuntimeChatResult({
+    orgId,
+    userId,
+    sessionId,
+    input,
+    agent,
+    connection,
+    persistUserMessage: true,
+    runtimeErrorMode: 'sse_error',
+  })
+  if (result.ok && result.assistantMessageId) {
+    sendSSEEvent(connection, 'done', {
+      sessionId,
+      messageId: result.assistantMessageId,
+    })
+  }
+  closeSSEConnection(connection.id)
 }
 
 export async function startNewChat(

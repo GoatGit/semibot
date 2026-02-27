@@ -24,7 +24,7 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       timeout: 15000,
       rateLimit: 120,
       requiresApproval: false,
-      permissions: ['search.read'],
+      riskLevel: 'low',
     },
   },
   web_search: {
@@ -34,7 +34,7 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       timeout: 15000,
       rateLimit: 120,
       requiresApproval: false,
-      permissions: ['search.read'],
+      riskLevel: 'low',
     },
   },
   code_executor: {
@@ -44,7 +44,7 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       timeout: 60000,
       rateLimit: 60,
       requiresApproval: true,
-      permissions: ['code.run'],
+      riskLevel: 'high',
     },
   },
   file_io: {
@@ -54,7 +54,7 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       timeout: 10000,
       rateLimit: 120,
       requiresApproval: true,
-      permissions: ['file.read', 'file.write', 'file.list'],
+      riskLevel: 'high',
     },
   },
 }
@@ -75,6 +75,7 @@ function getBuiltinTemplate(toolName: string): { description: string; type: stri
 function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig | undefined {
   if (!config) return undefined
   const sanitized: ToolConfig = { ...config }
+  delete sanitized.permissions
   if (toolName === 'code_executor') {
     delete sanitized.apiEndpoint
     delete sanitized.apiKey

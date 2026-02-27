@@ -306,6 +306,18 @@ export async function remove(id: string): Promise<boolean> {
 }
 
 /**
+ * 根据技能定义 ID 删除技能包
+ */
+export async function removeByDefinition(skillDefinitionId: string): Promise<number> {
+  const result = await sql`
+    DELETE FROM skill_packages
+    WHERE skill_definition_id = ${skillDefinitionId}
+  `
+
+  return result.count ?? 0
+}
+
+/**
  * 统计技能包数量
  */
 export async function count(options?: {

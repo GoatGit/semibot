@@ -6,6 +6,7 @@
 
 import { Router, type Response } from 'express'
 import { z } from 'zod'
+import fs from 'fs-extra'
 import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
@@ -20,8 +21,10 @@ import {
 import { installWithRetry } from '../../services/skill-retry-rollback.service'
 import { uploadAndInstall, uploadCreateAndInstall } from '../../services/skill-upload.service'
 import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
+import { createLogger } from '../../lib/logger'
 
 const router: Router = Router()
+const skillDefinitionsLogger = createLogger('skill-definitions-route')
 
 // ═══════════════════════════════════════════════════════════════
 // Schema 定义
@@ -307,7 +310,47 @@ router.delete(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const { id } = req.params
 
-    await skillDefinitionRepo.softDelete(id)
+    const definition = await skillDefinitionRepo.findById(id)
+    if (!definition) {
+      res.status(404).json({
+        success: false,
+        error: {
+          code: 'SKILL_NOT_FOUND',
+          message: '技能定义不存在',
+        },
+      })
+      return
+    }
+
+    const pkg = await skillPackageRepo.findByDefinition(id)
+    if (pkg?.packagePath) {
+      try {
+        if (await fs.pathExists(pkg.packagePath)) {
+          await fs.remove(pkg.packagePath)
+        }
+      } catch (error) {
+        skillDefinitionsLogger.warn('删除技能包目录失败，继续删除数据库记录', {
+          id,
+          packagePath: pkg.packagePath,
+          error: (error as Error).message,
+        })
+      }
+    }
+
+    await skillInstallLogRepo.removeByDefinition(id)
+    await skillPackageRepo.removeByDefinition(id)
+    const deleted = await skillDefinitionRepo.remove(id)
+
+    if (!deleted) {
+      res.status(500).json({
+        success: false,
+        error: {
+          code: 'SKILL_DELETE_FAILED',
+          message: '删除技能定义失败',
+        },
+      })
+      return
+    }
 
     res.json({
       success: true,

@@ -94,6 +94,25 @@ _FINANCE_NOISE_DOMAIN_PATTERNS = (
 )
 
 
+def _delegation_available(runtime_context: Any, plan: ExecutionPlan | None) -> bool:
+    """Check whether current plan can delegate in this runtime context."""
+    if not plan or not plan.requires_delegation or not plan.delegate_to:
+        return False
+    if not runtime_context:
+        return False
+
+    policy = getattr(runtime_context, "runtime_policy", None)
+    if policy is not None and getattr(policy, "enable_delegation", True) is False:
+        return False
+
+    sub_agents = getattr(runtime_context, "available_sub_agents", None) or []
+    if not sub_agents:
+        return False
+
+    delegate_to = str(plan.delegate_to)
+    return any(getattr(sa, "id", None) == delegate_to for sa in sub_agents)
+
+
 def _is_latest_intent(text: str) -> bool:
     if not text:
         return False
@@ -867,10 +886,20 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
                 "current_step": "respond",
             }
 
+        can_delegate = _delegation_available(runtime_context, plan)
+        if plan.requires_delegation and not can_delegate:
+            logger.warning(
+                "Delegation requested by planner but unavailable; falling back to local execution",
+                extra={
+                    "session_id": state["session_id"],
+                    "delegate_to": plan.delegate_to,
+                },
+            )
+
         return {
             "plan": plan,
             "pending_actions": plan.steps,
-            "current_step": "act" if not plan.requires_delegation else "delegate",
+            "current_step": "delegate" if can_delegate else "act",
         }
 
     except Exception as e:
@@ -1099,9 +1128,40 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
     delegator = context.get("sub_agent_delegator")
     plan = state["plan"]
 
-    if not delegator or not plan or not plan.delegate_to:
+    if not plan:
         return {
             "error": "Delegation not configured or no target specified",
+            "current_step": "observe",
+        }
+
+    if not delegator or not plan.delegate_to:
+        logger.warning(
+            "Delegation unavailable; requesting replan with local tools",
+            extra={
+                "session_id": state["session_id"],
+                "delegate_to": plan.delegate_to,
+                "delegator_configured": bool(delegator),
+            },
+        )
+        guidance = Message(
+            role="user",
+            content=(
+                "[SYSTEM] Delegation is unavailable in this runtime. "
+                "Please replan and execute using only available local tools/MCP/skills. "
+                "Do NOT set requires_delegation=true."
+            ),
+            name=None,
+            tool_call_id=None,
+        )
+        failed_result = ToolCallResult(
+            tool_name=f"subagent:{plan.delegate_to or 'unknown'}",
+            params={"task": plan.goal},
+            error="Delegation unavailable in current runtime",
+            success=False,
+        )
+        return {
+            "messages": [guidance],
+            "tool_results": [failed_result],
             "current_step": "observe",
         }
 

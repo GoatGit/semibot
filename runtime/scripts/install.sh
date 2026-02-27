@@ -8,6 +8,7 @@ VENV_PY="$VENV_DIR/bin/python"
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 AUTO_UPDATE_PROFILE="${AUTO_UPDATE_PROFILE:-1}"
 ACTIVE_PATH_TARGET=""
+INSTALL_LOG="$ROOT_DIR/.install-last.log"
 
 detect_shell_profile() {
   local shell_name
@@ -80,6 +81,23 @@ ensure_path_in_current_shell_if_sourced() {
   fi
 }
 
+link_global_launcher() {
+  if mkdir -p "$LOCAL_BIN" 2>/dev/null && ln -sf "$ROOT_DIR/scripts/semibot" "$LOCAL_BIN/semibot" 2>/dev/null; then
+    echo "[semibot] linked: $LOCAL_BIN/semibot -> $ROOT_DIR/scripts/semibot"
+    return 0
+  fi
+  return 1
+}
+
+warn_legacy_runtime_scripts_path() {
+  local profile_file
+  profile_file="$(detect_shell_profile)"
+  if [ -f "$profile_file" ] && grep -F "/semibot/runtime/scripts" "$profile_file" >/dev/null 2>&1; then
+    echo "[semibot] note: detected legacy PATH entries for */runtime/scripts in $profile_file"
+    echo "[semibot] note: with multiple worktrees, prefer using $LOCAL_BIN/semibot as the single entrypoint"
+  fi
+}
+
 echo "[semibot] root: $ROOT_DIR"
 echo "[semibot] python: $PYTHON_BIN"
 
@@ -96,15 +114,27 @@ fi
 echo "[semibot] ensuring pip in virtualenv"
 "$VENV_PY" -m ensurepip --upgrade >/dev/null 2>&1 || true
 
+echo "[semibot] upgrading packaging tools (pip/setuptools/wheel/hatchling/editables)"
+if ! "$VENV_PY" -m pip install -U pip setuptools wheel hatchling editables >/dev/null 2>&1; then
+  echo "[semibot] warning: packaging tools upgrade failed (will still try install -e)"
+fi
+
 echo "[semibot] trying editable install (pip install -e .)"
-if "$VENV_PY" -m pip install -e "$ROOT_DIR" --no-build-isolation >/dev/null 2>&1; then
+if "$VENV_PY" -m pip install -e "$ROOT_DIR" --no-build-isolation >"$INSTALL_LOG" 2>&1; then
   echo "[semibot] editable install succeeded"
-  ACTIVE_PATH_TARGET="$ROOT_DIR/scripts"
-  ensure_path_in_profile "$ROOT_DIR/scripts"
+  if link_global_launcher; then
+    ACTIVE_PATH_TARGET="$LOCAL_BIN"
+    ensure_path_in_profile "$LOCAL_BIN"
+  else
+    echo "[semibot] warning: cannot link $LOCAL_BIN/semibot, fallback to project-local path"
+    ACTIVE_PATH_TARGET="$ROOT_DIR/scripts"
+    ensure_path_in_profile "$ROOT_DIR/scripts"
+  fi
+  warn_legacy_runtime_scripts_path
   ensure_path_in_current_shell_if_sourced "$ACTIVE_PATH_TARGET"
-  echo "[semibot] run with:"
-  echo "  source \"$VENV_DIR/bin/activate\""
+  echo "[semibot] run:"
   echo "  semibot --help"
+  echo "[semibot] optional (for python dev commands): source \"$VENV_DIR/bin/activate\""
   if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     return 0
   fi
@@ -112,6 +142,10 @@ if "$VENV_PY" -m pip install -e "$ROOT_DIR" --no-build-isolation >/dev/null 2>&1
 fi
 
 echo "[semibot] editable install failed (likely offline build backend/dependency issue)"
+if [ -f "$INSTALL_LOG" ]; then
+  echo "[semibot] last install log: $INSTALL_LOG"
+  tail -n 40 "$INSTALL_LOG" || true
+fi
 echo "[semibot] falling back to local launcher script link"
 if mkdir -p "$LOCAL_BIN" 2>/dev/null && ln -sf "$ROOT_DIR/scripts/semibot" "$LOCAL_BIN/semibot" 2>/dev/null; then
   ACTIVE_PATH_TARGET="$LOCAL_BIN"
@@ -124,6 +158,7 @@ else
   ACTIVE_PATH_TARGET="$ROOT_DIR/scripts"
   ensure_path_in_profile "$ROOT_DIR/scripts"
 fi
+warn_legacy_runtime_scripts_path
 ensure_path_in_current_shell_if_sourced "$ACTIVE_PATH_TARGET"
 echo "[semibot] then run:"
 echo "  semibot --help"

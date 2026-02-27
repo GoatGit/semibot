@@ -9,13 +9,15 @@ import os
 from pathlib import Path
 from typing import Any
 
+from src.server.config_store import RuntimeConfigStore
 from src.skills.base import BaseTool, ToolResult
 
 
 class FileIOTool(BaseTool):
     def __init__(self) -> None:
-        self.root = Path(os.getenv("SEMIBOT_FILE_IO_ROOT", os.getcwd())).resolve()
+        self.root = Path(os.getenv("SEMIBOT_FILE_IO_ROOT", str(Path.home()))).resolve()
         self.max_read_bytes = int(os.getenv("SEMIBOT_FILE_IO_MAX_READ_BYTES", "200000"))
+        self._load_runtime_config()
 
     @property
     def name(self) -> str:
@@ -35,9 +37,14 @@ class FileIOTool(BaseTool):
                     "enum": ["read", "write", "list"],
                     "description": "File operation action",
                 },
+                "operation": {
+                    "type": "string",
+                    "enum": ["read", "write", "list"],
+                    "description": "Alias of action (compatibility)",
+                },
                 "path": {
                     "type": "string",
-                    "description": "Relative path under SEMIBOT_FILE_IO_ROOT",
+                    "description": "Path under allowed root",
                     "default": ".",
                 },
                 "content": {
@@ -50,30 +57,57 @@ class FileIOTool(BaseTool):
                     "default": False,
                 },
             },
-            "required": ["action"],
+            "required": [],
         }
+
+    def _load_runtime_config(self) -> None:
+        """Load file_io config from sqlite tool config if available."""
+        try:
+            store = RuntimeConfigStore(db_path=os.getenv("SEMIBOT_EVENTS_DB_PATH"))
+            item = store.get_tool_by_name("file_io")
+            config = item.get("config") if isinstance(item, dict) else {}
+            if not isinstance(config, dict):
+                return
+
+            root_from_cfg = config.get("rootPath") or config.get("root")
+            if isinstance(root_from_cfg, str) and root_from_cfg.strip():
+                self.root = Path(root_from_cfg).expanduser().resolve()
+
+            max_read = config.get("maxReadBytes")
+            if isinstance(max_read, int) and max_read > 0:
+                self.max_read_bytes = max_read
+        except Exception:
+            # Keep env/default config when sqlite config is unavailable.
+            return
 
     def _resolve_path(self, raw_path: str | None) -> Path:
         rel = (raw_path or ".").strip() or "."
         target = (self.root / rel).resolve()
         if target != self.root and self.root not in target.parents:
-            raise ValueError("path escapes configured root")
+            raise ValueError(f"path escapes configured root: {self.root}")
         return target
 
     async def execute(
         self,
-        action: str,
+        action: str | None = None,
+        operation: str | None = None,
         path: str = ".",
         content: str | None = None,
         recursive: bool = False,
         **_: Any,
     ) -> ToolResult:
+        resolved_action = (action or operation or "").strip().lower()
+        if resolved_action == "ls":
+            resolved_action = "list"
+        if not resolved_action:
+            return ToolResult.error_result("action is required (read/write/list)")
+
         try:
             target = self._resolve_path(path)
         except Exception as exc:
             return ToolResult.error_result(str(exc))
 
-        if action == "read":
+        if resolved_action == "read":
             if not target.exists() or not target.is_file():
                 return ToolResult.error_result(f"File not found: {path}")
             data = target.read_bytes()
@@ -87,7 +121,7 @@ class FileIOTool(BaseTool):
                 }
             )
 
-        if action == "write":
+        if resolved_action == "write":
             if content is None:
                 return ToolResult.error_result("content is required for write action")
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +133,7 @@ class FileIOTool(BaseTool):
                 }
             )
 
-        if action == "list":
+        if resolved_action == "list":
             if not target.exists() or not target.is_dir():
                 return ToolResult.error_result(f"Directory not found: {path}")
             iterator = target.rglob("*") if recursive else target.iterdir()
@@ -117,4 +151,4 @@ class FileIOTool(BaseTool):
                     break
             return ToolResult.success_result({"root": str(self.root), "items": items})
 
-        return ToolResult.error_result(f"Unsupported action: {action}")
+        return ToolResult.error_result(f"Unsupported action: {resolved_action}")

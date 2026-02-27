@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import re
 import time
@@ -22,6 +24,7 @@ from src.llm.base import LLMConfig
 from src.llm.openai_provider import OpenAIProvider
 from src.orchestrator.context import (
     AgentConfig,
+    RuntimePolicy,
     RuntimeSessionContext,
     SkillDefinition,
     ToolDefinition,
@@ -29,6 +32,7 @@ from src.orchestrator.context import (
 from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
+from src.server.config_store import RuntimeConfigStore
 from src.security.api_key_cipher import decrypt_api_keys
 from src.skills.bootstrap import create_default_registry
 from src.skills.registry import SkillRegistry
@@ -292,18 +296,50 @@ def _create_llm_provider(model: str | None = None) -> OpenAIProvider | None:
     )
 
 
-def _build_tool_definitions(registry: SkillRegistry) -> list[ToolDefinition]:
+def _load_tool_configs(db_path: str) -> dict[str, dict[str, Any]]:
+    try:
+        store = RuntimeConfigStore(db_path=db_path)
+        rows = store.list_tools(include_builtin=True, page=1, limit=500).get("data", [])
+    except Exception:
+        return {}
+    configs: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        cfg = row.get("config")
+        configs[name] = cfg if isinstance(cfg, dict) else {}
+    return configs
+
+
+def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolDefinition]:
+    tool_configs = _load_tool_configs(db_path)
     tools: list[ToolDefinition] = []
     for tool_name in registry.list_tools():
         tool = registry.get_tool(tool_name)
         if not tool:
             continue
+        cfg = tool_configs.get(tool.name, {})
+        raw_risk_level = cfg.get("riskLevel")
+        if isinstance(raw_risk_level, str) and raw_risk_level.strip():
+            risk_level = raw_risk_level.strip().lower()
+        elif tool.name in {"code_executor", "file_io"}:
+            risk_level = "high"
+        else:
+            risk_level = "low"
+        requires_approval = bool(cfg.get("requiresApproval", tool.name in {"code_executor", "file_io"}))
         tools.append(
             ToolDefinition(
                 name=tool.name,
                 description=tool.description,
                 parameters=tool.parameters,
-                metadata={"source": "builtin"},
+                metadata={
+                    "source": "builtin",
+                    "requires_approval": requires_approval,
+                    "risk_level": risk_level,
+                },
             )
         )
     return tools
@@ -377,6 +413,7 @@ async def run_task_once(
     system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Run one user task locally and return execution summary."""
+    os.environ["SEMIBOT_EVENTS_DB_PATH"] = db_path
     resolved_session_id = session_id or f"local_{int(time.time() * 1000)}_{uuid4().hex[:8]}"
     runtime_events: list[dict[str, Any]] = []
 
@@ -392,8 +429,84 @@ async def run_task_once(
         router=EventRouter(RuntimeActionExecutor(runtime_event_sink=_runtime_event_sink)),
         rules_path=rules_path,
     )
+    tool_definitions = _build_tool_definitions(skill_registry, db_path)
+
+    async def _capture_bus_event(event: Event) -> None:
+        runtime_events.append(
+            {
+                "event": event.event_type,
+                "source": event.source,
+                "subject": event.subject,
+                "data": event.payload,
+                "risk_hint": event.risk_hint,
+                "timestamp": event.timestamp.isoformat(),
+            }
+        )
+
+    event_engine.bus.subscribe(_capture_bus_event)
     event_engine.reload_rules()
     llm_provider = _create_llm_provider(model)
+
+    high_risk_tools = [
+        tool.name
+        for tool in tool_definitions
+        if bool(tool.metadata.get("requires_approval"))
+        or str(tool.metadata.get("risk_level", "")).lower() in {"high", "critical"}
+    ]
+
+    async def _approval_hook(
+        tool_name: str,
+        params: dict[str, Any],
+        metadata: Any,
+    ) -> dict[str, Any]:
+        risk_level = str((metadata.additional or {}).get("risk_level") or "high")
+        try:
+            params_key = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            params_key = str(params)
+        event_signature = hashlib.sha256(f"{tool_name}|{params_key}".encode("utf-8")).hexdigest()[:16]
+        event_id = f"{resolved_session_id}:{event_signature}"
+
+        approved_history = event_engine.store.list_approvals(status="approved", limit=1000)
+        for approved in approved_history:
+            if approved.event_id == event_id:
+                return {
+                    "approved": True,
+                    "approval_id": approved.approval_id,
+                    "reason": "approval already granted",
+                    "tool_name": tool_name,
+                    "params": params,
+                }
+
+        pending_history = event_engine.store.list_approvals(status="pending", limit=1000)
+        for pending in pending_history:
+            if pending.event_id == event_id:
+                return {
+                    "approved": False,
+                    "approval_id": pending.approval_id,
+                    "reason": (
+                        f"需要人工审批后才会执行 `{tool_name}`。审批ID: {pending.approval_id}。"
+                        f" 可执行 `/approve {pending.approval_id}` 或 `/reject {pending.approval_id}`。"
+                    ),
+                    "tool_name": tool_name,
+                    "params": params,
+                }
+
+        approval = await event_engine.approval_manager.request(
+            rule_id=f"tool.{tool_name}",
+            event_id=event_id,
+            risk_level=risk_level,
+        )
+        return {
+            "approved": False,
+            "approval_id": approval.approval_id,
+            "reason": (
+                f"需要人工审批后才会执行 `{tool_name}`。审批ID: {approval.approval_id}。"
+                f" 可执行 `/approve {approval.approval_id}` 或 `/reject {approval.approval_id}`。"
+            ),
+            "tool_name": tool_name,
+            "params": params,
+        }
 
     runtime_context = RuntimeSessionContext(
         agent_id=agent_id,
@@ -406,15 +519,21 @@ async def run_task_once(
         ),
         metadata={"event_emitter": event_engine},
         available_skills=_build_skill_definitions(skill_registry),
-        available_tools=_build_tool_definitions(skill_registry),
+        available_tools=tool_definitions,
         available_mcp_servers=[],
         available_sub_agents=[],
+        runtime_policy=RuntimePolicy(
+            enable_delegation=False,
+            require_approval_for_high_risk=True,
+            high_risk_tools=high_risk_tools,
+        ),
     )
 
     unified_executor = UnifiedActionExecutor(
         runtime_context=runtime_context,
         skill_registry=skill_registry,
         mcp_client=None,
+        approval_hook=_approval_hook,
         event_emitter=event_engine,
     )
 

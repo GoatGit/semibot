@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-本文件为 Claude AI 提供项目开发指南和规范。
+本文件为 Claude/Gemini/Antigravity/Codex AI 提供项目开发指南和规范。
 
 ## 基本规则
 

@@ -49,7 +49,7 @@ class UnifiedActionExecutor:
         runtime_context: RuntimeSessionContext,
         skill_registry: Any = None,
         mcp_client: Any = None,
-        approval_hook: Callable[[str, dict[str, Any], ExecutionMetadata], Awaitable[bool]] | None = None,
+        approval_hook: Callable[[str, dict[str, Any], ExecutionMetadata], Awaitable[bool | dict[str, Any]]] | None = None,
         audit_logger: Any = None,
         event_emitter: RuntimeEventEmitter | None = None,
     ):
@@ -229,7 +229,25 @@ class UnifiedActionExecutor:
                 )
 
             try:
-                approved = await self.approval_hook(tool_name, params, metadata)
+                approval_result = await self.approval_hook(tool_name, params, metadata)
+                approved = True
+                approval_reason: str | None = None
+                approval_id: str | None = None
+
+                if isinstance(approval_result, dict):
+                    approved = bool(approval_result.get("approved"))
+                    reason_raw = approval_result.get("reason")
+                    approval_reason = str(reason_raw) if reason_raw else None
+                    approval_id_raw = approval_result.get("approval_id")
+                    approval_id = str(approval_id_raw) if approval_id_raw else None
+                elif isinstance(approval_result, bool):
+                    approved = approval_result
+                else:
+                    approved = bool(approval_result)
+
+                if approval_id:
+                    metadata.additional["approval_id"] = approval_id
+
                 if not approved:
                     logger.warning(
                         "Action rejected by approval hook",
@@ -258,6 +276,8 @@ class UnifiedActionExecutor:
                             reason="Approval denied by user",
                         )
 
+                    denial_message = approval_reason or "Action rejected by approval hook"
+
                     await emit_runtime_event(
                         self.event_emitter,
                         event_type="tool.exec.failed",
@@ -268,14 +288,16 @@ class UnifiedActionExecutor:
                             "action_id": action.id,
                             "tool_name": tool_name,
                             "error": "approval_denied",
+                            "approval_id": approval_id,
                         },
                         risk_hint="high",
                     )
                     return ToolCallResult(
                         tool_name=tool_name,
                         params=params,
-                        error="Action rejected by approval hook",
+                        error=denial_message,
                         success=False,
+                        metadata={"approval_id": approval_id} if approval_id else {},
                     )
                 else:
                     # Log approval granted
@@ -401,8 +423,16 @@ class UnifiedActionExecutor:
 
     def _build_metadata(self, capability: Any, tool_name: str) -> ExecutionMetadata:
         """Build execution metadata from capability."""
-        is_high_risk = tool_name in self.high_risk_tools
-        requires_approval = (
+        metadata_map = capability.metadata if isinstance(capability.metadata, dict) else {}
+        raw_risk_level = metadata_map.get("risk_level")
+        risk_level = str(raw_risk_level).strip().lower() if raw_risk_level is not None else ""
+        configured_requires_approval = bool(metadata_map.get("requires_approval"))
+
+        is_high_risk = (
+            tool_name in self.high_risk_tools
+            or risk_level in {"high", "critical"}
+        )
+        requires_approval = configured_requires_approval or (
             is_high_risk and self.runtime_context.runtime_policy.require_approval_for_high_risk
         )
 
@@ -412,6 +442,7 @@ class UnifiedActionExecutor:
             version=capability.metadata.get("version"),
             requires_approval=requires_approval,
             is_high_risk=is_high_risk,
+            additional={"risk_level": risk_level or ("high" if is_high_risk else "low")},
         )
 
         # Add MCP-specific metadata

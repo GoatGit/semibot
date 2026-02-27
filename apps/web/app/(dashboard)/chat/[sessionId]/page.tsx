@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
-import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react'
+import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon, ArrowLeft, ShieldAlert, Check } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
 import { CitationList } from '@/components/agent2ui/text/CitationList'
@@ -47,6 +47,14 @@ interface DisplayMessage {
     plan: PlanData | null
     toolCalls: ToolCallData[]
   }
+}
+
+interface PendingApproval {
+  id: string
+  status: string
+  eventId?: string
+  riskLevel: string
+  createdAt: string
 }
 
 function isAgent2UIMessage(value: unknown): value is Agent2UIMessage {
@@ -143,6 +151,41 @@ function buildProcessState(messages: Agent2UIMessage[]): {
   return { thinking, plan, toolCalls }
 }
 
+function normalizePendingApprovals(raw: unknown, sessionId: string): PendingApproval[] {
+  if (!raw || typeof raw !== 'object') return []
+  const payload = raw as { items?: unknown[]; data?: unknown }
+  const items = Array.isArray(payload.items)
+    ? payload.items
+    : payload.data && typeof payload.data === 'object' && Array.isArray((payload.data as { items?: unknown[] }).items)
+      ? (payload.data as { items?: unknown[] }).items ?? []
+      : []
+
+  return items
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const record = item as Record<string, unknown>
+      const id = typeof record.id === 'string' ? record.id : (typeof record.approval_id === 'string' ? record.approval_id : '')
+      if (!id) return null
+
+      const status = typeof record.status === 'string' ? record.status : 'pending'
+      const eventId = typeof record.eventId === 'string' ? record.eventId : (typeof record.event_id === 'string' ? record.event_id : undefined)
+      const riskLevel = typeof record.riskLevel === 'string' ? record.riskLevel : (typeof record.risk_level === 'string' ? record.risk_level : 'medium')
+      const createdAt = typeof record.createdAt === 'string' ? record.createdAt : (typeof record.created_at === 'string' ? record.created_at : new Date().toISOString())
+
+      return {
+        id,
+        status,
+        eventId,
+        riskLevel,
+        createdAt,
+      } as PendingApproval
+    })
+    .filter((item): item is PendingApproval => item !== null)
+    .filter((item) => item.status === 'pending')
+    .filter((item) => !item.eventId || item.eventId.startsWith(`${sessionId}:`))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
 /**
  * Chat Session Page - 会话详情页面
  *
@@ -166,12 +209,31 @@ export default function ChatSessionPage() {
   const [isLoadingSession, setIsLoadingSession] = useState(true)
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([])
+  const [isLoadingApprovals, setIsLoadingApprovals] = useState(false)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
+  const [actingApprovalId, setActingApprovalId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { files, addFiles, removeFile, clearFiles, hasFiles } = useFileUpload()
 
   const { setCurrentSession: setStoreSession } = useSessionStore()
+
+  const loadPendingApprovals = useCallback(async () => {
+    try {
+      setIsLoadingApprovals(true)
+      const response = await apiClient.get<unknown>('/approvals', {
+        params: { status: 'pending', limit: 100 },
+      })
+      setPendingApprovals(normalizePendingApprovals(response, sessionId))
+      setApprovalError(null)
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : '加载审批列表失败')
+    } finally {
+      setIsLoadingApprovals(false)
+    }
+  }, [sessionId])
 
   // 使用 useChat hook 进行真实对话
   const {
@@ -245,6 +307,7 @@ export default function ChatSessionPage() {
             : m
         )
       )
+      void loadPendingApprovals()
     },
     onError: (error) => {
       console.error('[Chat] 错误:', error)
@@ -259,6 +322,7 @@ export default function ChatSessionPage() {
           status: 'error',
         },
       ])
+      void loadPendingApprovals()
     },
   })
 
@@ -387,6 +451,15 @@ export default function ChatSessionPage() {
     }
   }, [sessionId, setStoreSession])
 
+  // 定时刷新当前会话待审批项
+  useEffect(() => {
+    void loadPendingApprovals()
+    const timer = setInterval(() => {
+      void loadPendingApprovals()
+    }, 8000)
+    return () => clearInterval(timer)
+  }, [loadPendingApprovals])
+
   // 自动发送 initialMessage（从新建会话页面跳转过来时）
   const initialMessageSentRef = useRef(false)
   useEffect(() => {
@@ -489,6 +562,47 @@ export default function ChatSessionPage() {
       )
     }
   }
+
+  const sendCommandMessage = useCallback(async (command: string) => {
+    if (!command.trim() || isSending) return
+
+    const userMessage: DisplayMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: command.trim(),
+      timestamp: new Date(),
+      status: 'sending',
+    }
+    setDisplayMessages((prev) => [...prev, userMessage])
+
+    try {
+      setDisplayMessages((prev) =>
+        prev.map((m) =>
+          m.id === userMessage.id ? { ...m, status: 'sent' as const } : m
+        )
+      )
+      await sendMessage(command.trim())
+      await loadPendingApprovals()
+    } catch (error) {
+      setDisplayMessages((prev) =>
+        prev.map((m) =>
+          m.id === userMessage.id ? { ...m, status: 'error' as const } : m
+        )
+      )
+    }
+  }, [isSending, sendMessage, loadPendingApprovals])
+
+  const handleApprovalDecision = useCallback(async (approvalId: string, decision: 'approve' | 'reject') => {
+    if (isSending || actingApprovalId) return
+    const actionKey = `${approvalId}:${decision}`
+    setActingApprovalId(actionKey)
+    try {
+      await sendCommandMessage(`/${decision} ${approvalId}`)
+    } finally {
+      setActingApprovalId(null)
+      await loadPendingApprovals()
+    }
+  }, [actingApprovalId, isSending, loadPendingApprovals, sendCommandMessage])
 
   // 键盘事件处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -669,6 +783,77 @@ export default function ChatSessionPage() {
       {/* 输入区 */}
       <div className="flex-shrink-0 border-t border-border-subtle bg-bg-surface">
         <div className="max-w-3xl mx-auto p-4">
+          {pendingApprovals.length > 0 && (
+            <div className="mb-3 rounded-xl border border-primary-500/30 bg-primary-500/5 px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                  <ShieldAlert size={16} className="text-primary-500" />
+                  待审批操作 {pendingApprovals.length}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadPendingApprovals()}
+                  disabled={isLoadingApprovals}
+                  className={clsx(
+                    'inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary',
+                    isLoadingApprovals && 'opacity-60'
+                  )}
+                >
+                  <RefreshCw size={12} className={clsx(isLoadingApprovals && 'animate-spin')} />
+                  刷新
+                </button>
+              </div>
+
+              {approvalError && (
+                <p className="mt-2 text-xs text-error-400">{approvalError}</p>
+              )}
+
+              <div className="mt-2 space-y-2">
+                {pendingApprovals.map((approval) => (
+                  <div
+                    key={approval.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-subtle bg-bg-elevated px-2 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs text-text-primary truncate">
+                        {approval.id}
+                      </p>
+                      <p className="text-[11px] text-text-tertiary">
+                        风险 {approval.riskLevel}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        loading={actingApprovalId === `${approval.id}:approve`}
+                        disabled={isSending || !!actingApprovalId}
+                        leftIcon={<Check size={12} />}
+                        onClick={() => void handleApprovalDecision(approval.id, 'approve')}
+                      >
+                        通过
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="destructive"
+                        loading={actingApprovalId === `${approval.id}:reject`}
+                        disabled={isSending || !!actingApprovalId}
+                        leftIcon={<X size={12} />}
+                        onClick={() => void handleApprovalDecision(approval.id, 'reject')}
+                      >
+                        拒绝
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <p className="mt-2 text-[11px] text-text-tertiary">
+                通过后会自动继续执行被阻塞的任务。
+              </p>
+            </div>
+          )}
+
           {/* 错误重试提示 */}
           {displayMessages.length > 0 &&
             displayMessages[displayMessages.length - 1].status === 'error' && (

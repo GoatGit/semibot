@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -99,6 +100,8 @@ def create_app(
 ) -> FastAPI:
     db = db_path or str(Path("~/.semibot/semibot.db").expanduser())
     rules = rules_path or str(Path("~/.semibot/rules").expanduser())
+    # Expose runtime db path for tool-level config readers (e.g. SearchTool).
+    os.environ["SEMIBOT_EVENTS_DB_PATH"] = db
     feishu_notifier: FeishuNotifier | None = None
 
     async def _runtime_event_sink(runtime_event: dict[str, Any]) -> None:

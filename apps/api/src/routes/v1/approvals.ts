@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
-import * as eventEngineService from '../../services/event-engine.service'
+import { runtimeRequest } from '../../lib/runtime-client'
 
 const router: Router = Router()
 
@@ -28,7 +28,11 @@ router.get(
   validate(listApprovalsQuerySchema, 'query'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const { status, limit } = req.query as z.infer<typeof listApprovalsQuerySchema>
-    const items = await eventEngineService.listApprovals({ status, limit })
+    const payload = await runtimeRequest<{ items?: unknown[] }>('/v1/approvals', {
+      method: 'GET',
+      query: { status, limit: limit ?? 50 },
+    })
+    const items = Array.isArray(payload.items) ? payload.items : []
     res.json({
       success: true,
       items,
@@ -43,21 +47,14 @@ router.post(
   requirePermission('approvals:write'),
   validate(resolveApprovalSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const resolved = await eventEngineService.resolveApproval(req.params.id, 'approve', req.body.reason)
-    if (!resolved) {
-      res.status(404).json({
-        success: false,
-        error: {
-          code: 'APPROVAL_NOT_FOUND',
-          message: '审批记录不存在',
-        },
-      })
-      return
-    }
+    const resolved = await runtimeRequest<{ approval_id: string; status: string }>(
+      `/v1/approvals/${encodeURIComponent(req.params.id)}/approve`,
+      { method: 'POST' }
+    )
 
     res.json({
       success: true,
-      id: resolved.id,
+      id: resolved.approval_id,
       status: resolved.status,
       resolved: true,
     })
@@ -71,21 +68,14 @@ router.post(
   requirePermission('approvals:write'),
   validate(resolveApprovalSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const resolved = await eventEngineService.resolveApproval(req.params.id, 'reject', req.body.reason)
-    if (!resolved) {
-      res.status(404).json({
-        success: false,
-        error: {
-          code: 'APPROVAL_NOT_FOUND',
-          message: '审批记录不存在',
-        },
-      })
-      return
-    }
+    const resolved = await runtimeRequest<{ approval_id: string; status: string }>(
+      `/v1/approvals/${encodeURIComponent(req.params.id)}/reject`,
+      { method: 'POST' }
+    )
 
     res.json({
       success: true,
-      id: resolved.id,
+      id: resolved.approval_id,
       status: resolved.status,
       resolved: true,
     })

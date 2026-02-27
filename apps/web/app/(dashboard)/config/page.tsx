@@ -88,10 +88,12 @@ interface ToolItem {
     timeout?: number
     retryAttempts?: number
     requiresApproval?: boolean
+    riskLevel?: 'low' | 'medium' | 'high' | 'critical'
     rateLimit?: number
     apiEndpoint?: string
     apiKey?: string
-    permissions?: string[]
+    rootPath?: string
+    maxReadBytes?: number
   }
   isBuiltin: boolean
   isActive: boolean
@@ -114,9 +116,12 @@ type ToolForm = {
   name: string
   type: string
   timeoutMs: string
+  requiresApproval: boolean
+  riskLevel: 'low' | 'medium' | 'high' | 'critical'
   apiEndpoint: string
   apiKey: string
-  permissionsText: string
+  rootPath: string
+  maxReadBytes: string
 }
 
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
@@ -174,13 +179,6 @@ function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
   return merged
 }
 
-function parsePermissions(text: string): string[] {
-  return text
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
 export default function ConfigPage() {
   const [activeTab, setActiveTab] = useState<ConfigTab>('llm')
   const [loading, setLoading] = useState(true)
@@ -226,9 +224,12 @@ export default function ConfigPage() {
     name: '',
     type: 'custom',
     timeoutMs: '',
+    requiresApproval: false,
+    riskLevel: 'low',
     apiEndpoint: '',
     apiKey: '',
-    permissionsText: '',
+    rootPath: '',
+    maxReadBytes: '',
   })
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
@@ -431,36 +432,26 @@ export default function ConfigPage() {
   }
 
   const openEditToolDialog = (tool: ToolItem) => {
-    const permissions = Array.isArray(tool.config?.permissions)
-      ? tool.config!.permissions!
-      : tool.name === 'file_io'
-        ? ['file.read', 'file.write', 'file.list']
-        : []
     setToolForm({
       id: tool.id,
       name: tool.name,
       type: tool.type || 'custom',
       timeoutMs: tool.config?.timeout ? String(tool.config.timeout) : '',
+      requiresApproval: Boolean(tool.config?.requiresApproval),
+      riskLevel: (tool.config?.riskLevel || (tool.name === 'code_executor' || tool.name === 'file_io' ? 'high' : 'low')) as
+        | 'low'
+        | 'medium'
+        | 'high'
+        | 'critical',
       apiEndpoint: tool.config?.apiEndpoint || '',
       apiKey: '',
-      permissionsText: permissions.join(','),
+      rootPath: tool.config?.rootPath || '',
+      maxReadBytes:
+        typeof tool.config?.maxReadBytes === 'number'
+          ? String(tool.config.maxReadBytes)
+          : '',
     })
     setShowEditTool(true)
-  }
-
-  const setFileIoPermission = (permission: string, enabled: boolean) => {
-    setToolForm((prev) => {
-      const current = new Set(parsePermissions(prev.permissionsText))
-      if (enabled) {
-        current.add(permission)
-      } else {
-        current.delete(permission)
-      }
-      return {
-        ...prev,
-        permissionsText: Array.from(current).join(','),
-      }
-    })
   }
 
   const saveToolConfig = async () => {
@@ -482,21 +473,27 @@ export default function ConfigPage() {
       }
     }
 
-    const permissions = parsePermissions(toolForm.permissionsText)
-    const permissionsPayload = toolForm.name === 'file_io'
-      ? permissions
-      : permissions.length > 0
-        ? permissions
-        : undefined
+    const maxReadBytes = toolForm.maxReadBytes.trim()
+    if (maxReadBytes && (!/^\d+$/.test(maxReadBytes) || Number(maxReadBytes) < 1)) {
+      setError('maxReadBytes 必须是正整数')
+      return
+    }
 
     const payload = {
       config: {
         ...(timeout ? { timeout: Number(timeout) } : {}),
+        requiresApproval: toolForm.requiresApproval,
+        riskLevel: toolForm.riskLevel,
         ...(endpoint ? { apiEndpoint: endpoint } : {}),
         ...(supportsApiCredentials && toolForm.apiKey.trim()
           ? { apiKey: toolForm.apiKey.trim() }
           : {}),
-        ...(permissionsPayload !== undefined ? { permissions: permissionsPayload } : {}),
+        ...(toolForm.name === 'file_io' && toolForm.rootPath.trim()
+          ? { rootPath: toolForm.rootPath.trim() }
+          : {}),
+        ...(toolForm.name === 'file_io' && maxReadBytes
+          ? { maxReadBytes: Number(maxReadBytes) }
+          : {}),
       },
     }
 
@@ -886,11 +883,10 @@ export default function ConfigPage() {
                                   {tool.type}
                                   {tool.description ? ` · ${tool.description}` : ''}
                                 </p>
-                                {Array.isArray(tool.config?.permissions) && tool.config!.permissions!.length > 0 && (
-                                  <p className="mt-1 text-xs text-text-tertiary">
-                                    权限: {tool.config!.permissions!.join(', ')}
-                                  </p>
-                                )}
+                                <p className="mt-1 text-xs text-text-tertiary">
+                                  风险: {tool.config?.riskLevel || 'low'} · 审批:{' '}
+                                  {tool.config?.requiresApproval ? '开启' : '关闭'}
+                                </p>
                               </div>
                               <div className="flex items-center gap-1">
                                 {tool.isBuiltin && <Badge variant="outline">内置</Badge>}
@@ -1145,6 +1141,32 @@ export default function ConfigPage() {
             value={toolForm.timeoutMs}
             onChange={(e) => setToolForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
           />
+          <label className="flex items-center gap-2 text-sm text-text-secondary">
+            <input
+              type="checkbox"
+              checked={toolForm.requiresApproval}
+              onChange={(e) => setToolForm((prev) => ({ ...prev, requiresApproval: e.target.checked }))}
+            />
+            高风险操作需要人工审批（HITL）
+          </label>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">风险等级</p>
+            <select
+              className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+              value={toolForm.riskLevel}
+              onChange={(e) =>
+                setToolForm((prev) => ({
+                  ...prev,
+                  riskLevel: e.target.value as 'low' | 'medium' | 'high' | 'critical',
+                }))
+              }
+            >
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </div>
           {toolForm.name !== 'code_executor' && toolForm.name !== 'file_io' ? (
             <>
               <Input
@@ -1166,39 +1188,18 @@ export default function ConfigPage() {
           )}
           {toolForm.name === 'file_io' ? (
             <div className="space-y-2">
-              <p className="text-sm text-text-secondary">file_io 权限</p>
-              <label className="flex items-center gap-2 text-sm text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={parsePermissions(toolForm.permissionsText).includes('file.read')}
-                  onChange={(e) => setFileIoPermission('file.read', e.target.checked)}
-                />
-                允许读取文件（file.read）
-              </label>
-              <label className="flex items-center gap-2 text-sm text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={parsePermissions(toolForm.permissionsText).includes('file.write')}
-                  onChange={(e) => setFileIoPermission('file.write', e.target.checked)}
-                />
-                允许写入文件（file.write）
-              </label>
-              <label className="flex items-center gap-2 text-sm text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={parsePermissions(toolForm.permissionsText).includes('file.list')}
-                  onChange={(e) => setFileIoPermission('file.list', e.target.checked)}
-                />
-                允许列目录（file.list）
-              </label>
+              <Input
+                placeholder="根目录（可选，如 /Users/xxx）"
+                value={toolForm.rootPath}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, rootPath: e.target.value }))}
+              />
+              <Input
+                placeholder="maxReadBytes（可选，正整数）"
+                value={toolForm.maxReadBytes}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, maxReadBytes: e.target.value }))}
+              />
             </div>
-          ) : (
-            <Input
-              placeholder="权限（逗号分隔，如 search.read,file.write）"
-              value={toolForm.permissionsText}
-              onChange={(e) => setToolForm((prev) => ({ ...prev, permissionsText: e.target.value }))}
-            />
-          )}
+          ) : null}
         </div>
       </Modal>
 

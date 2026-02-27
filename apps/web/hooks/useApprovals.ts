@@ -20,7 +20,7 @@ function readString(value: unknown, fallback = ''): string {
 function normalizeApproval(raw: unknown): ApprovalRecord | null {
   if (!isObject(raw)) return null
 
-  const id = readString(raw.id)
+  const id = readString(raw.id) || readString(raw.approval_id)
   if (!id) return null
 
   return {

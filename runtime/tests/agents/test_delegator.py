@@ -481,8 +481,11 @@ async def test_delegate_node_no_delegator(delegation_state):
 
     result = await delegate_node(delegation_state, context)
 
-    assert "error" in result
-    assert "not configured" in result["error"].lower()
+    assert result["current_step"] == "observe"
+    assert len(result["tool_results"]) == 1
+    assert result["tool_results"][0].success is False
+    assert "delegation unavailable" in (result["tool_results"][0].error or "").lower()
+    assert result.get("messages")
 
 
 @pytest.mark.asyncio
