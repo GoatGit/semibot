@@ -1,0 +1,93 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - navigation [ref=e3]:
+      - img [ref=e7]
+      - generic [ref=e10]:
+        - link "仪表盘" [ref=e11] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e12]
+        - link "会话" [ref=e17] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e18]
+        - link "事件" [ref=e20] [cursor=pointer]:
+          - /url: /events
+          - img [ref=e21]
+        - link "规则" [ref=e23] [cursor=pointer]:
+          - /url: /rules
+          - img [ref=e24]
+        - link "审批" [ref=e28] [cursor=pointer]:
+          - /url: /approvals
+          - img [ref=e29]
+        - link "Agents" [ref=e32] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e33]
+        - link "Skills" [ref=e36] [cursor=pointer]:
+          - /url: /skills
+          - img [ref=e37]
+        - link "MCP" [ref=e39] [cursor=pointer]:
+          - /url: /mcp
+          - img [ref=e40]
+        - link "Tools" [ref=e42] [cursor=pointer]:
+          - /url: /tools
+          - img [ref=e43]
+        - link "配置" [ref=e45] [cursor=pointer]:
+          - /url: /config
+          - img [ref=e46]
+        - link "新建会话" [ref=e48] [cursor=pointer]:
+          - /url: /chat/new
+          - img [ref=e49]
+    - main [ref=e50]:
+      - generic [ref=e51]:
+        - generic [ref=e53]:
+          - generic [ref=e54]:
+            - link [ref=e55] [cursor=pointer]:
+              - /url: /agents
+              - img [ref=e56]
+            - heading "编辑 Agent" [level=1] [ref=e58]
+          - button "保存" [ref=e59] [cursor=pointer]:
+            - img [ref=e61]
+            - text: 保存
+        - generic [ref=e65]:
+          - generic [ref=e66]:
+            - generic [ref=e67]:
+              - generic [ref=e68]: 基础配置
+              - paragraph [ref=e69]: 使用真实 API 保存 Agent 配置
+            - generic [ref=e71]:
+              - generic [ref=e72]:
+                - generic [ref=e73]: 名称
+                - textbox "输入 Agent 名称" [ref=e76]: Seed Agent 1
+              - generic [ref=e77]:
+                - generic [ref=e78]: 描述
+                - textbox "输入描述" [ref=e79]: Seed description 1
+              - generic [ref=e80]:
+                - generic [ref=e81]: 模型
+                - combobox [ref=e83] [cursor=pointer]:
+                  - generic [ref=e84]: GPT-4o
+                  - img [ref=e85]
+              - generic [ref=e87]:
+                - generic [ref=e88]: 执行引擎
+                - combobox [ref=e90] [cursor=pointer]:
+                  - generic [ref=e91]: Semigraph
+                  - img [ref=e92]
+              - generic [ref=e94]:
+                - generic [ref=e95]: 系统提示词
+                - textbox "输入系统提示词" [ref=e96]: You are a helpful assistant.
+          - generic [ref=e97]:
+            - generic [ref=e98]:
+              - generic [ref=e99]: Skills 配置
+              - paragraph [ref=e100]: 选择此 Agent 可使用的技能
+            - generic [ref=e102]:
+              - img [ref=e103]
+              - text: 加载技能列表...
+          - generic [ref=e105]:
+            - generic [ref=e106]:
+              - generic [ref=e107]: MCP Servers 配置
+              - paragraph [ref=e108]: 选择此 Agent 可连接的 MCP 服务器
+            - generic [ref=e110]:
+              - img [ref=e111]
+              - text: 加载 MCP 服务器列表...
+  - alert [ref=e113]
+```

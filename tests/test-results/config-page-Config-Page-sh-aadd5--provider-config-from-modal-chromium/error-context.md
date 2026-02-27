@@ -1,0 +1,82 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - navigation [ref=e3]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e10]: Semibot
+    - generic [ref=e11]:
+      - link "仪表盘" [ref=e12] [cursor=pointer]:
+        - /url: /dashboard
+        - img [ref=e13]
+        - generic [ref=e18]: 仪表盘
+      - link "会话" [ref=e19] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e20]
+        - generic [ref=e22]: 会话
+      - link "事件" [ref=e23] [cursor=pointer]:
+        - /url: /events
+        - img [ref=e24]
+        - generic [ref=e26]: 事件
+      - link "规则" [ref=e27] [cursor=pointer]:
+        - /url: /rules
+        - img [ref=e28]
+        - generic [ref=e32]: 规则
+      - link "审批" [ref=e33] [cursor=pointer]:
+        - /url: /approvals
+        - img [ref=e34]
+        - generic [ref=e37]: 审批
+      - link "Agents" [ref=e38] [cursor=pointer]:
+        - /url: /agents
+        - img [ref=e39]
+        - generic [ref=e42]: Agents
+      - link "Skills" [ref=e43] [cursor=pointer]:
+        - /url: /skills
+        - img [ref=e44]
+        - generic [ref=e46]: Skills
+      - link "MCP" [ref=e47] [cursor=pointer]:
+        - /url: /mcp
+        - img [ref=e48]
+        - generic [ref=e50]: MCP
+      - link "Tools" [ref=e51] [cursor=pointer]:
+        - /url: /tools
+        - img [ref=e52]
+        - generic [ref=e54]: Tools
+      - link "配置" [ref=e55] [cursor=pointer]:
+        - /url: /config
+        - img [ref=e56]
+        - generic [ref=e57]: 配置
+      - link "新建会话" [ref=e59] [cursor=pointer]:
+        - /url: /chat/new
+        - img [ref=e60]
+        - generic [ref=e61]: 新建会话
+      - paragraph [ref=e63]: 暂无会话
+  - main [ref=e64]:
+    - generic [ref=e66]:
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - heading "配置管理" [level=1] [ref=e69]
+          - paragraph [ref=e70]: 统一管理 LLM、Tools、API Key、Webhook。
+        - button "刷新" [ref=e71] [cursor=pointer]:
+          - img [ref=e73]
+          - text: 刷新
+      - generic [ref=e75]:
+        - button "LLM 0" [ref=e76] [cursor=pointer]:
+          - generic [ref=e77]: LLM
+          - generic [ref=e78]: "0"
+        - button "Tools 0" [ref=e79] [cursor=pointer]:
+          - generic [ref=e80]: Tools
+          - generic [ref=e81]: "0"
+        - button "API Keys 0" [ref=e82] [cursor=pointer]:
+          - generic [ref=e83]: API Keys
+          - generic [ref=e84]: "0"
+        - button "Webhooks 0" [ref=e85] [cursor=pointer]:
+          - generic [ref=e86]: Webhooks
+          - generic [ref=e87]: "0"
+      - generic [ref=e89]:
+        - img [ref=e90]
+        - generic [ref=e92]: 加载配置中...
+  - button "展开详情画布" [ref=e94] [cursor=pointer]:
+    - img [ref=e95]
+```

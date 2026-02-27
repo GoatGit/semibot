@@ -1,0 +1,64 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - navigation [ref=e3]:
+      - img [ref=e7]
+      - generic [ref=e10]:
+        - link "仪表盘" [ref=e11] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e12]
+        - link "会话" [ref=e17] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e18]
+        - link "事件" [ref=e20] [cursor=pointer]:
+          - /url: /events
+          - img [ref=e21]
+        - link "规则" [ref=e23] [cursor=pointer]:
+          - /url: /rules
+          - img [ref=e24]
+        - link "审批" [ref=e28] [cursor=pointer]:
+          - /url: /approvals
+          - img [ref=e29]
+        - link "Agents" [ref=e32] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e33]
+        - link "Skills" [ref=e36] [cursor=pointer]:
+          - /url: /skills
+          - img [ref=e37]
+        - link "MCP" [ref=e39] [cursor=pointer]:
+          - /url: /mcp
+          - img [ref=e40]
+        - link "Tools" [ref=e42] [cursor=pointer]:
+          - /url: /tools
+          - img [ref=e43]
+        - link "配置" [ref=e45] [cursor=pointer]:
+          - /url: /config
+          - img [ref=e46]
+        - link "新建会话" [ref=e48] [cursor=pointer]:
+          - /url: /chat/new
+          - img [ref=e49]
+    - main [ref=e50]:
+      - generic [ref=e53]:
+        - generic [ref=e54]:
+          - img [ref=e56]
+          - heading "开始新会话" [level=1] [ref=e58]
+          - paragraph [ref=e59]: 选择一个 Agent，或直接输入您的问题开始对话
+        - heading "选择 Agent" [level=2] [ref=e61]
+        - generic [ref=e65]:
+          - heading "快速开始" [level=2] [ref=e66]
+          - generic [ref=e67]:
+            - textbox "输入您的问题或任务描述..." [ref=e68]
+            - button "开始对话" [disabled] [ref=e70]:
+              - text: 开始对话
+              - img [ref=e72]
+        - generic [ref=e74]:
+          - heading "试试这些问题" [level=2] [ref=e75]
+          - generic [ref=e76]:
+            - button "帮我分析这份销售数据并生成报告" [ref=e77] [cursor=pointer]
+            - button "写一个 React 组件实现文件上传功能" [ref=e78] [cursor=pointer]
+            - button "搜索最新的 AI 行业动态并总结" [ref=e79] [cursor=pointer]
+            - button "帮我优化这段 Python 代码的性能" [ref=e80] [cursor=pointer]
+  - alert [ref=e81]
+```

@@ -1,0 +1,163 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - navigation [ref=e3]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e10]: Semibot
+      - generic [ref=e11]:
+        - link "仪表盘" [ref=e12] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e13]
+          - generic [ref=e18]: 仪表盘
+        - link "会话" [ref=e19] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e20]
+          - generic [ref=e22]: 会话
+        - link "事件" [ref=e23] [cursor=pointer]:
+          - /url: /events
+          - img [ref=e24]
+          - generic [ref=e26]: 事件
+        - link "规则" [ref=e27] [cursor=pointer]:
+          - /url: /rules
+          - img [ref=e28]
+          - generic [ref=e32]: 规则
+        - link "审批" [ref=e33] [cursor=pointer]:
+          - /url: /approvals
+          - img [ref=e34]
+          - generic [ref=e37]: 审批
+        - link "Agents" [ref=e38] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e39]
+          - generic [ref=e42]: Agents
+        - link "Skills" [ref=e43] [cursor=pointer]:
+          - /url: /skills
+          - img [ref=e44]
+          - generic [ref=e46]: Skills
+        - link "MCP" [ref=e47] [cursor=pointer]:
+          - /url: /mcp
+          - img [ref=e48]
+          - generic [ref=e50]: MCP
+        - link "Tools" [active] [ref=e51] [cursor=pointer]:
+          - /url: /tools
+          - img [ref=e52]
+          - generic [ref=e54]: Tools
+        - link "配置" [ref=e55] [cursor=pointer]:
+          - /url: /config
+          - img [ref=e56]
+          - generic [ref=e57]: 配置
+        - link "新建会话" [ref=e59] [cursor=pointer]:
+          - /url: /chat/new
+          - img [ref=e60]
+          - generic [ref=e61]: 新建会话
+        - paragraph [ref=e63]: 暂无会话
+    - main [ref=e64]:
+      - generic [ref=e66]:
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - generic [ref=e73]: 控制台
+            - heading "Semibot 新版工作台" [level=1] [ref=e74]
+            - paragraph [ref=e75]: 统一查看会话、智能体与能力配置。入口聚合到一套 UI，保留旧功能并提升可见性。
+          - button "刷新" [disabled] [ref=e76]:
+            - img [ref=e78]
+            - text: 刷新
+        - generic [ref=e83]:
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - paragraph [ref=e87]: Agent
+              - img [ref=e89]
+            - generic [ref=e92]: "0"
+            - paragraph [ref=e93]: 可用智能体
+          - generic [ref=e95]:
+            - generic [ref=e96]:
+              - paragraph [ref=e97]: 会话
+              - img [ref=e99]
+            - generic [ref=e101]: "0"
+            - paragraph [ref=e102]: 进行中 0
+          - generic [ref=e104]:
+            - generic [ref=e105]:
+              - paragraph [ref=e106]: MCP
+              - img [ref=e108]
+            - generic [ref=e110]: "--"
+            - paragraph [ref=e111]: 外部工具连接
+          - generic [ref=e113]:
+            - generic [ref=e114]:
+              - paragraph [ref=e115]: Skills
+              - img [ref=e117]
+            - generic [ref=e119]: "--"
+            - paragraph [ref=e120]: 技能定义
+          - generic [ref=e122]:
+            - generic [ref=e123]:
+              - paragraph [ref=e124]: 事件
+              - img [ref=e126]
+            - generic [ref=e128]: "--"
+            - paragraph [ref=e129]: 待审批 0
+        - generic [ref=e130]:
+          - generic [ref=e133]:
+            - heading "最近会话" [level=2] [ref=e134]
+            - link "查看全部" [ref=e135] [cursor=pointer]:
+              - /url: /chat
+          - generic [ref=e141]:
+            - heading "快捷入口" [level=2] [ref=e142]
+            - generic [ref=e143]:
+              - link "新建会话 创建会话并立即提问" [ref=e144] [cursor=pointer]:
+                - /url: /chat/new
+                - generic [ref=e145]:
+                  - generic [ref=e146]: 新建会话
+                  - img [ref=e147]
+                - paragraph [ref=e149]: 创建会话并立即提问
+              - link "管理 Agents 创建、编辑、启停 Agent" [ref=e150] [cursor=pointer]:
+                - /url: /agents
+                - generic [ref=e151]:
+                  - generic [ref=e152]: 管理 Agents
+                  - img [ref=e153]
+                - paragraph [ref=e155]: 创建、编辑、启停 Agent
+              - link "事件中心 查看触发事件并执行回放" [ref=e156] [cursor=pointer]:
+                - /url: /events
+                - generic [ref=e157]:
+                  - generic [ref=e158]: 事件中心
+                  - img [ref=e159]
+                - paragraph [ref=e161]: 查看触发事件并执行回放
+              - link "规则管理 配置提醒、建议与自动执行策略" [ref=e162] [cursor=pointer]:
+                - /url: /rules
+                - generic [ref=e163]:
+                  - generic [ref=e164]: 规则管理
+                  - img [ref=e165]
+                - paragraph [ref=e167]: 配置提醒、建议与自动执行策略
+              - link "审批中心 处理高风险动作审批请求" [ref=e168] [cursor=pointer]:
+                - /url: /approvals
+                - generic [ref=e169]:
+                  - generic [ref=e170]: 审批中心
+                  - img [ref=e171]
+                - paragraph [ref=e173]: 处理高风险动作审批请求
+              - link "Tools 能力 查看运行时工具与数据库工具" [ref=e174] [cursor=pointer]:
+                - /url: /tools
+                - generic [ref=e175]:
+                  - generic [ref=e176]: Tools 能力
+                  - img [ref=e177]
+                - paragraph [ref=e179]: 查看运行时工具与数据库工具
+              - link "配置管理 模型、工具、Webhook 配置" [ref=e180] [cursor=pointer]:
+                - /url: /config
+                - generic [ref=e181]:
+                  - generic [ref=e182]: 配置管理
+                  - img [ref=e183]
+                - paragraph [ref=e185]: 模型、工具、Webhook 配置
+              - link "MCP 集成 连接外部工具与资源" [ref=e186] [cursor=pointer]:
+                - /url: /mcp
+                - generic [ref=e187]:
+                  - generic [ref=e188]: MCP 集成
+                  - img [ref=e189]
+                - paragraph [ref=e191]: 连接外部工具与资源
+            - generic [ref=e193]:
+              - img [ref=e194]
+              - text: 当前界面已切换为新版导航信息架构。
+        - generic [ref=e197]:
+          - generic [ref=e198]:
+            - heading "最近事件" [level=2] [ref=e199]
+            - link "进入事件中心" [ref=e200] [cursor=pointer]:
+              - /url: /events
+          - paragraph [ref=e202]: 暂无事件数据
+  - alert [ref=e203]
+```

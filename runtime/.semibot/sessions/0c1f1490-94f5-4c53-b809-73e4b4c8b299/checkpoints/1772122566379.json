@@ -1,0 +1,33 @@
+{
+  "id": "1772122566379",
+  "session_id": "0c1f1490-94f5-4c53-b809-73e4b4c8b299",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "你好，回复一句测试",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "你好！请问有什么我可以帮助您的？",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "user",
+      "content": "你喜欢什么颜色",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "作为一个人工智能助手，我没有个人喜好或者偏好。不过我可以帮您解释不同颜色的一些常见含义或使用场合，比如蓝色通常被认为代表冷静和信任，红色代表热情和活力等等。如果您想了解某种颜色的具体含义或者用途，欢迎告诉我！",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "你喜欢什么颜色",
+  "updated_at": 1772122566
+}

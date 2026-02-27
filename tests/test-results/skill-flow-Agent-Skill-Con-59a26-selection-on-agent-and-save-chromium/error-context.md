@@ -1,0 +1,68 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - navigation [ref=e3]:
+      - img [ref=e7]
+      - generic [ref=e10]:
+        - link "仪表盘" [ref=e11] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e12]
+        - link "会话" [ref=e17] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e18]
+        - link "事件" [ref=e20] [cursor=pointer]:
+          - /url: /events
+          - img [ref=e21]
+        - link "规则" [ref=e23] [cursor=pointer]:
+          - /url: /rules
+          - img [ref=e24]
+        - link "审批" [ref=e28] [cursor=pointer]:
+          - /url: /approvals
+          - img [ref=e29]
+        - link "Agents" [ref=e32] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e33]
+        - link "Skills" [ref=e36] [cursor=pointer]:
+          - /url: /skills
+          - img [ref=e37]
+        - link "MCP" [ref=e39] [cursor=pointer]:
+          - /url: /mcp
+          - img [ref=e40]
+        - link "Tools" [ref=e42] [cursor=pointer]:
+          - /url: /tools
+          - img [ref=e43]
+        - link "配置" [ref=e45] [cursor=pointer]:
+          - /url: /config
+          - img [ref=e46]
+        - link "新建会话" [ref=e48] [cursor=pointer]:
+          - /url: /chat/new
+          - img [ref=e49]
+    - main [ref=e50]:
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - generic [ref=e54]:
+              - heading "Agents" [level=1] [ref=e55]
+              - paragraph [ref=e56]: 管理您的 AI Agent，共 0 个
+            - button "新建代理" [ref=e57] [cursor=pointer]:
+              - img [ref=e59]
+              - text: 新建代理
+          - generic [ref=e60]:
+            - generic [ref=e63]:
+              - img [ref=e65]
+              - textbox "搜索 Agent..." [ref=e68]
+            - generic [ref=e69]:
+              - button "全部(0)" [ref=e70] [cursor=pointer]:
+                - text: 全部
+                - generic [ref=e71]: (0)
+              - button "运行中(0)" [ref=e72] [cursor=pointer]:
+                - text: 运行中
+                - generic [ref=e73]: (0)
+              - button "已停用(0)" [ref=e74] [cursor=pointer]:
+                - text: 已停用
+                - generic [ref=e75]: (0)
+        - img [ref=e78]
+  - alert [ref=e80]
+```

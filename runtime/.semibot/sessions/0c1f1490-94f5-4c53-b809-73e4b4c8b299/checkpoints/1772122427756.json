@@ -1,0 +1,21 @@
+{
+  "id": "1772122427756",
+  "session_id": "0c1f1490-94f5-4c53-b809-73e4b4c8b299",
+  "status": "completed",
+  "history": [
+    {
+      "role": "user",
+      "content": "你好，回复一句测试",
+      "name": null,
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "你好！请问有什么我可以帮助您的？",
+      "name": null,
+      "tool_call_id": null
+    }
+  ],
+  "last_user_message": "你好，回复一句测试",
+  "updated_at": 1772122427
+}

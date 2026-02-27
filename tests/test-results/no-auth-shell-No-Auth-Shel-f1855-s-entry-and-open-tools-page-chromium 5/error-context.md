@@ -1,0 +1,92 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - navigation [ref=e3]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e10]: Semibot
+    - generic [ref=e11]:
+      - link "仪表盘" [ref=e12] [cursor=pointer]:
+        - /url: /dashboard
+        - img [ref=e13]
+        - generic [ref=e18]: 仪表盘
+      - link "会话" [ref=e19] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e20]
+        - generic [ref=e22]: 会话
+      - link "事件" [ref=e23] [cursor=pointer]:
+        - /url: /events
+        - img [ref=e24]
+        - generic [ref=e26]: 事件
+      - link "规则" [ref=e27] [cursor=pointer]:
+        - /url: /rules
+        - img [ref=e28]
+        - generic [ref=e32]: 规则
+      - link "审批" [ref=e33] [cursor=pointer]:
+        - /url: /approvals
+        - img [ref=e34]
+        - generic [ref=e37]: 审批
+      - link "Agents" [ref=e38] [cursor=pointer]:
+        - /url: /agents
+        - img [ref=e39]
+        - generic [ref=e42]: Agents
+      - link "Skills" [ref=e43] [cursor=pointer]:
+        - /url: /skills
+        - img [ref=e44]
+        - generic [ref=e46]: Skills
+      - link "MCP" [ref=e47] [cursor=pointer]:
+        - /url: /mcp
+        - img [ref=e48]
+        - generic [ref=e50]: MCP
+      - link "Tools" [ref=e51] [cursor=pointer]:
+        - /url: /tools
+        - img [ref=e52]
+        - generic [ref=e54]: Tools
+      - link "配置" [ref=e55] [cursor=pointer]:
+        - /url: /config
+        - img [ref=e56]
+        - generic [ref=e57]: 配置
+      - link "新建会话" [ref=e59] [cursor=pointer]:
+        - /url: /chat/new
+        - img [ref=e60]
+        - generic [ref=e61]: 新建会话
+      - paragraph [ref=e63]: 暂无会话
+  - main [ref=e64]:
+    - generic [ref=e66]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - heading "Tools 能力中心" [level=1] [ref=e71]:
+            - img [ref=e72]
+            - text: Tools 能力中心
+          - paragraph [ref=e74]: 查看 Runtime 内置工具与数据库工具定义，确保执行能力可用。
+        - generic [ref=e75]:
+          - button "刷新" [ref=e76] [cursor=pointer]:
+            - img [ref=e78]
+            - text: 刷新
+          - button "进入配置管理" [ref=e83] [cursor=pointer]
+      - generic [ref=e84]:
+        - generic [ref=e86]:
+          - paragraph [ref=e87]: Runtime Tools
+          - paragraph [ref=e88]: "0"
+        - generic [ref=e90]:
+          - paragraph [ref=e91]: DB Tools
+          - paragraph [ref=e92]: "0"
+        - generic [ref=e94]:
+          - paragraph [ref=e95]: Active DB Tools
+          - paragraph [ref=e96]: "0"
+      - generic [ref=e97]:
+        - generic [ref=e99]:
+          - generic [ref=e100]:
+            - heading "Runtime 内置工具" [level=2] [ref=e101]:
+              - img [ref=e102]
+              - text: Runtime 内置工具
+            - generic [ref=e105]: 未连接
+          - paragraph [ref=e106]: "source: --"
+          - paragraph [ref=e107]: 加载中...
+        - generic [ref=e109]:
+          - heading "数据库工具" [level=2] [ref=e110]
+          - paragraph [ref=e111]: 加载中...
+  - button "展开详情画布" [ref=e113] [cursor=pointer]:
+    - img [ref=e114]
+```

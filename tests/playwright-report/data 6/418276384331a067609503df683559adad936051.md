@@ -1,0 +1,87 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - navigation [ref=e3]:
+      - img [ref=e7]
+      - generic [ref=e10]:
+        - link "仪表盘" [ref=e11] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e12]
+        - link "会话" [ref=e17] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e18]
+        - link "事件" [ref=e20] [cursor=pointer]:
+          - /url: /events
+          - img [ref=e21]
+        - link "规则" [ref=e23] [cursor=pointer]:
+          - /url: /rules
+          - img [ref=e24]
+        - link "审批" [ref=e28] [cursor=pointer]:
+          - /url: /approvals
+          - img [ref=e29]
+        - link "Agents" [ref=e32] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e33]
+        - link "Skills" [ref=e36] [cursor=pointer]:
+          - /url: /skills
+          - img [ref=e37]
+        - link "MCP" [ref=e39] [cursor=pointer]:
+          - /url: /mcp
+          - img [ref=e40]
+        - link "Tools" [ref=e42] [cursor=pointer]:
+          - /url: /tools
+          - img [ref=e43]
+        - link "配置" [ref=e45] [cursor=pointer]:
+          - /url: /config
+          - img [ref=e46]
+        - link "新建会话" [ref=e48] [cursor=pointer]:
+          - /url: /chat/new
+          - img [ref=e49]
+    - main [ref=e50]:
+      - generic [ref=e51]:
+        - generic [ref=e53]:
+          - generic [ref=e54]:
+            - generic [ref=e55]:
+              - button "返回会话列表" [ref=e56] [cursor=pointer]:
+                - img [ref=e57]
+              - heading "quality-quality-ui-002" [level=1] [ref=e59]
+            - paragraph [ref=e60]: 会话 quality-...
+          - generic [ref=e61]:
+            - generic [ref=e62]: active
+            - button "新建" [ref=e63] [cursor=pointer]
+        - generic [ref=e65]:
+          - generic [ref=e67]:
+            - img [ref=e69]
+            - generic [ref=e72]:
+              - paragraph [ref=e73]: 请帮我算一个会失败的问题
+              - generic [ref=e74]:
+                - generic [ref=e75]: 00:33
+                - generic [ref=e76]: 已发送
+          - generic [ref=e78]:
+            - img [ref=e80]
+            - generic [ref=e83]:
+              - paragraph [ref=e86]: "抱歉，发生了错误: 工具执行失败，请重试"
+              - generic [ref=e88]: 00:33
+        - generic [ref=e90]:
+          - generic [ref=e91]:
+            - img [ref=e92]
+            - generic [ref=e94]: 发送失败
+            - button "重试" [ref=e95] [cursor=pointer]:
+              - img [ref=e96]
+              - text: 重试
+          - generic [ref=e102]:
+            - button "添加附件" [ref=e103] [cursor=pointer]:
+              - img [ref=e104]
+            - textbox "输入您的问题..." [ref=e107]
+            - button "语音输入" [ref=e108] [cursor=pointer]:
+              - img [ref=e109]
+            - button "发送" [disabled] [ref=e112]:
+              - img [ref=e114]
+              - text: 发送
+          - paragraph [ref=e117]: 按 Enter 发送，Shift + Enter 换行
+    - button "展开详情画布" [ref=e119] [cursor=pointer]:
+      - img [ref=e120]
+  - alert [ref=e122]
+```

@@ -98,8 +98,8 @@ export default defineConfig({
 
   // 开发服务器配置
   webServer: {
-    // 清理 .next，避免因增量缓存导致 vendor chunk 丢失（MODULE_NOT_FOUND）
-    command: 'rm -rf apps/web/.next && pnpm --filter @semibot/web dev',
+    // 使用独立 dist 目录，避免 E2E 启动时清理缓存影响开发中的 `pnpm --filter @semibot/web dev`
+    command: 'rm -rf apps/web/.next-e2e && NEXT_DIST_DIR=.next-e2e pnpm --filter @semibot/web dev',
     url: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     // 默认不复用本地已运行的 dev server，避免命中陈旧构建导致前端 JS 404
     // 如需复用可显式设置 PW_REUSE_SERVER=1
