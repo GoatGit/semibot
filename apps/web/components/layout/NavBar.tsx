@@ -43,16 +43,6 @@ const navItems: NavItem[] = [
   { icon: <SlidersHorizontal size={20} />, label: '配置', href: '/config' },
 ]
 
-/**
- * NavBar - 左侧导航栏
- *
- * 根据 ARCHITECTURE.md 设计:
- * - 展开状态: 240px
- * - 折叠状态: 60px
- * - 包含: 主导航入口 + 会话列表
- * - 首页自动展开，其他页面自动收起
- * - 折叠状态下鼠标悬停自动展开
- */
 const NAVBAR_SESSION_LIMIT = 10
 
 export function NavBar() {
@@ -68,7 +58,6 @@ export function NavBar() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  // 加载最近会话列表
   useEffect(() => {
     let cancelled = false
     const loadSessions = async () => {
@@ -90,11 +79,12 @@ export function NavBar() {
         }
       }
     }
-    loadSessions()
-    return () => { cancelled = true }
+    void loadSessions()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  // 加载更多会话
   const loadMoreSessions = useCallback(async () => {
     if (isLoadingMore || !hasMoreSessions) return
     const nextPage = sessionPage + 1
@@ -116,34 +106,32 @@ export function NavBar() {
     }
   }, [isLoadingMore, hasMoreSessions, sessionPage])
 
-  // 实际显示的展开状态：固定展开 或 悬停展开
   const isExpanded = navBarExpanded || isHovered
 
-  // IntersectionObserver 监听哨兵元素
-  // 跟踪哨兵是否在视口内，用于加载完成后判断是否需要继续加载
   const sentinelVisibleRef = useRef(false)
 
   useEffect(() => {
     const sentinel = sentinelRef.current
     const root = scrollContainerRef.current
     if (!sentinel || !root) return
+
     const observer = new IntersectionObserver(
       (entries) => {
         sentinelVisibleRef.current = entries[0].isIntersecting
         if (entries[0].isIntersecting && hasMoreSessions && !isLoadingMore) {
-          loadMoreSessions()
+          void loadMoreSessions()
         }
       },
       { root, threshold: 0.1 }
     )
+
     observer.observe(sentinel)
     return () => observer.disconnect()
   }, [isExpanded, hasMoreSessions, isLoadingMore, loadMoreSessions])
 
-  // 加载完成后，如果哨兵仍在视口内，继续加载下一页
   useEffect(() => {
     if (!isLoadingMore && hasMoreSessions && sentinelVisibleRef.current) {
-      loadMoreSessions()
+      void loadMoreSessions()
     }
   }, [isLoadingMore, hasMoreSessions, loadMoreSessions])
 
@@ -172,19 +160,8 @@ export function NavBar() {
         isExpanded ? 'w-60' : 'w-[60px]'
       )}
     >
-      {/* Logo 区域 */}
-      <div
-        className={clsx(
-          'px-3 py-3',
-          'border-b border-border-subtle'
-        )}
-      >
-        <div
-          className={clsx(
-            'flex items-center',
-            isExpanded ? 'gap-2 px-1' : 'justify-center'
-          )}
-        >
+      <div className={clsx('px-3 py-3', 'border-b border-border-subtle')}>
+        <div className={clsx('flex items-center', isExpanded ? 'gap-2 px-1' : 'justify-center')}>
           <div className="w-8 h-8 rounded-lg bg-primary-500 flex items-center justify-center">
             <Bot size={18} className="text-neutral-950" />
           </div>
@@ -211,13 +188,10 @@ export function NavBar() {
             <Languages size={14} />
             {isExpanded && <span>{locale === 'zh-CN' ? '语言' : 'Language'}</span>}
           </span>
-          {isExpanded && (
-            <span className="font-medium text-text-primary">{locale === 'zh-CN' ? '中文' : 'EN'}</span>
-          )}
+          {isExpanded && <span className="font-medium text-text-primary">{locale === 'zh-CN' ? '中文' : 'EN'}</span>}
         </button>
       </div>
 
-      {/* 导航项 */}
       <div ref={scrollContainerRef} className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
         {navItems.map((item) => (
           <NavButton
@@ -230,20 +204,17 @@ export function NavBar() {
           />
         ))}
 
-        {/* 会话分隔线 */}
         <div className="my-4 border-t border-border-subtle" />
 
-        {/* 新建会话按钮 */}
         <NavButton
           icon={<Plus size={20} />}
-          label="新建会话"
+          label={locale === 'zh-CN' ? '新建会话' : 'New Chat'}
           href={NEW_CHAT_PATH}
           active={pathname === NEW_CHAT_PATH}
           expanded={isExpanded}
           variant="primary"
         />
 
-        {/* 会话列表 */}
         {isExpanded && (
           <div className="mt-2 space-y-1">
             {isLoadingSessions ? (
@@ -259,7 +230,7 @@ export function NavBar() {
                 ))}
               </>
             ) : sessions.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-text-tertiary">暂无会话</p>
+              <p className="px-3 py-2 text-xs text-text-tertiary">{locale === 'en-US' ? 'No sessions' : '暂无会话'}</p>
             ) : (
               <>
                 {sessions.map((session) => (
@@ -267,6 +238,7 @@ export function NavBar() {
                     key={session.id}
                     session={session}
                     active={pathname === `/chat/${session.id}`}
+                    locale={locale}
                   />
                 ))}
                 {isLoadingMore && (
@@ -280,7 +252,6 @@ export function NavBar() {
           </div>
         )}
       </div>
-
     </nav>
   )
 }
@@ -319,11 +290,12 @@ function NavButton({ icon, label, href, active, expanded, variant = 'default' }:
 interface SessionItemProps {
   session: Session
   active?: boolean
+  locale: string
 }
 
-function formatSessionTime(dateString: string): string {
+function formatSessionTime(dateString: string, locale: string): string {
   const date = new Date(dateString)
-  if (isNaN(date.getTime())) {
+  if (Number.isNaN(date.getTime())) {
     return '--'
   }
   const now = new Date()
@@ -331,16 +303,18 @@ function formatSessionTime(dateString: string): string {
   const days = Math.floor(diff / MS_PER_DAY)
 
   if (days === 0) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  } else if (days === 1) {
-    return '昨天'
-  } else if (days < RELATIVE_TIME_DAYS_THRESHOLD) {
-    return `${days} 天前`
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
   }
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  if (days === 1) {
+    return locale === 'en-US' ? 'Yesterday' : '昨天'
+  }
+  if (days < RELATIVE_TIME_DAYS_THRESHOLD) {
+    return locale === 'en-US' ? `${days}d ago` : `${days} 天前`
+  }
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 }
 
-function SessionItem({ session, active }: SessionItemProps) {
+function SessionItem({ session, active, locale }: SessionItemProps) {
   return (
     <Link
       href={`/chat/${session.id}`}
@@ -354,8 +328,8 @@ function SessionItem({ session, active }: SessionItemProps) {
     >
       <MessageSquare size={16} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm truncate">{session.title ?? '未命名会话'}</div>
-        <div className="text-xs text-text-tertiary">{formatSessionTime(session.createdAt)}</div>
+        <div className="text-sm truncate">{session.title ?? (locale === 'en-US' ? 'Untitled chat' : '未命名会话')}</div>
+        <div className="text-xs text-text-tertiary">{formatSessionTime(session.createdAt, locale)}</div>
       </div>
     </Link>
   )

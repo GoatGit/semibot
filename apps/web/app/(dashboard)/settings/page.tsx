@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/Input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { apiClient } from '@/lib/api'
 import { STORAGE_KEYS } from '@/constants/config'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 type SettingsSection = 'profile' | 'password' | 'preferences'
 type Theme = 'dark' | 'light' | 'system'
@@ -286,6 +287,7 @@ function PasswordSection() {
 }
 
 function PreferencesSection() {
+  const { locale, setLocale: applyLocale } = useLocale()
   const [theme, setTheme] = useState<Theme>('dark')
   const [language, setLanguage] = useState<Language>('zh-CN')
   const [saved, setSaved] = useState(false)
@@ -334,6 +336,9 @@ function PreferencesSection() {
           : savedTheme
         document.documentElement.dataset.theme = resolved
         localStorage.setItem(STORAGE_KEYS.THEME, savedTheme)
+        if (response.data.language !== locale) {
+          applyLocale(response.data.language)
+        }
       }
       setSaved(true)
       setTimeout(() => setSaved(false), 1200)
@@ -401,7 +406,7 @@ function PreferencesSection() {
               </button>
             ))}
           </div>
-          <p className="text-xs text-text-tertiary mt-3">语言切换功能开发中，当前仅支持中文界面</p>
+          <p className="text-xs text-text-tertiary mt-3">保存后会自动刷新并切换语言</p>
         </CardContent>
       </Card>
 
