@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import { ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 export interface SelectOption {
   value: string
@@ -49,7 +50,7 @@ export function Select({
   value,
   onChange,
   options,
-  placeholder = '请选择',
+  placeholder,
   disabled = false,
   error = false,
   errorMessage,
@@ -58,6 +59,7 @@ export function Select({
   'data-testid': testId,
   className,
 }: SelectProps) {
+  const { t } = useLocale()
   const [open, setOpen] = useState(false)
   const [focusIndex, setFocusIndex] = useState(-1)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -65,6 +67,7 @@ export function Select({
 
   const flat = flatOptions(options)
   const selectedOption = flat.find((o) => o.value === value)
+  const resolvedPlaceholder = placeholder ?? t('ui.select.placeholder')
 
   const close = useCallback(() => {
     setOpen(false)
@@ -186,7 +189,7 @@ export function Select({
         aria-expanded={open}
         aria-haspopup="listbox"
       >
-        <span className="truncate">{selectedOption?.label ?? placeholder}</span>
+        <span className="truncate">{selectedOption?.label ?? resolvedPlaceholder}</span>
         <ChevronDown
           className={clsx(
             'w-4 h-4 shrink-0 text-text-tertiary transition-transform duration-fast',

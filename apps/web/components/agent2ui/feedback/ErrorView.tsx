@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import { AlertTriangle, XCircle, RefreshCw } from 'lucide-react'
 import type { ErrorData } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * ErrorView - 错误展示组件
@@ -17,6 +18,7 @@ export interface ErrorViewProps {
 }
 
 export function ErrorView({ data, className, onRetry }: ErrorViewProps) {
+  const { t } = useLocale()
   // 根据错误码判断严重程度
   const code = data.code ?? ''
   const isWarning = code.startsWith('WARN_') || code.includes('TIMEOUT')
@@ -103,7 +105,7 @@ export function ErrorView({ data, className, onRetry }: ErrorViewProps) {
               )}
             >
               <RefreshCw className="w-4 h-4" />
-              <span>重试</span>
+              <span>{t('common.retry')}</span>
             </button>
           </div>
         )}

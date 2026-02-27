@@ -1,9 +1,12 @@
 'use client'
 
+import { useLocale } from '@/components/providers/LocaleProvider'
+
 /**
  * Dashboard 加载状态
  */
 export default function DashboardLoading() {
+  const { t } = useLocale()
   return (
     <div className="flex items-center justify-center min-h-[400px]">
       <div className="flex flex-col items-center gap-4">
@@ -14,7 +17,7 @@ export default function DashboardLoading() {
         </div>
 
         {/* 加载文字 */}
-        <p className="text-sm text-text-secondary">加载中...</p>
+        <p className="text-sm text-text-secondary">{t('common.loading')}</p>
       </div>
     </div>
   )

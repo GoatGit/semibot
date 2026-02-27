@@ -10,6 +10,7 @@ import {
   Minimize2,
   FileText,
 } from 'lucide-react'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * DetailCanvas - 详情画布
@@ -21,6 +22,7 @@ import {
  * - 职责: 结果数据、报告展示
  */
 export function DetailCanvas() {
+  const { t } = useLocale()
   const {
     detailCanvasMode,
     currentPath,
@@ -50,7 +52,7 @@ export function DetailCanvas() {
             'text-text-secondary hover:text-text-primary hover:bg-interactive-hover',
             'transition-colors duration-fast'
           )}
-          aria-label="展开详情画布"
+          aria-label={t('detailCanvas.expand')}
         >
           <ChevronLeft size={18} />
         </button>
@@ -62,7 +64,13 @@ export function DetailCanvas() {
   if (detailCanvasMode === 'maximized') {
     return (
       <div className="flex flex-col flex-1 bg-bg-surface">
-        <DetailHeader onMinimize={exitMaximize} />
+        <DetailHeader
+          onMinimize={exitMaximize}
+          title={t('detailCanvas.title')}
+          collapseLabel={t('detailCanvas.collapse')}
+          maximizeLabel={t('detailCanvas.maximize')}
+          exitMaximizeLabel={t('detailCanvas.exitMaximize')}
+        />
         <DetailContent />
       </div>
     )
@@ -81,6 +89,10 @@ export function DetailCanvas() {
       <DetailHeader
         onCollapse={collapseDetail}
         onMaximize={maximizeDetail}
+        title={t('detailCanvas.title')}
+        collapseLabel={t('detailCanvas.collapse')}
+        maximizeLabel={t('detailCanvas.maximize')}
+        exitMaximizeLabel={t('detailCanvas.exitMaximize')}
       />
       <DetailContent />
     </div>
@@ -91,9 +103,13 @@ interface DetailHeaderProps {
   onCollapse?: () => void
   onMaximize?: () => void
   onMinimize?: () => void
+  title: string
+  collapseLabel: string
+  maximizeLabel: string
+  exitMaximizeLabel?: string
 }
 
-function DetailHeader({ onCollapse, onMaximize, onMinimize }: DetailHeaderProps) {
+function DetailHeader({ onCollapse, onMaximize, onMinimize, title, collapseLabel, maximizeLabel, exitMaximizeLabel }: DetailHeaderProps) {
   return (
     <div
       className={clsx(
@@ -102,7 +118,7 @@ function DetailHeader({ onCollapse, onMaximize, onMinimize }: DetailHeaderProps)
       )}
     >
       <div>
-        <h2 className="text-sm font-semibold text-text-primary">详情</h2>
+        <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
       </div>
       <div className="flex items-center gap-1">
         {onCollapse && (
@@ -113,7 +129,7 @@ function DetailHeader({ onCollapse, onMaximize, onMinimize }: DetailHeaderProps)
               'text-text-secondary hover:text-text-primary hover:bg-interactive-hover',
               'transition-colors duration-fast'
             )}
-            aria-label="折叠"
+            aria-label={collapseLabel}
           >
             <ChevronRight size={16} />
           </button>
@@ -126,7 +142,7 @@ function DetailHeader({ onCollapse, onMaximize, onMinimize }: DetailHeaderProps)
               'text-text-secondary hover:text-text-primary hover:bg-interactive-hover',
               'transition-colors duration-fast'
             )}
-            aria-label="最大化"
+            aria-label={maximizeLabel}
           >
             <Maximize2 size={16} />
           </button>
@@ -139,7 +155,7 @@ function DetailHeader({ onCollapse, onMaximize, onMinimize }: DetailHeaderProps)
               'text-text-secondary hover:text-text-primary hover:bg-interactive-hover',
               'transition-colors duration-fast'
             )}
-            aria-label="退出最大化"
+            aria-label={exitMaximizeLabel}
           >
             <Minimize2 size={16} />
           </button>
@@ -150,11 +166,12 @@ function DetailHeader({ onCollapse, onMaximize, onMinimize }: DetailHeaderProps)
 }
 
 function DetailContent() {
+  const { t } = useLocale()
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-4">
       <FileText size={48} className="text-text-tertiary mb-4" />
-      <p className="text-sm text-text-secondary">暂无内容</p>
-      <p className="text-xs text-text-tertiary mt-1">对话产生的结果将在此展示</p>
+      <p className="text-sm text-text-secondary">{t('detailCanvas.emptyTitle')}</p>
+      <p className="text-xs text-text-tertiary mt-1">{t('detailCanvas.emptyDescription')}</p>
     </div>
   )
 }

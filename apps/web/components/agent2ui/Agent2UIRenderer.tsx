@@ -3,6 +3,7 @@
 import React from 'react'
 import clsx from 'clsx'
 import type { Agent2UIMessage } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 import { ComponentRegistry } from './ComponentRegistry'
 import { TextBlock } from './text/TextBlock'
 
@@ -26,6 +27,8 @@ interface ErrorBoundaryProps {
   message: Agent2UIMessage
   className?: string
   onError?: (error: Error, message: Agent2UIMessage) => void
+  renderFailedLabel: string
+  unknownErrorLabel: string
   children: React.ReactNode
 }
 
@@ -53,7 +56,7 @@ class RenderErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBound
 
   render(): React.ReactNode {
     if (this.state.hasError) {
-      const { message, className } = this.props
+      const { message, className, renderFailedLabel, unknownErrorLabel } = this.props
       return (
         <div
           className={clsx(
@@ -63,10 +66,10 @@ class RenderErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBound
           )}
         >
           <div className="text-sm text-error-500">
-            渲染失败: {message.type}
+            {renderFailedLabel}: {message.type}
           </div>
           <pre className="mt-2 text-xs text-text-secondary font-mono overflow-auto">
-            {this.state.error?.message ?? '未知错误'}
+            {this.state.error?.message ?? unknownErrorLabel}
           </pre>
         </div>
       )
@@ -81,6 +84,7 @@ export function Agent2UIRenderer({
   className,
   onError,
 }: Agent2UIRendererProps) {
+  const { t } = useLocale()
   const Component = ComponentRegistry.get(message.type)
 
   // 未知类型处理
@@ -101,7 +105,13 @@ export function Agent2UIRenderer({
   }
 
   return (
-    <RenderErrorBoundary message={message} className={className} onError={onError}>
+    <RenderErrorBoundary
+      message={message}
+      className={className}
+      onError={onError}
+      renderFailedLabel={t('agent2ui.renderer.renderFailed')}
+      unknownErrorLabel={t('error.unknown')}
+    >
       <div
         className={clsx(
           'agent2ui-message',

@@ -14,6 +14,7 @@ import { useLLMModels } from '@/hooks/useLLMModels'
 import { useSkillDefinitions } from '@/hooks/useSkillDefinitions'
 import { useMcpServers } from '@/hooks/useMcpServers'
 import type { ApiResponse, Agent } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface AgentFormValues {
   name: string
@@ -38,6 +39,7 @@ const EMPTY_VALUES: AgentFormValues = {
 export default function AgentDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const { t } = useLocale()
   const agentId = params.agentId as string
   const isNew = agentId === 'new'
   const { models, loading: modelsLoading } = useLLMModels()
@@ -81,12 +83,12 @@ export default function AgentDetailPage() {
     // If current value is not in the list, add it as a standalone option
     if (values.model && !models.some((m) => m.modelId === values.model)) {
       groups.unshift({
-        label: '当前',
-        options: [{ value: values.model, label: `${values.model}（不在可用列表中）` }],
+        label: t('agentsDetail.current'),
+        options: [{ value: values.model, label: t('agentsDetail.currentModelNotInList', { model: values.model }) }],
       })
     }
     return groups
-  }, [groupedModels, models, values.model])
+  }, [groupedModels, models, values.model, t])
 
   // 新建时：等 models 加载完后设置默认模型
   useEffect(() => {
@@ -131,7 +133,7 @@ export default function AgentDetailPage() {
       } catch (err) {
         console.error('[AgentDetail] 加载失败:', err)
         if (!cancelled) {
-          setError('加载 Agent 失败，请稍后重试')
+          setError(t('agentsDetail.error.load'))
         }
       } finally {
         if (!cancelled) {
@@ -144,15 +146,15 @@ export default function AgentDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [agentId, isNew])
+  }, [agentId, isNew, t])
 
   const handleSave = async () => {
     if (!values.name.trim()) {
-      setError('名称不能为空')
+      setError(t('agentsDetail.error.nameRequired'))
       return
     }
     if (!values.model) {
-      setError('请选择可用模型')
+      setError(t('agentsDetail.error.modelRequired'))
       return
     }
 
@@ -177,19 +179,19 @@ export default function AgentDetailPage() {
       if (isNew) {
         const response = await apiClient.post<ApiResponse<Agent>>('/agents', payload)
         if (!response.success || !response.data) {
-          throw new Error('创建失败')
+          throw new Error(t('agentsDetail.error.createFailed'))
         }
       } else {
         const response = await apiClient.put<ApiResponse<Agent>>(`/agents/${agentId}`, payload)
         if (!response.success || !response.data) {
-          throw new Error('更新失败')
+          throw new Error(t('agentsDetail.error.updateFailed'))
         }
       }
 
       router.push('/agents')
     } catch (err) {
       console.error('[AgentDetail] 保存失败:', err)
-      setError('保存失败，请稍后重试')
+      setError(t('agentsDetail.error.save'))
     } finally {
       setIsSaving(false)
     }
@@ -210,11 +212,11 @@ export default function AgentDetailPage() {
               <ArrowLeft size={18} />
             </Link>
             <h1 className="text-lg font-semibold text-text-primary">
-              {isNew ? '创建 Agent' : '编辑 Agent'}
+              {isNew ? t('agentsDetail.createTitle') : t('agentsDetail.editTitle')}
             </h1>
           </div>
           <Button onClick={handleSave} loading={isSaving} leftIcon={<Save size={16} />}>
-            {isNew ? '创建' : '保存'}
+            {isNew ? t('common.create') : t('common.save')}
           </Button>
         </div>
       </header>
@@ -222,14 +224,14 @@ export default function AgentDetailPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <Card className="max-w-3xl">
           <CardHeader>
-            <div className="text-lg font-semibold text-text-primary">基础配置</div>
-            <CardDescription>使用真实 API 保存 Agent 配置</CardDescription>
+            <div className="text-lg font-semibold text-text-primary">{t('agentsDetail.basicConfig')}</div>
+            <CardDescription>{t('agentsDetail.basicConfigDescription')}</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <div className="h-48 flex items-center justify-center text-text-secondary">
                 <Loader2 size={20} className="animate-spin mr-2" />
-                加载中...
+                {t('common.loading')}
               </div>
             ) : (
               <div className="space-y-4">
@@ -240,21 +242,21 @@ export default function AgentDetailPage() {
                 )}
 
                 <div>
-                  <label className="block text-sm font-medium text-text-primary mb-1.5">名称</label>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">{t('agent.name')}</label>
                   <Input
                     value={values.name}
                     onChange={(e) => setValues((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder="输入 Agent 名称"
+                    placeholder={t('agentsDetail.namePlaceholder')}
                     disabled={isSaving}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-text-primary mb-1.5">描述</label>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">{t('agent.description')}</label>
                   <textarea
                     value={values.description}
                     onChange={(e) => setValues((prev) => ({ ...prev, description: e.target.value }))}
-                    placeholder="输入描述"
+                    placeholder={t('agentsDetail.descriptionPlaceholder')}
                     disabled={isSaving}
                     className={clsx(
                       'w-full h-24 px-3 py-2 rounded-md resize-none',
@@ -266,7 +268,7 @@ export default function AgentDetailPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-text-primary mb-1.5">模型</label>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">{t('agent.model')}</label>
                   <Select
                     value={values.model}
                     onChange={(val) => setValues((prev) => ({ ...prev, model: val }))}
@@ -274,16 +276,16 @@ export default function AgentDetailPage() {
                     options={modelOptions}
                     placeholder={
                       modelsLoading
-                        ? '加载中...'
+                        ? t('common.loading')
                         : models.length === 0
-                          ? '暂无可用模型'
-                          : '请选择模型'
+                          ? t('agentsDetail.noModels')
+                          : t('agentsDetail.selectModel')
                     }
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-text-primary mb-1.5">执行引擎</label>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">{t('agent.runtimeEngine')}</label>
                   <Select
                     value={values.runtimeType}
                     onChange={(val) => setValues((prev) => ({
@@ -299,11 +301,11 @@ export default function AgentDetailPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-text-primary mb-1.5">系统提示词</label>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">{t('agent.systemPrompt')}</label>
                   <textarea
                     value={values.systemPrompt}
                     onChange={(e) => setValues((prev) => ({ ...prev, systemPrompt: e.target.value }))}
-                    placeholder="输入系统提示词"
+                    placeholder={t('agentsDetail.systemPromptPlaceholder')}
                     disabled={isSaving}
                     className={clsx(
                       'w-full h-40 px-3 py-2 rounded-md resize-none',
@@ -320,17 +322,17 @@ export default function AgentDetailPage() {
 
         <Card className="max-w-3xl mt-6">
           <CardHeader>
-            <div className="text-lg font-semibold text-text-primary">Skills 配置</div>
-            <CardDescription>选择此 Agent 可使用的技能</CardDescription>
+            <div className="text-lg font-semibold text-text-primary">{t('agentsDetail.skillsTitle')}</div>
+            <CardDescription>{t('agentsDetail.skillsDescription')}</CardDescription>
           </CardHeader>
           <CardContent>
             {skillsLoading ? (
               <div className="h-20 flex items-center justify-center text-text-secondary">
                 <Loader2 size={16} className="animate-spin mr-2" />
-                加载技能列表...
+                {t('agentsDetail.loadingSkills')}
               </div>
             ) : availableSkillDefs.length === 0 ? (
-              <div className="text-sm text-text-tertiary">暂无可用技能</div>
+              <div className="text-sm text-text-tertiary">{t('agentsDetail.noSkills')}</div>
             ) : (
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {availableSkillDefs.map((def) => (
@@ -360,7 +362,7 @@ export default function AgentDetailPage() {
                         <span className="text-sm font-medium text-text-primary truncate">{def.name}</span>
                         {def.isPublic && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500 shrink-0">
-                            内置
+                            {t('agentsDetail.builtin')}
                           </span>
                         )}
                       </div>
@@ -377,17 +379,17 @@ export default function AgentDetailPage() {
 
         <Card className="max-w-3xl mt-6">
           <CardHeader>
-            <div className="text-lg font-semibold text-text-primary">MCP Servers 配置</div>
-            <CardDescription>选择此 Agent 可连接的 MCP 服务器</CardDescription>
+            <div className="text-lg font-semibold text-text-primary">{t('agentsDetail.mcpTitle')}</div>
+            <CardDescription>{t('agentsDetail.mcpDescription')}</CardDescription>
           </CardHeader>
           <CardContent>
             {mcpLoading ? (
               <div className="h-20 flex items-center justify-center text-text-secondary">
                 <Loader2 size={16} className="animate-spin mr-2" />
-                加载 MCP 服务器列表...
+                {t('agentsDetail.loadingMcp')}
               </div>
             ) : availableMcpServers.length === 0 ? (
-              <div className="text-sm text-text-tertiary">暂无可用 MCP 服务器</div>
+              <div className="text-sm text-text-tertiary">{t('agentsDetail.noMcp')}</div>
             ) : (
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {availableMcpServers.map((server) => (
@@ -417,7 +419,7 @@ export default function AgentDetailPage() {
                         <span className="text-sm font-medium text-text-primary truncate">{server.name}</span>
                         {server.isSystem && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500 shrink-0">
-                            系统
+                            {t('agentsDetail.system')}
                           </span>
                         )}
                       </div>

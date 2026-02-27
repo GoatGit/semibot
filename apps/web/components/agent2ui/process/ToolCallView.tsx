@@ -4,6 +4,7 @@ import { useState } from 'react'
 import clsx from 'clsx'
 import { Wrench, Check, XCircle, Loader2, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react'
 import type { ToolCallData } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * ToolCallView - 工具调用卡片组件
@@ -20,6 +21,7 @@ export interface ToolCallViewProps {
 }
 
 export function ToolCallView({ data, className, onRetry, variant = 'default' }: ToolCallViewProps) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
 
   const getStatusIcon = () => {
@@ -36,11 +38,11 @@ export function ToolCallView({ data, className, onRetry, variant = 'default' }: 
   const getStatusLabel = () => {
     switch (data.status) {
       case 'calling':
-        return '执行中'
+        return t('agent2ui.toolCall.running')
       case 'success':
-        return data.duration ? `成功 · ${(data.duration / 1000).toFixed(1)}s` : '成功'
+        return data.duration ? t('agent2ui.toolCall.successWithDuration', { seconds: (data.duration / 1000).toFixed(1) }) : t('agent2ui.toolCall.success')
       case 'error':
-        return data.duration ? `失败 · ${(data.duration / 1000).toFixed(1)}s` : '失败'
+        return data.duration ? t('agent2ui.toolCall.errorWithDuration', { seconds: (data.duration / 1000).toFixed(1) }) : t('agent2ui.toolCall.error')
     }
   }
 
@@ -99,7 +101,7 @@ export function ToolCallView({ data, className, onRetry, variant = 'default' }: 
           <div className="border border-border-subtle rounded-md bg-bg-surface mt-1 overflow-hidden">
             {Object.keys(data.arguments).length > 0 && (
               <div className="px-3 py-2 border-b border-border-subtle">
-                <div className="text-xs text-text-tertiary mb-1">参数</div>
+                <div className="text-xs text-text-tertiary mb-1">{t('agent2ui.toolCall.arguments')}</div>
                 <pre className="text-xs font-mono text-text-secondary bg-bg-elevated p-2 rounded overflow-x-auto">
                   {formatArguments(data.arguments)}
                 </pre>
@@ -107,7 +109,7 @@ export function ToolCallView({ data, className, onRetry, variant = 'default' }: 
             )}
             {data.result !== undefined && (
               <div className="px-3 py-2">
-                <div className="text-xs text-text-tertiary mb-1">结果</div>
+                <div className="text-xs text-text-tertiary mb-1">{t('agent2ui.toolCall.result')}</div>
                 <pre
                   className={clsx(
                     'text-xs font-mono p-2 rounded overflow-x-auto max-h-36',
@@ -176,7 +178,7 @@ export function ToolCallView({ data, className, onRetry, variant = 'default' }: 
               )}
             >
               <RotateCcw className="w-3 h-3" />
-              <span>重试</span>
+              <span>{t('common.retry')}</span>
             </button>
           )}
 
@@ -194,7 +196,7 @@ export function ToolCallView({ data, className, onRetry, variant = 'default' }: 
           {/* 参数 */}
           {Object.keys(data.arguments).length > 0 && (
             <div className="px-4 py-3 border-b border-border-subtle">
-              <div className="text-xs text-text-tertiary mb-2">参数</div>
+              <div className="text-xs text-text-tertiary mb-2">{t('agent2ui.toolCall.arguments')}</div>
               <pre className="text-sm font-mono text-text-secondary bg-bg-elevated p-3 rounded overflow-x-auto">
                 {formatArguments(data.arguments)}
               </pre>
@@ -204,7 +206,7 @@ export function ToolCallView({ data, className, onRetry, variant = 'default' }: 
           {/* 结果 */}
           {data.result !== undefined && (
             <div className="px-4 py-3">
-              <div className="text-xs text-text-tertiary mb-2">结果</div>
+              <div className="text-xs text-text-tertiary mb-2">{t('agent2ui.toolCall.result')}</div>
               <pre
                 className={clsx(
                   'text-sm font-mono p-3 rounded overflow-x-auto max-h-48',

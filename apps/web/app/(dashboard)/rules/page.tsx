@@ -10,25 +10,19 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { useRules } from '@/hooks/useRules'
 import type { RuleActionMode, RuleActionType, RiskLevel } from '@/types'
-
-const ACTION_MODE_OPTIONS = [
-  { value: 'ask', label: 'ask（先询问）' },
-  { value: 'suggest', label: 'suggest（建议执行）' },
-  { value: 'auto', label: 'auto（自动执行）' },
-  { value: 'skip', label: 'skip（跳过）' },
-]
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 const ACTION_TYPE_OPTIONS = [
-  { value: 'notify', label: 'notify' },
-  { value: 'run_agent', label: 'run_agent' },
-  { value: 'execute_plan', label: 'execute_plan' },
-  { value: 'write_memory', label: 'write_memory' },
+  { value: 'notify', labelKey: 'rules.actionType.notify' },
+  { value: 'run_agent', labelKey: 'rules.actionType.runAgent' },
+  { value: 'execute_plan', labelKey: 'rules.actionType.executePlan' },
+  { value: 'write_memory', labelKey: 'rules.actionType.writeMemory' },
 ]
 
 const RISK_OPTIONS = [
-  { value: 'low', label: 'low' },
-  { value: 'medium', label: 'medium' },
-  { value: 'high', label: 'high' },
+  { value: 'low', labelKey: 'rules.risk.low' },
+  { value: 'medium', labelKey: 'rules.risk.medium' },
+  { value: 'high', labelKey: 'rules.risk.high' },
 ]
 
 function mapRiskVariant(risk: RiskLevel): 'success' | 'warning' | 'error' {
@@ -38,6 +32,15 @@ function mapRiskVariant(risk: RiskLevel): 'success' | 'warning' | 'error' {
 }
 
 export default function RulesPage() {
+  const { t } = useLocale()
+  const actionTypeOptions = ACTION_TYPE_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))
+  const riskOptions = RISK_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))
+  const actionModeOptions = [
+    { value: 'ask', label: t('rules.actionMode.ask') },
+    { value: 'suggest', label: t('rules.actionMode.suggest') },
+    { value: 'auto', label: t('rules.actionMode.auto') },
+    { value: 'skip', label: t('rules.actionMode.skip') },
+  ]
   const [showEditor, setShowEditor] = useState(false)
   const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create')
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
@@ -119,7 +122,7 @@ export default function RulesPage() {
 
   const submitEditor = async () => {
     if (!form.name.trim() || !form.eventType.trim()) {
-      setFormError('请填写规则名称和事件类型')
+      setFormError(t('rules.error.requiredFields'))
       return
     }
 
@@ -135,7 +138,7 @@ export default function RulesPage() {
       setShowEditor(false)
       resetForm()
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : '保存规则失败')
+      setFormError(err instanceof Error ? err.message : t('rules.error.save'))
     } finally {
       setIsSubmitting(false)
     }
@@ -147,7 +150,7 @@ export default function RulesPage() {
       await updateRule(ruleId, { isActive: nextActive })
       await loadRules()
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '更新规则状态失败')
+      setActionError(err instanceof Error ? err.message : t('rules.error.updateStatus'))
     }
   }
 
@@ -160,13 +163,13 @@ export default function RulesPage() {
               <div>
                 <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
                   <Workflow size={22} className="text-primary-400" />
-                  规则管理
+                  {t('rules.title')}
                 </h1>
                 <p className="mt-2 text-sm text-text-secondary">
-                  配置事件触发策略，控制提醒、建议和自动执行行为。
+                  {t('rules.subtitle')}
                 </p>
                 <p className="mt-2 text-xs text-text-tertiary">
-                  已启用 {activeStats.active} / {activeStats.total}
+                  {t('rules.enabled')} {activeStats.active} / {activeStats.total}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -176,14 +179,14 @@ export default function RulesPage() {
                   onClick={() => void loadRules()}
                   disabled={isLoading}
                 >
-                  刷新
+                  {t('common.refresh')}
                 </Button>
                 <Button
                   leftIcon={<Plus size={16} />}
                   onClick={openCreateEditor}
                   disabled={!apiAvailable}
                 >
-                  新建规则
+                  {t('rules.new')}
                 </Button>
               </div>
             </div>
@@ -192,7 +195,7 @@ export default function RulesPage() {
 
         {!apiAvailable && (
           <div className="rounded-lg border border-warning-500/30 bg-warning-500/10 px-4 py-3 text-sm text-warning-500">
-            规则 API 尚未接入，请先实现 `/v1/rules`。
+            {t('rules.apiUnavailable')}
           </div>
         )}
 
@@ -225,14 +228,14 @@ export default function RulesPage() {
                           {rule.riskLevel}
                         </Badge>
                         <Badge variant={rule.isActive ? 'success' : 'outline'}>
-                          {rule.isActive ? 'active' : 'inactive'}
+                          {rule.isActive ? t('rules.status.active') : t('rules.status.inactive')}
                         </Badge>
                       </div>
                       <div className="mt-1 text-xs text-text-secondary break-all">
                         {rule.eventType} · mode={rule.actionMode} · priority={rule.priority}
                       </div>
                       <div className="mt-2 text-xs text-text-tertiary">
-                        dedupe={rule.dedupeWindowSeconds ?? 0}s · cooldown={rule.cooldownSeconds ?? 0}s · budget/day={rule.attentionBudgetPerDay ?? 0}
+                        {t('rules.meta.dedupe')}={rule.dedupeWindowSeconds ?? 0}s · {t('rules.meta.cooldown')}={rule.cooldownSeconds ?? 0}s · {t('rules.meta.budgetPerDay')}={rule.attentionBudgetPerDay ?? 0}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -243,7 +246,7 @@ export default function RulesPage() {
                         onClick={() => openEditEditor(rule.id)}
                         disabled={!apiAvailable}
                       >
-                        编辑
+                        {t('common.edit')}
                       </Button>
                       <Button
                         size="sm"
@@ -252,7 +255,7 @@ export default function RulesPage() {
                         onClick={() => void handleToggleRule(rule.id, !rule.isActive)}
                         disabled={!apiAvailable}
                       >
-                        {rule.isActive ? '停用' : '启用'}
+                        {rule.isActive ? t('rules.disable') : t('rules.enable')}
                       </Button>
                     </div>
                   </div>
@@ -262,7 +265,7 @@ export default function RulesPage() {
           ) : (
             <Card className="border-border-subtle">
               <CardContent className="p-8 text-center text-sm text-text-secondary">
-                暂无规则，先创建一条规则开始。
+                {t('rules.empty')}
               </CardContent>
             </Card>
           )}
@@ -275,8 +278,8 @@ export default function RulesPage() {
           setShowEditor(false)
           resetForm()
         }}
-        title={editorMode === 'create' ? '新建规则' : '编辑规则'}
-        description={editorMode === 'create' ? '创建事件触发规则' : '更新规则配置'}
+        title={editorMode === 'create' ? t('rules.new') : t('rules.edit')}
+        description={editorMode === 'create' ? t('rules.createDescription') : t('rules.updateDescription')}
         footer={(
           <>
             <Button
@@ -287,10 +290,10 @@ export default function RulesPage() {
               }}
               disabled={isSubmitting}
             >
-              取消
+              {t('common.cancel')}
             </Button>
             <Button onClick={() => void submitEditor()} loading={isSubmitting}>
-              {editorMode === 'create' ? '创建' : '保存'}
+              {editorMode === 'create' ? t('common.create') : t('common.save')}
             </Button>
           </>
         )}
@@ -299,27 +302,27 @@ export default function RulesPage() {
           <Input
             value={form.name}
             onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-            placeholder="规则名称"
+            placeholder={t('rules.form.ruleName')}
           />
           <Input
             value={form.eventType}
             onChange={(e) => setForm((prev) => ({ ...prev, eventType: e.target.value }))}
-            placeholder="事件类型（例如 tool.exec.failed）"
+            placeholder={t('rules.form.eventType')}
           />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Select
               value={form.actionMode}
-              options={ACTION_MODE_OPTIONS}
+              options={actionModeOptions}
               onChange={(value) => setForm((prev) => ({ ...prev, actionMode: value as RuleActionMode }))}
             />
             <Select
               value={form.actionType}
-              options={ACTION_TYPE_OPTIONS}
+              options={actionTypeOptions}
               onChange={(value) => setForm((prev) => ({ ...prev, actionType: value as RuleActionType }))}
             />
             <Select
               value={form.riskLevel}
-              options={RISK_OPTIONS}
+              options={riskOptions}
               onChange={(value) => setForm((prev) => ({ ...prev, riskLevel: value as RiskLevel }))}
             />
           </div>
@@ -328,25 +331,25 @@ export default function RulesPage() {
               type="number"
               value={String(form.priority)}
               onChange={(e) => setForm((prev) => ({ ...prev, priority: Number(e.target.value || 0) }))}
-              placeholder="priority"
+              placeholder={t('rules.form.priority')}
             />
             <Input
               type="number"
               value={String(form.dedupeWindowSeconds)}
               onChange={(e) => setForm((prev) => ({ ...prev, dedupeWindowSeconds: Number(e.target.value || 0) }))}
-              placeholder="dedupe(s)"
+              placeholder={t('rules.form.dedupe')}
             />
             <Input
               type="number"
               value={String(form.cooldownSeconds)}
               onChange={(e) => setForm((prev) => ({ ...prev, cooldownSeconds: Number(e.target.value || 0) }))}
-              placeholder="cooldown(s)"
+              placeholder={t('rules.form.cooldown')}
             />
             <Input
               type="number"
               value={String(form.attentionBudgetPerDay)}
               onChange={(e) => setForm((prev) => ({ ...prev, attentionBudgetPerDay: Number(e.target.value || 0) }))}
-              placeholder="budget/day"
+              placeholder={t('rules.form.budgetPerDay')}
             />
           </div>
           {formError && (

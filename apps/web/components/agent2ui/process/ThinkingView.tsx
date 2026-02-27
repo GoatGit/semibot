@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import { Brain } from 'lucide-react'
 import type { ThinkingData } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * ThinkingView - 思考过程展示组件
@@ -18,6 +19,7 @@ export interface ThinkingViewProps {
 }
 
 export function ThinkingView({ data, className, variant = 'card' }: ThinkingViewProps) {
+  const { t } = useLocale()
   // 解析思考内容，支持多行和列表格式
   const parseContent = (content: string): string[] => {
     return content
@@ -83,7 +85,7 @@ export function ThinkingView({ data, className, variant = 'card' }: ThinkingView
           <Brain className="w-5 h-5 text-primary-500" />
           <span className="absolute inset-0 rounded-full bg-primary-500/30 animate-ping" />
         </div>
-        <span className="text-sm font-medium text-text-primary">正在思考...</span>
+        <span className="text-sm font-medium text-text-primary">{t('agent2ui.thinking.title')}</span>
 
         <div className="flex items-center gap-1 ml-auto">
           <span

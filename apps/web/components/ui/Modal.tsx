@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import { useEffect, useCallback, useRef } from 'react'
 import { X } from 'lucide-react'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 export interface ModalProps {
   open: boolean
@@ -29,6 +30,7 @@ export function Modal({
   closeOnEsc = true,
   showCloseButton = true,
 }: ModalProps) {
+  const { t } = useLocale()
   const overlayRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -116,7 +118,7 @@ export function Modal({
                 'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
                 'transition-colors duration-fast'
               )}
-              aria-label="关闭"
+              aria-label={t('common.close')}
             >
               <X size={16} />
             </button>

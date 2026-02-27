@@ -2,6 +2,7 @@
 
 import clsx from 'clsx'
 import { Loader2 } from 'lucide-react'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * LoadingView - 加载状态组件
@@ -24,9 +25,11 @@ export function LoadingView({
   className,
   variant = 'skeleton',
   lines = 3,
-  message = '加载中...',
+  message,
   size = 'md',
 }: LoadingViewProps) {
+  const { t } = useLocale()
+  const resolvedMessage = message ?? t('common.loading')
   if (variant === 'spinner') {
     const spinnerSizes = {
       sm: 'w-4 h-4',
@@ -53,12 +56,12 @@ export function LoadingView({
         <Loader2
           className={clsx(spinnerSizes[size], 'text-primary-500 animate-spin')}
         />
-        {message && (
+        {resolvedMessage && (
           <span className={clsx(textSizes[size], 'text-text-secondary')}>
-            {message}
+            {resolvedMessage}
           </span>
         )}
-        <span className="sr-only">{message}</span>
+        <span className="sr-only">{resolvedMessage}</span>
       </div>
     )
   }
@@ -97,7 +100,7 @@ export function LoadingView({
         />
       ))}
 
-      <span className="sr-only">内容加载中</span>
+      <span className="sr-only">{t('agent2ui.loading.contentLoading')}</span>
     </div>
   )
 }

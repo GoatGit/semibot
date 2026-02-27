@@ -22,6 +22,7 @@ import type {
 } from '@/types'
 import { SandboxLogView } from './SandboxLogView'
 import { SandboxOutputView } from './SandboxOutputView'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * SandboxExecutionCard - 沙箱执行卡片聚合组件
@@ -42,37 +43,32 @@ type TabType = 'logs' | 'output'
 
 const statusConfig: Record<
   SandboxStatus,
-  { icon: React.ReactNode; textClass: string; bgClass: string; label: string }
+  { icon: React.ReactNode; textClass: string; bgClass: string }
 > = {
   starting: {
     icon: <Loader2 className="w-4 h-4 animate-spin" />,
     textClass: 'text-primary-500',
     bgClass: 'border-primary-500/50 bg-primary-500/5',
-    label: '启动中',
   },
   running: {
     icon: <Loader2 className="w-4 h-4 animate-spin" />,
     textClass: 'text-primary-500',
     bgClass: 'border-primary-500/50 bg-primary-500/5',
-    label: '执行中',
   },
   success: {
     icon: <CheckCircle className="w-4 h-4" />,
     textClass: 'text-success-500',
     bgClass: 'border-success-500/50 bg-success-500/5',
-    label: '成功',
   },
   error: {
     icon: <XCircle className="w-4 h-4" />,
     textClass: 'text-error-500',
     bgClass: 'border-error-500/50 bg-error-500/5',
-    label: '失败',
   },
   timeout: {
     icon: <Clock className="w-4 h-4" />,
     textClass: 'text-warning-500',
     bgClass: 'border-warning-500/50 bg-warning-500/5',
-    label: '超时',
   },
 }
 
@@ -89,12 +85,22 @@ export function SandboxExecutionCard({
   outputs = [],
   className,
 }: SandboxExecutionCardProps) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(true)
   const [activeTab, setActiveTab] = useState<TabType>('output')
   const logsEndRef = useRef<HTMLDivElement>(null)
 
   const config = statusConfig[status.status]
   const isRunning = status.status === 'starting' || status.status === 'running'
+  const statusLabel = status.status === 'starting'
+    ? t('agent2ui.sandbox.status.starting')
+    : status.status === 'running'
+      ? t('agent2ui.sandbox.status.running')
+      : status.status === 'success'
+        ? t('agent2ui.sandbox.status.success')
+        : status.status === 'timeout'
+          ? t('agent2ui.sandbox.status.timeout')
+          : t('agent2ui.sandbox.status.error')
 
   // 自动滚动到最新日志
   useEffect(() => {
@@ -128,7 +134,7 @@ export function SandboxExecutionCard({
           </div>
           <div className="flex flex-col">
             <span className="font-medium text-text-primary text-sm">
-              沙箱执行
+              {t('agent2ui.sandbox.title')}
             </span>
             <span className="text-xs text-text-tertiary font-mono">
               {sandboxId.slice(0, 8)}...
@@ -158,7 +164,7 @@ export function SandboxExecutionCard({
           {/* 状态 */}
           <div className={clsx('flex items-center gap-1.5 text-sm', config.textClass)}>
             {config.icon}
-            <span>{config.label}</span>
+            <span>{statusLabel}</span>
             {status.durationMs !== undefined && (
               <span className="text-text-tertiary">
                 · {formatDuration(status.durationMs)}
@@ -191,7 +197,7 @@ export function SandboxExecutionCard({
               onClick={() => setActiveTab('output')}
             >
               <Terminal className="w-4 h-4" />
-              <span>输出</span>
+              <span>{t('agent2ui.sandbox.output')}</span>
               {outputs.length > 0 && (
                 <span className="text-xs bg-bg-elevated px-1.5 py-0.5 rounded">
                   {outputs.length}
@@ -209,7 +215,7 @@ export function SandboxExecutionCard({
               onClick={() => setActiveTab('logs')}
             >
               <FileText className="w-4 h-4" />
-              <span>日志</span>
+              <span>{t('agent2ui.sandbox.logs')}</span>
               {logs.length > 0 && (
                 <span className="text-xs bg-bg-elevated px-1.5 py-0.5 rounded">
                   {logs.length}
@@ -224,7 +230,7 @@ export function SandboxExecutionCard({
               <div className="p-4 space-y-3">
                 {outputs.length === 0 ? (
                   <div className="text-sm text-text-tertiary text-center py-4">
-                    {isRunning ? '等待输出...' : '无输出'}
+                    {isRunning ? t('agent2ui.sandbox.waitingOutput') : t('agent2ui.sandbox.noOutput')}
                   </div>
                 ) : (
                   outputs.map((output, index) => (
@@ -238,7 +244,7 @@ export function SandboxExecutionCard({
               <div className="p-2 space-y-1">
                 {logs.length === 0 ? (
                   <div className="text-sm text-text-tertiary text-center py-4">
-                    {isRunning ? '等待日志...' : '无日志'}
+                    {isRunning ? t('agent2ui.sandbox.waitingLogs') : t('agent2ui.sandbox.noLogs')}
                   </div>
                 ) : (
                   <>

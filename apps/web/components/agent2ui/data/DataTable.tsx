@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback } from 'react'
 import clsx from 'clsx'
 import { ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { TableData, TableColumn } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * DataTable - 数据表格组件
@@ -25,6 +26,7 @@ interface SortState {
 }
 
 export function DataTable({ data, className, onPageChange }: DataTableProps) {
+  const { locale, t } = useLocale()
   const [sortState, setSortState] = useState<SortState>({
     column: null,
     direction: null,
@@ -86,7 +88,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
 
     if (column.type === 'date') {
       try {
-        return new Date(String(value)).toLocaleDateString('zh-CN')
+        return new Date(String(value)).toLocaleDateString(locale)
       } catch {
         return String(value)
       }
@@ -95,7 +97,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
     if (column.type === 'number') {
       const num = Number(value)
       if (!isNaN(num)) {
-        return num.toLocaleString('zh-CN')
+        return num.toLocaleString(locale)
       }
     }
 
@@ -171,7 +173,11 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
           )}
         >
           <span className="text-sm text-text-secondary">
-            共 {pagination.total} 条，第 {pagination.page} / {totalPages} 页
+            {t('agent2ui.dataTable.pagination', {
+              total: pagination.total,
+              page: pagination.page,
+              totalPages,
+            })}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -184,7 +190,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
                 'hover:bg-interactive-hover hover:text-text-primary',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
-              aria-label="上一页"
+              aria-label={t('agent2ui.dataTable.prevPage')}
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -198,7 +204,7 @@ export function DataTable({ data, className, onPageChange }: DataTableProps) {
                 'hover:bg-interactive-hover hover:text-text-primary',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
-              aria-label="下一页"
+              aria-label={t('agent2ui.dataTable.nextPage')}
             >
               <ChevronRight className="w-5 h-5" />
             </button>

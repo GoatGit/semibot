@@ -8,30 +8,32 @@ import { Button } from '@/components/ui/Button'
 import { apiClient } from '@/lib/api'
 import { NEW_CHAT_PATH } from '@/constants/config'
 import type { ApiResponse, Session } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface ChatLayoutProps {
   children: React.ReactNode
 }
 
-function formatTime(dateString: string) {
+function formatTime(dateString: string, locale: string) {
   const date = new Date(dateString)
   if (Number.isNaN(date.getTime())) return '--'
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
 
   const now = new Date()
   const diff = now.getTime() - date.getTime()
   const days = Math.floor(diff / (1000 * 60 * 60 * 24))
 
   if (days <= 0) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
   }
-  if (days === 1) return '昨天'
-  if (days < 7) return `${days} 天前`
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  if (days < 7) return rtf.format(-days, 'day')
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 }
 
 export default function ChatLayout({ children }: ChatLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
+  const { locale, t } = useLocale()
   const [sessions, setSessions] = useState<Session[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
@@ -71,7 +73,7 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
             onClick={() => router.push(NEW_CHAT_PATH)}
             data-testid="new-session-btn"
           >
-            新建会话
+            {t('chatLayout.newChat')}
           </Button>
           <button
             type="button"
@@ -79,13 +81,13 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
             className="w-full h-8 rounded-md border border-border-default text-text-secondary text-xs hover:bg-interactive-hover flex items-center justify-center gap-1.5"
           >
             <RefreshCw size={12} />
-            刷新会话
+            {t('chatLayout.refresh')}
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {!isLoading && sessions.length === 0 && (
-            <p className="text-xs text-text-tertiary px-3 py-2">暂无会话</p>
+            <p className="text-xs text-text-tertiary px-3 py-2">{t('chatLayout.noSessions')}</p>
           )}
           {sessions.map((session) => {
             const isActive = activeSessionId === session.id
@@ -105,8 +107,8 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
                 <div className="flex items-start gap-2">
                   <MessageSquare size={14} className="mt-0.5 flex-shrink-0 text-text-tertiary" />
                   <div className="min-w-0">
-                    <p className="text-sm truncate">{session.title ?? '未命名会话'}</p>
-                    <p className="text-xs text-text-tertiary mt-0.5">{formatTime(session.createdAt)}</p>
+                    <p className="text-sm truncate">{session.title ?? t('chatLayout.untitled')}</p>
+                    <p className="text-xs text-text-tertiary mt-0.5">{formatTime(session.createdAt, locale)}</p>
                   </div>
                 </div>
               </button>

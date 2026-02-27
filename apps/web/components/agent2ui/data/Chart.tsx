@@ -22,6 +22,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import type { ChartData, ChartSeries } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * Chart - 图表组件
@@ -48,12 +49,13 @@ const CHART_COLORS = [
 ]
 
 export function Chart({ data, className, height = 300 }: ChartProps) {
+  const { t } = useLocale()
   // 将数据转换为 Recharts 格式
   const chartData = useMemo(() => {
     if (data.chartType === 'pie') {
       // 饼图数据格式
       return data.series[0]?.data.map((value: number, index: number) => ({
-        name: data.xAxis?.data?.[index] || `项目 ${index + 1}`,
+        name: data.xAxis?.data?.[index] || t('agent2ui.chart.item', { index: index + 1 }),
         value,
       })) || []
     }
@@ -67,7 +69,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
       })
       return point
     })
-  }, [data])
+  }, [data, t])
 
   const renderChart = () => {
     switch (data.chartType) {
@@ -310,7 +312,7 @@ export function Chart({ data, className, height = 300 }: ChartProps) {
       default:
         return (
           <div className="flex items-center justify-center h-full text-text-secondary">
-            不支持的图表类型: {data.chartType}
+            {t('agent2ui.chart.unsupported', { type: data.chartType })}
           </div>
         )
     }

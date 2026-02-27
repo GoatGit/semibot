@@ -341,4 +341,86 @@ test.describe('Chat Flow', () => {
       await expect(page.getByRole('button', { name: /Message to delete/i })).toHaveCount(0)
     })
   })
+
+  test.describe('HITL Approval Flow', () => {
+    test('should approve browser automation action and resume execution', async ({ page }) => {
+      await mockSessionList(page, [{ id: 'sess-hitl', title: 'HITL', createdAt: new Date().toISOString() }])
+      await mockSessionDetail(page, 'sess-hitl', [])
+
+      let approvalState: 'none' | 'pending' | 'approved' = 'none'
+
+      await page.route('**/api/v1/approvals**', async (route, request) => {
+        if (request.method() !== 'GET') {
+          await route.continue()
+          return
+        }
+
+        const items = approvalState === 'pending'
+          ? [{
+              id: 'ap-browser-1',
+              status: 'pending',
+              event_id: 'sess-hitl:browser_automation',
+              risk_level: 'high',
+              created_at: new Date().toISOString(),
+            }]
+          : []
+
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items }),
+        })
+      })
+
+      await page.route('**/api/v1/chat/sessions/sess-hitl', async (route, request) => {
+        const payload = request.postDataJSON() as { message?: string } | null
+        const message = (payload?.message || '').trim()
+
+        if (message.startsWith('/approve ap-browser-1')) {
+          approvalState = 'approved'
+          await route.fulfill({
+            status: 200,
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+            },
+            body: buildTextSSE('sess-hitl', ['已通过审批，browser_automation 已继续执行并完成。']),
+          })
+          return
+        }
+
+        approvalState = 'pending'
+        await route.fulfill({
+          status: 200,
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+            },
+            body: buildTextSSE('sess-hitl', [
+              'browser_automation 调用被策略拦截，等待人工审批。',
+              '浏览器自动化请求已暂停，等待审批。',
+            ]),
+          })
+        })
+
+      await page.goto('/chat/sess-hitl')
+      await page.getByPlaceholder('输入您的问题...').fill('请使用 browser_automation 打开 example.com 并提取标题')
+      await page.getByRole('button', { name: '发送' }).click()
+
+      await expect(page.getByText('浏览器自动化请求已暂停，等待审批。')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByText('待审批操作 1')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByText('ap-browser-1')).toBeVisible()
+
+      const stopButton = page.getByRole('button', { name: '停止' })
+      if (await stopButton.isVisible().catch(() => false)) {
+        await stopButton.click()
+      }
+      await expect(page.getByRole('button', { name: '通过' })).toBeEnabled({ timeout: 10000 })
+
+      await page.getByRole('button', { name: '通过' }).click()
+      await expect(page.getByText('/approve ap-browser-1')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByText('已通过审批，browser_automation 已继续执行并完成。')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByText('待审批操作 1')).toHaveCount(0)
+    })
+  })
 })

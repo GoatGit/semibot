@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { Bot, Sparkles, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle } from 'lucide-react'
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Agent } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface AgentOption {
   id: string
@@ -19,49 +20,50 @@ interface AgentOption {
   isSystem?: boolean
 }
 
-// 默认 Agent 模板（当无法加载真实 Agent 列表时使用）
-const defaultTemplates: AgentOption[] = [
-  {
-    id: 'general',
-    name: '通用助手',
-    description: '多功能 AI 助手，可以帮助您完成各种任务',
-    icon: <Bot size={24} />,
-    color: 'primary',
-    isFallback: true,
-  },
-  {
-    id: 'code',
-    name: '代码助手',
-    description: '专注于编程和代码审查的 AI 助手',
-    icon: <Code size={24} />,
-    color: 'info',
-    isFallback: true,
-  },
-  {
-    id: 'research',
-    name: '研究助手',
-    description: '帮助您搜索、整理和分析信息',
-    icon: <FileSearch size={24} />,
-    color: 'success',
-    isFallback: true,
-  },
-  {
-    id: 'data',
-    name: '数据分析',
-    description: '数据处理、可视化和洞察分析',
-    icon: <BarChart3 size={24} />,
-    color: 'warning',
-    isFallback: true,
-  },
-  {
-    id: 'creative',
-    name: '创意写作',
-    description: '文案创作、内容生成和编辑',
-    icon: <PenTool size={24} />,
-    color: 'error',
-    isFallback: true,
-  },
-]
+function getDefaultTemplates(t: (key: string) => string): AgentOption[] {
+  return [
+    {
+      id: 'general',
+      name: t('chatNew.templates.general.name'),
+      description: t('chatNew.templates.general.description'),
+      icon: <Bot size={24} />,
+      color: 'primary',
+      isFallback: true,
+    },
+    {
+      id: 'code',
+      name: t('chatNew.templates.code.name'),
+      description: t('chatNew.templates.code.description'),
+      icon: <Code size={24} />,
+      color: 'info',
+      isFallback: true,
+    },
+    {
+      id: 'research',
+      name: t('chatNew.templates.research.name'),
+      description: t('chatNew.templates.research.description'),
+      icon: <FileSearch size={24} />,
+      color: 'success',
+      isFallback: true,
+    },
+    {
+      id: 'data',
+      name: t('chatNew.templates.data.name'),
+      description: t('chatNew.templates.data.description'),
+      icon: <BarChart3 size={24} />,
+      color: 'warning',
+      isFallback: true,
+    },
+    {
+      id: 'creative',
+      name: t('chatNew.templates.creative.name'),
+      description: t('chatNew.templates.creative.description'),
+      icon: <PenTool size={24} />,
+      color: 'error',
+      isFallback: true,
+    },
+  ]
+}
 
 // 根据 Agent 名称选择图标
 function getAgentIcon(name: string): React.ReactNode {
@@ -96,6 +98,8 @@ function getAgentColor(index: number): string {
  */
 export default function NewChatPage() {
   const router = useRouter()
+  const { t } = useLocale()
+  const fallbackTemplates = useMemo(() => getDefaultTemplates(t), [t])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [isCreating, setIsCreating] = useState(false)
@@ -116,7 +120,7 @@ export default function NewChatPage() {
           .map((agent: Agent, index: number) => ({
             id: agent.id,
             name: agent.name,
-            description: agent.description ?? '智能 AI 助手',
+            description: agent.description ?? t('chatNew.smartAssistant'),
             icon: getAgentIcon(agent.name),
             color: getAgentColor(index),
             isFallback: false,
@@ -129,16 +133,16 @@ export default function NewChatPage() {
         }
       }
 
-      setAgents(defaultTemplates)
+      setAgents(fallbackTemplates)
       setUsingFallbackAgents(true)
     } catch (err) {
       console.error('[NewChat] 加载 Agent 列表失败:', err)
-      setAgents(defaultTemplates)
+      setAgents(fallbackTemplates)
       setUsingFallbackAgents(true)
     } finally {
       setIsLoadingAgents(false)
     }
-  }, [])
+  }, [fallbackTemplates, t])
 
   useEffect(() => {
     loadAgents()
@@ -157,16 +161,16 @@ export default function NewChatPage() {
         : agents[0]
 
       if (!selectedAgent || selectedAgent.isFallback || usingFallbackAgents) {
-        throw new Error('未加载到可用 Agent，请先创建或启用 Agent')
+        throw new Error(t('chatNew.error.noAvailableAgent'))
       }
 
       const agentId = selectedAgent.id
 
       if (!agentId) {
-        throw new Error('请先选择一个 Agent')
+        throw new Error(t('chatNew.error.selectAgent'))
       }
 
-      const initialMessage = message.trim() || '你好，请介绍一下你自己'
+      const initialMessage = message.trim() || t('chatNew.defaultMessage')
 
       // 创建会话（普通 REST 请求，立即返回 sessionId）
       const response = await apiClient.post<ApiResponse<{ id: string }>>('/sessions', {
@@ -175,7 +179,7 @@ export default function NewChatPage() {
       })
 
       if (!response.success || !response.data) {
-        throw new Error(response.error?.message ?? '创建会话失败')
+        throw new Error(response.error?.message ?? t('chatNew.error.createSession'))
       }
 
       const sessionId = response.data.id
@@ -187,7 +191,7 @@ export default function NewChatPage() {
       router.push(`/chat/${sessionId}?initialMessage=${encodeURIComponent(initialMessage)}`)
     } catch (err) {
       console.error('[NewChat] 创建会话失败:', err)
-      setError(err instanceof Error ? err.message : '创建会话失败')
+      setError(err instanceof Error ? err.message : t('chatNew.error.createSession'))
       setIsCreating(false)
     }
   }
@@ -233,9 +237,9 @@ export default function NewChatPage() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary-500/20 mb-4">
               <Sparkles size={32} className="text-primary-400" />
             </div>
-            <h1 className="text-2xl font-semibold text-text-primary">开始新会话</h1>
+            <h1 className="text-2xl font-semibold text-text-primary">{t('chatNew.title')}</h1>
             <p className="text-text-secondary mt-2">
-              选择一个 Agent，或直接输入您的问题开始对话
+              {t('chatNew.subtitle')}
             </p>
           </div>
 
@@ -249,7 +253,7 @@ export default function NewChatPage() {
 
           {/* Agent 选择 */}
           <div className="mb-8">
-            <h2 className="text-sm font-medium text-text-secondary mb-4">选择 Agent</h2>
+            <h2 className="text-sm font-medium text-text-secondary mb-4">{t('chatNew.chooseAgent')}</h2>
             {isLoadingAgents ? (
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-500" />
@@ -276,7 +280,7 @@ export default function NewChatPage() {
                         <h3 className="text-sm font-medium text-text-primary">{agent.name}</h3>
                         {agent.isSystem && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary-500/20 text-primary-400 rounded">
-                            系统
+                            {t('chatNew.system')}
                           </span>
                         )}
                       </div>
@@ -292,9 +296,9 @@ export default function NewChatPage() {
               <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-warning-500/10 border border-warning-500/20">
                 <AlertCircle size={18} className="text-warning-500 flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-warning-500">
-                  <p>未加载到可用 Agent，无法开始对话。</p>
+                  <p>{t('chatNew.warning.noAvailableAgent')}</p>
                   <a href="/agents" className="underline underline-offset-4">
-                    去创建或启用 Agent
+                    {t('chatNew.warning.goCreateAgent')}
                   </a>
                 </div>
               </div>
@@ -304,12 +308,12 @@ export default function NewChatPage() {
           {/* 快速开始 */}
           <Card variant="outlined" padding="lg">
             <CardContent>
-              <h2 className="text-sm font-medium text-text-secondary mb-3">快速开始</h2>
+              <h2 className="text-sm font-medium text-text-secondary mb-3">{t('chatNew.quickStart')}</h2>
               <div className="space-y-4">
                 <textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  placeholder="输入您的问题或任务描述..."
+                  placeholder={t('chatNew.inputPlaceholder')}
                   className={clsx(
                     'w-full h-32 px-4 py-3 rounded-lg resize-none',
                     'bg-bg-surface border border-border-default',
@@ -322,7 +326,7 @@ export default function NewChatPage() {
                   <div className="text-xs text-text-tertiary">
                     {selectedAgentId && (
                       <span>
-                        已选择: {agents.find((a) => a.id === selectedAgentId)?.name}
+                        {t('chatNew.selectedPrefix')} {agents.find((a) => a.id === selectedAgentId)?.name}
                       </span>
                     )}
                   </div>
@@ -332,7 +336,7 @@ export default function NewChatPage() {
                     disabled={(!message.trim() && !selectedAgentId) || usingFallbackAgents}
                     rightIcon={<ArrowRight size={16} />}
                   >
-                    开始对话
+                    {t('chatNew.startChat')}
                   </Button>
                 </div>
               </div>
@@ -341,13 +345,13 @@ export default function NewChatPage() {
 
           {/* 示例提示 */}
           <div className="mt-8">
-            <h2 className="text-sm font-medium text-text-secondary mb-3">试试这些问题</h2>
+            <h2 className="text-sm font-medium text-text-secondary mb-3">{t('chatNew.suggestionsTitle')}</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {[
-                '帮我分析这份销售数据并生成报告',
-                '写一个 React 组件实现文件上传功能',
-                '搜索最新的 AI 行业动态并总结',
-                '帮我优化这段 Python 代码的性能',
+                t('chatNew.suggestions.item1'),
+                t('chatNew.suggestions.item2'),
+                t('chatNew.suggestions.item3'),
+                t('chatNew.suggestions.item4'),
               ].map((suggestion, index) => (
                 <button
                   key={index}

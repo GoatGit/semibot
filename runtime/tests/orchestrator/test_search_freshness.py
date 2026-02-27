@@ -1,7 +1,10 @@
 from datetime import datetime
 
 from src.orchestrator.nodes import (
+    _enforce_browser_tool_preference,
     _enforce_freshness_on_plan_steps,
+    _extract_target_url,
+    _is_browser_intent,
     _is_latest_intent,
 )
 from src.orchestrator.state import PlanStep
@@ -61,3 +64,32 @@ def test_enforce_freshness_skip_non_latest_intent():
     )
 
     assert step.params["query"] == "人工智能历史"
+
+
+def test_browser_intent_detection_and_url_extract():
+    assert _is_browser_intent("访问 www.doubao.com 并提取标题")
+    assert _extract_target_url("访问 www.doubao.com 并提取标题") == "https://www.doubao.com"
+    assert _extract_target_url("open https://example.com/page?a=1") == "https://example.com/page?a=1"
+    assert _extract_target_url("总结 AI 发展历史") is None
+
+
+def test_enforce_browser_tool_preference_inserts_open_step():
+    steps = [
+        PlanStep(
+            id="1",
+            title="回答问题",
+            tool=None,
+            params={},
+            parallel=False,
+        )
+    ]
+    _enforce_browser_tool_preference(
+        steps=steps,
+        user_text="访问 www.doubao.com，然后告诉我首页标题",
+        available_tool_names={"search", "browser_automation"},
+        session_id="sess-browser",
+    )
+
+    assert steps[0].tool == "browser_automation"
+    assert steps[0].params["action"] == "open"
+    assert steps[0].params["url"] == "https://www.doubao.com"

@@ -61,6 +61,20 @@ _SEARCH_TOOL_KEYWORDS = (
     "duckduckgo",
 )
 
+_BROWSER_INTENT_KEYWORDS = (
+    "访问",
+    "打开",
+    "网页",
+    "网站",
+    "浏览器",
+    "登录",
+    "login",
+    "click",
+    "点击",
+    "form",
+    "表单",
+)
+
 _TIME_SERIES_PATTERNS = (
     r"近\s*(\d{1,3})\s*年",
     r"过去\s*(\d{1,3})\s*年",
@@ -125,6 +139,64 @@ def _is_search_tool(tool_name: str | None) -> bool:
         return False
     lower = tool_name.lower()
     return any(token in lower for token in _SEARCH_TOOL_KEYWORDS)
+
+
+def _is_browser_intent(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    return any(token in lower for token in _BROWSER_INTENT_KEYWORDS)
+
+
+def _extract_target_url(text: str) -> str | None:
+    if not text:
+        return None
+
+    explicit = _re.search(r"https?://[^\s，。,\"'）)]+", text, _re.IGNORECASE)
+    if explicit:
+        return explicit.group(0).rstrip(".,)")
+
+    domain = _re.search(
+        r"\b(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/[^\s，。,\"'）)]*)?",
+        text,
+    )
+    if not domain:
+        return None
+    value = domain.group(0).rstrip(".,)")
+    return value if value.lower().startswith("http") else f"https://{value}"
+
+
+def _enforce_browser_tool_preference(
+    steps: list[PlanStep],
+    user_text: str,
+    available_tool_names: set[str],
+    session_id: str,
+) -> None:
+    if "browser_automation" not in available_tool_names:
+        return
+    if not _is_browser_intent(user_text):
+        return
+    if any((step.tool or "").strip() == "browser_automation" for step in steps):
+        return
+
+    target_url = _extract_target_url(user_text)
+    if not target_url:
+        return
+
+    steps.insert(
+        0,
+        PlanStep(
+            id="browser_open_1",
+            title="打开目标网页",
+            tool="browser_automation",
+            params={"action": "open", "url": target_url},
+            parallel=False,
+        ),
+    )
+    logger.info(
+        "browser_tool_preference_enforced",
+        extra={"session_id": session_id, "url": target_url},
+    )
 
 
 def _enhance_latest_search_query(query: str, now: datetime) -> str:
@@ -862,6 +934,12 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         _enforce_finance_research_on_plan_steps(
             steps=plan.steps,
             user_text=user_text,
+            session_id=state["session_id"],
+        )
+        _enforce_browser_tool_preference(
+            steps=plan.steps,
+            user_text=user_text,
+            available_tool_names=available_tool_names,
             session_id=state["session_id"],
         )
         _enforce_pdf_tool_preference(

@@ -152,12 +152,11 @@ START → PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND → END
 
 稳定、低成本、可直接调用的基础能力集，不依赖 LLM 解释。
 
-**P0 必备工具：**
-- `web_search` — 搜索
-- `web_fetch` / `web_screenshot` — 浏览器访问
-- `read_file` / `write_file` / `list_dir` — 文件访问
-- `run_code` — 代码执行
-- `run_shell` — 命令执行
+**P0 必备工具（V2 实现对齐）：**
+- `search` — 搜索（支持 provider/key 配置）
+- `browser_automation` — 浏览器自动化（导航、点击、提取文本、截图）
+- `file_io` — 本地文件读/写/列目录
+- `code_executor` — 代码执行
 
 **P1 增强工具：**
 - `pdf_read` / `sheet_edit` — PDF/表格处理

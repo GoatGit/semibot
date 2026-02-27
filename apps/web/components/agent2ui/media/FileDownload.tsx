@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import { Download, File, FileText, FileImage, FileVideo, FileAudio, FileArchive } from 'lucide-react'
 import { AUTH_DISABLED } from '@/lib/auth-mode'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface FileDownloadProps {
   data: {
@@ -17,8 +18,8 @@ interface FileDownloadProps {
 /**
  * 格式化文件大小
  */
-function formatFileSize(bytes?: number): string {
-  if (!bytes) return '未知大小'
+function formatFileSize(bytes: number | undefined, unknownLabel: string): string {
+  if (!bytes) return unknownLabel
 
   const units = ['B', 'KB', 'MB', 'GB']
   let size = bytes
@@ -59,6 +60,7 @@ function getFileIcon(mimeType?: string) {
  * - 点击下载
  */
 export function FileDownload({ data }: FileDownloadProps) {
+  const { t } = useLocale()
   const { url, filename, size, mimeType } = data
   const IconComponent = getFileIcon(mimeType)
 
@@ -87,11 +89,11 @@ export function FileDownload({ data }: FileDownloadProps) {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       })
       if (!response.ok) {
-        throw new Error(`下载失败: HTTP ${response.status}`)
+        throw new Error(t('agent2ui.fileDownload.error.http', { status: response.status }))
       }
       const contentType = response.headers.get('content-type') ?? ''
       if (contentType.includes('application/json')) {
-        throw new Error('下载失败: 服务端返回了错误响应')
+        throw new Error(t('agent2ui.fileDownload.error.invalidResponse'))
       }
 
       const blob = await response.blob()
@@ -126,7 +128,7 @@ export function FileDownload({ data }: FileDownloadProps) {
       {/* 文件信息 */}
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-text-primary truncate">{filename}</p>
-        <p className="text-xs text-text-tertiary">{formatFileSize(size)}</p>
+        <p className="text-xs text-text-tertiary">{formatFileSize(size, t('agent2ui.fileDownload.unknownSize'))}</p>
       </div>
 
       {/* 下载按钮 */}
@@ -136,7 +138,7 @@ export function FileDownload({ data }: FileDownloadProps) {
           'text-text-secondary hover:text-primary-400',
           'hover:bg-primary-500/10 transition-colors'
         )}
-        aria-label="下载文件"
+        aria-label={t('agent2ui.fileDownload.downloadFile')}
       >
         <Download size={18} />
       </button>

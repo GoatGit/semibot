@@ -15,6 +15,7 @@ import {
   Loader2,
   Play,
 } from 'lucide-react'
+import { useLocale } from '@/components/providers/LocaleProvider'
 import type {
   Agent2UIMessage,
   Agent2UIType,
@@ -136,10 +137,10 @@ function deduplicateTimeline(messages: Agent2UIMessage[]): Agent2UIMessage[] {
 }
 
 /** 格式化 ISO 时间戳为 HH:mm:ss */
-function formatTime(timestamp: string): string {
+function formatTime(timestamp: string, locale: string): string {
   try {
     const d = new Date(timestamp)
-    return d.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    return d.toLocaleTimeString(locale, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
   } catch {
     return ''
   }
@@ -157,8 +158,9 @@ function truncate(text: string, max: number): string {
 // ---------------------------------------------------------------------------
 
 function TimelineEntry({ message }: { message: Agent2UIMessage }) {
+  const { locale, t } = useLocale()
   const [expanded, setExpanded] = useState(false)
-  const time = formatTime(message.timestamp)
+  const time = formatTime(message.timestamp, locale)
 
   switch (message.type) {
     case 'thinking': {
@@ -169,7 +171,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
       const isMerged = segments.length > 1
       const needExpand = isMerged || content.length > 80
       const preview = isMerged
-        ? truncate(segments[0], 60) + ` (+${segments.length - 1}条)`
+        ? truncate(segments[0], 60) + ` ${t('agent2ui.process.thinkingMergedExtra', { count: segments.length - 1 })}`
         : truncate(content, 80)
       return (
         <div className="group py-1.5 px-3">
@@ -191,7 +193,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
                   onClick={() => setExpanded(!expanded)}
                   className="ml-1 text-xs text-primary-400 hover:underline"
                 >
-                  {expanded ? '收起' : '展开'}
+                  {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.expand')}
                 </button>
               )}
             </div>
@@ -207,7 +209,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
           <span className="text-xs text-text-tertiary font-mono shrink-0 w-[52px]">{time}</span>
           <ClipboardList className="w-3.5 h-3.5 text-amber-400 shrink-0" />
           <span className="text-xs text-text-primary">
-            执行计划: {data.steps.length} 个步骤
+            {t('agent2ui.process.planSummary', { count: data.steps.length })}
           </span>
         </div>
       )
@@ -223,12 +225,12 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
             ? <XCircle className="w-3 h-3 text-error-500" />
             : <Play className="w-3 h-3 text-text-tertiary" />
       const statusLabel = data.status === 'completed'
-        ? '完成'
+        ? t('agent2ui.plan.status.completed')
         : data.status === 'running'
-          ? '进行中'
+          ? t('agent2ui.plan.status.running')
           : data.status === 'failed'
-            ? '失败'
-            : ''
+            ? t('agent2ui.plan.status.failed')
+            : t('agent2ui.plan.status.pending')
       return (
         <div className="flex items-center gap-2 py-1.5 px-3">
           <span className="text-xs text-text-tertiary font-mono shrink-0 w-[52px]">{time}</span>
@@ -272,7 +274,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
           {data.status === 'error' && (
             <div className="flex items-center gap-1 shrink-0">
               <XCircle className="w-3 h-3 text-error-500" />
-              <span className="text-xs text-error-500">失败</span>
+              <span className="text-xs text-error-500">{t('agent2ui.process.failed')}</span>
             </div>
           )}
         </div>
@@ -298,7 +300,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
             ) : (
               <div className="flex items-center gap-1 shrink-0">
                 <XCircle className="w-3 h-3 text-error-500" />
-                <span className="text-xs text-error-500">失败</span>
+                <span className="text-xs text-error-500">{t('agent2ui.process.failed')}</span>
               </div>
             )}
             {hasResult && (
@@ -306,7 +308,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
                 onClick={() => setExpanded(!expanded)}
                 className="ml-auto text-xs text-primary-400 hover:underline shrink-0"
               >
-                {expanded ? '收起' : '详情'}
+                {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
               </button>
             )}
           </div>
@@ -343,7 +345,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
           {data.status === 'error' && (
             <div className="flex items-center gap-1 shrink-0">
               <XCircle className="w-3 h-3 text-error-500" />
-              <span className="text-xs text-error-500">失败</span>
+              <span className="text-xs text-error-500">{t('agent2ui.process.failed')}</span>
             </div>
           )}
         </div>
@@ -369,7 +371,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
             ) : (
               <div className="flex items-center gap-1 shrink-0">
                 <XCircle className="w-3 h-3 text-error-500" />
-                <span className="text-xs text-error-500">失败</span>
+                <span className="text-xs text-error-500">{t('agent2ui.process.failed')}</span>
               </div>
             )}
             {hasResult && (
@@ -377,7 +379,7 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
                 onClick={() => setExpanded(!expanded)}
                 className="ml-auto text-xs text-primary-400 hover:underline shrink-0"
               >
-                {expanded ? '收起' : '详情'}
+                {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
               </button>
             )}
           </div>
@@ -413,6 +415,7 @@ export function ProcessCard({
   messages,
   className,
 }: ProcessCardProps) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(true)
 
   // Auto-expand when active, auto-collapse when done
@@ -431,17 +434,17 @@ export function ProcessCard({
   const summary = useMemo(() => {
     const parts: string[] = []
     if (toolCalls.length > 0) {
-      parts.push(`调用 ${toolCalls.length} 次工具`)
+      parts.push(t('agent2ui.process.toolCallSummary', { count: toolCalls.length }))
     }
     if (plan && plan.steps.length > 0) {
-      parts.push(`执行 ${plan.steps.length} 个步骤`)
+      parts.push(t('agent2ui.process.stepSummary', { count: plan.steps.length }))
     }
     const failedCount = toolCalls.filter((tc) => tc.status === 'error').length
     if (failedCount > 0) {
-      parts.push(`${failedCount} 个失败`)
+      parts.push(t('agent2ui.process.failedSummary', { count: failedCount }))
     }
-    return parts.join('，')
-  }, [toolCalls, plan])
+    return parts.join(t('agent2ui.process.summarySeparator'))
+  }, [plan, t, toolCalls])
 
   // 过滤出时序日志中需要展示的消息，并去重
   const timelineMessages = useMemo(() => {
@@ -478,7 +481,7 @@ export function ProcessCard({
               <Brain className="w-5 h-5 text-primary-500" />
               <span className="absolute inset-0 rounded-full bg-primary-500/30 animate-ping" />
             </div>
-            <span className="text-sm font-medium text-text-primary">深度思考中</span>
+            <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.status.thinking')}</span>
             <div className="flex items-center gap-1 ml-1">
               <span className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse" style={{ animationDelay: '0ms' }} />
               <span className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse" style={{ animationDelay: '200ms' }} />
@@ -489,7 +492,7 @@ export function ProcessCard({
         {status === 'completed' && (
           <>
             <CheckCircle2 className="w-5 h-5 text-success-500 flex-shrink-0" />
-            <span className="text-sm font-medium text-text-primary">已完成思考</span>
+            <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.status.completed')}</span>
             {summary && (
               <span className="text-sm text-text-tertiary ml-1">{summary}</span>
             )}
@@ -498,7 +501,7 @@ export function ProcessCard({
         {status === 'failed' && (
           <>
             <AlertCircle className="w-5 h-5 text-error-500 flex-shrink-0" />
-            <span className="text-sm font-medium text-text-primary">执行遇到问题</span>
+            <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.status.failed')}</span>
             {summary && (
               <span className="text-sm text-text-tertiary ml-1">{summary}</span>
             )}

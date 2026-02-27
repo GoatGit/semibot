@@ -2,6 +2,7 @@
 
 import { Component, type ReactNode, type ErrorInfo } from 'react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
+import { createTranslator, detectLocale } from '@/lib/i18n'
 
 interface Props {
   children: ReactNode
@@ -41,6 +42,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render(): ReactNode {
     if (this.state.hasError) {
+      const t = createTranslator(detectLocale())
       // 如果提供了自定义 fallback，使用它
       if (this.props.fallback) {
         return this.props.fallback
@@ -54,9 +56,9 @@ export class ErrorBoundary extends Component<Props, State> {
               <AlertTriangle size={24} className="text-error-500" />
             </div>
             <div className="space-y-1">
-              <h3 className="text-lg font-medium text-text-primary">组件加载失败</h3>
+              <h3 className="text-lg font-medium text-text-primary">{t('errorBoundary.title')}</h3>
               <p className="text-sm text-text-secondary">
-                {this.state.error?.message || '发生了未知错误'}
+                {this.state.error?.message || t('error.unknown')}
               </p>
             </div>
             <button
@@ -64,7 +66,7 @@ export class ErrorBoundary extends Component<Props, State> {
               className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 transition-colors text-sm"
             >
               <RefreshCw size={14} />
-              重试
+              {t('common.retry')}
             </button>
           </div>
         </div>

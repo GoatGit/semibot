@@ -23,6 +23,7 @@ import { Card, CardContent } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { apiClient } from '@/lib/api'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface ApiResponse<T> {
   success: boolean
@@ -59,66 +60,73 @@ interface McpServer {
   isSystem?: boolean
 }
 type TransportType = 'stdio' | 'sse' | 'streamable_http'
+type Translate = (key: string, params?: Record<string, string | number>) => string
 
-const TRANSPORT_OPTIONS: {
+function getTransportOptions(t: Translate): {
   value: TransportType
   label: string
   icon: React.ReactNode
   description: string
-}[] = [
-  {
-    value: 'stdio',
-    label: 'Stdio',
-    icon: <Terminal size={16} />,
-    description: '本地命令行进程，适用于本地安装的 MCP Server',
-  },
-  {
-    value: 'sse',
-    label: 'SSE',
-    icon: <Radio size={16} />,
-    description: '通过 Server-Sent Events 连接远程 MCP Server（旧版协议）',
-  },
-  {
-    value: 'streamable_http',
-    label: 'Streamable HTTP',
-    icon: <Globe size={16} />,
-    description: '通过 Streamable HTTP 连接远程 MCP Server（推荐）',
-  },
-]
-
-const TRANSPORT_HINTS: Record<
-  TransportType,
-  { endpointLabel: string; endpointPlaceholder: string; endpointHint: string; showApiKey: boolean; apiKeyHint: string }
-> = {
-  stdio: {
-    endpointLabel: '命令',
-    endpointPlaceholder: 'npx -y @modelcontextprotocol/server-filesystem /path/to/dir',
-    endpointHint:
-      '输入完整的可执行命令。将 command 和 args 用空格拼接，例如：uvx mcp-server-time --local-timezone=Asia/Shanghai',
-    showApiKey: true,
-    apiKeyHint: '可选。会通过 MCP_API_KEY 环境变量传递给子进程',
-  },
-  sse: {
-    endpointLabel: 'SSE URL',
-    endpointPlaceholder: 'https://mcp-server.example.com/sse',
-    endpointHint: '输入 MCP Server 的 SSE 端点 URL，通常以 /sse 结尾。适用于旧版 MCP Server',
-    showApiKey: true,
-    apiKeyHint: '可选。会通过 Authorization: Bearer <key> 请求头发送',
-  },
-  streamable_http: {
-    endpointLabel: 'HTTP URL',
-    endpointPlaceholder: 'https://mcp-server.example.com/mcp',
-    endpointHint: '输入 MCP Server 的 HTTP 端点 URL，通常以 /mcp 结尾。这是 MCP 协议推荐的远程连接方式',
-    showApiKey: true,
-    apiKeyHint: '可选。会通过 Authorization: Bearer <key> 请求头发送',
-  },
+}[] {
+  return [
+    {
+      value: 'stdio',
+      label: 'Stdio',
+      icon: <Terminal size={16} />,
+      description: t('mcp.transport.stdio.description'),
+    },
+    {
+      value: 'sse',
+      label: 'SSE',
+      icon: <Radio size={16} />,
+      description: t('mcp.transport.sse.description'),
+    },
+    {
+      value: 'streamable_http',
+      label: 'Streamable HTTP',
+      icon: <Globe size={16} />,
+      description: t('mcp.transport.streamableHttp.description'),
+    },
+  ]
 }
 
-const STATUS_MAP: Record<string, { label: string; color: string; dot: string }> = {
-  connected: { label: '已连接', color: 'text-success-500', dot: 'bg-success-500' },
-  connecting: { label: '连接中', color: 'text-warning-500', dot: 'bg-warning-500' },
-  error: { label: '连接失败', color: 'text-error-500', dot: 'bg-error-500' },
-  disconnected: { label: '未连接', color: 'text-text-tertiary', dot: 'bg-text-tertiary' },
+function getTransportHints(t: Translate): Record<
+  TransportType,
+  { endpointLabel: string; endpointPlaceholder: string; endpointHint: string; showApiKey: boolean; apiKeyHint: string }
+>
+{
+  return {
+    stdio: {
+      endpointLabel: t('mcp.form.endpointLabel.command'),
+      endpointPlaceholder: 'npx -y @modelcontextprotocol/server-filesystem /path/to/dir',
+      endpointHint: t('mcp.form.endpointHint.command'),
+      showApiKey: true,
+      apiKeyHint: t('mcp.form.apiKeyHint.stdio'),
+    },
+    sse: {
+      endpointLabel: 'SSE URL',
+      endpointPlaceholder: 'https://mcp-server.example.com/sse',
+      endpointHint: t('mcp.form.endpointHint.sse'),
+      showApiKey: true,
+      apiKeyHint: t('mcp.form.apiKeyHint.http'),
+    },
+    streamable_http: {
+      endpointLabel: 'HTTP URL',
+      endpointPlaceholder: 'https://mcp-server.example.com/mcp',
+      endpointHint: t('mcp.form.endpointHint.streamableHttp'),
+      showApiKey: true,
+      apiKeyHint: t('mcp.form.apiKeyHint.http'),
+    },
+  }
+}
+
+function getStatusMap(t: Translate): Record<string, { label: string; color: string; dot: string }> {
+  return {
+    connected: { label: t('mcp.status.connected'), color: 'text-success-500', dot: 'bg-success-500' },
+    connecting: { label: t('mcp.status.connecting'), color: 'text-warning-500', dot: 'bg-warning-500' },
+    error: { label: t('mcp.status.error'), color: 'text-error-500', dot: 'bg-error-500' },
+    disconnected: { label: t('mcp.status.disconnected'), color: 'text-text-tertiary', dot: 'bg-text-tertiary' },
+  }
 }
 
 function ServerFormModal({
@@ -156,7 +164,9 @@ function ServerFormModal({
   submitLabel: string
   showIsSystem?: boolean
 }) {
-  const hints = TRANSPORT_HINTS[formState.transport]
+  const { t } = useLocale()
+  const hints = getTransportHints(t)[formState.transport]
+  const transportOptions = getTransportOptions(t)
 
   return (
     <Modal
@@ -166,7 +176,7 @@ function ServerFormModal({
       footer={
         <>
           <Button variant="secondary" onClick={onCancel} disabled={saving}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button onClick={onSubmit} loading={saving} disabled={!formState.name.trim() || !formState.endpoint.trim()}>
             {submitLabel}
@@ -177,9 +187,9 @@ function ServerFormModal({
       <div className="space-y-5">
         {/* 传输类型选择 */}
         <div>
-          <label className="block text-sm font-medium text-text-secondary mb-2">传输类型</label>
+          <label className="block text-sm font-medium text-text-secondary mb-2">{t('mcp.form.transport')}</label>
           <div className="grid grid-cols-3 gap-2">
-            {TRANSPORT_OPTIONS.map((opt) => (
+            {transportOptions.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
@@ -198,15 +208,15 @@ function ServerFormModal({
             ))}
           </div>
           <p className="mt-1.5 text-xs text-text-tertiary">
-            {TRANSPORT_OPTIONS.find((o) => o.value === formState.transport)?.description}
+            {transportOptions.find((o) => o.value === formState.transport)?.description}
           </p>
         </div>
 
         {/* 名称 */}
         <div>
-          <label className="block text-sm font-medium text-text-secondary mb-1.5">名称</label>
+          <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('mcp.form.name')}</label>
           <Input
-            placeholder="例如：filesystem、github、time"
+            placeholder={t('mcp.form.namePlaceholder')}
             value={formState.name}
             onChange={(e) => setFormState((s) => ({ ...s, name: e.target.value }))}
             disabled={saving}
@@ -216,10 +226,10 @@ function ServerFormModal({
         {/* 描述 */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-1.5">
-            描述 <span className="text-text-tertiary font-normal">（可选）</span>
+            {t('mcp.form.description')} <span className="text-text-tertiary font-normal">{t('mcp.form.optional')}</span>
           </label>
           <Input
-            placeholder="简要描述此 MCP Server 的用途"
+            placeholder={t('mcp.form.descriptionPlaceholder')}
             value={formState.description}
             onChange={(e) => setFormState((s) => ({ ...s, description: e.target.value }))}
             disabled={saving}
@@ -242,7 +252,7 @@ function ServerFormModal({
         {hints.showApiKey && (
           <div>
             <label className="block text-sm font-medium text-text-secondary mb-1.5">
-              API Key <span className="text-text-tertiary font-normal">（可选）</span>
+              API Key <span className="text-text-tertiary font-normal">{t('mcp.form.optional')}</span>
             </label>
             <Input
               type="password"
@@ -265,7 +275,7 @@ function ServerFormModal({
               disabled={saving}
               className="rounded border-border-default"
             />
-            <span className="text-sm text-text-secondary">设为系统 MCP（所有组织可见）</span>
+            <span className="text-sm text-text-secondary">{t('mcp.form.systemMcp')}</span>
           </label>
         )}
       </div>
@@ -285,6 +295,7 @@ function parseJsonField<T>(value: unknown): T[] {
 }
 
 function ToolsList({ tools: rawTools, resources: rawResources }: { tools: unknown; resources?: unknown }) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
   const tools = parseJsonField<McpTool>(rawTools)
   const resources = parseJsonField<McpResource>(rawResources)
@@ -292,7 +303,7 @@ function ToolsList({ tools: rawTools, resources: rawResources }: { tools: unknow
 
   if (!hasContent) {
     return (
-      <p className="text-xs text-text-tertiary mt-3 italic">尚未同步工具列表，点击「同步」获取</p>
+      <p className="text-xs text-text-tertiary mt-3 italic">{t('mcp.tools.notSynced')}</p>
     )
   }
 
@@ -305,12 +316,12 @@ function ToolsList({ tools: rawTools, resources: rawResources }: { tools: unknow
       >
         {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         <Wrench size={12} />
-        <span>{tools.length} 个工具</span>
+        <span>{t('mcp.tools.count', { count: tools.length })}</span>
         {resources.length > 0 && (
           <>
             <span className="text-text-tertiary mx-1">·</span>
             <FolderOpen size={12} />
-            <span>{resources.length} 个资源</span>
+            <span>{t('mcp.resources.count', { count: resources.length })}</span>
           </>
         )}
       </button>
@@ -354,6 +365,7 @@ function ToolsList({ tools: rawTools, resources: rawResources }: { tools: unknow
 const EMPTY_FORM = { name: '', description: '', endpoint: '', transport: 'stdio' as TransportType, apiKey: '', isSystem: false }
 
 export default function McpPage() {
+  const { t } = useLocale()
   const [servers, setServers] = useState<McpServer[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -364,6 +376,7 @@ export default function McpPage() {
   const [showEdit, setShowEdit] = useState(false)
   const [editingServerId, setEditingServerId] = useState<string | null>(null)
   const [formState, setFormState] = useState(EMPTY_FORM)
+  const [selectedServerIds, setSelectedServerIds] = useState<string[]>([])
 
   const loadServers = useCallback(async () => {
     try {
@@ -377,11 +390,11 @@ export default function McpPage() {
       }
     } catch (err) {
       console.error('[MCP] 加载失败:', err)
-      setError('加载 MCP Servers 失败')
+      setError(t('mcp.error.load'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadServers()
@@ -405,6 +418,16 @@ export default function McpPage() {
       return 0
     })
   }, [servers, searchQuery])
+
+  const filteredServerIds = useMemo(() => filteredServers.map((server) => server.id), [filteredServers])
+  const selectedCount = selectedServerIds.length
+  const allFilteredSelected =
+    filteredServerIds.length > 0 && filteredServerIds.every((id) => selectedServerIds.includes(id))
+
+  useEffect(() => {
+    const validIds = new Set(servers.map((server) => server.id))
+    setSelectedServerIds((prev) => prev.filter((id) => validIds.has(id)))
+  }, [servers])
 
   const buildPayload = () => {
     const payload: Record<string, unknown> = {
@@ -435,7 +458,7 @@ export default function McpPage() {
       await loadServers()
     } catch (err) {
       console.error('[MCP] 创建失败:', err)
-      setError('创建 MCP Server 失败')
+      setError(t('mcp.error.create'))
     } finally {
       setSaving(false)
     }
@@ -448,7 +471,66 @@ export default function McpPage() {
       await loadServers()
     } catch (err) {
       console.error('[MCP] 删除失败:', err)
-      setError('删除 MCP Server 失败')
+      setError(t('mcp.error.delete'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleSelectServer = (serverId: string) => {
+    setSelectedServerIds((prev) =>
+      prev.includes(serverId) ? prev.filter((id) => id !== serverId) : [...prev, serverId]
+    )
+  }
+
+  const toggleSelectAllFiltered = () => {
+    setSelectedServerIds((prev) => {
+      if (allFilteredSelected) {
+        return prev.filter((id) => !filteredServerIds.includes(id))
+      }
+      const next = new Set(prev)
+      filteredServerIds.forEach((id) => next.add(id))
+      return Array.from(next)
+    })
+  }
+
+  const handleBatchTestConnection = async () => {
+    if (selectedServerIds.length === 0) return
+    try {
+      setSaving(true)
+      setError(null)
+      const total = selectedServerIds.length
+      const results = await Promise.allSettled(
+        selectedServerIds.map((id) => apiClient.post(`/mcp/${id}/test`))
+      )
+      const failed = results.filter((result) => result.status === 'rejected').length
+      setSelectedServerIds([])
+      await loadServers()
+      if (failed > 0) {
+        setError(t('mcp.error.batchTest', { failed, total }))
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    if (selectedServerIds.length === 0) return
+    if (!confirm(t('mcp.confirm.batchDelete', { count: selectedServerIds.length }))) return
+
+    try {
+      setSaving(true)
+      setError(null)
+      const total = selectedServerIds.length
+      const results = await Promise.allSettled(
+        selectedServerIds.map((id) => apiClient.delete(`/mcp/${id}`))
+      )
+      const failed = results.filter((result) => result.status === 'rejected').length
+      setSelectedServerIds([])
+      await loadServers()
+      if (failed > 0) {
+        setError(t('mcp.error.batchDelete', { failed, total }))
+      }
     } finally {
       setSaving(false)
     }
@@ -461,7 +543,7 @@ export default function McpPage() {
       await loadServers()
     } catch (err) {
       console.error('[MCP] 连接测试失败:', err)
-      setError('连接测试失败')
+      setError(t('mcp.error.test'))
     } finally {
       setTestingId(null)
     }
@@ -491,7 +573,7 @@ export default function McpPage() {
       await loadServers()
     } catch (err) {
       console.error('[MCP] 更新失败:', err)
-      setError('更新 MCP Server 失败')
+      setError(t('mcp.error.update'))
     } finally {
       setSaving(false)
     }
@@ -502,14 +584,14 @@ export default function McpPage() {
       <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-text-primary">MCP Servers</h1>
+            <h1 className="text-xl font-semibold text-text-primary">{t('mcp.title')}</h1>
             <p className="text-sm text-text-secondary mt-1">
-              管理 Model Context Protocol 服务器，为 Agent 提供外部工具和资源
+              {t('mcp.subtitle')}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={loadServers}>
-              刷新
+              {t('common.refresh')}
             </Button>
             <Button
               leftIcon={<Plus size={16} />}
@@ -518,18 +600,59 @@ export default function McpPage() {
                 setShowCreate(true)
               }}
             >
-              添加服务器
+              {t('mcp.addServer')}
             </Button>
           </div>
         </div>
-        <div className="mt-4 max-w-md">
-          <Input
-            placeholder="搜索服务器..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search size={16} />}
-          />
+        <div className="mt-4 flex items-center gap-4">
+          <div className="max-w-md flex-1">
+            <Input
+              placeholder={t('mcp.searchPlaceholder')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
+          </div>
+          {filteredServers.length > 0 && (
+            <label className="flex items-center gap-2 text-sm text-text-secondary">
+              <input
+                data-testid="mcp-select-all"
+                type="checkbox"
+                className="rounded border-border-default"
+                checked={allFilteredSelected}
+                onChange={toggleSelectAllFiltered}
+                disabled={saving}
+              />
+              {t('mcp.batch.selectAllVisible')}
+            </label>
+          )}
         </div>
+
+        {selectedCount > 0 && (
+          <div className="mt-3 rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-text-primary">
+              {t('mcp.batch.selectedCount', { count: selectedCount })}
+            </span>
+            <Button
+              data-testid="mcp-batch-test-sync"
+              variant="secondary"
+              size="sm"
+              disabled={saving}
+              onClick={handleBatchTestConnection}
+            >
+              {t('mcp.batch.testAndSync')}
+            </Button>
+            <Button
+              data-testid="mcp-batch-delete"
+              variant="secondary"
+              size="sm"
+              disabled={saving}
+              onClick={handleBatchDelete}
+            >
+              {t('mcp.batch.delete')}
+            </Button>
+          </div>
+        )}
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -537,7 +660,7 @@ export default function McpPage() {
           <div className="mb-4 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500 flex items-center justify-between">
             <span>{error}</span>
             <button onClick={() => setError(null)} className="text-error-500/60 hover:text-error-500 text-xs">
-              关闭
+              {t('common.close')}
             </button>
           </div>
         )}
@@ -553,29 +676,38 @@ export default function McpPage() {
             </div>
             {searchQuery ? (
               <>
-                <h3 className="text-lg font-medium text-text-primary">未找到匹配的服务</h3>
-                <p className="text-sm text-text-secondary mt-1 mb-4">尝试调整搜索条件</p>
-                <Button variant="secondary" onClick={() => setSearchQuery('')}>清除搜索</Button>
+                <h3 className="text-lg font-medium text-text-primary">{t('mcp.empty.filteredTitle')}</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">{t('mcp.empty.filteredDescription')}</p>
+                <Button variant="secondary" onClick={() => setSearchQuery('')}>{t('mcp.empty.clearSearch')}</Button>
               </>
             ) : (
               <>
-                <h3 className="text-lg font-medium text-text-primary">暂无 MCP 服务</h3>
-                <p className="text-sm text-text-secondary mt-1 mb-4">添加您的第一个 MCP 服务器开始使用</p>
-                <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>添加服务器</Button>
+                <h3 className="text-lg font-medium text-text-primary">{t('mcp.empty.defaultTitle')}</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">{t('mcp.empty.defaultDescription')}</p>
+                <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>{t('mcp.addServer')}</Button>
               </>
             )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredServers.map((server) => {
-              const transportOpt = TRANSPORT_OPTIONS.find((o) => o.value === server.transport)
-              const statusInfo = STATUS_MAP[server.status] || STATUS_MAP.disconnected
+              const transportOpt = getTransportOptions(t).find((o) => o.value === server.transport)
+              const statusMap = getStatusMap(t)
+              const statusInfo = statusMap[server.status] || statusMap.disconnected
 
               return (
                 <Card key={server.id}>
                   <CardContent>
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3 min-w-0">
+                        <input
+                          data-testid={`mcp-select-${server.id}`}
+                          type="checkbox"
+                          className="mt-1 rounded border-border-default"
+                          checked={selectedServerIds.includes(server.id)}
+                          onChange={() => toggleSelectServer(server.id)}
+                          disabled={saving || testingId === server.id}
+                        />
                         <div className="w-9 h-9 rounded-md bg-primary-500/20 flex items-center justify-center flex-shrink-0">
                           {transportOpt?.icon || <Plug size={16} className="text-primary-400" />}
                         </div>
@@ -584,12 +716,12 @@ export default function McpPage() {
                             <div className="text-sm font-semibold text-text-primary">{server.name}</div>
                             {server.isSystem && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium">
-                                系统
+                                {t('mcp.system')}
                               </span>
                             )}
                           </div>
                           <div className="text-xs text-text-secondary mt-0.5">
-                            {server.description || '无描述'}
+                            {server.description || t('mcp.noDescription')}
                           </div>
                           <div className="flex items-center gap-2 mt-1.5">
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-base text-text-tertiary border border-border-subtle font-mono">
@@ -605,7 +737,7 @@ export default function McpPage() {
                           </div>
                         </div>
                       </div>
-                      <Tooltip content="删除">
+                      <Tooltip content={t('common.delete')}>
                         <button
                           onClick={() => handleDelete(server.id)}
                           disabled={saving}
@@ -626,7 +758,7 @@ export default function McpPage() {
                         onClick={() => openEditModal(server)}
                         disabled={saving}
                       >
-                        编辑
+                        {t('common.edit')}
                       </Button>
                       <Button
                         variant="secondary"
@@ -635,7 +767,7 @@ export default function McpPage() {
                         disabled={saving || testingId === server.id}
                         leftIcon={testingId === server.id ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                       >
-                        测试并同步
+                        {t('mcp.testAndSync')}
                       </Button>
                     </div>
                   </CardContent>
@@ -648,7 +780,7 @@ export default function McpPage() {
 
       {showCreate && (
         <ServerFormModal
-          title="添加 MCP 服务器"
+          title={t('mcp.modal.addTitle')}
           saving={saving}
           formState={formState}
           setFormState={setFormState}
@@ -657,14 +789,14 @@ export default function McpPage() {
             setShowCreate(false)
             setFormState(EMPTY_FORM)
           }}
-          submitLabel="创建"
+          submitLabel={t('common.create')}
           showIsSystem={true}
         />
       )}
 
       {showEdit && (
         <ServerFormModal
-          title="编辑 MCP 服务器"
+          title={t('mcp.modal.editTitle')}
           saving={saving}
           formState={formState}
           setFormState={setFormState}
@@ -674,7 +806,7 @@ export default function McpPage() {
             setEditingServerId(null)
             setFormState(EMPTY_FORM)
           }}
-          submitLabel="保存"
+          submitLabel={t('common.save')}
           showIsSystem={true}
         />
       )}

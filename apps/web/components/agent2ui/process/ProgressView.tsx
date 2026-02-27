@@ -2,6 +2,7 @@
 
 import clsx from 'clsx'
 import type { ProgressData } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * ProgressView - 进度条组件
@@ -15,6 +16,7 @@ export interface ProgressViewProps {
 }
 
 export function ProgressView({ data, className }: ProgressViewProps) {
+  const { t } = useLocale()
   // 使用类型定义的字段名: current, total, percentage, label
   const percentage = data.percentage ?? Math.min(100, Math.max(0, (data.current / data.total) * 100))
   const isIndeterminate = data.total <= 0
@@ -24,7 +26,7 @@ export function ProgressView({ data, className }: ProgressViewProps) {
       {/* 标签和百分比 */}
       <div className="flex items-center justify-between text-sm">
         <span className="text-text-secondary">
-          {data.label || '处理中'}
+          {data.label || t('agent2ui.progress.processing')}
         </span>
         {!isIndeterminate && (
           <span className="text-text-primary font-mono">

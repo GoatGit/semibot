@@ -15,9 +15,11 @@ import { apiClient } from '@/lib/api'
 import { toast } from '@/stores/toastStore'
 import type { ApiResponse, Agent } from '@/types'
 import { useLLMModels, type LLMModel } from '@/hooks/useLLMModels'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 export default function AgentsPage() {
   const router = useRouter()
+  const { locale, t } = useLocale()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [agents, setAgents] = useState<Agent[]>([])
@@ -49,11 +51,11 @@ export default function AgentsPage() {
       }
     } catch (err) {
       console.error('[Agents] 加载失败:', err)
-      toast.error('加载失败，请重试')
+      toast.error(t('agents.error.load'))
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadAgents()
@@ -104,10 +106,10 @@ export default function AgentsPage() {
   const handleSave = async () => {
     const errors: Record<string, string> = {}
     if (!formValues.name.trim()) {
-      errors.name = '名称不能为空'
+      errors.name = t('agents.error.nameRequired')
     }
     if (!formValues.model) {
-      errors.model = '请选择可用模型'
+      errors.model = t('agents.error.modelRequired')
     }
     setFormErrors(errors)
     if (Object.keys(errors).length > 0) return
@@ -127,12 +129,12 @@ export default function AgentsPage() {
       if (response.success && response.data) {
         const newAgent = response.data
         setAgents((prev) => [newAgent, ...prev])
-        toast.success('创建成功')
+        toast.success(t('agents.toast.created'))
         setShowForm(false)
       }
     } catch (err) {
       console.error('[Agents] 保存失败:', err)
-      toast.error('保存失败，请重试')
+      toast.error(t('agents.error.save'))
     } finally {
       setIsSubmitting(false)
     }
@@ -150,7 +152,7 @@ export default function AgentsPage() {
       setAgents((prev) => prev.map((a) => a.id === agent.id ? { ...a, isActive: !a.isActive } : a))
     } catch (err) {
       console.error('[Agents] 切换状态失败:', err)
-      toast.error('切换状态失败')
+      toast.error(t('agents.error.toggle'))
     } finally {
       setIsToggling(false)
     }
@@ -167,11 +169,11 @@ export default function AgentsPage() {
     try {
       await apiClient.delete(`/agents/${confirmDelete.id}`)
       setAgents((prev) => prev.filter((agent) => agent.id !== confirmDelete.id))
-      toast.success('已删除')
+      toast.success(t('agents.toast.deleted'))
       setConfirmDelete(null)
     } catch (err) {
       console.error('[Agents] 删除失败:', err)
-      toast.error('删除失败，请重试')
+      toast.error(t('agents.error.delete'))
     } finally {
       setIsDeleting(false)
     }
@@ -185,7 +187,7 @@ export default function AgentsPage() {
           <div>
             <h1 className="text-xl font-semibold text-text-primary">Agents</h1>
             <p className="text-sm text-text-secondary mt-1">
-              管理您的 AI Agent，共 {agents.length} 个
+              {t('agents.header.prefix')} {agents.length} {t('agents.header.suffix')}
             </p>
           </div>
           <Button
@@ -193,7 +195,7 @@ export default function AgentsPage() {
             data-testid="create-agent-btn"
             onClick={openCreateForm}
           >
-            新建代理
+            {t('agents.new')}
           </Button>
         </div>
 
@@ -202,7 +204,7 @@ export default function AgentsPage() {
         <div className="flex items-center gap-4 mt-4">
           <div className="flex-1 max-w-md">
             <Input
-              placeholder="搜索 Agent..."
+              placeholder={t('agents.searchPlaceholder')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               leftIcon={<Search size={16} />}
@@ -223,9 +225,9 @@ export default function AgentsPage() {
                     : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
                 )}
               >
-                {status === 'all' && '全部'}
-                {status === 'active' && '运行中'}
-                {status === 'inactive' && '已停用'}
+                {status === 'all' && (t('agents.filter.all'))}
+                {status === 'active' && (t('agents.filter.active'))}
+                {status === 'inactive' && (t('agents.filter.inactive'))}
                 <span className="ml-1 text-xs text-text-tertiary">
                   ({status === 'all' ? statusCounts.all : status === 'active' ? statusCounts.active : statusCounts.inactive})
                 </span>
@@ -256,6 +258,7 @@ export default function AgentsPage() {
               <AgentCard
                 key={agent.id}
                 agent={agent}
+                locale={locale}
                 onEdit={() => openEditForm(agent)}
                 onDelete={() => handleDelete(agent)}
                 onToggleActive={() => handleToggleActive(agent)}
@@ -270,7 +273,7 @@ export default function AgentsPage() {
             data-testid="pagination"
             className="flex items-center justify-center gap-3 mt-6"
             role="navigation"
-            aria-label="分页"
+            aria-label={t('agents.pagination.label')}
           >
             <Button
               variant="secondary"
@@ -278,7 +281,7 @@ export default function AgentsPage() {
               onClick={() => setPageIndex((prev) => Math.max(1, prev - 1))}
               disabled={pageIndex <= 1}
             >
-              上一页
+              {t('agents.pagination.prev')}
             </Button>
             <span className="text-sm text-text-secondary">
               {safePageIndex} / {totalPages}
@@ -289,7 +292,7 @@ export default function AgentsPage() {
               onClick={() => setPageIndex((prev) => Math.min(totalPages, prev + 1))}
               disabled={pageIndex >= totalPages}
             >
-              下一页
+              {t('agents.pagination.next')}
             </Button>
           </div>
         )}
@@ -324,13 +327,15 @@ export default function AgentsPage() {
 
 interface AgentCardProps {
   agent: Agent
+  locale: string
   onEdit: () => void
   onDelete: () => void
   onToggleActive: () => void
   isToggling: boolean
 }
 
-function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: AgentCardProps) {
+function AgentCard({ agent, locale, onEdit, onDelete, onToggleActive, isToggling }: AgentCardProps) {
+  const { t } = useLocale()
   const isActive = agent.isActive
   const isSystem = agent.isSystem === true
 
@@ -354,7 +359,7 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
                   </h3>
                   {isSystem && (
                     <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary-500/20 text-primary-400 rounded">
-                      系统
+                      {t('agents.system')}
                     </span>
                   )}
                 </div>
@@ -363,14 +368,14 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
                   <span
                     className={clsx('text-xs', isActive ? 'text-success-500' : 'text-text-tertiary')}
                   >
-                    {isActive ? '运行中' : '已停用'}
+                    {isActive ? (t('agents.filter.active')) : (t('agents.filter.inactive'))}
                   </span>
                 </div>
               </div>
             </div>
             {!isSystem && (
               <div className="flex items-center gap-1">
-                <Tooltip content={isActive ? '停用' : '启用'}>
+                <Tooltip content={isActive ? (t('agents.action.disable')) : (t('agents.action.enable'))}>
                   <button
                     type="button"
                     data-testid="toggle-agent-btn"
@@ -392,7 +397,7 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
                     <Power size={16} />
                   </button>
                 </Tooltip>
-                <Tooltip content="编辑">
+                <Tooltip content={t('common.edit')}>
                   <button
                     type="button"
                     data-testid="edit-agent-btn"
@@ -410,7 +415,7 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
                     <Settings size={16} />
                   </button>
                 </Tooltip>
-                <Tooltip content="删除">
+                <Tooltip content={t('common.delete')}>
                   <button
                     type="button"
                     data-testid="delete-agent-btn"
@@ -437,7 +442,7 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
             className="text-sm text-text-secondary line-clamp-2 mb-4 h-10"
             data-testid="agent-description"
           >
-            {agent.description || '暂无描述'}
+            {agent.description || (t('agents.noDescription'))}
           </p>
 
           {/* 标签 */}
@@ -457,7 +462,7 @@ function AgentCard({ agent, onEdit, onDelete, onToggleActive, isToggling }: Agen
 
           {/* 底部信息 */}
           <div className="flex items-center justify-between text-xs text-text-tertiary">
-            <span>创建于 {new Date(agent.createdAt).toLocaleDateString()}</span>
+            <span>{t('agents.createdOn')} {new Date(agent.createdAt).toLocaleDateString(locale)}</span>
           </div>
         </div>
       </CardContent>
@@ -472,6 +477,7 @@ interface EmptyStateProps {
 }
 
 function EmptyState({ hasSearch, onClear, onCreate }: EmptyStateProps) {
+  const { t } = useLocale()
   return (
     <div className="flex flex-col items-center justify-center h-full py-12">
       <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-4">
@@ -479,17 +485,17 @@ function EmptyState({ hasSearch, onClear, onCreate }: EmptyStateProps) {
       </div>
       {hasSearch ? (
         <>
-          <h3 className="text-lg font-medium text-text-primary">未找到匹配的 Agent</h3>
-          <p className="text-sm text-text-secondary mt-1 mb-4">尝试调整搜索条件或筛选器</p>
+          <h3 className="text-lg font-medium text-text-primary">{t('agents.empty.filteredTitle')}</h3>
+          <p className="text-sm text-text-secondary mt-1 mb-4">{t('agents.empty.filteredDescription')}</p>
           <Button variant="secondary" onClick={onClear}>
-            清除筛选
+            {t('agents.empty.clearFilters')}
           </Button>
         </>
       ) : (
         <>
-          <h3 className="text-lg font-medium text-text-primary">暂无 Agent</h3>
-          <p className="text-sm text-text-secondary mt-1 mb-4">创建您的第一个 AI Agent 开始使用</p>
-          <Button leftIcon={<Plus size={16} />} onClick={onCreate}>新建代理</Button>
+          <h3 className="text-lg font-medium text-text-primary">{t('agents.empty.defaultTitle')}</h3>
+          <p className="text-sm text-text-secondary mt-1 mb-4">{t('agents.empty.defaultDescription')}</p>
+          <Button leftIcon={<Plus size={16} />} onClick={onCreate}>{t('agents.new')}</Button>
         </>
       )}
     </div>
@@ -531,6 +537,7 @@ function AgentFormModal({
   onSave,
   onCancel,
 }: AgentFormModalProps) {
+  const { t } = useLocale()
   // 按 Provider 分组模型
   const groupedModels = models.reduce<Record<string, LLMModel[]>>((acc, model) => {
     const provider = model.providerName || 'Other'
@@ -552,14 +559,14 @@ function AgentFormModal({
     <Modal
       open={true}
       onClose={onCancel}
-      title={mode === 'create' ? '创建代理' : '编辑代理'}
+      title={mode === 'create' ? (t('agents.modal.createTitle')) : (t('agents.modal.editTitle'))}
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onCancel} disabled={isSubmitting}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button type="button" onClick={onSave} loading={isSubmitting}>
-            {mode === 'create' ? '创建' : '保存'}
+            {mode === 'create' ? (t('common.create')) : (t('common.save'))}
           </Button>
         </>
       }
@@ -570,11 +577,11 @@ function AgentFormModal({
             htmlFor="agent-name"
             className="block text-sm font-medium text-text-secondary mb-1.5"
           >
-            名称
+            {t('agent.name')}
           </label>
           <Input
             id="agent-name"
-            placeholder="代理名称"
+            placeholder={t('agents.modal.namePlaceholder')}
             value={values.name}
             onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))}
             className={errors.name ? 'border-error-500' : ''}
@@ -590,11 +597,11 @@ function AgentFormModal({
             htmlFor="agent-description"
             className="block text-sm font-medium text-text-secondary mb-1.5"
           >
-            描述
+            {t('agent.description')}
           </label>
           <textarea
             id="agent-description"
-            placeholder="描述"
+            placeholder={t('agent.description')}
             value={values.description}
             onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
             disabled={isSubmitting}
@@ -613,7 +620,7 @@ function AgentFormModal({
             htmlFor="agent-model"
             className="block text-sm font-medium text-text-secondary mb-1.5"
           >
-            模型
+            {t('agent.model')}
           </label>
           <Select
             id="agent-model"
@@ -624,12 +631,12 @@ function AgentFormModal({
             options={modelOptions}
             placeholder={
               modelsLoading
-                ? '加载中...'
+                ? (t('common.loading'))
                 : modelsError
-                  ? '模型列表加载失败，请检查后端接口'
+                  ? (t('agents.modal.modelsLoadFailed'))
                   : models.length === 0
-                    ? '暂无可用模型，请检查 LLM Provider 配置'
-                    : '请选择模型'
+                    ? (t('agents.modal.noModels'))
+                    : (t('agents.modal.selectModel'))
             }
             error={!!errors.model}
             errorMessage={errors.model}
@@ -641,11 +648,11 @@ function AgentFormModal({
             htmlFor="agent-system-prompt"
             className="block text-sm font-medium text-text-secondary mb-1.5"
           >
-            系统提示词
+            {t('agent.systemPrompt')}
           </label>
           <textarea
             id="agent-system-prompt"
-            placeholder="系统提示"
+            placeholder={t('agents.modal.systemPromptPlaceholder')}
             value={values.systemPrompt}
             onChange={(e) => onChange((prev) => ({ ...prev, systemPrompt: e.target.value }))}
             disabled={isSubmitting}
@@ -671,25 +678,26 @@ interface ConfirmDeleteModalProps {
 }
 
 function ConfirmDeleteModal({ agentName, isDeleting, onConfirm, onCancel }: ConfirmDeleteModalProps) {
+  const { t } = useLocale()
   return (
     <Modal
       open={true}
       onClose={onCancel}
-      title="删除代理"
+      title={t('agents.deleteModal.title')}
       maxWidth="sm"
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onCancel} disabled={isDeleting}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button variant="destructive" type="button" onClick={onConfirm} loading={isDeleting}>
-            确认
+            {t('common.confirm')}
           </Button>
         </>
       }
     >
       <p className="text-sm text-text-secondary">
-        删除&ldquo;{agentName}&rdquo;后无法恢复。
+        <>{t('agents.deleteModal.description', { name: agentName })}</>
       </p>
     </Modal>
   )

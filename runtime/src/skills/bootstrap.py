@@ -2,9 +2,10 @@
 
 import os
 
+from src.skills.browser_automation import BrowserAutomationTool
 from src.skills.code_executor import CodeExecutorTool
-from src.skills.file_io import FileIOTool
 from src.skills.file_generators import PdfGeneratorTool, XlsxGeneratorTool
+from src.skills.file_io import FileIOTool
 from src.skills.registry import SkillRegistry
 from src.skills.search import SearchTool
 from src.skills.web_search import WebSearchTool
@@ -25,7 +26,11 @@ def create_default_registry() -> SkillRegistry:
     logger.info("Registered CodeExecutorTool", extra={"timeout": code_timeout})
     registry.register_tool(SearchTool())
     registry.register_tool(FileIOTool())
-    logger.info("Registered core builtin tools", extra={"tools": ["search", "file_io"]})
+    registry.register_tool(BrowserAutomationTool())
+    logger.info(
+        "Registered core builtin tools",
+        extra={"tools": ["search", "file_io", "browser_automation"]},
+    )
     registry.register_tool(XlsxGeneratorTool())
     registry.register_tool(PdfGeneratorTool())
     logger.info("Registered file generator tools", extra={"tools": ["xlsx", "pdf"]})

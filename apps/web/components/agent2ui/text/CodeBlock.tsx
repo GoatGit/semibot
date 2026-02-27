@@ -6,6 +6,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Check, Copy, FileCode } from 'lucide-react'
 import type { CodeData } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * CodeBlock - 代码块展示组件
@@ -20,6 +21,7 @@ export interface CodeBlockProps {
 }
 
 export function CodeBlock({ data, className }: CodeBlockProps) {
+  const { t } = useLocale()
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async () => {
@@ -80,17 +82,17 @@ export function CodeBlock({ data, className }: CodeBlockProps) {
             'hover:text-text-primary hover:bg-interactive-hover',
             'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500'
           )}
-          aria-label={copied ? '已复制' : '复制代码'}
+          aria-label={copied ? t('common.copied') : t('agent2ui.code.copyCode')}
         >
           {copied ? (
             <>
               <Check className="w-3.5 h-3.5 text-success-500" />
-              <span>已复制</span>
+              <span>{t('common.copied')}</span>
             </>
           ) : (
             <>
               <Copy className="w-3.5 h-3.5" />
-              <span>复制</span>
+              <span>{t('common.copy')}</span>
             </>
           )}
         </button>

@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import clsx from 'clsx'
 import { ChevronDown, ExternalLink, Globe } from 'lucide-react'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 export interface Citation {
   title: string
@@ -39,6 +40,7 @@ export interface CitationListProps {
 }
 
 export function CitationList({ content, className }: CitationListProps) {
+  const { t } = useLocale()
   const [isExpanded, setIsExpanded] = useState(false)
   const citations = useMemo(() => extractCitations(content), [content])
 
@@ -54,7 +56,7 @@ export function CitationList({ content, className }: CitationListProps) {
         )}
       >
         <Globe size={12} />
-        <span>参考来源 ({citations.length})</span>
+        <span>{t('agent2ui.citation.references', { count: citations.length })}</span>
         <ChevronDown
           size={12}
           className={clsx(

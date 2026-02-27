@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { X, CheckCircle, AlertCircle, AlertTriangle, Info } from 'lucide-react'
 import { useToastStore } from '@/stores/toastStore'
 import type { Toast } from '@/stores/toastStore'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 const ICON_MAP = {
   success: CheckCircle,
@@ -20,6 +21,7 @@ const STYLE_MAP = {
 }
 
 function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) {
+  const { t } = useLocale()
   const Icon = ICON_MAP[toast.type]
 
   return (
@@ -43,7 +45,7 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) 
       <button
         onClick={onRemove}
         className="flex-shrink-0 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
-        aria-label="关闭"
+        aria-label={t('common.close')}
       >
         <X size={14} />
       </button>

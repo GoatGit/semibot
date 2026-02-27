@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/Badge'
 import { apiClient } from '@/lib/api'
 import { NEW_CHAT_PATH } from '@/constants/config'
 import type { Session } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface PageMeta {
   total?: number
@@ -47,21 +48,23 @@ interface DashboardStats {
   }>
 }
 
-function formatRelativeTime(dateString: string): string {
+function formatRelativeTime(dateString: string, locale: string): string {
   const date = new Date(dateString)
   if (Number.isNaN(date.getTime())) return '--'
   const diff = Date.now() - date.getTime()
   const mins = Math.floor(diff / (1000 * 60))
-  if (mins < 1) return '刚刚'
-  if (mins < 60) return `${mins} 分钟前`
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+  if (mins < 1) return rtf.format(0, 'minute')
+  if (mins < 60) return rtf.format(-mins, 'minute')
   const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours} 小时前`
+  if (hours < 24) return rtf.format(-hours, 'hour')
   const days = Math.floor(hours / 24)
-  if (days < 7) return `${days} 天前`
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  if (days < 7) return rtf.format(-days, 'day')
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 }
 
 export default function DashboardPage() {
+  const { locale, t } = useLocale()
   const [stats, setStats] = useState<DashboardStats>({
     agentsTotal: 0,
     sessionsTotal: 0,
@@ -104,7 +107,7 @@ export default function DashboardPage() {
           : []
 
       if (!agents && !sessions) {
-        throw new Error('无法加载仪表盘核心数据，请检查 API 服务状态')
+        throw new Error(t('dashboard.error.coreData'))
       }
 
       const recentSessions = sessions?.data ?? []
@@ -131,11 +134,11 @@ export default function DashboardPage() {
           })),
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败')
+      setError(err instanceof Error ? err.message : t('dashboard.error.load'))
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     load()
@@ -145,41 +148,41 @@ export default function DashboardPage() {
     () => [
       {
         id: 'agents',
-        label: 'Agent',
+        label: t('dashboard.cards.agents.label'),
         value: stats.agentsTotal,
         icon: <Bot size={18} />,
-        hint: '可用智能体',
+        hint: t('dashboard.cards.agents.hint'),
       },
       {
         id: 'sessions',
-        label: '会话',
+        label: t('dashboard.cards.sessions.label'),
         value: stats.sessionsTotal,
         icon: <MessageSquare size={18} />,
-        hint: `进行中 ${stats.sessionsActive}`,
+        hint: t('dashboard.cards.sessions.hint', { count: stats.sessionsActive }),
       },
       {
         id: 'mcp',
         label: 'MCP',
         value: stats.mcpTotal,
         icon: <Puzzle size={18} />,
-        hint: '外部工具连接',
+        hint: t('dashboard.cards.mcp.hint'),
       },
       {
         id: 'skills',
         label: 'Skills',
         value: stats.skillsTotal,
         icon: <Sparkles size={18} />,
-        hint: '技能定义',
+        hint: t('dashboard.cards.skills.hint'),
       },
       {
         id: 'events',
-        label: '事件',
+        label: t('dashboard.cards.events.label'),
         value: stats.eventsTotal,
         icon: <Activity size={18} />,
-        hint: `待审批 ${stats.approvalsPending ?? 0}`,
+        hint: t('dashboard.cards.events.hint', { count: stats.approvalsPending ?? 0 }),
       },
     ],
-    [stats]
+    [stats, t]
   )
 
   return (
@@ -195,7 +198,7 @@ export default function DashboardPage() {
                     Semibot - A semi bot
                   </h1>
                   <p className="text-text-secondary max-w-2xl">
-                    能干活、能提醒、能协作、能自己变强的数字员工。
+                    {t('dashboard.subtitle')}
                   </p>
                 </div>
                 <Button
@@ -204,7 +207,7 @@ export default function DashboardPage() {
                   onClick={load}
                   disabled={isLoading}
                 >
-                  刷新
+                  {t('common.refresh')}
                 </Button>
               </div>
             </div>
@@ -238,9 +241,9 @@ export default function DashboardPage() {
           <Card className="lg:col-span-2 border-border-default">
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-text-primary">最近会话</h2>
+                <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.recentSessions.title')}</h2>
                 <Link href="/chat" className="text-sm text-primary-400 hover:text-primary-300">
-                  查看全部
+                  {t('dashboard.recentSessions.viewAll')}
                 </Link>
               </div>
               <div className="mt-4 space-y-2">
@@ -263,11 +266,11 @@ export default function DashboardPage() {
                     >
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-text-primary">
-                          {session.title || '未命名会话'}
+                          {session.title || t('chatLayout.untitled')}
                         </p>
                         <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
                           <Clock3 size={12} />
-                          {formatRelativeTime(session.createdAt)}
+                          {formatRelativeTime(session.createdAt, locale)}
                         </div>
                       </div>
                       <ArrowRight
@@ -278,7 +281,7 @@ export default function DashboardPage() {
                   ))
                 ) : (
                   <p className="rounded-lg border border-border-subtle bg-bg-surface px-4 py-6 text-sm text-text-secondary">
-                    暂无会话，去创建第一个对话任务。
+                    {t('dashboard.recentSessions.empty')}
                   </p>
                 )}
               </div>
@@ -287,21 +290,21 @@ export default function DashboardPage() {
 
           <Card className="border-border-default">
             <CardContent className="p-5">
-              <h2 className="text-lg font-semibold text-text-primary">快捷入口</h2>
+              <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.quickLinks.title')}</h2>
               <div className="mt-4 space-y-2">
-                <QuickLink href={NEW_CHAT_PATH} title="新建会话" desc="创建会话并立即提问" />
-                <QuickLink href="/agents" title="管理 Agents" desc="创建、编辑、启停 Agent" />
-                <QuickLink href="/events" title="事件中心" desc="查看触发事件并执行回放" />
-                <QuickLink href="/rules" title="规则管理" desc="配置提醒、建议与自动执行策略" />
-                <QuickLink href="/approvals" title="审批中心" desc="处理高风险动作审批请求" />
-                <QuickLink href="/tools" title="Tools 能力" desc="查看运行时工具与数据库工具" />
-                <QuickLink href="/config" title="配置管理" desc="模型、工具、Webhook 配置" />
-                <QuickLink href="/mcp" title="MCP 集成" desc="连接外部工具与资源" />
+                <QuickLink href={NEW_CHAT_PATH} title={t('dashboard.quickLinks.items.newChat.title')} desc={t('dashboard.quickLinks.items.newChat.desc')} />
+                <QuickLink href="/agents" title={t('dashboard.quickLinks.items.agents.title')} desc={t('dashboard.quickLinks.items.agents.desc')} />
+                <QuickLink href="/events" title={t('dashboard.quickLinks.items.events.title')} desc={t('dashboard.quickLinks.items.events.desc')} />
+                <QuickLink href="/rules" title={t('dashboard.quickLinks.items.rules.title')} desc={t('dashboard.quickLinks.items.rules.desc')} />
+                <QuickLink href="/approvals" title={t('dashboard.quickLinks.items.approvals.title')} desc={t('dashboard.quickLinks.items.approvals.desc')} />
+                <QuickLink href="/tools" title={t('dashboard.quickLinks.items.tools.title')} desc={t('dashboard.quickLinks.items.tools.desc')} />
+                <QuickLink href="/config" title={t('dashboard.quickLinks.items.config.title')} desc={t('dashboard.quickLinks.items.config.desc')} />
+                <QuickLink href="/mcp" title={t('dashboard.quickLinks.items.mcp.title')} desc={t('dashboard.quickLinks.items.mcp.desc')} />
               </div>
               <div className="mt-5 rounded-lg border border-border-subtle bg-bg-elevated/70 p-3 text-xs text-text-secondary">
                 <div className="flex items-center gap-2">
                   <Activity size={14} className="text-success-500" />
-                  当前界面已切换为新版导航信息架构。
+                  {t('dashboard.quickLinks.note')}
                 </div>
               </div>
             </CardContent>
@@ -311,9 +314,9 @@ export default function DashboardPage() {
         <Card className="border-border-default">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-text-primary">最近事件</h2>
+              <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.recentEvents.title')}</h2>
               <Link href="/events" className="text-sm text-primary-400 hover:text-primary-300">
-                进入事件中心
+                {t('dashboard.recentEvents.open')}
               </Link>
             </div>
             <div className="mt-4 space-y-2">
@@ -336,17 +339,17 @@ export default function DashboardPage() {
                                 : 'outline'
                         }
                       >
-                        {event.riskHint || 'unknown'}
+                        {event.riskHint || t('events.unknown')}
                       </Badge>
                     </div>
                     <p className="mt-1 text-xs text-text-tertiary">
-                      {formatRelativeTime(event.createdAt)}
+                      {formatRelativeTime(event.createdAt, locale)}
                     </p>
                   </div>
                 ))
               ) : (
                 <p className="rounded-lg border border-border-subtle bg-bg-surface px-4 py-6 text-sm text-text-secondary">
-                  暂无事件数据
+                  {t('dashboard.recentEvents.empty')}
                 </p>
               )}
             </div>

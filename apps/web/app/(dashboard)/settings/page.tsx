@@ -28,12 +28,13 @@ interface UserProfile {
 }
 
 export default function SettingsPage() {
+  const { t } = useLocale()
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
 
   const sections = [
-    { id: 'profile' as const, label: '个人资料', icon: <User size={18} /> },
-    { id: 'password' as const, label: '修改密码', icon: <Lock size={18} /> },
-    { id: 'preferences' as const, label: '偏好设置', icon: <Palette size={18} /> },
+    { id: 'profile' as const, label: t('settings.sections.profile'), icon: <User size={18} /> },
+    { id: 'password' as const, label: t('settings.sections.password'), icon: <Lock size={18} /> },
+    { id: 'preferences' as const, label: t('settings.sections.preferences'), icon: <Palette size={18} /> },
   ]
 
   return (
@@ -43,9 +44,9 @@ export default function SettingsPage() {
           <CardContent className="p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-semibold text-text-primary">个人设置</h1>
+                <h1 className="text-2xl font-semibold text-text-primary">{t('settings.title')}</h1>
                 <p className="mt-1 text-sm text-text-secondary">
-                  管理个人资料、登录安全和界面偏好。
+                  {t('settings.subtitle')}
                 </p>
               </div>
               <Link
@@ -56,7 +57,7 @@ export default function SettingsPage() {
                 )}
               >
                 <SlidersHorizontal size={14} />
-                平台配置
+                {t('settings.platformConfig')}
                 <ArrowRight size={14} />
               </Link>
             </div>
@@ -93,6 +94,7 @@ export default function SettingsPage() {
 }
 
 function ProfileSection() {
+  const { t } = useLocale()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [name, setName] = useState('')
   const [avatarUrl, setAvatarUrl] = useState('')
@@ -111,11 +113,11 @@ function ProfileSection() {
       }
     } catch (error) {
       console.error('[Settings] 获取用户资料失败:', error)
-      setMessage('加载用户资料失败')
+      setMessage(t('settings.profile.error.load'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadProfile()
@@ -131,11 +133,11 @@ function ProfileSection() {
       })
       if (response.success && response.data) {
         setProfile(response.data)
-        setMessage('保存成功')
+        setMessage(t('settings.profile.success.saved'))
       }
     } catch (error) {
       console.error('[Settings] 保存用户资料失败:', error)
-      setMessage('保存失败')
+      setMessage(t('settings.profile.error.save'))
     } finally {
       setSaving(false)
     }
@@ -144,29 +146,29 @@ function ProfileSection() {
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary">个人资料</h2>
-        <p className="text-sm text-text-secondary mt-1">来自真实 `/users/me` 接口</p>
+        <h2 className="text-xl font-semibold text-text-primary">{t('settings.profile.title')}</h2>
+        <p className="text-sm text-text-secondary mt-1">{t('settings.profile.subtitle')}</p>
       </div>
       <Card>
         <CardContent>
           {loading ? (
             <div className="h-32 flex items-center justify-center text-text-secondary">
               <Loader2 size={18} className="animate-spin mr-2" />
-              加载中...
+              {t('common.loading')}
             </div>
           ) : (
             <div className="space-y-4">
               {message && <div className="text-sm text-text-secondary">{message}</div>}
               <div>
-                <label className="block text-sm font-medium text-text-primary mb-1.5">邮箱</label>
+                <label className="block text-sm font-medium text-text-primary mb-1.5">{t('auth.email')}</label>
                 <Input value={profile?.email || ''} disabled />
               </div>
               <div>
-                <label className="block text-sm font-medium text-text-primary mb-1.5">用户名</label>
+                <label className="block text-sm font-medium text-text-primary mb-1.5">{t('settings.profile.username')}</label>
                 <Input value={name} onChange={(e) => setName(e.target.value)} disabled={saving} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-text-primary mb-1.5">头像 URL</label>
+                <label className="block text-sm font-medium text-text-primary mb-1.5">{t('settings.profile.avatarUrl')}</label>
                 <Input value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} disabled={saving} />
               </div>
             </div>
@@ -175,7 +177,7 @@ function ProfileSection() {
       </Card>
       <div className="flex justify-end">
         <Button onClick={handleSave} loading={saving} disabled={loading}>
-          保存更改
+          {t('settings.profile.saveChanges')}
         </Button>
       </div>
     </div>
@@ -183,6 +185,7 @@ function ProfileSection() {
 }
 
 function PasswordSection() {
+  const { t } = useLocale()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -193,17 +196,17 @@ function PasswordSection() {
     setMessage(null)
 
     if (!currentPassword || !newPassword || !confirmPassword) {
-      setMessage({ type: 'error', text: '请填写所有字段' })
+      setMessage({ type: 'error', text: t('settings.password.error.required') })
       return
     }
 
     if (newPassword.length < 8) {
-      setMessage({ type: 'error', text: '新密码至少 8 个字符' })
+      setMessage({ type: 'error', text: t('settings.password.error.minLength') })
       return
     }
 
     if (newPassword !== confirmPassword) {
-      setMessage({ type: 'error', text: '两次输入的新密码不一致' })
+      setMessage({ type: 'error', text: t('settings.password.error.mismatch') })
       return
     }
 
@@ -213,12 +216,12 @@ function PasswordSection() {
         currentPassword,
         newPassword,
       })
-      setMessage({ type: 'success', text: '密码修改成功' })
+      setMessage({ type: 'success', text: t('settings.password.success.changed') })
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : '密码修改失败'
+      const errMsg = error instanceof Error ? error.message : t('settings.password.error.changeFailed')
       setMessage({ type: 'error', text: errMsg })
     } finally {
       setSaving(false)
@@ -228,8 +231,8 @@ function PasswordSection() {
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary">修改密码</h2>
-        <p className="text-sm text-text-secondary mt-1">更新您的登录密码</p>
+        <h2 className="text-xl font-semibold text-text-primary">{t('settings.password.title')}</h2>
+        <p className="text-sm text-text-secondary mt-1">{t('settings.password.subtitle')}</p>
       </div>
       <Card>
         <CardContent>
@@ -245,33 +248,33 @@ function PasswordSection() {
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-text-primary mb-1.5">当前密码</label>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">{t('settings.password.currentPassword')}</label>
               <Input
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 disabled={saving}
-                placeholder="请输入当前密码"
+                placeholder={t('settings.password.currentPasswordPlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-text-primary mb-1.5">新密码</label>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">{t('settings.password.newPassword')}</label>
               <Input
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 disabled={saving}
-                placeholder="至少 8 个字符"
+                placeholder={t('settings.password.newPasswordPlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-text-primary mb-1.5">确认新密码</label>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">{t('settings.password.confirmPassword')}</label>
               <Input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 disabled={saving}
-                placeholder="再次输入新密码"
+                placeholder={t('settings.password.confirmPasswordPlaceholder')}
               />
             </div>
           </div>
@@ -279,7 +282,7 @@ function PasswordSection() {
       </Card>
       <div className="flex justify-end">
         <Button onClick={handleChangePassword} loading={saving}>
-          修改密码
+          {t('settings.password.changePassword')}
         </Button>
       </div>
     </div>
@@ -287,7 +290,7 @@ function PasswordSection() {
 }
 
 function PreferencesSection() {
-  const { locale, setLocale: applyLocale } = useLocale()
+  const { locale, setLocale: applyLocale, t } = useLocale()
   const [theme, setTheme] = useState<Theme>('dark')
   const [language, setLanguage] = useState<Language>('zh-CN')
   const [saved, setSaved] = useState(false)
@@ -308,11 +311,11 @@ function PreferencesSection() {
       }
     } catch (error) {
       console.error('[Settings] 获取偏好设置失败:', error)
-      setMessage('加载偏好设置失败')
+      setMessage(t('settings.preferences.error.load'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadPreferences()
@@ -344,7 +347,7 @@ function PreferencesSection() {
       setTimeout(() => setSaved(false), 1200)
     } catch (error) {
       console.error('[Settings] 保存偏好设置失败:', error)
-      setMessage('保存偏好设置失败')
+      setMessage(t('settings.preferences.error.save'))
     } finally {
       setSaving(false)
     }
@@ -353,15 +356,15 @@ function PreferencesSection() {
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary">偏好设置</h2>
-        <p className="text-sm text-text-secondary mt-1">来自真实 `/users/preferences` 接口</p>
+        <h2 className="text-xl font-semibold text-text-primary">{t('settings.preferences.title')}</h2>
+        <p className="text-sm text-text-secondary mt-1">{t('settings.preferences.subtitle')}</p>
       </div>
 
       {message && <div className="text-sm text-text-secondary">{message}</div>}
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">主题</CardTitle>
+          <CardTitle className="text-base">{t('settings.preferences.theme')}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex gap-2">
@@ -377,7 +380,9 @@ function PreferencesSection() {
                     : 'border-border-default text-text-secondary'
                 )}
               >
-                {item}
+                {item === 'dark' && t('settings.preferences.themeOptions.dark')}
+                {item === 'light' && t('settings.preferences.themeOptions.light')}
+                {item === 'system' && t('settings.preferences.themeOptions.system')}
               </button>
             ))}
           </div>
@@ -386,7 +391,7 @@ function PreferencesSection() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">语言</CardTitle>
+          <CardTitle className="text-base">{t('settings.preferences.language')}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex gap-2">
@@ -402,18 +407,18 @@ function PreferencesSection() {
                     : 'border-border-default text-text-secondary'
                 )}
               >
-                {item}
+                {item === 'zh-CN' ? t('settings.preferences.languageOptions.zhCN') : t('settings.preferences.languageOptions.enUS')}
               </button>
             ))}
           </div>
-          <p className="text-xs text-text-tertiary mt-3">保存后会自动刷新并切换语言</p>
+          <p className="text-xs text-text-tertiary mt-3">{t('settings.preferences.languageHint')}</p>
         </CardContent>
       </Card>
 
       <div className="flex items-center justify-end gap-3">
-        {saved && <span className="text-sm text-success-500">已保存</span>}
+        {saved && <span className="text-sm text-success-500">{t('settings.preferences.saved')}</span>}
         <Button onClick={savePreferences} loading={saving} disabled={loading}>
-          保存偏好
+          {t('settings.preferences.save')}
         </Button>
       </div>
     </div>

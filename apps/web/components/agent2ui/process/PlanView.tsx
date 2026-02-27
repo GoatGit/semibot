@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import { Check, Circle, Loader2, XCircle } from 'lucide-react'
 import type { PlanData, PlanStep } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * PlanView - 计划步骤视图组件
@@ -19,6 +20,7 @@ export interface PlanViewProps {
 }
 
 export function PlanView({ data, className, mode = 'horizontal', variant = 'card' }: PlanViewProps) {
+  const { t } = useLocale()
   const getStepIcon = (step: PlanStep, small = false) => {
     const size = small ? 'w-6 h-6' : 'w-8 h-8'
     const iconSize = small ? 'w-3 h-3' : 'w-4 h-4'
@@ -61,11 +63,11 @@ export function PlanView({ data, className, mode = 'horizontal', variant = 'card
 
   const getStatusLabel = (status: PlanStep['status']) => {
     const labels: Record<PlanStep['status'], string> = {
-      pending: '等待中',
-      running: '进行中',
-      completed: '已完成',
-      failed: '失败',
-      skipped: '已跳过',
+      pending: t('agent2ui.plan.status.pending'),
+      running: t('agent2ui.plan.status.running'),
+      completed: t('agent2ui.plan.status.completed'),
+      failed: t('agent2ui.plan.status.failed'),
+      skipped: t('agent2ui.plan.status.skipped'),
     }
     return labels[status]
   }

@@ -125,9 +125,9 @@ app/
   - 配置变更后应有“已同步到 runtime”反馈
   - 不再展示组织配置（V2 单用户模式）
   - Tools 固定为内建能力：前端不提供新增/删除入口，只允许配置与启停（如权限、限流、超时、必要时的 endpoint/key）
-  - `code_executor` 不展示 endpoint/key 配置项
+  - `code_executor`、`file_io`、`browser_automation` 不展示 endpoint/key 配置项
   - `xlsx` / `pdf` 归类为 Skills，不在 Tools 配置页展示为可配置 Tool
-  - `file_io` 权限需提供细粒度开关（`file.read` / `file.write` / `file.list`）
+  - Tools 风控配置以风险等级与 HITL 审批为主；`browser_automation` 额外支持 `allowLocalhost`、域名白/黑名单、`headless`、`browserType`
 
 ## 6. 前端状态与数据流
 

@@ -10,11 +10,12 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { useEvents } from '@/hooks/useEvents'
 import type { EventRecord } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
-function formatTime(dateString: string): string {
+function formatTime(dateString: string, locale: string): string {
   const date = new Date(dateString)
   if (Number.isNaN(date.getTime())) return '--'
-  return date.toLocaleString('zh-CN')
+  return date.toLocaleString(locale)
 }
 
 function mapRiskVariant(risk?: EventRecord['riskHint']): 'default' | 'success' | 'warning' | 'error' {
@@ -25,6 +26,7 @@ function mapRiskVariant(risk?: EventRecord['riskHint']): 'default' | 'success' |
 }
 
 export default function EventsPage() {
+  const { locale, t } = useLocale()
   const [eventType, setEventType] = useState('')
   const [replayingId, setReplayingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -61,7 +63,7 @@ export default function EventsPage() {
       setReplayingId(eventId)
       await replayEvent(eventId)
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '回放失败')
+      setActionError(err instanceof Error ? err.message : t('events.error.replay'))
     } finally {
       setReplayingId(null)
     }
@@ -76,10 +78,10 @@ export default function EventsPage() {
               <div>
                 <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
                   <Activity size={22} className="text-primary-400" />
-                  事件中心
+                  {t('events.title')}
                 </h1>
                 <p className="mt-2 text-sm text-text-secondary">
-                  查看系统触发事件、匹配结果，并支持单事件回放。
+                  {t('events.subtitle')}
                 </p>
               </div>
               <Button
@@ -88,7 +90,7 @@ export default function EventsPage() {
                 onClick={() => void refresh()}
                 disabled={isLoading}
               >
-                刷新
+                {t('common.refresh')}
               </Button>
             </div>
           </CardContent>
@@ -101,7 +103,7 @@ export default function EventsPage() {
                 <Input
                   value={eventType}
                   onChange={(e) => setEventType(e.target.value)}
-                  placeholder="按事件类型过滤（例如 task.completed）"
+                  placeholder={t('events.filterPlaceholder')}
                 />
               </div>
               <Button
@@ -110,7 +112,7 @@ export default function EventsPage() {
                 onClick={() => void refresh()}
                 disabled={isLoading}
               >
-                查询
+                {t('common.search')}
               </Button>
             </div>
             {eventTypeOptions.length > 0 && (
@@ -137,7 +139,7 @@ export default function EventsPage() {
 
         {!apiAvailable && (
           <div className="rounded-lg border border-warning-500/30 bg-warning-500/10 px-4 py-3 text-sm text-warning-500">
-            事件 API 尚未接入，请先实现 `/v1/events` 与 `/v1/events/replay`。
+            {t('events.apiUnavailable')}
           </div>
         )}
 
@@ -168,21 +170,21 @@ export default function EventsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="font-medium text-text-primary break-all">{event.eventType}</p>
                         <Badge variant={mapRiskVariant(event.riskHint)}>
-                          风险 {event.riskHint || 'unknown'}
+                          {t('events.riskLabel')} {event.riskHint || t('events.unknown')}
                         </Badge>
                       </div>
                       <div className="mt-1 text-xs text-text-secondary">
-                        {event.id} · {event.source} · {formatTime(event.createdAt)}
+                        {event.id} · {event.source} · {formatTime(event.createdAt, locale)}
                       </div>
                       {event.subject && (
                         <div className="mt-2 text-sm text-text-secondary break-all">
-                          subject: {event.subject}
+                          {t('events.subject')}: {event.subject}
                         </div>
                       )}
                       {event.payload && (
                         <pre className="mt-2 rounded-md bg-bg-elevated border border-border-subtle px-3 py-2 text-xs text-text-secondary overflow-x-auto">
                           {JSON.stringify(event.payload, null, 2).slice(0, 240)}
-                          {JSON.stringify(event.payload).length > 240 ? ' ...' : ''}
+                          {JSON.stringify(event.payload).length > 240 ? t('events.truncated') : ''}
                         </pre>
                       )}
                     </div>
@@ -193,7 +195,7 @@ export default function EventsPage() {
                         variant="secondary"
                         onClick={() => setSelectedEvent(event)}
                       >
-                        详情
+                        {t('events.details')}
                       </Button>
                       <Button
                         size="sm"
@@ -202,7 +204,7 @@ export default function EventsPage() {
                         loading={replayingId === event.id}
                         onClick={() => void handleReplay(event.id)}
                       >
-                        回放
+                        {t('events.replay')}
                       </Button>
                     </div>
                   </div>
@@ -212,7 +214,7 @@ export default function EventsPage() {
           ) : (
             <Card className="border-border-subtle">
               <CardContent className="p-8 text-center text-sm text-text-secondary">
-                暂无事件数据
+                {t('events.empty')}
               </CardContent>
             </Card>
           )}
@@ -222,16 +224,16 @@ export default function EventsPage() {
       <Modal
         open={selectedEvent !== null}
         onClose={() => setSelectedEvent(null)}
-        title="事件详情"
+        title={t('events.detailsTitle')}
         description={selectedEvent ? `${selectedEvent.eventType} · ${selectedEvent.id}` : undefined}
         maxWidth="lg"
       >
         {selectedEvent && (
           <div className="space-y-3">
             <div className="text-xs text-text-secondary">
-              <div>source: {selectedEvent.source}</div>
-              <div>time: {formatTime(selectedEvent.createdAt)}</div>
-              {selectedEvent.subject && <div>subject: {selectedEvent.subject}</div>}
+              <div>{t('events.source')}: {selectedEvent.source}</div>
+              <div>{t('events.time')}: {formatTime(selectedEvent.createdAt, locale)}</div>
+              {selectedEvent.subject && <div>{t('events.subject')}: {selectedEvent.subject}</div>}
             </div>
             <pre className="rounded-md bg-bg-elevated border border-border-subtle px-3 py-2 text-xs text-text-secondary overflow-x-auto max-h-[50vh]">
               {JSON.stringify(selectedEvent.payload ?? {}, null, 2)}

@@ -349,8 +349,8 @@ URL 验证响应：
 
 ```json
 {
-  "tools": ["code_executor", "pdf", "xlsx"],
-  "skills": []
+  "tools": ["search", "file_io", "code_executor", "browser_automation"],
+  "skills": ["xlsx", "pdf"]
 }
 ```
 

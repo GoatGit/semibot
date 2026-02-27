@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import { ZoomIn, Download, X } from 'lucide-react'
 
 import type { ImageData } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface ImageViewProps {
   data: ImageData
@@ -20,12 +21,13 @@ interface ImageViewProps {
  * - 下载功能
  */
 export function ImageView({ data }: ImageViewProps) {
+  const { t } = useLocale()
   const [isZoomed, setIsZoomed] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
 
   // 使用类型定义的字段名: url, alt, caption, width, height
-  const { url, alt = '图片', caption, width, height } = data
+  const { url, alt = t('agent2ui.image.defaultAlt'), caption, width, height } = data
 
   const handleDownload = async () => {
     try {
@@ -34,7 +36,7 @@ export function ImageView({ data }: ImageViewProps) {
       const blobUrl = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = blobUrl
-      a.download = alt || 'image'
+      a.download = alt || t('agent2ui.image.defaultFilename')
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -47,7 +49,7 @@ export function ImageView({ data }: ImageViewProps) {
   if (hasError) {
     return (
       <div className="flex items-center justify-center p-8 bg-bg-secondary rounded-lg border border-border-default">
-        <p className="text-text-tertiary text-sm">图片加载失败</p>
+        <p className="text-text-tertiary text-sm">{t('agent2ui.image.loadFailed')}</p>
       </div>
     )
   }
@@ -91,14 +93,14 @@ export function ImageView({ data }: ImageViewProps) {
           <button
             onClick={() => setIsZoomed(true)}
             className="p-1.5 bg-bg-overlay/80 rounded-md hover:bg-bg-overlay transition-colors"
-            aria-label="放大"
+            aria-label={t('agent2ui.image.zoom')}
           >
             <ZoomIn size={16} className="text-text-primary" />
           </button>
           <button
             onClick={handleDownload}
             className="p-1.5 bg-bg-overlay/80 rounded-md hover:bg-bg-overlay transition-colors"
-            aria-label="下载"
+            aria-label={t('agent2ui.image.download')}
           >
             <Download size={16} className="text-text-primary" />
           </button>
@@ -120,7 +122,7 @@ export function ImageView({ data }: ImageViewProps) {
           <button
             onClick={() => setIsZoomed(false)}
             className="absolute top-4 right-4 p-2 bg-bg-overlay/80 rounded-full hover:bg-bg-overlay transition-colors"
-            aria-label="关闭"
+            aria-label={t('common.close')}
           >
             <X size={20} className="text-text-primary" />
           </button>
@@ -135,7 +137,7 @@ export function ImageView({ data }: ImageViewProps) {
               className="px-4 py-2 bg-bg-overlay/80 rounded-md hover:bg-bg-overlay transition-colors flex items-center gap-2"
             >
               <Download size={16} className="text-text-primary" />
-              <span className="text-text-primary text-sm">下载</span>
+              <span className="text-text-primary text-sm">{t('agent2ui.image.download')}</span>
             </button>
           </div>
 

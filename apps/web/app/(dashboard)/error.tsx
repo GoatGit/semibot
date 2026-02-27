@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react'
 import Link from 'next/link'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface ErrorProps {
   error: Error & { digest?: string }
@@ -13,6 +14,8 @@ interface ErrorProps {
  * Dashboard 错误边界
  */
 export default function DashboardError({ error, reset }: ErrorProps) {
+  const { t } = useLocale()
+
   useEffect(() => {
     // 记录错误到日志服务
     console.error('[Dashboard Error]', error)
@@ -28,12 +31,12 @@ export default function DashboardError({ error, reset }: ErrorProps) {
 
         {/* 错误信息 */}
         <div className="space-y-2">
-          <h2 className="text-xl font-semibold text-text-primary">出错了</h2>
+          <h2 className="text-xl font-semibold text-text-primary">{t('dashboardError.title')}</h2>
           <p className="text-sm text-text-secondary">
-            {error.message || '加载页面时发生错误，请稍后重试'}
+            {error.message || t('dashboardError.message')}
           </p>
           {error.digest && (
-            <p className="text-xs text-text-tertiary">错误 ID: {error.digest}</p>
+            <p className="text-xs text-text-tertiary">{t('dashboardError.errorId')}: {error.digest}</p>
           )}
         </div>
 
@@ -44,14 +47,14 @@ export default function DashboardError({ error, reset }: ErrorProps) {
             className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 transition-colors"
           >
             <RefreshCw size={16} />
-            重试
+            {t('common.retry')}
           </button>
           <Link
             href="/"
             className="flex items-center gap-2 px-4 py-2 bg-bg-secondary text-text-primary rounded-md hover:bg-bg-tertiary transition-colors"
           >
             <Home size={16} />
-            返回首页
+            {t('dashboardError.backHome')}
           </Link>
         </div>
       </div>

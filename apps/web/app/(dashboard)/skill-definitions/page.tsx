@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/Select'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { apiClient } from '@/lib/api'
 import type { SkillDefinition } from '@semibot/shared-types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface ApiResponse<T> {
   success: boolean
@@ -47,6 +48,7 @@ function getApiErrorMessage(err: unknown, fallback: string): string {
 }
 
 export default function SkillDefinitionsPage() {
+  const { t } = useLocale()
   const [definitions, setDefinitions] = useState<SkillDefinition[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -76,11 +78,11 @@ export default function SkillDefinitionsPage() {
       }
     } catch (err) {
       console.error('[SkillDefinitions] 加载失败:', err)
-      setError('加载技能定义失败')
+      setError(t('skillDefinitions.error.load'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadDefinitions()
@@ -113,7 +115,7 @@ export default function SkillDefinitionsPage() {
       await loadDefinitions()
     } catch (err) {
       console.error('[SkillDefinitions] 安装失败:', err)
-      setError(getApiErrorMessage(err, '安装失败'))
+      setError(getApiErrorMessage(err, t('skillDefinitions.error.install')))
     } finally {
       setActionLoading(false)
     }
@@ -140,7 +142,7 @@ export default function SkillDefinitionsPage() {
       await loadDefinitions()
     } catch (err) {
       console.error('[SkillDefinitions] 删除失败:', err)
-      setError(getApiErrorMessage(err, '删除失败'))
+      setError(getApiErrorMessage(err, t('skillDefinitions.error.delete')))
     } finally {
       setActionLoading(false)
     }
@@ -171,7 +173,7 @@ export default function SkillDefinitionsPage() {
       await loadDefinitions()
     } catch (err) {
       console.error('[SkillDefinitions] 更新失败:', err)
-      setError(getApiErrorMessage(err, '更新失败'))
+      setError(getApiErrorMessage(err, t('skillDefinitions.error.update')))
     } finally {
       setActionLoading(false)
     }
@@ -183,17 +185,17 @@ export default function SkillDefinitionsPage() {
       <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-text-primary">技能管理</h1>
+            <h1 className="text-xl font-semibold text-text-primary">{t('skillDefinitions.title')}</h1>
             <p className="text-sm text-text-secondary mt-1">
-              管理平台技能定义，共 {definitions.length} 个
+              {t('skillDefinitions.subtitlePrefix')} {definitions.length} {t('skillDefinitions.subtitleSuffix')}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={loadDefinitions}>
-              刷新
+              {t('common.refresh')}
             </Button>
             <Button leftIcon={<Plus size={16} />} onClick={() => window.location.href = '/skill-definitions/new'}>
-              创建技能
+              {t('skillDefinitions.create')}
             </Button>
           </div>
         </div>
@@ -203,7 +205,7 @@ export default function SkillDefinitionsPage() {
           <div className="mt-3 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500 flex items-center justify-between">
             <span>{error}</span>
             <button onClick={() => setError(null)} className="text-error-500/60 hover:text-error-500 text-xs">
-              关闭
+              {t('common.close')}
             </button>
           </div>
         )}
@@ -211,7 +213,7 @@ export default function SkillDefinitionsPage() {
         {/* 搜索栏 */}
         <div className="mt-4 max-w-md">
           <Input
-            placeholder="搜索技能名称、ID 或描述..."
+            placeholder={t('skillDefinitions.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             leftIcon={<Search size={16} />}
@@ -232,15 +234,15 @@ export default function SkillDefinitionsPage() {
             </div>
             {searchQuery ? (
               <>
-                <h3 className="text-lg font-medium text-text-primary">未找到匹配的技能</h3>
-                <p className="text-sm text-text-secondary mt-1 mb-4">尝试调整搜索条件</p>
-                <Button variant="secondary" onClick={() => setSearchQuery('')}>清除搜索</Button>
+                <h3 className="text-lg font-medium text-text-primary">{t('skillDefinitions.empty.filteredTitle')}</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">{t('skillDefinitions.empty.filteredDescription')}</p>
+                <Button variant="secondary" onClick={() => setSearchQuery('')}>{t('skillDefinitions.empty.clearSearch')}</Button>
               </>
             ) : (
               <>
-                <h3 className="text-lg font-medium text-text-primary">暂无技能定义</h3>
-                <p className="text-sm text-text-secondary mt-1 mb-4">创建您的第一个技能定义开始使用</p>
-                <Button leftIcon={<Plus size={16} />} onClick={() => window.location.href = '/skill-definitions/new'}>创建技能</Button>
+                <h3 className="text-lg font-medium text-text-primary">{t('skillDefinitions.empty.defaultTitle')}</h3>
+                <p className="text-sm text-text-secondary mt-1 mb-4">{t('skillDefinitions.empty.defaultDescription')}</p>
+                <Button leftIcon={<Plus size={16} />} onClick={() => window.location.href = '/skill-definitions/new'}>{t('skillDefinitions.create')}</Button>
               </>
             )}
           </div>
@@ -255,28 +257,28 @@ export default function SkillDefinitionsPage() {
                         <CardTitle className="text-lg">{definition.name}</CardTitle>
                         {definition.isPublic && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-primary-500/10 text-primary-500">
-                            内置
+                            {t('skillDefinitions.builtin')}
                           </span>
                         )}
                       </div>
                       <p className="text-sm text-text-tertiary mt-1">{definition.skillId}</p>
                     </div>
                     {definition.isActive ? (
-                      <Badge variant="success">已启用</Badge>
+                      <Badge variant="success">{t('skillDefinitions.enabled')}</Badge>
                     ) : (
-                      <Badge variant="default">已禁用</Badge>
+                      <Badge variant="default">{t('skillDefinitions.disabled')}</Badge>
                     )}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-text-secondary line-clamp-2">
-                    {definition.description || '暂无描述'}
+                    {definition.description || t('skillDefinitions.noDescription')}
                   </p>
 
                   {/* 分类和标签 */}
                   {definition.category && (
                     <div className="flex items-center text-sm">
-                      <span className="text-text-tertiary mr-2">分类:</span>
+                      <span className="text-text-tertiary mr-2">{t('skillDefinitions.category')}</span>
                       <Badge variant="default">{definition.category}</Badge>
                     </div>
                   )}
@@ -303,9 +305,9 @@ export default function SkillDefinitionsPage() {
                       className="flex-1"
                       leftIcon={<Package size={14} />}
                     >
-                      安装
+                      {t('skillDefinitions.install')}
                     </Button>
-                    <Tooltip content="编辑">
+                    <Tooltip content={t('common.edit')}>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -315,7 +317,7 @@ export default function SkillDefinitionsPage() {
                         <Pencil size={14} />
                       </Button>
                     </Tooltip>
-                    <Tooltip content="删除">
+                    <Tooltip content={t('common.delete')}>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -337,22 +339,22 @@ export default function SkillDefinitionsPage() {
       <Modal
         open={showInstallDialog && !!selectedDefinition}
         onClose={() => setShowInstallDialog(false)}
-        title="安装技能"
+        title={t('skillDefinitions.installModal.title')}
         description={selectedDefinition?.name}
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowInstallDialog(false)} disabled={actionLoading}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleInstall} loading={actionLoading}>
-              安装
+              {t('skillDefinitions.install')}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">来源类型 *</label>
+            <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('skillDefinitions.installModal.sourceType')}</label>
             <Select
               value={installSourceType}
               onChange={(val) => setInstallSourceType(val as typeof installSourceType)}
@@ -366,7 +368,7 @@ export default function SkillDefinitionsPage() {
 
           {(installSourceType === 'git' || installSourceType === 'url') && (
             <div>
-              <label className="block text-sm font-medium text-text-secondary mb-1.5">来源 URL *</label>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('skillDefinitions.installModal.sourceUrl')}</label>
               <Input
                 type="text"
                 placeholder="https://..."
@@ -382,22 +384,22 @@ export default function SkillDefinitionsPage() {
       <Modal
         open={showEditDialog && !!editingDefinition}
         onClose={() => { setShowEditDialog(false); setEditingDefinition(null) }}
-        title="编辑技能定义"
+        title={t('skillDefinitions.editModal.title')}
         description={editingDefinition?.skillId}
         footer={
           <>
             <Button variant="secondary" onClick={() => { setShowEditDialog(false); setEditingDefinition(null) }} disabled={actionLoading}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleUpdateDefinition} loading={actionLoading} disabled={!editForm.name.trim()}>
-              保存
+              {t('common.save')}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">名称 *</label>
+            <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('skillDefinitions.editModal.name')}</label>
             <Input
               type="text"
               value={editForm.name}
@@ -406,7 +408,7 @@ export default function SkillDefinitionsPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1.5">描述</label>
+            <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('agent.description')}</label>
             <Input
               type="text"
               value={editForm.description}
@@ -422,7 +424,7 @@ export default function SkillDefinitionsPage() {
               disabled={actionLoading}
               className="rounded border-border-default"
             />
-            <span className="text-sm text-text-secondary">设为内置技能（所有组织可见）</span>
+            <span className="text-sm text-text-secondary">{t('skillDefinitions.editModal.builtinHint')}</span>
           </label>
         </div>
       </Modal>

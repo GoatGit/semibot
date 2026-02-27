@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { apiClient } from '@/lib/api'
 import { formatRuntimeStatusError } from '@/lib/runtime-status'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface ApiResponse<T> {
   success: boolean
@@ -30,7 +31,7 @@ interface RuntimeSkillsData {
   source: string
   error?: string
 }
-const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io']
+const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io', 'browser_automation']
 const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
 function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
@@ -58,6 +59,7 @@ function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
 
 export default function ToolsPage() {
   const router = useRouter()
+  const { t } = useLocale()
   const [tools, setTools] = useState<ToolItem[]>([])
   const [runtime, setRuntime] = useState<RuntimeSkillsData>({
     available: false,
@@ -87,7 +89,7 @@ export default function ToolsPage() {
               tools: [],
               skills: [],
               source: '',
-              error: 'Runtime 未连接',
+              error: t('toolsPage.runtimeUnavailable'),
             }
       const unifiedTools = Array.from(new Set([...(runtimeData.tools || []), ...MIN_BUILTIN_TOOLS])).filter(
         (name) => !NON_TOOL_SKILLS.includes(name)
@@ -99,12 +101,12 @@ export default function ToolsPage() {
         (toolsRes.status === 'rejected' || !toolsRes.value.success) &&
         (runtimeRes.status === 'rejected' || !runtimeRes.value.success)
       ) {
-        setError('工具数据加载失败，请检查 API 与 Runtime 状态')
+        setError(t('toolsPage.error.load'))
       }
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     void loadData()
@@ -133,10 +135,10 @@ export default function ToolsPage() {
               <div>
                 <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
                   <Wrench size={22} className="text-primary-400" />
-                  Tools 能力中心
+                  {t('toolsPage.title')}
                 </h1>
                 <p className="mt-2 text-sm text-text-secondary">
-                  所有工具统一视图：内建工具可配置启停与参数，不区分来源。
+                  {t('toolsPage.subtitle')}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -145,9 +147,9 @@ export default function ToolsPage() {
                   leftIcon={<RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />}
                   onClick={() => void loadData()}
                 >
-                  刷新
+                  {t('common.refresh')}
                 </Button>
-                <Button onClick={() => router.push('/config')}>进入配置管理</Button>
+                <Button onClick={() => router.push('/config')}>{t('toolsPage.openConfig')}</Button>
               </div>
             </div>
           </CardContent>
@@ -161,25 +163,25 @@ export default function ToolsPage() {
         )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <StatCard label="Tools 总数" value={stats.allTools} />
-          <StatCard label="已启用" value={stats.active} />
-          <StatCard label="Runtime 连接" value={stats.runtimeConnected} />
+          <StatCard label={t('toolsPage.stats.total')} value={stats.allTools} />
+          <StatCard label={t('toolsPage.stats.enabled')} value={stats.active} />
+          <StatCard label={t('toolsPage.stats.runtimeConnected')} value={stats.runtimeConnected} />
         </div>
 
         <div className="grid grid-cols-1 gap-4">
           <Card className="border-border-default">
             <CardContent className="p-5">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-lg font-semibold text-text-primary">工具配置</h2>
+                <h2 className="text-lg font-semibold text-text-primary">{t('toolsPage.configTitle')}</h2>
                 <Badge variant={runtime.available ? 'success' : 'outline'}>
-                  {runtime.available ? '已连接' : '未连接'}
+                  {runtime.available ? t('toolsPage.connected') : t('toolsPage.disconnected')}
                 </Badge>
               </div>
               {runtimeErrorText && (
                 <p className="mt-2 text-xs text-warning-500">{runtimeErrorText}</p>
               )}
               {isLoading ? (
-                <p className="mt-4 text-sm text-text-secondary">加载中...</p>
+                <p className="mt-4 text-sm text-text-secondary">{t('common.loading')}</p>
               ) : tools.length > 0 ? (
                 <div className="mt-4 space-y-2">
                   {tools.map((tool) => (
@@ -198,9 +200,9 @@ export default function ToolsPage() {
                           </p>
                         </div>
                         <div className="flex items-center gap-1">
-                          {tool.isBuiltin && <Badge variant="outline">内置</Badge>}
+                          {tool.isBuiltin && <Badge variant="outline">{t('toolsPage.builtin')}</Badge>}
                           <Badge variant={tool.isActive ? 'success' : 'outline'}>
-                            {tool.isActive ? '启用' : '停用'}
+                            {tool.isActive ? t('toolsPage.enabled') : t('toolsPage.disabled')}
                           </Badge>
                         </div>
                       </div>
@@ -208,7 +210,7 @@ export default function ToolsPage() {
                   ))}
                 </div>
               ) : (
-                <p className="mt-4 text-sm text-text-secondary">暂无工具配置（V2 不支持新增/删除 Tool）</p>
+                <p className="mt-4 text-sm text-text-secondary">{t('toolsPage.empty')}</p>
               )}
             </CardContent>
           </Card>

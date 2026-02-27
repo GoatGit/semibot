@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { FileArchive, Upload, X } from 'lucide-react'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface FileUploadProps {
   /** 接受的文件类型 (MIME 或扩展名) */
@@ -49,25 +50,32 @@ export function FileUpload({
   disabled = false,
   hint,
 }: FileUploadProps) {
+  const { t } = useLocale()
   const [isDragOver, setIsDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validateFile = useCallback(
     (file: File): string | null => {
       if (maxSize && file.size > maxSize) {
-        return `文件大小 (${formatFileSize(file.size)}) 超过限制 (${formatFileSize(maxSize)})`
+        return t('fileUpload.error.maxSize', {
+          size: formatFileSize(file.size),
+          max: formatFileSize(maxSize),
+        })
       }
 
       if (allowedExtensions && allowedExtensions.length > 0) {
         const ext = getFileExtension(file.name)
         if (!allowedExtensions.includes(ext)) {
-          return `不支持的文件类型 ${ext}，仅支持 ${allowedExtensions.join(', ')}`
+          return t('fileUpload.error.invalidType', {
+            ext,
+            allowed: allowedExtensions.join(', '),
+          })
         }
       }
 
       return null
     },
-    [maxSize, allowedExtensions]
+    [allowedExtensions, maxSize, t]
   )
 
   const handleFile = useCallback(
@@ -192,7 +200,8 @@ export function FileUpload({
           <>
             <Upload className="w-8 h-8 text-text-tertiary mb-2" />
             <p className="text-sm text-text-secondary">
-              拖拽文件到此处，或 <span className="text-primary-500 font-medium">点击选择</span>
+              {t('fileUpload.dropOr')}{' '}
+              <span className="text-primary-500 font-medium">{t('fileUpload.clickSelect')}</span>
             </p>
             {hint && <p className="text-xs text-text-tertiary mt-1">{hint}</p>}
           </>
