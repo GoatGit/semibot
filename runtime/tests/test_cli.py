@@ -626,6 +626,215 @@ def test_skill_list_command(monkeypatch, capsys) -> None:
     assert payload["skills"] == ["market-analyst"]
 
 
+def test_skills_batch_disable_enable_remove(tmp_path, capsys) -> None:
+    skills_root = tmp_path / "skills"
+    alpha = skills_root / "alpha"
+    beta = skills_root / "beta"
+    alpha.mkdir(parents=True)
+    beta.mkdir(parents=True)
+    (alpha / "SKILL.md").write_text("# alpha\n", encoding="utf-8")
+    (beta / "SKILL.md").write_text("# beta\n", encoding="utf-8")
+
+    parser = build_parser()
+
+    args_disable = parser.parse_args(
+        [
+            "skills",
+            "batch",
+            "--skills-path",
+            str(skills_root),
+            "--action",
+            "disable",
+            "--names",
+            "alpha,beta",
+        ]
+    )
+    exit_disable = args_disable.func(args_disable)
+    assert exit_disable == 0
+    payload_disable = json.loads(capsys.readouterr().out)
+    assert payload_disable["batch_action"] == "disable"
+    assert sorted(payload_disable["changed"]) == ["alpha", "beta"]
+
+    args_enable = parser.parse_args(
+        [
+            "skills",
+            "batch",
+            "--skills-path",
+            str(skills_root),
+            "--action",
+            "enable",
+            "--names",
+            "alpha",
+        ]
+    )
+    exit_enable = args_enable.func(args_enable)
+    assert exit_enable == 0
+    payload_enable = json.loads(capsys.readouterr().out)
+    assert payload_enable["batch_action"] == "enable"
+    assert payload_enable["changed"] == ["alpha"]
+    assert payload_enable["disabled_skills"] == ["beta"]
+
+    args_remove = parser.parse_args(
+        [
+            "skills",
+            "batch",
+            "--skills-path",
+            str(skills_root),
+            "--action",
+            "remove",
+            "--names",
+            "beta",
+            "--yes",
+        ]
+    )
+    exit_remove = args_remove.func(args_remove)
+    assert exit_remove == 0
+    payload_remove = json.loads(capsys.readouterr().out)
+    assert payload_remove["batch_action"] == "remove"
+    assert payload_remove["changed"] == ["beta"]
+    assert not beta.exists()
+
+
+def test_mcp_batch_disable_enable_remove(tmp_path, capsys) -> None:
+    mcp_path = tmp_path / "mcp.json"
+    mcp_path.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "alpha": {"transport": "http", "url": "http://localhost:9001"},
+                    "beta": {"transport": "stdio", "command": "node", "args": ["server.js"]},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    parser = build_parser()
+    args_disable = parser.parse_args(
+        [
+            "mcp",
+            "batch",
+            "--mcp-path",
+            str(mcp_path),
+            "--action",
+            "disable",
+            "--names",
+            "alpha,beta",
+        ]
+    )
+    exit_disable = args_disable.func(args_disable)
+    assert exit_disable == 0
+    payload_disable = json.loads(capsys.readouterr().out)
+    assert payload_disable["batch_action"] == "disable"
+    assert sorted(payload_disable["changed"]) == ["alpha", "beta"]
+
+    stored_disable = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert stored_disable["servers"]["alpha"]["enabled"] is False
+    assert stored_disable["servers"]["beta"]["enabled"] is False
+
+    args_enable = parser.parse_args(
+        [
+            "mcp",
+            "batch",
+            "--mcp-path",
+            str(mcp_path),
+            "--action",
+            "enable",
+            "--names",
+            "alpha",
+        ]
+    )
+    exit_enable = args_enable.func(args_enable)
+    assert exit_enable == 0
+    payload_enable = json.loads(capsys.readouterr().out)
+    assert payload_enable["batch_action"] == "enable"
+    assert payload_enable["changed"] == ["alpha"]
+
+    args_remove = parser.parse_args(
+        [
+            "mcp",
+            "batch",
+            "--mcp-path",
+            str(mcp_path),
+            "--action",
+            "remove",
+            "--names",
+            "beta",
+            "--yes",
+        ]
+    )
+    exit_remove = args_remove.func(args_remove)
+    assert exit_remove == 0
+    payload_remove = json.loads(capsys.readouterr().out)
+    assert payload_remove["batch_action"] == "remove"
+    assert payload_remove["changed"] == ["beta"]
+
+    stored_remove = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert "beta" not in stored_remove["servers"]
+
+
+def test_mcp_test_returns_disabled_error(tmp_path, capsys) -> None:
+    mcp_path = tmp_path / "mcp.json"
+    mcp_path.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "alpha": {
+                        "transport": "http",
+                        "url": "http://localhost:9001",
+                        "enabled": False,
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args(["mcp", "test", "alpha", "--mcp-path", str(mcp_path)])
+    exit_code = args.func(args)
+    assert exit_code == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "MCP_SERVER_DISABLED"
+
+
+def test_mcp_call_returns_disabled_error(tmp_path, capsys) -> None:
+    mcp_path = tmp_path / "mcp.json"
+    mcp_path.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "alpha": {
+                        "transport": "http",
+                        "url": "http://localhost:9001",
+                        "enabled": False,
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "mcp",
+            "call",
+            "alpha",
+            "tool.search",
+            "--args",
+            "{}",
+            "--mcp-path",
+            str(mcp_path),
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "MCP_SERVER_DISABLED"
+
+
 def test_memory_search_command(monkeypatch, capsys) -> None:
     class _FakeStore:
         def __init__(self, db_path: str):

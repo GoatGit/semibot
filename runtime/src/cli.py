@@ -2132,10 +2132,21 @@ def cmd_ui(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
-def cmd_skill_list(_args: argparse.Namespace) -> int:
+def cmd_skill_list(args: argparse.Namespace) -> int:
     registry = create_default_registry()
-    skills_path = Path(_default_skills_path()).expanduser()
+    skills_path_value = str(getattr(args, "skills_path", _default_skills_path()))
+    skills_path = Path(skills_path_value).expanduser()
+    state = _read_skill_state(skills_path_value)
+    disabled = set(state.get("disabled") or [])
     local_skill_dirs = sorted([p.name for p in skills_path.iterdir() if p.is_dir()]) if skills_path.exists() else []
+    local_skills = [
+        {
+            "name": name,
+            "enabled": name not in disabled,
+            "path": str(skills_path / name),
+        }
+        for name in local_skill_dirs
+    ]
     _print_json(
         {
             "version": CLI_VERSION,
@@ -2143,7 +2154,10 @@ def cmd_skill_list(_args: argparse.Namespace) -> int:
             "action": "list",
             "tools": registry.list_tools(),
             "skills": registry.list_skills(),
+            "skills_path": str(skills_path),
             "local_skill_dirs": local_skill_dirs,
+            "local_skills": local_skills,
+            "disabled_skills": sorted(disabled),
         }
     )
     return EXIT_SUCCESS
@@ -2281,6 +2295,117 @@ def cmd_skills_remove(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_skills_batch(args: argparse.Namespace) -> int:
+    skills_root = Path(args.skills_path).expanduser()
+    if not skills_root.exists():
+        _print_json(
+            _error_payload(
+                resource="skills",
+                action="batch",
+                code="SKILLS_PATH_NOT_FOUND",
+                message=f"skills path not found: {skills_root}",
+            )
+        )
+        return EXIT_NOT_FOUND
+
+    options = sorted([path.name for path in skills_root.iterdir() if path.is_dir()])
+    selected, selection_error = _resolve_batch_selection(
+        options=options,
+        names_arg=args.names,
+        select_all=bool(args.all),
+        interactive=bool(args.interactive),
+    )
+    if selection_error:
+        _print_json(
+            _error_payload(
+                resource="skills",
+                action="batch",
+                code="BATCH_SELECTION_INVALID",
+                message=selection_error,
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    missing = [name for name in selected if name not in options]
+    if missing and not args.ignore_missing:
+        _print_json(
+            _error_payload(
+                resource="skills",
+                action="batch",
+                code="SKILL_NOT_FOUND",
+                message=f"skills not found: {', '.join(missing)}",
+            )
+        )
+        return EXIT_NOT_FOUND
+
+    targets = [name for name in selected if name in options]
+    action = str(args.action)
+    state = _read_skill_state(args.skills_path)
+    disabled = set(state.get("disabled") or [])
+    changed: list[str] = []
+
+    if action == "disable":
+        for name in targets:
+            if name in disabled:
+                continue
+            disabled.add(name)
+            changed.append(name)
+        _write_skill_state(args.skills_path, {"disabled": sorted(disabled)})
+    elif action == "enable":
+        for name in targets:
+            if name not in disabled:
+                continue
+            disabled.discard(name)
+            changed.append(name)
+        _write_skill_state(args.skills_path, {"disabled": sorted(disabled)})
+    elif action == "remove":
+        if not bool(getattr(args, "yes", False) or getattr(args, "confirm_yes", False)):
+            _print_json(
+                _error_payload(
+                    resource="skills",
+                    action="batch",
+                    code="CONFIRMATION_REQUIRED",
+                    message="re-run with --yes for batch remove",
+                )
+            )
+            return EXIT_ARGS_ERROR
+        for name in targets:
+            target = skills_root / name
+            if not target.exists() or not target.is_dir():
+                continue
+            shutil.rmtree(target)
+            disabled.discard(name)
+            changed.append(name)
+        _write_skill_state(args.skills_path, {"disabled": sorted(disabled)})
+    else:
+        _print_json(
+            _error_payload(
+                resource="skills",
+                action="batch",
+                code="BATCH_ACTION_INVALID",
+                message=f"unsupported batch action: {action}",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "skills",
+            "action": "batch",
+            "batch_action": action,
+            "ok": True,
+            "skills_path": str(skills_root),
+            "requested": selected,
+            "targets": targets,
+            "changed": changed,
+            "missing": missing,
+            "disabled_skills": sorted(disabled),
+        }
+    )
+    return EXIT_SUCCESS
+
+
 def cmd_tools_list(_args: argparse.Namespace) -> int:
     registry = create_default_registry()
     _print_json(
@@ -2338,6 +2463,100 @@ def _read_mcp_config(path: str) -> tuple[dict[str, Any] | None, str | None]:
     return data, None
 
 
+def _write_mcp_config(path: str, config: dict[str, Any]) -> None:
+    config_path = Path(path).expanduser()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=config_path.parent) as tmp:
+        tmp.write(content)
+        temp_path = Path(tmp.name)
+    temp_path.replace(config_path)
+
+
+def _parse_batch_names(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for token in raw.split(","):
+        name = token.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        parsed.append(name)
+    return parsed
+
+
+def _resolve_batch_selection(
+    *,
+    options: list[str],
+    names_arg: str | None,
+    select_all: bool,
+    interactive: bool,
+) -> tuple[list[str], str | None]:
+    if select_all:
+        return list(options), None
+    names = _parse_batch_names(names_arg)
+    if names:
+        return names, None
+    if interactive:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            return [], "interactive mode requires a TTY"
+        selected = _multi_select(
+            title="Select targets",
+            options=options,
+            defaults=[],
+        )
+        if selected:
+            return selected, None
+        return [], "no items selected"
+    return [], "specify --names, --all, or --interactive"
+
+
+def _skill_state_path(skills_path: str) -> Path:
+    return Path(skills_path).expanduser() / ".state.json"
+
+
+def _read_skill_state(skills_path: str) -> dict[str, Any]:
+    state_path = _skill_state_path(skills_path)
+    if not state_path.exists():
+        return {"disabled": []}
+    try:
+        parsed = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"disabled": []}
+    if not isinstance(parsed, dict):
+        return {"disabled": []}
+    disabled_raw = parsed.get("disabled", [])
+    disabled = sorted(
+        {
+            str(item).strip()
+            for item in disabled_raw
+            if isinstance(item, str) and str(item).strip()
+        }
+    )
+    return {"disabled": disabled}
+
+
+def _write_skill_state(skills_path: str, state: dict[str, Any]) -> None:
+    state_path = _skill_state_path(skills_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = {
+        "disabled": sorted(
+            {
+                str(item).strip()
+                for item in (state.get("disabled") or [])
+                if isinstance(item, str) and str(item).strip()
+            }
+        )
+    }
+    content = json.dumps(normalized, ensure_ascii=False, indent=2) + "\n"
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=state_path.parent) as tmp:
+        tmp.write(content)
+        temp_path = Path(tmp.name)
+    temp_path.replace(state_path)
+
+
 def _normalize_mcp_items(config: dict[str, Any]) -> list[dict[str, Any]]:
     servers = config.get("servers", {})
     if not isinstance(servers, dict):
@@ -2357,6 +2576,7 @@ def _normalize_mcp_items(config: dict[str, Any]) -> list[dict[str, Any]]:
                 "transport": transport,
                 "endpoint": str(endpoint or ""),
                 "has_headers": isinstance(raw.get("headers"), dict),
+                "enabled": bool(raw.get("enabled", True)),
             }
         )
     return items
@@ -2412,6 +2632,16 @@ def cmd_mcp_test(args: argparse.Namespace) -> int:
             )
         )
         return EXIT_NOT_FOUND
+    if not bool(target.get("enabled", True)):
+        _print_json(
+            _error_payload(
+                resource="mcp",
+                action="test",
+                code="MCP_SERVER_DISABLED",
+                message=f"server is disabled: {args.server_name}",
+            )
+        )
+        return EXIT_CONFIG_ERROR
 
     transport = str(target["transport"])
     endpoint = str(target["endpoint"])
@@ -2469,6 +2699,114 @@ def cmd_mcp_sync(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_mcp_batch(args: argparse.Namespace) -> int:
+    config, error = _read_mcp_config(args.mcp_path)
+    if error:
+        _print_json(
+            _error_payload(
+                resource="mcp",
+                action="batch",
+                code="MCP_CONFIG_ERROR",
+                message=error,
+            )
+        )
+        return EXIT_CONFIG_ERROR
+
+    servers = config.get("servers", {}) if isinstance(config, dict) else {}
+    if not isinstance(servers, dict):
+        servers = {}
+        config["servers"] = servers
+    options = sorted(str(name) for name in servers.keys())
+    selected, selection_error = _resolve_batch_selection(
+        options=options,
+        names_arg=args.names,
+        select_all=bool(args.all),
+        interactive=bool(args.interactive),
+    )
+    if selection_error:
+        _print_json(
+            _error_payload(
+                resource="mcp",
+                action="batch",
+                code="BATCH_SELECTION_INVALID",
+                message=selection_error,
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    missing = [name for name in selected if name not in servers]
+    if missing and not args.ignore_missing:
+        _print_json(
+            _error_payload(
+                resource="mcp",
+                action="batch",
+                code="MCP_SERVER_NOT_FOUND",
+                message=f"servers not found: {', '.join(missing)}",
+            )
+        )
+        return EXIT_NOT_FOUND
+    targets = [name for name in selected if name in servers]
+    action = str(args.action)
+    changed: list[str] = []
+
+    if action in {"disable", "enable"}:
+        expected = action == "enable"
+        for name in targets:
+            raw = servers.get(name)
+            if not isinstance(raw, dict):
+                continue
+            current = bool(raw.get("enabled", True))
+            if current == expected:
+                continue
+            raw["enabled"] = expected
+            changed.append(name)
+    elif action == "remove":
+        if not bool(getattr(args, "yes", False) or getattr(args, "confirm_yes", False)):
+            _print_json(
+                _error_payload(
+                    resource="mcp",
+                    action="batch",
+                    code="CONFIRMATION_REQUIRED",
+                    message="re-run with --yes for batch remove",
+                )
+            )
+            return EXIT_ARGS_ERROR
+        for name in targets:
+            if name in servers:
+                del servers[name]
+                changed.append(name)
+    else:
+        _print_json(
+            _error_payload(
+                resource="mcp",
+                action="batch",
+                code="BATCH_ACTION_INVALID",
+                message=f"unsupported batch action: {action}",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    _write_mcp_config(args.mcp_path, config)
+    items = _normalize_mcp_items(config or {})
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "mcp",
+            "action": "batch",
+            "batch_action": action,
+            "ok": True,
+            "config_path": str(Path(args.mcp_path).expanduser()),
+            "requested": selected,
+            "targets": targets,
+            "changed": changed,
+            "missing": missing,
+            "count": len(items),
+            "items": items,
+        }
+    )
+    return EXIT_SUCCESS
+
+
 def cmd_mcp_call(args: argparse.Namespace) -> int:
     config, error = _read_mcp_config(getattr(args, "mcp_path", _default_mcp_path()))
     if error:
@@ -2509,6 +2847,16 @@ def cmd_mcp_call(args: argparse.Namespace) -> int:
             )
         )
         return EXIT_NOT_FOUND
+    if not bool(raw_server.get("enabled", True)):
+        _print_json(
+            _error_payload(
+                resource="mcp",
+                action="call",
+                code="MCP_SERVER_DISABLED",
+                message=f"server is disabled: {args.server_name}",
+            )
+        )
+        return EXIT_CONFIG_ERROR
 
     transport = str(raw_server.get("transport") or ("stdio" if raw_server.get("command") else "http")).lower()
     endpoint = str(raw_server.get("url") or "")
@@ -4005,6 +4353,7 @@ def build_parser() -> argparse.ArgumentParser:
     skill_parser = subparsers.add_parser("skills", aliases=["skill"], help="Skill operations")
     skill_subparsers = skill_parser.add_subparsers(dest="skill_command", required=True)
     skill_list_parser = skill_subparsers.add_parser("list", help="List available tools/skills")
+    skill_list_parser.add_argument("--skills-path", default=_default_skills_path(), help="Skills root path")
     skill_list_parser.set_defaults(func=cmd_skill_list)
     skill_install_parser = skill_subparsers.add_parser("install", help="Install a local skill directory")
     skill_install_parser.add_argument("source", help="Local directory path containing SKILL.md")
@@ -4021,6 +4370,20 @@ def build_parser() -> argparse.ArgumentParser:
     skill_remove_parser.add_argument("--skills-path", default=_default_skills_path(), help="Skills root path")
     skill_remove_parser.add_argument("--yes", dest="confirm_yes", action="store_true", help="Skip confirmation prompts")
     skill_remove_parser.set_defaults(func=cmd_skills_remove)
+    skill_batch_parser = skill_subparsers.add_parser("batch", help="Batch enable/disable/remove skills")
+    skill_batch_parser.add_argument("--skills-path", default=_default_skills_path(), help="Skills root path")
+    skill_batch_parser.add_argument(
+        "--action",
+        choices=["enable", "disable", "remove"],
+        required=True,
+        help="Batch action",
+    )
+    skill_batch_parser.add_argument("--names", default=None, help="Comma-separated skill names")
+    skill_batch_parser.add_argument("--all", action="store_true", help="Select all installed skills")
+    skill_batch_parser.add_argument("--interactive", action="store_true", help="Select skills interactively")
+    skill_batch_parser.add_argument("--ignore-missing", action="store_true", help="Ignore missing names")
+    skill_batch_parser.add_argument("--yes", dest="confirm_yes", action="store_true", help="Skip confirmation prompts")
+    skill_batch_parser.set_defaults(func=cmd_skills_batch)
 
     tools_parser = subparsers.add_parser("tools", help="Builtin tool operations")
     tools_subparsers = tools_parser.add_subparsers(dest="tools_command", required=True)
@@ -4049,6 +4412,20 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_call_parser.add_argument("--args", default="{}", help="Tool args as JSON")
     mcp_call_parser.add_argument("--mcp-path", default=_default_mcp_path(), help="MCP config json path")
     mcp_call_parser.set_defaults(func=cmd_mcp_call)
+    mcp_batch_parser = mcp_subparsers.add_parser("batch", help="Batch enable/disable/remove MCP servers")
+    mcp_batch_parser.add_argument(
+        "--action",
+        choices=["enable", "disable", "remove"],
+        required=True,
+        help="Batch action",
+    )
+    mcp_batch_parser.add_argument("--names", default=None, help="Comma-separated server names")
+    mcp_batch_parser.add_argument("--all", action="store_true", help="Select all configured MCP servers")
+    mcp_batch_parser.add_argument("--interactive", action="store_true", help="Select MCP servers interactively")
+    mcp_batch_parser.add_argument("--ignore-missing", action="store_true", help="Ignore missing names")
+    mcp_batch_parser.add_argument("--yes", dest="confirm_yes", action="store_true", help="Skip confirmation prompts")
+    mcp_batch_parser.add_argument("--mcp-path", default=_default_mcp_path(), help="MCP config json path")
+    mcp_batch_parser.set_defaults(func=cmd_mcp_batch)
 
     memory_parser = subparsers.add_parser("memory", help="Memory operations")
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
