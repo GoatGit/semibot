@@ -22,7 +22,7 @@ from src.events.event_store import EventStore
 from src.events.models import Event
 from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.events.runtime_action_executor import RuntimeActionExecutor
-from src.local_runtime import run_task_once
+from src.runtime_service import run_task_once
 from src.server.feishu import (
     maybe_url_verification,
     normalize_message_event,
@@ -66,10 +66,18 @@ class RunTaskRequest(BaseModel):
     system_prompt: str | None = None
 
 
-class ChatRequest(BaseModel):
+class ChatStartRequest(BaseModel):
     message: str
     agent_id: str = "semibot"
     session_id: str | None = None
+    model: str | None = None
+    system_prompt: str | None = None
+    stream: bool = False
+
+
+class ChatSessionRequest(BaseModel):
+    message: str
+    agent_id: str = "semibot"
     model: str | None = None
     system_prompt: str | None = None
     stream: bool = False
@@ -387,38 +395,45 @@ def create_app(
         )
         return {"task": req.task, **result}
 
-    @app.post("/v1/chat")
-    async def chat(req: ChatRequest):
-        if not req.stream:
+    async def _chat_response(
+        *,
+        message: str,
+        agent_id: str,
+        session_id: str | None,
+        model: str | None,
+        system_prompt: str | None,
+        stream: bool,
+    ):
+        if not stream:
             result = await run_task_once(
-                task=req.message,
+                task=message,
                 db_path=db,
                 rules_path=rules,
-                agent_id=req.agent_id,
-                session_id=req.session_id,
-                model=req.model,
-                system_prompt=req.system_prompt,
+                agent_id=agent_id,
+                session_id=session_id,
+                model=model,
+                system_prompt=system_prompt,
             )
             return {
-                "message": req.message,
+                "message": message,
                 **result,
             }
 
         async def _stream():
             start = {
                 "event": "start",
-                "session_id": req.session_id,
-                "agent_id": req.agent_id,
+                "session_id": session_id,
+                "agent_id": agent_id,
             }
             yield f"data: {json.dumps(start, ensure_ascii=False)}\n\n"
             result = await run_task_once(
-                task=req.message,
+                task=message,
                 db_path=db,
                 rules_path=rules,
-                agent_id=req.agent_id,
-                session_id=req.session_id,
-                model=req.model,
-                system_prompt=req.system_prompt,
+                agent_id=agent_id,
+                session_id=session_id,
+                model=model,
+                system_prompt=system_prompt,
             )
             for event in result.get("runtime_events", []):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -433,6 +448,28 @@ def create_app(
             yield f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    @app.post("/api/v1/chat/start")
+    async def chat_start(req: ChatStartRequest):
+        return await _chat_response(
+            message=req.message,
+            agent_id=req.agent_id,
+            session_id=req.session_id,
+            model=req.model,
+            system_prompt=req.system_prompt,
+            stream=req.stream,
+        )
+
+    @app.post("/api/v1/chat/sessions/{session_id}")
+    async def chat_in_session(session_id: str, req: ChatSessionRequest):
+        return await _chat_response(
+            message=req.message,
+            agent_id=req.agent_id,
+            session_id=session_id,
+            model=req.model,
+            system_prompt=req.system_prompt,
+            stream=req.stream,
+        )
 
     @app.post("/v1/webhooks/{event_type}")
     async def ingest_webhook(event_type: str, request: Request) -> dict[str, Any]:

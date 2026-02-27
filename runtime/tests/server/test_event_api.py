@@ -295,13 +295,16 @@ async def test_event_api_chat_endpoint(tmp_path: Path, monkeypatch):
     app = create_app(db_path=str(db_path), rules_path=str(rules_path))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        non_stream = await client.post("/v1/chat", json={"message": "你好"})
+        non_stream = await client.post("/api/v1/chat/start", json={"message": "你好"})
         assert non_stream.status_code == 200
         payload = non_stream.json()
         assert payload["status"] == "completed"
         assert payload["final_response"] == "你好，我已完成。"
 
-        stream = await client.post("/v1/chat", json={"message": "你好", "stream": True})
+        stream = await client.post(
+            "/api/v1/chat/sessions/sess_fixed",
+            json={"message": "你好", "stream": True},
+        )
         assert stream.status_code == 200
         assert "text/event-stream" in stream.headers.get("content-type", "")
         text = stream.text
