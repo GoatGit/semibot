@@ -155,6 +155,54 @@ async def test_feishu_card_action_resolves_approval(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_feishu_text_reply_resolves_approval(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        feishu_verify_token="token_123",
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        emit_resp = await client.post(
+            "/v1/events",
+            json={"event_type": "fund.transfer", "payload": {"amount": 12000}, "source": "test"},
+        )
+        assert emit_resp.status_code == 200
+        pending = await client.get("/v1/approvals?status=pending")
+        approval_id = pending.json()["items"][0]["approval_id"]
+
+        reply = await client.post(
+            "/v1/integrations/feishu/events",
+            json={
+                "token": "token_123",
+                "header": {"event_id": "evt_reply_001", "event_type": "im.message.receive_v1"},
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_reviewer"}},
+                    "message": {
+                        "message_id": "om_reply_001",
+                        "chat_id": "oc_group_001",
+                        "chat_type": "group",
+                        "message_type": "text",
+                        "content": json.dumps({"text": f"同意 {approval_id}"}, ensure_ascii=False),
+                    },
+                },
+            },
+        )
+        assert reply.status_code == 200
+        payload = reply.json()
+        assert payload["accepted"] is True
+        assert payload["approval_command"]["resolved"] is True
+        assert payload["approval_command"]["status"] == "approved"
+
+        approved = await client.get("/v1/approvals?status=approved")
+        assert approved.status_code == 200
+        assert len(approved.json()["items"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_feishu_outbound_test_endpoint(tmp_path: Path):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"

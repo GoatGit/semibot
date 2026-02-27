@@ -30,6 +30,7 @@ from src.server.feishu import (
     parse_card_action,
     verify_callback_token,
 )
+from src.server.approval_text import extract_message_text, parse_approval_text_command
 from src.server.feishu_notifier import FeishuNotifier, SendFn
 from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
@@ -167,6 +168,120 @@ def create_app(
             }
         payload = queue_events[0].payload
         return payload if isinstance(payload, dict) else {}
+
+    def _serialize_approval(item: Any) -> dict[str, Any]:
+        context = item.context if isinstance(getattr(item, "context", None), dict) else {}
+        return {
+            "approval_id": item.approval_id,
+            "rule_id": item.rule_id,
+            "event_id": item.event_id,
+            "risk_level": item.risk_level,
+            "status": item.status,
+            "created_at": item.created_at.isoformat(),
+            "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+            "context": context,
+            "tool_name": context.get("tool_name"),
+            "action": context.get("action"),
+            "target": context.get("target"),
+            "summary": context.get("summary"),
+        }
+
+    def _approval_matches_subject(item: Any, subject: str | None) -> bool:
+        if not subject:
+            return False
+        context = item.context if isinstance(getattr(item, "context", None), dict) else {}
+        candidates = {
+            str(subject),
+            str(context.get("session_id") or ""),
+            str(context.get("subject") or ""),
+            str(context.get("chat_id") or ""),
+            str(context.get("thread_id") or ""),
+        }
+        return str(subject) in candidates
+
+    async def _handle_text_approval_command(
+        *,
+        text: str,
+        source: str,
+        subject: str | None,
+        trace_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        parsed = parse_approval_text_command(text)
+        kind = str(parsed.get("kind") or "none")
+        if kind == "none":
+            return None
+
+        pending = engine.list_approvals(status="pending", limit=500)
+        scoped_pending = [item for item in pending if _approval_matches_subject(item, subject)]
+        candidate_pool = scoped_pending or pending
+
+        if kind == "list":
+            return {
+                "command": kind,
+                "recognized": True,
+                "resolved": False,
+                "resolved_count": 0,
+                "pending_count": len(candidate_pool),
+                "scope": "subject" if scoped_pending else "global",
+            }
+
+        decision = "approved" if kind in {"approve", "approve_all"} else "rejected"
+        target_ids: list[str] = []
+        requested_id = parsed.get("approval_id")
+        if isinstance(requested_id, str) and requested_id:
+            target_ids = [requested_id]
+        elif kind in {"approve_all", "reject_all"}:
+            target_ids = [item.approval_id for item in candidate_pool]
+        elif candidate_pool:
+            # pick latest pending approval in scope when id is omitted.
+            target_ids = [candidate_pool[-1].approval_id]
+
+        if not target_ids:
+            return {
+                "command": kind,
+                "recognized": True,
+                "resolved": False,
+                "resolved_count": 0,
+                "pending_count": len(candidate_pool),
+                "scope": "subject" if scoped_pending else "global",
+                "reason": "no_pending_approval_found",
+            }
+
+        resolved_items: list[Any] = []
+        for approval_id in target_ids:
+            resolved = await engine.resolve_approval(approval_id, decision)
+            if resolved:
+                resolved_items.append(resolved)
+
+        approval_action_event = Event(
+            event_id=f"evt_approval_action_{uuid4().hex}",
+            event_type="approval.action",
+            source=source,
+            subject=subject or (target_ids[0] if target_ids else None),
+            payload={
+                "command": kind,
+                "decision": decision,
+                "approval_ids": target_ids,
+                "resolved_count": len(resolved_items),
+                "scope": "subject" if scoped_pending else "global",
+                "text": text,
+                "raw": trace_payload or {},
+            },
+            risk_hint="low",
+            timestamp=datetime.now(UTC),
+        )
+        await engine.emit(approval_action_event)
+
+        return {
+            "command": kind,
+            "recognized": True,
+            "resolved": len(resolved_items) > 0,
+            "resolved_count": len(resolved_items),
+            "approval_ids": [item.approval_id for item in resolved_items],
+            "status": decision,
+            "scope": "subject" if scoped_pending else "global",
+            "event_id": approval_action_event.event_id,
+        }
 
     def _encode_cursor(created_at: str, event_id: str) -> str:
         raw = f"{created_at}|{event_id}".encode()
@@ -722,10 +837,21 @@ def create_app(
             timestamp=datetime.now(UTC),
         )
         outcomes = await engine.emit(event)
+        approval_command = None
+        if event_type == "chat.message.received":
+            text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
+            if text:
+                approval_command = await _handle_text_approval_command(
+                    text=text,
+                    source=str(event.source or "webhook"),
+                    subject=str(event.subject) if isinstance(event.subject, str) else None,
+                    trace_payload=event.payload if isinstance(event.payload, dict) else {},
+                )
         return {
             "event_id": event.event_id,
             "event_type": event.event_type,
             "matched_rules": len(outcomes),
+            "approval_command": approval_command,
         }
 
     @app.post("/v1/system/heartbeat")
@@ -774,11 +900,21 @@ def create_app(
             timestamp=datetime.now(UTC),
         )
         outcomes = await engine.emit(event)
+        approval_command = None
+        text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
+        if text:
+            approval_command = await _handle_text_approval_command(
+                text=text,
+                source="feishu.gateway",
+                subject=str(event.subject) if isinstance(event.subject, str) else None,
+                trace_payload=payload,
+            )
         return {
             "accepted": True,
             "event_id": event.event_id,
             "event_type": event.event_type,
             "matched_rules": len(outcomes),
+            "approval_command": approval_command,
         }
 
     @app.post("/v1/integrations/feishu/card-actions")
@@ -901,20 +1037,7 @@ def create_app(
         limit: int = Query(default=50, ge=1, le=500),
     ) -> dict[str, Any]:
         items = engine.list_approvals(status=status, limit=limit)
-        return {
-            "items": [
-                {
-                    "approval_id": item.approval_id,
-                    "rule_id": item.rule_id,
-                    "event_id": item.event_id,
-                    "risk_level": item.risk_level,
-                    "status": item.status,
-                    "created_at": item.created_at.isoformat(),
-                    "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
-                }
-                for item in items
-            ]
-        }
+        return {"items": [_serialize_approval(item) for item in items]}
 
     @app.get("/v1/metrics/events")
     async def event_metrics(since: str | None = Query(default=None)) -> dict[str, Any]:

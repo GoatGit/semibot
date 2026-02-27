@@ -15,21 +15,28 @@
     "submit": "Submit",
     "reset": "Reset",
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "refresh": "Refresh"
   },
   "nav": {
     "dashboard": "Dashboard",
     "agents": "Agents",
     "sessions": "Sessions",
+    "events": "Events",
+    "rules": "Rules",
+    "approvals": "Approvals",
     "skills": "Skills",
     "tools": "Tools",
+    "config": "Config",
     "settings": "Settings",
     "logs": "Logs",
     "apiKeys": "API Keys",
     "mcpServers": "MCP Servers",
     "webhooks": "Webhooks",
     "memory": "Memory",
-    "evolution": "Evolution"
+    "evolution": "Evolution",
+    "language": "Language",
+    "switchLanguage": "Switch language"
   },
   "auth": {
     "login": "Login",
@@ -44,6 +51,7 @@
     "name": "Name",
     "description": "Description",
     "systemPrompt": "System Prompt",
+    "runtimeEngine": "Runtime Engine",
     "model": "Model",
     "status": "Status",
     "active": "Active",
@@ -79,5 +87,874 @@
     "minLength": "Minimum {min} characters",
     "maxLength": "Maximum {max} characters",
     "invalidUrl": "Please enter a valid URL"
+  },
+  "mcp": {
+    "title": "MCP Servers",
+    "subtitle": "Manage MCP servers to provide external tools and resources for agents",
+    "addServer": "Add Server",
+    "searchPlaceholder": "Search servers...",
+    "system": "System",
+    "noDescription": "No description",
+    "testAndSync": "Test & Sync",
+    "transport": {
+      "stdio": {
+        "description": "Local command process for locally installed MCP servers"
+      },
+      "sse": {
+        "description": "Connect remote MCP server via Server-Sent Events (legacy protocol)"
+      },
+      "streamableHttp": {
+        "description": "Connect remote MCP server via Streamable HTTP (recommended)"
+      }
+    },
+    "form": {
+      "transport": "Transport",
+      "name": "Name",
+      "namePlaceholder": "e.g. filesystem, github, time",
+      "description": "Description",
+      "descriptionPlaceholder": "Briefly describe this MCP server",
+      "optional": "(optional)",
+      "systemMcp": "Set as system MCP (visible to all)",
+      "endpointLabel": {
+        "command": "Command"
+      },
+      "endpointHint": {
+        "command": "Enter full executable command with args, e.g. uvx mcp-server-time --local-timezone=Asia/Shanghai",
+        "sse": "Enter MCP Server SSE endpoint URL, usually ending with /sse (legacy servers)",
+        "streamableHttp": "Enter MCP Server HTTP endpoint URL, usually ending with /mcp. Recommended MCP remote transport"
+      },
+      "apiKeyHint": {
+        "stdio": "Optional. Passed to subprocess via MCP_API_KEY env",
+        "http": "Optional. Sent as Authorization: Bearer <key> header"
+      }
+    },
+    "status": {
+      "connected": "Connected",
+      "connecting": "Connecting",
+      "error": "Connection failed",
+      "disconnected": "Disconnected"
+    },
+    "tools": {
+      "notSynced": "Tools list not synced yet, click \"Sync\"",
+      "count": "{count} tools"
+    },
+    "resources": {
+      "count": "{count} resources"
+    },
+    "error": {
+      "load": "Failed to load MCP servers",
+      "create": "Failed to create MCP server",
+      "delete": "Failed to delete MCP server",
+      "test": "Connection test failed",
+      "update": "Failed to update MCP server",
+      "batchTest": "Batch test completed, {failed}/{total} servers failed",
+      "batchDelete": "Batch delete completed, {failed}/{total} servers failed"
+    },
+    "batch": {
+      "selectAllVisible": "Select current list",
+      "selectedCount": "{count} MCP selected",
+      "testAndSync": "Batch test & sync",
+      "delete": "Batch delete"
+    },
+    "confirm": {
+      "batchDelete": "Delete selected {count} MCP servers?"
+    },
+    "empty": {
+      "filteredTitle": "No matching servers found",
+      "filteredDescription": "Try adjusting your search",
+      "clearSearch": "Clear search",
+      "defaultTitle": "No MCP servers yet",
+      "defaultDescription": "Add your first MCP server to get started"
+    },
+    "modal": {
+      "addTitle": "Add MCP Server",
+      "editTitle": "Edit MCP Server"
+    }
+  },
+  "config": {
+    "header": {
+      "title": "Configuration",
+      "subtitle": "Manage LLM, tools, API keys and webhooks in one place."
+    },
+    "loading": "Loading configuration...",
+    "common": {
+      "notSet": "Not set"
+    },
+    "status": {
+      "available": "Available",
+      "configured": "Configured",
+      "notConfigured": "Not configured",
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "errors": {
+      "llmLoad": "Failed to load LLM configuration",
+      "runtimeToolsLoad": "Failed to read runtime built-in tools",
+      "toolsConfigLoad": "Failed to load tool config (runtime tools are shown)",
+      "toolsLoad": "Failed to load tools list",
+      "apiKeysLoad": "Failed to load API key list",
+      "webhooksLoad": "Failed to load webhook list",
+      "saveDefaultModel": "Failed to save default model config",
+      "saveProvider": "Failed to save provider config",
+      "timeoutInvalid": "timeout must be an integer >= 1000 (ms)",
+      "apiEndpointInvalid": "apiEndpoint must be a valid URL",
+      "maxReadBytesInvalid": "maxReadBytes must be a positive integer",
+      "maxTextLengthInvalid": "maxTextLength must be between 100 and 500000",
+      "missingToolId": "Missing tool ID, unable to save",
+      "updateToolConfig": "Failed to update tool config",
+      "updateToolStatus": "Failed to update tool status",
+      "createApiKey": "Failed to create API key",
+      "deleteApiKey": "Failed to delete API key",
+      "webhookUrlInvalid": "Webhook URL must be an http(s) address",
+      "webhookSecretMin": "Webhook secret must be at least {min} characters",
+      "webhookEventRequired": "At least one event is required",
+      "createWebhook": "Failed to create webhook",
+      "updateWebhook": "Failed to update webhook",
+      "testWebhook": "Failed to test webhook",
+      "deleteWebhook": "Failed to delete webhook"
+    },
+    "confirm": {
+      "deleteApiKey": "Delete this API key? This action cannot be undone.",
+      "deleteWebhook": "Delete this webhook? This action cannot be undone."
+    },
+    "llm": {
+      "routingDefaults": "Model routing defaults",
+      "saveRouting": "Save routing defaults",
+      "providerConfig": "Provider configuration",
+      "viewModels": "View models"
+    },
+    "tools": {
+      "activeCount": "Active {count}",
+      "configTitle": "Tool configuration (toggle & params only)",
+      "loading": "Loading tools...",
+      "empty": "No tool config data (V2 does not support add/delete tools)",
+      "risk": "Risk",
+      "approval": "Approval",
+      "approvalScope": "Scope",
+      "on": "On",
+      "off": "Off",
+      "builtIn": "Built-in",
+      "configure": "Configure",
+      "disable": "Disable",
+      "enable": "Enable"
+    },
+    "apiKeys": {
+      "newKey": "New Key",
+      "loading": "Loading API keys...",
+      "empty": "No API keys",
+      "lastUsed": "Last used",
+      "expires": "Expires"
+    },
+    "webhooks": {
+      "newWebhook": "New Webhook",
+      "loading": "Loading webhooks...",
+      "empty": "No webhooks",
+      "events": "Events",
+      "createdAt": "Created at"
+    },
+    "modals": {
+      "provider": {
+        "title": "Edit LLM provider",
+        "apiKeyPlaceholder": "New API key (leave empty to keep unchanged)",
+        "clearApiKey": "Clear existing API key"
+      },
+      "tool": {
+        "title": "Tool configuration",
+        "description": "V2 only supports built-in tool params and enable/disable; rename/type change and add/delete are not supported.",
+        "namePlaceholder": "Tool name",
+        "typePlaceholder": "Tool type",
+        "timeoutPlaceholder": "timeout ms (optional, >=1000)",
+        "hitl": "Require HITL approval for high-risk actions",
+        "riskLevel": "Risk level",
+        "approvalScope": "Approval grouping scope",
+        "approvalScopeHint": "Controls how similar approvals are grouped to reduce noise.",
+        "approvalDedupeKeysPlaceholder": "approvalDedupeKeys (optional, comma-separated, e.g. url,selector)",
+        "approvalScopes": {
+          "session": "Group by session (recommended)",
+          "sessionAction": "Group by session + action",
+          "action": "Group by action",
+          "target": "Group by action + target",
+          "tool": "Group by tool",
+          "call": "Per call"
+        },
+        "apiEndpointPlaceholder": "API endpoint (optional)",
+        "apiKeyPlaceholder": "API key (leave empty to keep unchanged)",
+        "noApiNeeded": "{tool} does not require API endpoint / API key.",
+        "rootPathPlaceholder": "Root path (optional, e.g. /Users/xxx)",
+        "maxReadBytesPlaceholder": "maxReadBytes (optional, positive integer)",
+        "browser": {
+          "headless": "Run browser in headless mode",
+          "allowLocalhost": "Allow localhost / internal network access",
+          "browserType": "Browser type",
+          "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. example.com,news.ycombinator.com)",
+          "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxTextLengthPlaceholder": "maxTextLength (optional, 100-500000)"
+        }
+      },
+      "apiKey": {
+        "title": "Create API key",
+        "description": "The full key is shown only once.",
+        "namePlaceholder": "Key name"
+      },
+      "webhook": {
+        "title": "Create webhook",
+        "description": "Use comma-separated events, at least one event required.",
+        "secretPlaceholder": "secret (at least 16 characters)"
+      },
+      "createdKey": {
+        "title": "API key created",
+        "description": "Save it now. It will not be shown again after closing.",
+        "saved": "Saved",
+        "fullKey": "Full key"
+      }
+    }
+  },
+  "events": {
+    "title": "Event Center",
+    "subtitle": "Inspect triggered events, matching results, and replay single events.",
+    "filterPlaceholder": "Filter by event type (e.g. task.completed)",
+    "apiUnavailable": "Event APIs are not connected yet. Please implement `/v1/events` and `/v1/events/replay`.",
+    "riskLabel": "Risk",
+    "unknown": "unknown",
+    "details": "Details",
+    "replay": "Replay",
+    "empty": "No events found",
+    "detailsTitle": "Event Details",
+    "error": {
+      "replay": "Replay failed"
+    },
+    "source": "source",
+    "time": "time",
+    "subject": "subject",
+    "truncated": " ..."
+  },
+  "approvals": {
+    "title": "Approval Center",
+    "subtitle": "Review high-risk actions before execution.",
+    "pending": "Pending",
+    "total": "Total",
+    "approve": "Approve",
+    "reject": "Reject",
+    "empty": "No approvals",
+    "unknownEvent": "unknown event",
+    "status": {
+      "all": "All status",
+      "pending": "pending",
+      "approved": "approved",
+      "rejected": "rejected",
+      "expired": "expired"
+    },
+    "error": {
+      "action": "Approval action failed"
+    },
+    "apiUnavailablePrefix": "Approval APIs are not connected yet. Please implement",
+    "and": "and",
+    "period": ".",
+    "risk": "Risk",
+    "riskLevel": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  "toolsPage": {
+    "title": "Tools Center",
+    "subtitle": "Unified tool view: built-in tools can be enabled/disabled and configured.",
+    "openConfig": "Open Configuration",
+    "configTitle": "Tool Configuration",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "builtin": "Built-in",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "empty": "No tool configuration yet (V2 does not support add/delete).",
+    "runtimeUnavailable": "Runtime unavailable",
+    "error": {
+      "load": "Failed to load tools data. Please check API and Runtime."
+    },
+    "stats": {
+      "total": "Total Tools",
+      "enabled": "Enabled",
+      "runtimeConnected": "Runtime Connected"
+    }
+  },
+  "rules": {
+    "title": "Rule Management",
+    "subtitle": "Configure event policies for reminders, suggestions and automation.",
+    "enabled": "Enabled",
+    "new": "New Rule",
+    "edit": "Edit Rule",
+    "disable": "Disable",
+    "enable": "Enable",
+    "empty": "No rules yet. Create one to start.",
+    "apiUnavailable": "Rules API is not connected yet. Please implement `/v1/rules`.",
+    "createDescription": "Create an event trigger rule",
+    "updateDescription": "Update rule settings",
+    "actionMode": {
+      "ask": "ask (confirm first)",
+      "suggest": "suggest (recommend)",
+      "auto": "auto (run automatically)",
+      "skip": "skip"
+    },
+    "error": {
+      "requiredFields": "Please fill rule name and event type",
+      "save": "Failed to save rule",
+      "updateStatus": "Failed to update rule status"
+    },
+    "form": {
+      "ruleName": "Rule name",
+      "eventType": "Event type (e.g. tool.exec.failed)",
+      "priority": "priority",
+      "dedupe": "dedupe(s)",
+      "cooldown": "cooldown(s)",
+      "budgetPerDay": "budget/day"
+    },
+    "status": {
+      "active": "active",
+      "inactive": "inactive"
+    },
+    "actionType": {
+      "notify": "notify",
+      "runAgent": "run_agent",
+      "executePlan": "execute_plan",
+      "writeMemory": "write_memory"
+    },
+    "risk": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    },
+    "meta": {
+      "dedupe": "dedupe",
+      "cooldown": "cooldown",
+      "budgetPerDay": "budget/day"
+    }
+  },
+  "chatLayout": {
+    "newChat": "New Chat",
+    "refresh": "Refresh",
+    "noSessions": "No sessions",
+    "untitled": "Untitled chat"
+  },
+  "agents": {
+    "new": "New Agent",
+    "searchPlaceholder": "Search agents...",
+    "system": "System",
+    "noDescription": "No description",
+    "createdOn": "Created on",
+    "header": {
+      "prefix": "Manage your AI agents,",
+      "suffix": ""
+    },
+    "filter": {
+      "all": "All",
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "pagination": {
+      "label": "Pagination",
+      "prev": "Prev",
+      "next": "Next"
+    },
+    "action": {
+      "disable": "Disable",
+      "enable": "Enable"
+    },
+    "empty": {
+      "filteredTitle": "No matching agents",
+      "filteredDescription": "Try adjusting search or filters",
+      "clearFilters": "Clear filters",
+      "defaultTitle": "No agents yet",
+      "defaultDescription": "Create your first AI agent to get started"
+    },
+    "error": {
+      "load": "Load failed, please retry",
+      "nameRequired": "Name is required",
+      "modelRequired": "Please select a model",
+      "save": "Save failed, please retry",
+      "toggle": "Failed to change status",
+      "delete": "Delete failed, please retry"
+    },
+    "toast": {
+      "created": "Created successfully",
+      "deleted": "Deleted"
+    },
+    "modal": {
+      "createTitle": "Create Agent",
+      "editTitle": "Edit Agent",
+      "namePlaceholder": "Agent name",
+      "modelsLoadFailed": "Failed to load models, please check backend APIs",
+      "noModels": "No model available, check LLM Provider config",
+      "selectModel": "Select a model",
+      "systemPromptPlaceholder": "System prompt"
+    },
+    "deleteModal": {
+      "title": "Delete Agent",
+      "description": "Deleting \"{name}\" cannot be undone."
+    }
+  },
+  "agentsDetail": {
+    "createTitle": "Create Agent",
+    "editTitle": "Edit Agent",
+    "basicConfig": "Basic Configuration",
+    "basicConfigDescription": "Save agent settings via live API",
+    "current": "Current",
+    "currentModelNotInList": "{model} (not in available list)",
+    "namePlaceholder": "Enter agent name",
+    "descriptionPlaceholder": "Enter description",
+    "selectModel": "Select a model",
+    "noModels": "No models available",
+    "systemPromptPlaceholder": "Enter system prompt",
+    "skillsTitle": "Skills",
+    "skillsDescription": "Select skills available to this agent",
+    "loadingSkills": "Loading skills...",
+    "noSkills": "No available skills",
+    "builtin": "Built-in",
+    "mcpTitle": "MCP Servers",
+    "mcpDescription": "Select MCP servers available to this agent",
+    "loadingMcp": "Loading MCP servers...",
+    "noMcp": "No available MCP server",
+    "system": "System",
+    "error": {
+      "load": "Failed to load agent, please retry later",
+      "nameRequired": "Name is required",
+      "modelRequired": "Please select a model",
+      "createFailed": "Create failed",
+      "updateFailed": "Update failed",
+      "save": "Save failed, please retry later"
+    }
+  },
+  "chatNew": {
+    "title": "Start New Chat",
+    "subtitle": "Select an agent, or type your question to start chatting",
+    "chooseAgent": "Choose Agent",
+    "smartAssistant": "Smart AI assistant",
+    "quickStart": "Quick Start",
+    "inputPlaceholder": "Describe your question or task...",
+    "selectedPrefix": "Selected:",
+    "startChat": "Start Chat",
+    "suggestionsTitle": "Try These Prompts",
+    "system": "System",
+    "defaultMessage": "Hi, please introduce yourself.",
+    "templates": {
+      "general": {
+        "name": "General Assistant",
+        "description": "Multi-purpose AI assistant for everyday tasks"
+      },
+      "code": {
+        "name": "Code Assistant",
+        "description": "Focused on coding and code review tasks"
+      },
+      "research": {
+        "name": "Research Assistant",
+        "description": "Search, organize, and analyze information"
+      },
+      "data": {
+        "name": "Data Analyst",
+        "description": "Data processing, visualization, and insights"
+      },
+      "creative": {
+        "name": "Creative Writer",
+        "description": "Copywriting, content generation, and editing"
+      }
+    },
+    "suggestions": {
+      "item1": "Analyze this sales data and generate a report",
+      "item2": "Build a React component for file upload",
+      "item3": "Search latest AI industry news and summarize",
+      "item4": "Optimize the performance of this Python code"
+    },
+    "warning": {
+      "noAvailableAgent": "No available agent loaded. Unable to start chat.",
+      "goCreateAgent": "Create or enable an agent"
+    },
+    "error": {
+      "noAvailableAgent": "No available agent loaded. Please create or enable an agent first.",
+      "selectAgent": "Please select an agent first.",
+      "createSession": "Failed to create session"
+    }
+  },
+  "chatSession": {
+    "loadingSession": "Loading session...",
+    "newChat": "New chat",
+    "backToChats": "Back to chats",
+    "sessionLabel": "Session",
+    "new": "New",
+    "welcome": "Hi! I am your AI assistant. How can I help you today?",
+    "pendingApprovals": "Pending approvals",
+    "risk": "Risk",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approveAll": "Approve all",
+    "rejectAll": "Reject all",
+    "bulkDone": "Bulk {action} completed for {count} approvals.",
+    "moreApprovalsHint": "{count} more approvals hidden. Use approve-all/reject-all.",
+    "approvalHint": "After approval, blocked tasks will resume automatically.",
+    "sendFailed": "Send failed",
+    "addAttachment": "Add attachment",
+    "inputPlaceholder": "Type your question...",
+    "voiceInput": "Voice input",
+    "stop": "Stop",
+    "send": "Send",
+    "keyboardHint": "Press Enter to send, Shift + Enter for new line",
+    "messageStatus": {
+      "sending": "Sending...",
+      "sent": "Sent",
+      "failed": "Send failed"
+    },
+    "error": {
+      "loadApprovals": "Failed to load approvals",
+      "bulkApproval": "Bulk approval failed",
+      "loadSession": "Failed to load session",
+      "messageWithReason": "Sorry, an error occurred: {message}"
+    }
+  },
+  "dashboard": {
+    "subtitle": "A digital employee that executes, reminds, collaborates, and keeps improving.",
+    "cards": {
+      "agents": {
+        "label": "Agents",
+        "hint": "available agents"
+      },
+      "sessions": {
+        "label": "Sessions",
+        "hint": "active {count}"
+      },
+      "mcp": {
+        "hint": "external integrations"
+      },
+      "skills": {
+        "hint": "skill definitions"
+      },
+      "events": {
+        "label": "Events",
+        "hint": "pending approvals {count}"
+      }
+    },
+    "recentSessions": {
+      "title": "Recent Sessions",
+      "viewAll": "View all",
+      "empty": "No sessions yet. Create your first chat task."
+    },
+    "quickLinks": {
+      "title": "Quick Links",
+      "note": "Current interface is switched to the new navigation IA.",
+      "items": {
+        "newChat": {
+          "title": "New Chat",
+          "desc": "Create session and ask immediately"
+        },
+        "agents": {
+          "title": "Manage Agents",
+          "desc": "Create, edit and enable/disable agents"
+        },
+        "events": {
+          "title": "Event Center",
+          "desc": "Review triggered events and replay"
+        },
+        "rules": {
+          "title": "Rule Management",
+          "desc": "Configure reminder/suggest/auto strategies"
+        },
+        "approvals": {
+          "title": "Approval Center",
+          "desc": "Handle high-risk approvals"
+        },
+        "tools": {
+          "title": "Tools",
+          "desc": "View runtime and DB tools"
+        },
+        "config": {
+          "title": "Configuration",
+          "desc": "Model, tool and webhook settings"
+        },
+        "mcp": {
+          "title": "MCP Integrations",
+          "desc": "Connect external tools and resources"
+        }
+      }
+    },
+    "recentEvents": {
+      "title": "Recent Events",
+      "open": "Open Event Center",
+      "empty": "No events yet"
+    },
+    "error": {
+      "coreData": "Failed to load dashboard core data. Please check API service.",
+      "load": "Load failed"
+    }
+  },
+  "skillDefinitions": {
+    "title": "Skill Management",
+    "subtitlePrefix": "Manage skill definitions,",
+    "subtitleSuffix": "",
+    "create": "Create Skill",
+    "searchPlaceholder": "Search by skill name, ID, or description...",
+    "builtin": "Built-in",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "noDescription": "No description",
+    "category": "Category:",
+    "install": "Install",
+    "empty": {
+      "filteredTitle": "No matching skills found",
+      "filteredDescription": "Try adjusting your search query",
+      "clearSearch": "Clear search",
+      "defaultTitle": "No skill definitions yet",
+      "defaultDescription": "Create your first skill definition to get started"
+    },
+    "installModal": {
+      "title": "Install Skill",
+      "sourceType": "Source Type *",
+      "sourceUrl": "Source URL *"
+    },
+    "editModal": {
+      "title": "Edit Skill Definition",
+      "name": "Name *",
+      "builtinHint": "Mark as built-in skill (visible to all orgs)"
+    },
+    "error": {
+      "load": "Failed to load skill definitions",
+      "install": "Install failed",
+      "delete": "Delete failed",
+      "update": "Update failed"
+    }
+  },
+  "skillsPage": {
+    "title": "Skill Management",
+    "subtitlePrefix": "Manage skill definitions,",
+    "subtitleSuffix": "",
+    "create": "Create Skill",
+    "searchPlaceholder": "Search skill name, ID or description...",
+    "emptyTitle": "No matching skills found",
+    "emptyDescription": "Try adjusting the search query",
+    "noDescription": "No description",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "createDescription": "Upload a package containing SKILL.md to create and install a skill automatically.",
+    "packageLabel": "Package file *",
+    "packageHint": "Supports .zip, .tar.gz, .tgz up to 100MB. Package must include SKILL.md.",
+    "uploadAndCreate": "Upload & Create",
+    "batch": {
+      "selectAllVisible": "Select current list",
+      "selectedCount": "{count} skills selected",
+      "enable": "Batch enable",
+      "disable": "Batch disable",
+      "delete": "Batch delete"
+    },
+    "confirm": {
+      "delete": "Delete skill \"{name}\"? This action cannot be undone.",
+      "batchDelete": "Delete selected {count} skills? This action cannot be undone."
+    },
+    "error": {
+      "load": "Failed to load skill definitions",
+      "create": "Failed to create skill",
+      "toggle": "Failed to change status",
+      "delete": "Delete failed",
+      "batchToggle": "Batch operation completed, {failed}/{total} skills failed to update",
+      "batchDelete": "Batch delete completed, {failed}/{total} skills failed to delete"
+    }
+  },
+  "dashboardError": {
+    "title": "Something went wrong",
+    "message": "Failed to load page. Please try again later.",
+    "errorId": "Error ID",
+    "backHome": "Back to home"
+  },
+  "settings": {
+    "title": "Personal Settings",
+    "subtitle": "Manage profile, account security, and UI preferences.",
+    "platformConfig": "Platform Config",
+    "sections": {
+      "profile": "Profile",
+      "password": "Password",
+      "preferences": "Preferences"
+    },
+    "profile": {
+      "title": "Profile",
+      "subtitle": "From live `/users/me` API",
+      "username": "Username",
+      "avatarUrl": "Avatar URL",
+      "saveChanges": "Save Changes",
+      "success": {
+        "saved": "Saved"
+      },
+      "error": {
+        "load": "Failed to load profile",
+        "save": "Failed to save"
+      }
+    },
+    "password": {
+      "title": "Change Password",
+      "subtitle": "Update your login password",
+      "currentPassword": "Current Password",
+      "newPassword": "New Password",
+      "confirmPassword": "Confirm New Password",
+      "currentPasswordPlaceholder": "Enter current password",
+      "newPasswordPlaceholder": "At least 8 characters",
+      "confirmPasswordPlaceholder": "Re-enter new password",
+      "changePassword": "Change Password",
+      "success": {
+        "changed": "Password changed"
+      },
+      "error": {
+        "required": "Please fill in all fields",
+        "minLength": "New password must be at least 8 characters",
+        "mismatch": "New passwords do not match",
+        "changeFailed": "Failed to change password"
+      }
+    },
+    "preferences": {
+      "title": "Preferences",
+      "subtitle": "From live `/users/preferences` API",
+      "theme": "Theme",
+      "language": "Language",
+      "themeOptions": {
+        "dark": "Dark",
+        "light": "Light",
+        "system": "System"
+      },
+      "languageOptions": {
+        "zhCN": "Chinese",
+        "enUS": "English"
+      },
+      "languageHint": "Language will refresh automatically after saving",
+      "saved": "Saved",
+      "save": "Save Preferences",
+      "error": {
+        "load": "Failed to load preferences",
+        "save": "Failed to save preferences"
+      }
+    }
+  },
+  "detailCanvas": {
+    "title": "Detail Canvas",
+    "collapse": "Collapse detail canvas",
+    "maximize": "Maximize detail canvas",
+    "exitMaximize": "Exit maximize",
+    "expand": "Expand detail canvas",
+    "emptyTitle": "No detail content yet",
+    "emptyDescription": "Reports, files, and structured results will appear here"
+  },
+  "ui": {
+    "select": {
+      "placeholder": "Please select"
+    }
+  },
+  "fileUpload": {
+    "dropOr": "Drop files here, or",
+    "clickSelect": "click to select",
+    "error": {
+      "maxSize": "File size {size} exceeds limit {max}",
+      "invalidType": "File type {ext} is not allowed. Allowed: {allowed}"
+    }
+  },
+  "agent2ui": {
+    "renderer": {
+      "renderFailed": "Render failed"
+    },
+    "chart": {
+      "item": "Item {index}",
+      "unsupported": "Unsupported chart type: {type}"
+    },
+    "citation": {
+      "references": "References ({count})"
+    },
+    "code": {
+      "copyCode": "Copy code"
+    },
+    "dataTable": {
+      "pagination": "{total} records, page {page}/{totalPages}",
+      "prevPage": "Previous page",
+      "nextPage": "Next page"
+    },
+    "fileDownload": {
+      "unknownSize": "Unknown size",
+      "downloadFile": "Download file",
+      "error": {
+        "http": "Download failed (HTTP {status})",
+        "invalidResponse": "Download endpoint returned an invalid response"
+      }
+    },
+    "image": {
+      "defaultAlt": "image",
+      "defaultFilename": "image",
+      "download": "Download",
+      "zoom": "Zoom",
+      "loadFailed": "Failed to load image"
+    },
+    "loading": {
+      "contentLoading": "Loading content"
+    },
+    "plan": {
+      "status": {
+        "pending": "pending",
+        "running": "running",
+        "completed": "completed",
+        "failed": "failed",
+        "skipped": "skipped"
+      }
+    },
+    "progress": {
+      "processing": "Processing..."
+    },
+    "thinking": {
+      "title": "Thinking"
+    },
+    "toolCall": {
+      "arguments": "Arguments",
+      "result": "Result",
+      "running": "Running",
+      "success": "Success",
+      "successWithDuration": "Success ({seconds}s)",
+      "error": "Failed",
+      "errorWithDuration": "Failed ({seconds}s)"
+    },
+    "sandbox": {
+      "title": "Sandbox Execution",
+      "output": "Output",
+      "logs": "Logs",
+      "waitingOutput": "Waiting for output...",
+      "noOutput": "No output",
+      "waitingLogs": "Waiting for logs...",
+      "noLogs": "No logs",
+      "status": {
+        "starting": "Starting",
+        "running": "Running",
+        "success": "Success",
+        "timeout": "Timeout",
+        "error": "Failed"
+      }
+    },
+    "process": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "details": "Details",
+      "failed": "Failed",
+      "planSummary": "Execution plan: {count} steps",
+      "thinkingMergedExtra": "(+{count} more)",
+      "toolCallSummary": "Called {count} tools",
+      "stepSummary": "Executed {count} steps",
+      "failedSummary": "{count} failed",
+      "summarySeparator": ", ",
+      "status": {
+        "thinking": "Deep thinking in progress",
+        "completed": "Thinking completed",
+        "failed": "Execution encountered issues"
+      }
+    }
+  },
+  "globalError": {
+    "title": "Application Error",
+    "message": "Sorry, the application encountered an unexpected error.",
+    "errorId": "Error ID",
+    "reload": "Reload application"
+  },
+  "errorBoundary": {
+    "title": "Component failed to load"
   }
 }

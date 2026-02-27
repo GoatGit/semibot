@@ -150,7 +150,16 @@ async function executeApprovalCommand(command: ApprovalCommand): Promise<Approva
   }
 
   const list = await runtimeRequest<{
-    items?: Array<{ approval_id?: string; status?: string; risk_level?: string; event_id?: string }>
+    items?: Array<{
+      approval_id?: string
+      status?: string
+      risk_level?: string
+      event_id?: string
+      summary?: string
+      tool_name?: string
+      action?: string
+      target?: string
+    }>
   }>('/v1/approvals', {
     method: 'GET',
     query: { status: 'pending', limit: 20 },
@@ -162,8 +171,9 @@ async function executeApprovalCommand(command: ApprovalCommand): Promise<Approva
   const lines = items.map((item) => {
     const id = item.approval_id || 'unknown'
     const risk = item.risk_level || 'unknown'
+    const summary = item.summary || [item.tool_name, item.action, item.target].filter(Boolean).join(' ')
     const eventId = item.event_id || 'unknown'
-    return `- ${id} | risk=${risk} | event=${eventId}`
+    return `- ${id} | risk=${risk} | ${summary || `event=${eventId}`}`
   })
   return {
     text: `待审批列表（${items.length}）：\n${lines.join('\n')}\n可执行：/approve <id> 或 /reject <id>`,

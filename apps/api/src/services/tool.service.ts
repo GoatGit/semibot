@@ -25,6 +25,8 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       rateLimit: 120,
       requiresApproval: false,
       riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
     },
   },
   web_search: {
@@ -35,6 +37,8 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       rateLimit: 120,
       requiresApproval: false,
       riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
     },
   },
   code_executor: {
@@ -45,6 +49,8 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       rateLimit: 60,
       requiresApproval: true,
       riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
     },
   },
   file_io: {
@@ -55,6 +61,25 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       rateLimit: 120,
       requiresApproval: true,
       riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  browser_automation: {
+    description: '内建浏览器自动化工具（Playwright）',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 60,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+      headless: true,
+      browserType: 'chromium',
+      blockedDomains: ['localhost', '127.0.0.1', '::1'],
+      allowedDomains: [],
+      maxTextLength: 20000,
     },
   },
 }
@@ -76,7 +101,7 @@ function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig |
   if (!config) return undefined
   const sanitized: ToolConfig = { ...config }
   delete sanitized.permissions
-  if (toolName === 'code_executor') {
+  if (toolName === 'code_executor' || toolName === 'file_io' || toolName === 'browser_automation') {
     delete sanitized.apiEndpoint
     delete sanitized.apiKey
   }

@@ -442,7 +442,11 @@ class UnifiedActionExecutor:
             version=capability.metadata.get("version"),
             requires_approval=requires_approval,
             is_high_risk=is_high_risk,
-            additional={"risk_level": risk_level or ("high" if is_high_risk else "low")},
+            additional={
+                "risk_level": risk_level or ("high" if is_high_risk else "low"),
+                "approval_scope": metadata_map.get("approval_scope"),
+                "approval_dedupe_keys": metadata_map.get("approval_dedupe_keys"),
+            },
         )
 
         # Add MCP-specific metadata

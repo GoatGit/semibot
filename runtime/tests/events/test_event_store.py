@@ -84,6 +84,7 @@ def test_rule_run_and_approval_persistence(store: EventStore):
         rule_id="rule_1",
         event_id="evt_rule",
         risk_level="high",
+        context={"summary": "测试审批"},
     )
     store.insert_approval(approval)
     pending = store.list_pending_approvals()
@@ -94,6 +95,7 @@ def test_rule_run_and_approval_persistence(store: EventStore):
     loaded = store.get_approval("appr_1")
     assert loaded is not None
     assert loaded.status == "approved"
+    assert loaded.context == {"summary": "测试审批"}
     assert loaded.resolved_at is not None
 
 

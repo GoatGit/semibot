@@ -294,6 +294,11 @@ export interface ApprovalRecord {
   status: 'pending' | 'approved' | 'rejected' | 'expired'
   riskLevel: RiskLevel
   reason?: string
+  toolName?: string
+  action?: string
+  target?: string
+  summary?: string
+  context?: Record<string, unknown>
   createdAt: string
   resolvedAt?: string
 }

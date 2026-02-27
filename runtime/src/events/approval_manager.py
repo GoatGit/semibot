@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import uuid4
 
 from src.events.event_store import EventStore
@@ -20,12 +21,21 @@ class ApprovalManager:
         self.store = store
         self.emit_event = emit_event
 
-    async def request(self, *, rule_id: str, event_id: str, risk_level: str) -> ApprovalRequest:
+    async def request(
+        self,
+        *,
+        rule_id: str,
+        event_id: str,
+        risk_level: str,
+        context: dict[str, Any] | None = None,
+    ) -> ApprovalRequest:
+        normalized_context = context if isinstance(context, dict) else {}
         approval = ApprovalRequest(
             approval_id=f"appr_{uuid4().hex}",
             rule_id=rule_id,
             event_id=event_id,
             risk_level=risk_level,
+            context=normalized_context,
             status="pending",
         )
         self.store.insert_approval(approval)
@@ -42,6 +52,7 @@ class ApprovalManager:
                         "event_id": event_id,
                         "risk_level": risk_level,
                         "status": "pending",
+                        "context": normalized_context,
                     },
                     risk_hint=risk_level,
                 )
@@ -65,6 +76,7 @@ class ApprovalManager:
                         "event_id": approval.event_id,
                         "risk_level": approval.risk_level,
                         "status": approval.status,
+                        "context": approval.context,
                     },
                     risk_hint=approval.risk_level,
                 )

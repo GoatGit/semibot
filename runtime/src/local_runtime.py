@@ -32,8 +32,8 @@ from src.orchestrator.context import (
 from src.orchestrator.graph import create_agent_graph
 from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
-from src.server.config_store import RuntimeConfigStore
 from src.security.api_key_cipher import decrypt_api_keys
+from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
 from src.skills.registry import SkillRegistry
 from src.utils.logging import get_logger
@@ -48,6 +48,31 @@ _CONTROL_PLANE_BOOTSTRAP_RETRY_COOLDOWN_SECONDS = 15.0
 _LOCAL_ENV_BOOTSTRAP_DONE = False
 
 _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_APPROVAL_SCOPE_ALLOWED = {"call", "action", "target", "session", "session_action", "tool"}
+_APPROVAL_ACTION_KEYS = ("action", "operation", "method", "mode", "type")
+_APPROVAL_TARGET_KEYS = (
+    "url",
+    "path",
+    "target",
+    "selector",
+    "query",
+    "command",
+    "resource",
+    "file",
+    "filename",
+    "name",
+)
+_APPROVAL_SUMMARY_IGNORED_PARAMS = {
+    "content",
+    "text",
+    "code",
+    "html",
+    "script",
+    "prompt",
+    "messages",
+    "input",
+    "body",
+}
 
 
 def _as_non_empty_str(value: Any) -> str | None:
@@ -55,6 +80,116 @@ def _as_non_empty_str(value: Any) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def _short_text(value: Any, *, max_len: int = 120) -> str:
+    text = str(value or "").strip()
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 1]}…"
+
+
+def _extract_first_string(params: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = params.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+    return ""
+
+
+def _normalize_dedupe_keys(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    normalized: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        key = item.strip()
+        if key:
+            normalized.append(key)
+    return normalized
+
+
+def _summarize_params(params: dict[str, Any], *, max_items: int = 3) -> dict[str, str]:
+    summary: dict[str, str] = {}
+    for key in sorted(params.keys()):
+        if key in _APPROVAL_SUMMARY_IGNORED_PARAMS:
+            continue
+        value = params.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                continue
+            summary[key] = _short_text(stripped, max_len=60)
+        elif isinstance(value, (int, float, bool)):
+            summary[key] = str(value)
+        if len(summary) >= max_items:
+            break
+    return summary
+
+
+def _build_approval_policy(
+    tool_name: str,
+    params: dict[str, Any],
+    risk_level: str,
+    session_id: str,
+    metadata_additional: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    metadata_additional = metadata_additional or {}
+    action = _extract_first_string(params, _APPROVAL_ACTION_KEYS).lower()
+    target = _short_text(_extract_first_string(params, _APPROVAL_TARGET_KEYS), max_len=120)
+    params_preview = _summarize_params(params)
+
+    scope_raw = str(metadata_additional.get("approval_scope") or "").strip().lower()
+    approval_scope = scope_raw if scope_raw in _APPROVAL_SCOPE_ALLOWED else "session"
+    dedupe_keys = _normalize_dedupe_keys(metadata_additional.get("approval_dedupe_keys"))
+
+    context: dict[str, Any] = {
+        "tool_name": tool_name,
+        "action": action or None,
+        "target": target or None,
+        "risk_level": risk_level,
+        "session_id": session_id,
+        "params_preview": params_preview,
+    }
+    context["summary"] = (
+        f"工具 `{tool_name}`"
+        f"{f' 执行动作 `{action}`' if action else ''}"
+        f"{f'，目标 `{target}`' if target else ''}"
+    )
+
+    if dedupe_keys:
+        grouped_values: list[str] = []
+        for key in dedupe_keys:
+            value = params.get(key)
+            if value is None:
+                continue
+            grouped_values.append(f"{key}={_short_text(value, max_len=80)}")
+        grouped = "|".join(grouped_values) if grouped_values else "none"
+        return f"{tool_name}|risk:{risk_level}|custom:{grouped}", context
+
+    if approval_scope == "tool":
+        return f"{tool_name}|risk:{risk_level}", context
+    if approval_scope == "session":
+        return f"{tool_name}|risk:{risk_level}|session:{session_id}", context
+    if approval_scope == "action":
+        return f"{tool_name}|risk:{risk_level}|action:{action or 'none'}", context
+    if approval_scope == "target":
+        return f"{tool_name}|risk:{risk_level}|action:{action or 'none'}|target:{target or 'none'}", context
+    if approval_scope == "call":
+        try:
+            serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            serialized = str(params)
+        call_hash = hashlib.sha256(serialized.encode()).hexdigest()[:16]
+        return f"{tool_name}|risk:{risk_level}|call:{call_hash}", context
+
+    # Default: one approval per (tool + session + action), generic and low-noise.
+    return f"{tool_name}|risk:{risk_level}|session:{session_id}|action:{action or 'none'}", context
 
 
 def _runtime_root() -> Path:
@@ -325,11 +460,20 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
         raw_risk_level = cfg.get("riskLevel")
         if isinstance(raw_risk_level, str) and raw_risk_level.strip():
             risk_level = raw_risk_level.strip().lower()
-        elif tool.name in {"code_executor", "file_io"}:
+        elif tool.name in {"code_executor", "file_io", "browser_automation"}:
             risk_level = "high"
         else:
             risk_level = "low"
-        requires_approval = bool(cfg.get("requiresApproval", tool.name in {"code_executor", "file_io"}))
+        requires_approval = bool(
+            cfg.get("requiresApproval", tool.name in {"code_executor", "file_io", "browser_automation"})
+        )
+        raw_approval_scope = str(cfg.get("approvalScope") or "").strip().lower()
+        approval_scope = (
+            raw_approval_scope
+            if raw_approval_scope in _APPROVAL_SCOPE_ALLOWED
+            else "session"
+        )
+        approval_dedupe_keys = _normalize_dedupe_keys(cfg.get("approvalDedupeKeys"))
         tools.append(
             ToolDefinition(
                 name=tool.name,
@@ -339,6 +483,8 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
                     "source": "builtin",
                     "requires_approval": requires_approval,
                     "risk_level": risk_level,
+                    "approval_scope": approval_scope,
+                    "approval_dedupe_keys": approval_dedupe_keys,
                 },
             )
         )
@@ -460,11 +606,20 @@ async def run_task_once(
         metadata: Any,
     ) -> dict[str, Any]:
         risk_level = str((metadata.additional or {}).get("risk_level") or "high")
-        try:
-            params_key = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        except Exception:
-            params_key = str(params)
-        event_signature = hashlib.sha256(f"{tool_name}|{params_key}".encode("utf-8")).hexdigest()[:16]
+        metadata_additional = metadata.additional if isinstance(metadata.additional, dict) else {}
+        scope_session_id = _short_text(
+            params.get("session_id") or resolved_session_id,
+            max_len=80,
+        ) or resolved_session_id
+        scope_key, approval_context = _build_approval_policy(
+            tool_name,
+            params,
+            risk_level,
+            scope_session_id,
+            metadata_additional,
+        )
+
+        event_signature = hashlib.sha256(scope_key.encode()).hexdigest()[:16]
         event_id = f"{resolved_session_id}:{event_signature}"
 
         approved_history = event_engine.store.list_approvals(status="approved", limit=1000)
@@ -496,6 +651,7 @@ async def run_task_once(
             rule_id=f"tool.{tool_name}",
             event_id=event_id,
             risk_level=risk_level,
+            context=approval_context,
         )
         return {
             "approved": False,

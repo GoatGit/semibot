@@ -8,14 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Select } from '@/components/ui/Select'
 import { useApprovals } from '@/hooks/useApprovals'
 import type { ApprovalRecord } from '@/types'
-
-const STATUS_OPTIONS = [
-  { value: 'all', label: '全部状态' },
-  { value: 'pending', label: 'pending' },
-  { value: 'approved', label: 'approved' },
-  { value: 'rejected', label: 'rejected' },
-  { value: 'expired', label: 'expired' },
-]
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 function mapRiskVariant(risk: ApprovalRecord['riskLevel']): 'success' | 'warning' | 'error' {
   if (risk === 'high') return 'error'
@@ -30,15 +23,24 @@ function mapStatusVariant(status: ApprovalRecord['status']): 'default' | 'succes
   return 'default'
 }
 
-function formatTime(dateString: string): string {
+function formatTime(dateString: string, locale: string): string {
   const date = new Date(dateString)
   if (Number.isNaN(date.getTime())) return '--'
-  return date.toLocaleString('zh-CN')
+  return date.toLocaleString(locale)
 }
 
 export default function ApprovalsPage() {
+  const { locale, t } = useLocale()
+  const statusOptions = [
+    { value: 'all', label: t('approvals.status.all') },
+    { value: 'pending', label: t('approvals.status.pending') },
+    { value: 'approved', label: t('approvals.status.approved') },
+    { value: 'rejected', label: t('approvals.status.rejected') },
+    { value: 'expired', label: t('approvals.status.expired') },
+  ]
   const [status, setStatus] = useState<'all' | ApprovalRecord['status']>('all')
   const [resolvingId, setResolvingId] = useState<string | null>(null)
+  const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const {
@@ -59,6 +61,11 @@ export default function ApprovalsPage() {
     return { pending, total: approvals.length }
   }, [approvals])
 
+  const pendingIds = useMemo(
+    () => approvals.filter((item) => item.status === 'pending').map((item) => item.id),
+    [approvals]
+  )
+
   const handleResolve = async (id: string, decision: 'approve' | 'reject') => {
     try {
       setActionError(null)
@@ -66,9 +73,24 @@ export default function ApprovalsPage() {
       await resolveApproval(id, decision)
       await loadApprovals({ status, limit: 100 })
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '审批操作失败')
+      setActionError(err instanceof Error ? err.message : t('approvals.error.action'))
     } finally {
       setResolvingId(null)
+    }
+  }
+
+  const handleBulkResolve = async (decision: 'approve' | 'reject') => {
+    if (pendingIds.length === 0 || resolvingId || bulkAction) return
+    setActionError(null)
+    setBulkAction(decision)
+    try {
+      const action = decision === 'approve' ? 'approve' : 'reject'
+      await Promise.all(pendingIds.map((id) => resolveApproval(id, action)))
+      await loadApprovals({ status, limit: 100 })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : t('approvals.error.action'))
+    } finally {
+      setBulkAction(null)
     }
   }
 
@@ -81,13 +103,13 @@ export default function ApprovalsPage() {
               <div>
                 <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
                   <ShieldCheck size={22} className="text-primary-400" />
-                  审批中心
+                  {t('approvals.title')}
                 </h1>
                 <p className="mt-2 text-sm text-text-secondary">
-                  处理高风险动作审批请求，确保自动执行可控。
+                  {t('approvals.subtitle')}
                 </p>
                 <p className="mt-2 text-xs text-text-tertiary">
-                  待审批 {stats.pending} / 全部 {stats.total}
+                  {t('approvals.pending')} {stats.pending} / {t('approvals.total')} {stats.total}
                 </p>
               </div>
               <Button
@@ -96,7 +118,23 @@ export default function ApprovalsPage() {
                 onClick={() => void loadApprovals({ status, limit: 100 })}
                 disabled={isLoading}
               >
-                刷新
+                {t('common.refresh')}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void handleBulkResolve('approve')}
+                disabled={pendingIds.length === 0 || !!resolvingId || !!bulkAction}
+                loading={bulkAction === 'approve'}
+              >
+                {t('chatSession.approveAll')}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => void handleBulkResolve('reject')}
+                disabled={pendingIds.length === 0 || !!resolvingId || !!bulkAction}
+                loading={bulkAction === 'reject'}
+              >
+                {t('chatSession.rejectAll')}
               </Button>
             </div>
           </CardContent>
@@ -107,7 +145,7 @@ export default function ApprovalsPage() {
             <div className="max-w-xs">
               <Select
                 value={status}
-                options={STATUS_OPTIONS}
+                options={statusOptions}
                 onChange={(value) => setStatus(value as 'all' | ApprovalRecord['status'])}
               />
             </div>
@@ -116,7 +154,12 @@ export default function ApprovalsPage() {
 
         {!apiAvailable && (
           <div className="rounded-lg border border-warning-500/30 bg-warning-500/10 px-4 py-3 text-sm text-warning-500">
-            审批 API 尚未接入，请先实现 <code>/v1/approvals</code> 与 <code>/v1/approvals/{'{id}'}/approve|reject</code>。
+            <>
+              {t('approvals.apiUnavailablePrefix')}{' '}
+              <code>/v1/approvals</code> {t('approvals.and')}{' '}
+              <code>/v1/approvals/{'{id}'}/approve|reject</code>
+              {t('approvals.period')}
+            </>
           </div>
         )}
 
@@ -146,15 +189,23 @@ export default function ApprovalsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="font-medium text-text-primary">{approval.id}</p>
                         <Badge variant={mapStatusVariant(approval.status)}>
-                          {approval.status}
+                          {approval.status === 'pending' && t('approvals.status.pending')}
+                          {approval.status === 'approved' && t('approvals.status.approved')}
+                          {approval.status === 'rejected' && t('approvals.status.rejected')}
+                          {approval.status === 'expired' && t('approvals.status.expired')}
                         </Badge>
                         <Badge variant={mapRiskVariant(approval.riskLevel)}>
-                          risk {approval.riskLevel}
+                          {t('approvals.risk')} {approval.riskLevel === 'high' ? t('approvals.riskLevel.high') : approval.riskLevel === 'medium' ? t('approvals.riskLevel.medium') : t('approvals.riskLevel.low')}
                         </Badge>
                       </div>
                       <div className="mt-1 text-xs text-text-secondary">
-                        {approval.eventType || 'unknown event'} · {formatTime(approval.createdAt)}
+                        {approval.eventType || t('approvals.unknownEvent')} · {formatTime(approval.createdAt, locale)}
                       </div>
+                      {(approval.summary || approval.toolName || approval.action || approval.target) && (
+                        <p className="mt-2 text-sm text-text-primary break-words">
+                          {approval.summary || [approval.toolName, approval.action, approval.target].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
                       {approval.reason && (
                         <p className="mt-2 text-sm text-text-secondary">{approval.reason}</p>
                       )}
@@ -169,7 +220,7 @@ export default function ApprovalsPage() {
                           loading={resolvingId === approval.id}
                           onClick={() => void handleResolve(approval.id, 'approve')}
                         >
-                          批准
+                          {t('approvals.approve')}
                         </Button>
                         <Button
                           size="sm"
@@ -178,7 +229,7 @@ export default function ApprovalsPage() {
                           loading={resolvingId === approval.id}
                           onClick={() => void handleResolve(approval.id, 'reject')}
                         >
-                          拒绝
+                          {t('approvals.reject')}
                         </Button>
                       </div>
                     )}
@@ -189,7 +240,7 @@ export default function ApprovalsPage() {
           ) : (
             <Card className="border-border-subtle">
               <CardContent className="p-8 text-center text-sm text-text-secondary">
-                暂无审批项
+                {t('approvals.empty')}
               </CardContent>
             </Card>
           )}

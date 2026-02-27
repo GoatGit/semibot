@@ -3809,6 +3809,7 @@ def cmd_rules_toggle(args: argparse.Namespace) -> int:
 
 
 def _approval_to_json(item: Any) -> dict[str, Any]:
+    context = item.context if isinstance(getattr(item, "context", None), dict) else {}
     return {
         "approval_id": item.approval_id,
         "rule_id": item.rule_id,
@@ -3817,6 +3818,8 @@ def _approval_to_json(item: Any) -> dict[str, Any]:
         "status": item.status,
         "created_at": item.created_at.isoformat(),
         "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+        "context": context,
+        "summary": context.get("summary"),
     }
 
 

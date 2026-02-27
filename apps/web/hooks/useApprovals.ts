@@ -30,6 +30,11 @@ function normalizeApproval(raw: unknown): ApprovalRecord | null {
     status: (readString(raw.status, 'pending') as ApprovalRecord['status']),
     riskLevel: (readString(raw.riskLevel) || readString(raw.risk_level) || 'medium') as ApprovalRecord['riskLevel'],
     reason: readString(raw.reason) || undefined,
+    toolName: readString(raw.toolName) || readString(raw.tool_name) || undefined,
+    action: readString(raw.action) || undefined,
+    target: readString(raw.target) || undefined,
+    summary: readString(raw.summary) || undefined,
+    context: isObject(raw.context) ? raw.context : undefined,
     createdAt: readString(raw.createdAt) || readString(raw.created_at) || new Date().toISOString(),
     resolvedAt: readString(raw.resolvedAt) || readString(raw.resolved_at) || undefined,
   }

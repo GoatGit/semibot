@@ -22,11 +22,21 @@ const updateToolSchema = z.object({
       retryAttempts: z.number().min(0).max(5).optional(),
       requiresApproval: z.boolean().optional(),
       riskLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+      approvalScope: z
+        .enum(['call', 'action', 'target', 'session', 'session_action', 'tool'])
+        .optional(),
+      approvalDedupeKeys: z.array(z.string().min(1).max(64)).max(20).optional(),
       rateLimit: z.number().min(1).max(1000).optional(),
       apiEndpoint: z.string().url().optional(),
       apiKey: z.string().max(500).optional(),
       rootPath: z.string().max(1000).optional(),
       maxReadBytes: z.number().int().min(1).max(10_000_000).optional(),
+      headless: z.boolean().optional(),
+      browserType: z.enum(['chromium', 'firefox', 'webkit']).optional(),
+      allowLocalhost: z.boolean().optional(),
+      allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
+      blockedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
+      maxTextLength: z.number().int().min(100).max(500_000).optional(),
     })
     .optional(),
   isActive: z.boolean().optional(),

@@ -329,6 +329,7 @@ async def test_event_api_approval_endpoints(tmp_path: Path):
 
         approvals = (await client.get("/v1/approvals?status=pending")).json()["items"]
         assert len(approvals) == 1
+        assert isinstance(approvals[0].get("context"), dict)
         approval_id = approvals[0]["approval_id"]
 
         approve_resp = await client.post(f"/v1/approvals/{approval_id}/approve")
@@ -337,6 +338,41 @@ async def test_event_api_approval_endpoints(tmp_path: Path):
 
         approvals = (await client.get("/v1/approvals?status=approved")).json()["items"]
         assert len(approvals) == 1
+
+
+@pytest.mark.asyncio
+async def test_webhook_chat_message_can_resolve_approval_by_text(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        emit_resp = await client.post(
+            "/v1/events",
+            json={"event_type": "fund.transfer", "payload": {"amount": 10001}, "source": "test"},
+        )
+        assert emit_resp.status_code == 200
+
+        pending = (await client.get("/v1/approvals?status=pending")).json()["items"]
+        assert len(pending) == 1
+        approval_id = pending[0]["approval_id"]
+
+        webhook = await client.post(
+            "/v1/webhooks/chat.message.received",
+            json={
+                "source": "telegram.gateway",
+                "subject": "tg_group_001",
+                "payload": {"text": f"approve {approval_id}"},
+            },
+        )
+        assert webhook.status_code == 200
+        payload = webhook.json()
+        assert payload["approval_command"]["resolved"] is True
+        assert payload["approval_command"]["status"] == "approved"
+
+        approved = (await client.get("/v1/approvals?status=approved")).json()["items"]
+        assert len(approved) == 1
 
 
 @pytest.mark.asyncio

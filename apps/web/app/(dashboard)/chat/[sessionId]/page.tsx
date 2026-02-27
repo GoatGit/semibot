@@ -12,6 +12,7 @@ import { FileDownload } from '@/components/agent2ui/media/FileDownload'
 import { useChat } from '@/hooks/useChat'
 import { useFileUpload } from '@/hooks/useFileUpload'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useLocale } from '@/components/providers/LocaleProvider'
 import { apiClient } from '@/lib/api'
 import type {
   ApiResponse,
@@ -27,8 +28,6 @@ import type {
 } from '@/types'
 import {
   TIME_FORMAT_OPTIONS,
-  DEFAULT_LOCALE,
-  NEW_CHAT_PATH,
   CHAT_UPLOAD_ALLOWED_EXTENSIONS,
 } from '@/constants/config'
 
@@ -54,6 +53,11 @@ interface PendingApproval {
   status: string
   eventId?: string
   riskLevel: string
+  summary?: string
+  toolName?: string
+  action?: string
+  target?: string
+  reason?: string
   createdAt: string
 }
 
@@ -170,6 +174,11 @@ function normalizePendingApprovals(raw: unknown, sessionId: string): PendingAppr
       const status = typeof record.status === 'string' ? record.status : 'pending'
       const eventId = typeof record.eventId === 'string' ? record.eventId : (typeof record.event_id === 'string' ? record.event_id : undefined)
       const riskLevel = typeof record.riskLevel === 'string' ? record.riskLevel : (typeof record.risk_level === 'string' ? record.risk_level : 'medium')
+      const summary = typeof record.summary === 'string' ? record.summary : undefined
+      const toolName = typeof record.toolName === 'string' ? record.toolName : (typeof record.tool_name === 'string' ? record.tool_name : undefined)
+      const action = typeof record.action === 'string' ? record.action : undefined
+      const target = typeof record.target === 'string' ? record.target : undefined
+      const reason = typeof record.reason === 'string' ? record.reason : undefined
       const createdAt = typeof record.createdAt === 'string' ? record.createdAt : (typeof record.created_at === 'string' ? record.created_at : new Date().toISOString())
 
       return {
@@ -177,6 +186,11 @@ function normalizePendingApprovals(raw: unknown, sessionId: string): PendingAppr
         status,
         eventId,
         riskLevel,
+        summary,
+        toolName,
+        action,
+        target,
+        reason,
         createdAt,
       } as PendingApproval
     })
@@ -198,6 +212,7 @@ function normalizePendingApprovals(raw: unknown, sessionId: string): PendingAppr
 export default function ChatSessionPage() {
   const params = useParams()
   const router = useRouter()
+  const { locale, t } = useLocale()
   const searchParams = useSearchParams()
   const sessionId = params.sessionId as string
   const initialMessage = searchParams.get('initialMessage')
@@ -213,6 +228,7 @@ export default function ChatSessionPage() {
   const [isLoadingApprovals, setIsLoadingApprovals] = useState(false)
   const [approvalError, setApprovalError] = useState<string | null>(null)
   const [actingApprovalId, setActingApprovalId] = useState<string | null>(null)
+  const [bulkApprovalAction, setBulkApprovalAction] = useState<'approve' | 'reject' | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -229,11 +245,11 @@ export default function ChatSessionPage() {
       setPendingApprovals(normalizePendingApprovals(response, sessionId))
       setApprovalError(null)
     } catch (error) {
-      setApprovalError(error instanceof Error ? error.message : '加载审批列表失败')
+      setApprovalError(error instanceof Error ? error.message : t('chatSession.error.loadApprovals'))
     } finally {
       setIsLoadingApprovals(false)
     }
-  }, [sessionId])
+  }, [sessionId, t])
 
   // 使用 useChat hook 进行真实对话
   const {
@@ -317,7 +333,7 @@ export default function ChatSessionPage() {
         {
           id: `error-${Date.now()}`,
           role: 'assistant' as const,
-          content: `抱歉，发生了错误: ${error.message}`,
+          content: t('chatSession.error.messageWithReason', { message: error.message }),
           timestamp: new Date(),
           status: 'error',
         },
@@ -362,6 +378,12 @@ export default function ChatSessionPage() {
     return result
   }, [displayMessages])
 
+  const visibleApprovals = useMemo(
+    () => pendingApprovals.slice(0, 3),
+    [pendingApprovals]
+  )
+  const hiddenApprovalCount = Math.max(0, pendingApprovals.length - visibleApprovals.length)
+
   // 加载会话数据
   useEffect(() => {
     const loadSession = async () => {
@@ -375,7 +397,7 @@ export default function ChatSessionPage() {
         )
 
         if (!sessionResponse.success || !sessionResponse.data) {
-          throw new Error(sessionResponse.error?.message ?? '加载会话失败')
+          throw new Error(sessionResponse.error?.message ?? t('chatSession.error.loadSession'))
         }
 
         const session = sessionResponse.data
@@ -383,7 +405,7 @@ export default function ChatSessionPage() {
         setStoreSession({
           id: session.id,
           agentId: session.agentId,
-          title: session.title ?? '新对话',
+          title: session.title ?? t('chatSession.newChat'),
           status: session.status,
           messages: [],
           createdAt: session.createdAt,
@@ -439,7 +461,7 @@ export default function ChatSessionPage() {
       } catch (error) {
         console.error('[Chat] 加载会话失败:', error)
         setSessionError(
-          error instanceof Error ? error.message : '加载会话失败'
+          error instanceof Error ? error.message : t('chatSession.error.loadSession')
         )
       } finally {
         setIsLoadingSession(false)
@@ -449,7 +471,7 @@ export default function ChatSessionPage() {
     if (sessionId) {
       loadSession()
     }
-  }, [sessionId, setStoreSession])
+  }, [sessionId, setStoreSession, t])
 
   // 定时刷新当前会话待审批项
   useEffect(() => {
@@ -604,6 +626,34 @@ export default function ChatSessionPage() {
     }
   }, [actingApprovalId, isSending, loadPendingApprovals, sendCommandMessage])
 
+  const handleBulkApprovalDecision = useCallback(async (decision: 'approve' | 'reject') => {
+    if (isSending || actingApprovalId || bulkApprovalAction || pendingApprovals.length === 0) return
+    setBulkApprovalAction(decision)
+    try {
+      const endpoint = decision === 'approve' ? 'approve' : 'reject'
+      await Promise.all(
+        pendingApprovals.map((approval) =>
+          apiClient.post(`/approvals/${approval.id}/${endpoint}`, {})
+        )
+      )
+      setDisplayMessages((prev) => [
+        ...prev,
+        {
+          id: `approval-batch-${Date.now()}`,
+          role: 'assistant',
+          content: t('chatSession.bulkDone', { count: pendingApprovals.length, action: decision === 'approve' ? t('chatSession.approve') : t('chatSession.reject') }),
+          timestamp: new Date(),
+          status: 'sent',
+        },
+      ])
+      await loadPendingApprovals()
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : t('chatSession.error.bulkApproval'))
+    } finally {
+      setBulkApprovalAction(null)
+    }
+  }, [actingApprovalId, bulkApprovalAction, isSending, loadPendingApprovals, pendingApprovals, t])
+
   // 键盘事件处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -639,7 +689,7 @@ export default function ChatSessionPage() {
     return (
       <div className="flex flex-col items-center justify-center flex-1 min-h-0 bg-bg-base">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" />
-        <p className="mt-4 text-text-secondary">加载会话中...</p>
+        <p className="mt-4 text-text-secondary">{t('chatSession.loadingSession')}</p>
       </div>
     )
   }
@@ -649,10 +699,10 @@ export default function ChatSessionPage() {
     return (
       <div className="flex flex-col items-center justify-center flex-1 min-h-0 bg-bg-base">
         <AlertCircle size={48} className="text-error-400 mb-4" />
-        <p className="text-text-primary mb-2">加载会话失败</p>
+        <p className="text-text-primary mb-2">{t('chatSession.error.loadSession')}</p>
         <p className="text-text-secondary text-sm mb-4">{sessionError}</p>
         <Button onClick={() => router.push('/chat')} variant="secondary">
-          返回会话列表
+          {t('chatSession.backToChats')}
         </Button>
       </div>
     )
@@ -672,16 +722,16 @@ export default function ChatSessionPage() {
                 type="button"
                 onClick={() => router.push('/chat')}
                 className="p-1 rounded-md text-text-tertiary hover:bg-interactive-hover hover:text-text-primary"
-                aria-label="返回会话列表"
+                aria-label={t('chatSession.backToChats')}
               >
                 <ArrowLeft size={16} />
               </button>
               <h1 className="text-sm font-semibold text-text-primary truncate">
-                {sessionMeta?.title || '未命名会话'}
+                {sessionMeta?.title || t('chatLayout.untitled')}
               </h1>
             </div>
             <p className="text-xs text-text-tertiary pl-7 mt-0.5">
-              会话 {sessionId.slice(0, 8)}...
+              {t('chatSession.sessionLabel')} {sessionId.slice(0, 8)}...
             </p>
           </div>
 
@@ -696,9 +746,6 @@ export default function ChatSessionPage() {
             >
               {sessionMeta?.status || 'active'}
             </span>
-            <Button size="xs" variant="secondary" onClick={() => router.push(NEW_CHAT_PATH)}>
-              新建
-            </Button>
           </div>
         </div>
       </div>
@@ -714,7 +761,7 @@ export default function ChatSessionPage() {
               </div>
               <div className="bg-bg-elevated rounded-xl rounded-bl-sm px-4 py-3 border border-border-subtle">
                 <p className="text-sm text-text-primary">
-                  您好！我是您的 AI 助手。有什么我可以帮助您的吗？
+                  {t('chatSession.welcome')}
                 </p>
               </div>
             </div>
@@ -756,7 +803,7 @@ export default function ChatSessionPage() {
                     />
                   </div>
                 )}
-                <MessageBubble message={message} />
+                <MessageBubble message={message} locale={locale} />
               </div>
             )
           })}
@@ -788,20 +835,40 @@ export default function ChatSessionPage() {
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
                   <ShieldAlert size={16} className="text-primary-500" />
-                  待审批操作 {pendingApprovals.length}
+                  {t('chatSession.pendingApprovals')} {pendingApprovals.length}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void loadPendingApprovals()}
-                  disabled={isLoadingApprovals}
-                  className={clsx(
-                    'inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary',
-                    isLoadingApprovals && 'opacity-60'
-                  )}
-                >
-                  <RefreshCw size={12} className={clsx(isLoadingApprovals && 'animate-spin')} />
-                  刷新
-                </button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    loading={bulkApprovalAction === 'approve'}
+                    disabled={isSending || !!actingApprovalId || !!bulkApprovalAction}
+                    onClick={() => void handleBulkApprovalDecision('approve')}
+                  >
+                    {t('chatSession.approveAll')}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="destructive"
+                    loading={bulkApprovalAction === 'reject'}
+                    disabled={isSending || !!actingApprovalId || !!bulkApprovalAction}
+                    onClick={() => void handleBulkApprovalDecision('reject')}
+                  >
+                    {t('chatSession.rejectAll')}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => void loadPendingApprovals()}
+                    disabled={isLoadingApprovals}
+                    className={clsx(
+                      'inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary',
+                      isLoadingApprovals && 'opacity-60'
+                    )}
+                  >
+                    <RefreshCw size={12} className={clsx(isLoadingApprovals && 'animate-spin')} />
+                    {t('common.refresh')}
+                  </button>
+                </div>
               </div>
 
               {approvalError && (
@@ -809,17 +876,24 @@ export default function ChatSessionPage() {
               )}
 
               <div className="mt-2 space-y-2">
-                {pendingApprovals.map((approval) => (
+                {visibleApprovals.map((approval) => (
                   <div
                     key={approval.id}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-subtle bg-bg-elevated px-2 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="text-xs text-text-primary truncate">
-                        {approval.id}
+                      <p className="text-xs text-text-primary break-words">
+                        {approval.summary || approval.reason || approval.toolName || approval.id}
+                      </p>
+                      <p className="text-[11px] text-text-tertiary break-words">
+                        {approval.toolName && `${approval.toolName}`}
+                        {approval.action && ` · ${approval.action}`}
+                        {approval.target && ` · ${approval.target}`}
+                        {(approval.toolName || approval.action || approval.target) && ' · '}
+                        {t('chatSession.risk')} {approval.riskLevel}
                       </p>
                       <p className="text-[11px] text-text-tertiary">
-                        风险 {approval.riskLevel}
+                        {approval.id}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -831,7 +905,7 @@ export default function ChatSessionPage() {
                         leftIcon={<Check size={12} />}
                         onClick={() => void handleApprovalDecision(approval.id, 'approve')}
                       >
-                        通过
+                        {t('chatSession.approve')}
                       </Button>
                       <Button
                         size="xs"
@@ -841,15 +915,20 @@ export default function ChatSessionPage() {
                         leftIcon={<X size={12} />}
                         onClick={() => void handleApprovalDecision(approval.id, 'reject')}
                       >
-                        拒绝
+                        {t('chatSession.reject')}
                       </Button>
                     </div>
                   </div>
                 ))}
+                {hiddenApprovalCount > 0 && (
+                  <p className="text-[11px] text-text-tertiary px-1">
+                    {t('chatSession.moreApprovalsHint', { count: hiddenApprovalCount })}
+                  </p>
+                )}
               </div>
 
               <p className="mt-2 text-[11px] text-text-tertiary">
-                通过后会自动继续执行被阻塞的任务。
+                {t('chatSession.approvalHint')}
               </p>
             </div>
           )}
@@ -859,13 +938,13 @@ export default function ChatSessionPage() {
             displayMessages[displayMessages.length - 1].status === 'error' && (
               <div className="flex items-center justify-center gap-2 mb-3 text-sm text-error-400">
                 <AlertCircle size={16} />
-                <span>发送失败</span>
+                <span>{t('chatSession.sendFailed')}</span>
                 <button
                   onClick={handleRetry}
                   className="flex items-center gap-1 text-primary-400 hover:underline"
                 >
                   <RefreshCw size={14} />
-                  重试
+                  {t('common.retry')}
                 </button>
               </div>
             )}
@@ -935,7 +1014,7 @@ export default function ChatSessionPage() {
                   'transition-colors duration-fast',
                   'disabled:opacity-50'
                 )}
-                aria-label="添加附件"
+                aria-label={t('chatSession.addAttachment')}
               >
                 <Paperclip size={20} />
               </button>
@@ -944,7 +1023,7 @@ export default function ChatSessionPage() {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入您的问题..."
+              placeholder={t('chatSession.inputPlaceholder')}
               rows={1}
               disabled={isSending}
               className={clsx(
@@ -966,7 +1045,7 @@ export default function ChatSessionPage() {
                 'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
                 'transition-colors duration-fast'
               )}
-              aria-label="语音输入"
+              aria-label={t('chatSession.voiceInput')}
             >
               <Mic size={20} />
             </button>
@@ -977,13 +1056,13 @@ export default function ChatSessionPage() {
               disabled={!isSending && !inputValue.trim() && !hasFiles}
               leftIcon={isSending ? <StopCircle size={16} /> : <Send size={16} />}
             >
-              {isSending ? '停止' : '发送'}
+              {isSending ? t('chatSession.stop') : t('chatSession.send')}
             </Button>
             </div>
           </div>
 
           <p className="text-xs text-text-tertiary text-center mt-2">
-            按 Enter 发送，Shift + Enter 换行
+            {t('chatSession.keyboardHint')}
           </p>
         </div>
       </div>
@@ -993,9 +1072,11 @@ export default function ChatSessionPage() {
 
 interface MessageBubbleProps {
   message: DisplayMessage
+  locale: string
 }
 
-function MessageBubble({ message }: MessageBubbleProps) {
+function MessageBubble({ message, locale }: MessageBubbleProps) {
+  const { t } = useLocale()
   const isUser = message.role === 'user'
   const attachments = (message.metadata?.attachments ?? []) as Array<{
     filename: string
@@ -1073,12 +1154,12 @@ function MessageBubble({ message }: MessageBubbleProps) {
           )}
         >
           <span>
-            {message.timestamp.toLocaleTimeString(DEFAULT_LOCALE, TIME_FORMAT_OPTIONS)}
+            {message.timestamp.toLocaleTimeString(locale, TIME_FORMAT_OPTIONS)}
           </span>
-          {isUser && message.status === 'sending' && <span>发送中...</span>}
-          {isUser && message.status === 'sent' && <span>已发送</span>}
+          {isUser && message.status === 'sending' && <span>{t('chatSession.messageStatus.sending')}</span>}
+          {isUser && message.status === 'sent' && <span>{t('chatSession.messageStatus.sent')}</span>}
           {isUser && message.status === 'error' && (
-            <span className="text-error-400">发送失败</span>
+            <span className="text-error-400">{t('chatSession.messageStatus.failed')}</span>
           )}
         </div>
       </div>

@@ -28,6 +28,16 @@ def _from_iso(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
+def _parse_json_object(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 class EventStore:
     """Persist events, rule-runs, and approvals in SQLite."""
 
@@ -85,6 +95,7 @@ class EventStore:
                   rule_id TEXT NOT NULL,
                   event_id TEXT NOT NULL,
                   risk_level TEXT NOT NULL,
+                  context TEXT NOT NULL DEFAULT '{}',
                   status TEXT NOT NULL,
                   created_at TEXT NOT NULL,
                   resolved_at TEXT
@@ -93,6 +104,15 @@ class EventStore:
                 CREATE INDEX IF NOT EXISTS idx_approval_status ON approval_requests(status);
                 """
             )
+            # Backward-compatible migration for existing databases.
+            approval_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(approval_requests)").fetchall()
+            }
+            if "context" not in approval_columns:
+                conn.execute(
+                    "ALTER TABLE approval_requests ADD COLUMN context TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def append_event(self, event: Event) -> None:
         with self._connect() as conn:
@@ -402,14 +422,15 @@ class EventStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO approval_requests (id, rule_id, event_id, risk_level, status, created_at, resolved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO approval_requests (id, rule_id, event_id, risk_level, context, status, created_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval.approval_id,
                     approval.rule_id,
                     approval.event_id,
                     approval.risk_level,
+                    json.dumps(approval.context or {}, ensure_ascii=False),
                     approval.status,
                     _to_iso(approval.created_at),
                     _to_iso(approval.resolved_at),
@@ -432,7 +453,7 @@ class EventStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, rule_id, event_id, risk_level, status, created_at, resolved_at
+                SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
                 FROM approval_requests WHERE id = ?
                 """,
                 (approval_id,),
@@ -444,6 +465,7 @@ class EventStore:
                 rule_id=row["rule_id"],
                 event_id=row["event_id"],
                 risk_level=row["risk_level"],
+                context=_parse_json_object(row["context"]),
                 status=row["status"],
                 created_at=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
                 resolved_at=_from_iso(row["resolved_at"]),
@@ -462,7 +484,7 @@ class EventStore:
             if status:
                 rows = conn.execute(
                     """
-                    SELECT id, rule_id, event_id, risk_level, status, created_at, resolved_at
+                    SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
                     FROM approval_requests
                     WHERE status = ?
                     ORDER BY created_at ASC
@@ -473,7 +495,7 @@ class EventStore:
             else:
                 rows = conn.execute(
                     """
-                    SELECT id, rule_id, event_id, risk_level, status, created_at, resolved_at
+                    SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
                     FROM approval_requests
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -488,6 +510,7 @@ class EventStore:
                         rule_id=row["rule_id"],
                         event_id=row["event_id"],
                         risk_level=row["risk_level"],
+                        context=_parse_json_object(row["context"]),
                         status=row["status"],
                         created_at=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
                         resolved_at=_from_iso(row["resolved_at"]),

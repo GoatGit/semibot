@@ -85,6 +85,7 @@ class ApprovalRequest:
     rule_id: str
     event_id: str
     risk_level: str
+    context: dict[str, Any] = field(default_factory=dict)
     status: str = "pending"
     created_at: datetime = field(default_factory=utc_now)
     resolved_at: datetime | None = None

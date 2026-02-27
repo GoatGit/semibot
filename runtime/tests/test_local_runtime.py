@@ -8,6 +8,7 @@ import pytest
 
 from src.llm.base import LLMConfig
 from src.local_runtime import (
+    _build_approval_policy,
     _create_llm_provider,
     _maybe_bootstrap_llm_from_control_plane,
     _maybe_load_local_env_files,
@@ -136,3 +137,29 @@ def test_create_llm_provider_returns_none_without_api_key(monkeypatch) -> None:
     monkeypatch.delenv("SEMIBOT_CONFIG_PATH", raising=False)
 
     assert _create_llm_provider() is None
+
+
+def test_build_approval_policy_uses_generic_session_action_scope() -> None:
+    scope_key, context = _build_approval_policy(
+        "browser_automation",
+        {"action": "open", "session_id": "s1", "url": "https://example.com"},
+        "high",
+        "s1",
+        {},
+    )
+
+    assert scope_key == "browser_automation|risk:high|session:s1"
+    assert context["summary"] == "工具 `browser_automation` 执行动作 `open`，目标 `https://example.com`"
+
+
+def test_build_approval_policy_supports_generic_custom_dedupe_keys() -> None:
+    scope_key, context = _build_approval_policy(
+        "any_tool",
+        {"operation": "sync", "resource_id": "abc-1", "value": 42},
+        "medium",
+        "chat-1",
+        {"approval_dedupe_keys": ["resource_id"], "approval_scope": "call"},
+    )
+
+    assert scope_key == "any_tool|risk:medium|custom:resource_id=abc-1"
+    assert context["action"] == "sync"

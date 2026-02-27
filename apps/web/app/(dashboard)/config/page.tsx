@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { apiClient } from '@/lib/api'
 import { formatRuntimeStatusError } from '@/lib/runtime-status'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface ApiResponse<T> {
   success: boolean
@@ -89,11 +90,19 @@ interface ToolItem {
     retryAttempts?: number
     requiresApproval?: boolean
     riskLevel?: 'low' | 'medium' | 'high' | 'critical'
+    approvalScope?: ApprovalScope
+    approvalDedupeKeys?: string[]
     rateLimit?: number
     apiEndpoint?: string
     apiKey?: string
     rootPath?: string
     maxReadBytes?: number
+    headless?: boolean
+    browserType?: 'chromium' | 'firefox' | 'webkit'
+    allowLocalhost?: boolean
+    allowedDomains?: string[]
+    blockedDomains?: string[]
+    maxTextLength?: number
   }
   isBuiltin: boolean
   isActive: boolean
@@ -110,6 +119,7 @@ interface RuntimeSkillsData {
 type ConfigTab = 'llm' | 'tools' | 'apiKeys' | 'webhooks'
 type SectionKey = 'llm' | 'tools' | 'apiKeys' | 'webhooks'
 type ProviderKey = keyof LlmConfigData['providers']
+type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 
 type ToolForm = {
   id?: string
@@ -118,22 +128,30 @@ type ToolForm = {
   timeoutMs: string
   requiresApproval: boolean
   riskLevel: 'low' | 'medium' | 'high' | 'critical'
+  approvalScope: ApprovalScope
+  approvalDedupeKeys: string
   apiEndpoint: string
   apiKey: string
   rootPath: string
   maxReadBytes: string
+  headless: boolean
+  browserType: 'chromium' | 'firefox' | 'webkit'
+  allowLocalhost: boolean
+  allowedDomains: string
+  blockedDomains: string
+  maxTextLength: string
 }
 
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
 const MIN_WEBHOOK_SECRET_LENGTH = 16
-const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io']
+const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io', 'browser_automation']
 const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
-function formatDate(dateString?: string): string {
-  if (!dateString) return '未设置'
+function formatDate(dateString: string | undefined, locale: string, t: (key: string, params?: Record<string, string | number>) => string): string {
+  if (!dateString) return t('config.common.notSet')
   const date = new Date(dateString)
-  if (Number.isNaN(date.getTime())) return '未设置'
-  return date.toLocaleString('zh-CN')
+  if (Number.isNaN(date.getTime())) return t('config.common.notSet')
+  return date.toLocaleString(locale)
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -180,6 +198,7 @@ function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
 }
 
 export default function ConfigPage() {
+  const { locale, t } = useLocale()
   const [activeTab, setActiveTab] = useState<ConfigTab>('llm')
   const [loading, setLoading] = useState(true)
   const [refreshingAll, setRefreshingAll] = useState(false)
@@ -226,10 +245,18 @@ export default function ConfigPage() {
     timeoutMs: '',
     requiresApproval: false,
     riskLevel: 'low',
+    approvalScope: 'session',
+    approvalDedupeKeys: '',
     apiEndpoint: '',
     apiKey: '',
     rootPath: '',
     maxReadBytes: '',
+    headless: true,
+    browserType: 'chromium',
+    allowLocalhost: false,
+    allowedDomains: '',
+    blockedDomains: '',
+    maxTextLength: '',
   })
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
@@ -262,7 +289,7 @@ export default function ConfigPage() {
       ])
 
       if (!statusRes.success || !configRes.success) {
-        throw new Error('LLM 配置加载失败')
+        throw new Error(t('config.errors.llmLoad'))
       }
 
       setLlmProviders(statusRes.data || [])
@@ -275,12 +302,12 @@ export default function ConfigPage() {
     } catch (err) {
       setSectionErrors((prev) => ({
         ...prev,
-        llm: getErrorMessage(err, 'LLM 配置加载失败'),
+        llm: getErrorMessage(err, t('config.errors.llmLoad')),
       }))
     } finally {
       setSectionLoadingFlag('llm', false)
     }
-  }, [setSectionLoadingFlag])
+  }, [setSectionLoadingFlag, t])
 
   const loadTools = useCallback(async () => {
     setSectionLoadingFlag('tools', true)
@@ -300,7 +327,7 @@ export default function ConfigPage() {
               tools: [],
               skills: [],
               source: '',
-              error: 'Runtime 内置工具读取失败',
+              error: t('config.errors.runtimeToolsLoad'),
             }
 
       const unifiedTools = Array.from(
@@ -313,25 +340,25 @@ export default function ConfigPage() {
         tools:
           toolsRes.status === 'fulfilled' && toolsRes.value.success
             ? null
-            : 'Tools 配置读取失败（Runtime 工具清单已显示）',
+            : t('config.errors.toolsConfigLoad'),
       }))
     } catch (err) {
       setTools([])
       setSectionErrors((prev) => ({
         ...prev,
-        tools: getErrorMessage(err, 'Tools 列表加载失败'),
+        tools: getErrorMessage(err, t('config.errors.toolsLoad')),
       }))
     } finally {
       setSectionLoadingFlag('tools', false)
     }
-  }, [setSectionLoadingFlag])
+  }, [setSectionLoadingFlag, t])
 
   const loadApiKeys = useCallback(async () => {
     setSectionLoadingFlag('apiKeys', true)
     try {
       const response = await apiClient.get<ApiResponse<ApiKeyItem[]>>('/api-keys')
       if (!response.success) {
-        throw new Error('API Key 列表加载失败')
+        throw new Error(t('config.errors.apiKeysLoad'))
       }
       setApiKeys(response.data || [])
       setSectionErrors((prev) => ({ ...prev, apiKeys: null }))
@@ -339,12 +366,12 @@ export default function ConfigPage() {
       setApiKeys([])
       setSectionErrors((prev) => ({
         ...prev,
-        apiKeys: getErrorMessage(err, 'API Key 列表加载失败'),
+        apiKeys: getErrorMessage(err, t('config.errors.apiKeysLoad')),
       }))
     } finally {
       setSectionLoadingFlag('apiKeys', false)
     }
-  }, [setSectionLoadingFlag])
+  }, [setSectionLoadingFlag, t])
 
   const loadWebhooks = useCallback(async () => {
     setSectionLoadingFlag('webhooks', true)
@@ -353,7 +380,7 @@ export default function ConfigPage() {
         params: { page: 1, limit: 50 },
       })
       if (!response.success) {
-        throw new Error('Webhook 列表加载失败')
+        throw new Error(t('config.errors.webhooksLoad'))
       }
       setWebhooks(response.data || [])
       setSectionErrors((prev) => ({ ...prev, webhooks: null }))
@@ -361,12 +388,12 @@ export default function ConfigPage() {
       setWebhooks([])
       setSectionErrors((prev) => ({
         ...prev,
-        webhooks: getErrorMessage(err, 'Webhook 列表加载失败'),
+        webhooks: getErrorMessage(err, t('config.errors.webhooksLoad')),
       }))
     } finally {
       setSectionLoadingFlag('webhooks', false)
     }
-  }, [setSectionLoadingFlag])
+  }, [setSectionLoadingFlag, t])
 
   const loadData = useCallback(async () => {
     setRefreshingAll(true)
@@ -390,7 +417,7 @@ export default function ConfigPage() {
       })
       await loadLlmData()
     } catch (err) {
-      setError(getErrorMessage(err, '保存模型默认配置失败'))
+      setError(getErrorMessage(err, t('config.errors.saveDefaultModel')))
     } finally {
       setSavingModelDefaults(false)
     }
@@ -425,13 +452,19 @@ export default function ConfigPage() {
       setShowProviderConfigModal(false)
       await loadLlmData()
     } catch (err) {
-      setError(getErrorMessage(err, '保存 Provider 配置失败'))
+      setError(getErrorMessage(err, t('config.errors.saveProvider')))
     } finally {
       setProviderConfigSaving(false)
     }
   }
 
   const openEditToolDialog = (tool: ToolItem) => {
+    const allowedDomains = Array.isArray(tool.config?.allowedDomains)
+      ? tool.config?.allowedDomains.join(',')
+      : ''
+    const blockedDomains = Array.isArray(tool.config?.blockedDomains)
+      ? tool.config?.blockedDomains.join(',')
+      : ''
     setToolForm({
       id: tool.id,
       name: tool.name,
@@ -443,6 +476,10 @@ export default function ConfigPage() {
         | 'medium'
         | 'high'
         | 'critical',
+      approvalScope: (tool.config?.approvalScope || 'session') as ApprovalScope,
+      approvalDedupeKeys: Array.isArray(tool.config?.approvalDedupeKeys)
+        ? tool.config.approvalDedupeKeys.join(',')
+        : '',
       apiEndpoint: tool.config?.apiEndpoint || '',
       apiKey: '',
       rootPath: tool.config?.rootPath || '',
@@ -450,15 +487,26 @@ export default function ConfigPage() {
         typeof tool.config?.maxReadBytes === 'number'
           ? String(tool.config.maxReadBytes)
           : '',
+      headless: tool.config?.headless ?? true,
+      browserType: tool.config?.browserType || 'chromium',
+      allowLocalhost: tool.config?.allowLocalhost ?? false,
+      allowedDomains,
+      blockedDomains,
+      maxTextLength:
+        typeof tool.config?.maxTextLength === 'number'
+          ? String(tool.config.maxTextLength)
+          : '',
     })
     setShowEditTool(true)
   }
 
   const saveToolConfig = async () => {
-    const supportsApiCredentials = toolForm.name !== 'code_executor' && toolForm.name !== 'file_io'
+    const supportsApiCredentials =
+      toolForm.name !== 'code_executor' && toolForm.name !== 'file_io' && toolForm.name !== 'browser_automation'
+    const isBrowserTool = toolForm.name === 'browser_automation'
     const timeout = toolForm.timeoutMs.trim()
     if (timeout && (!/^\d+$/.test(timeout) || Number(timeout) < 1000)) {
-      setError('timeout 必须是 >= 1000 的整数（毫秒）')
+      setError(t('config.errors.timeoutInvalid'))
       return
     }
 
@@ -468,22 +516,41 @@ export default function ConfigPage() {
         // eslint-disable-next-line no-new
         new URL(endpoint)
       } catch {
-        setError('apiEndpoint 必须是合法 URL')
+        setError(t('config.errors.apiEndpointInvalid'))
         return
       }
     }
 
     const maxReadBytes = toolForm.maxReadBytes.trim()
     if (maxReadBytes && (!/^\d+$/.test(maxReadBytes) || Number(maxReadBytes) < 1)) {
-      setError('maxReadBytes 必须是正整数')
+      setError(t('config.errors.maxReadBytesInvalid'))
       return
     }
+
+    const maxTextLength = toolForm.maxTextLength.trim()
+    if (
+      isBrowserTool &&
+      maxTextLength &&
+      (!/^\d+$/.test(maxTextLength) || Number(maxTextLength) < 100 || Number(maxTextLength) > 500000)
+    ) {
+      setError(t('config.errors.maxTextLengthInvalid'))
+      return
+    }
+
+    const parseCommaList = (value: string): string[] =>
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    const approvalDedupeKeys = parseCommaList(toolForm.approvalDedupeKeys)
 
     const payload = {
       config: {
         ...(timeout ? { timeout: Number(timeout) } : {}),
         requiresApproval: toolForm.requiresApproval,
         riskLevel: toolForm.riskLevel,
+        approvalScope: toolForm.approvalScope,
+        approvalDedupeKeys,
         ...(endpoint ? { apiEndpoint: endpoint } : {}),
         ...(supportsApiCredentials && toolForm.apiKey.trim()
           ? { apiKey: toolForm.apiKey.trim() }
@@ -494,6 +561,12 @@ export default function ConfigPage() {
         ...(toolForm.name === 'file_io' && maxReadBytes
           ? { maxReadBytes: Number(maxReadBytes) }
           : {}),
+        ...(isBrowserTool ? { headless: toolForm.headless } : {}),
+        ...(isBrowserTool ? { browserType: toolForm.browserType } : {}),
+        ...(isBrowserTool ? { allowLocalhost: toolForm.allowLocalhost } : {}),
+        ...(isBrowserTool ? { allowedDomains: parseCommaList(toolForm.allowedDomains) } : {}),
+        ...(isBrowserTool ? { blockedDomains: parseCommaList(toolForm.blockedDomains) } : {}),
+        ...(isBrowserTool && maxTextLength ? { maxTextLength: Number(maxTextLength) } : {}),
       },
     }
 
@@ -502,7 +575,7 @@ export default function ConfigPage() {
       setError(null)
 
       if (!toolForm.id) {
-        setError('缺少工具 ID，无法保存')
+        setError(t('config.errors.missingToolId'))
         return
       }
       if (toolForm.id.startsWith('builtin:')) {
@@ -514,7 +587,7 @@ export default function ConfigPage() {
 
       await loadTools()
     } catch (err) {
-      setError(getErrorMessage(err, '更新工具配置失败'))
+      setError(getErrorMessage(err, t('config.errors.updateToolConfig')))
     } finally {
       setSavingTool(false)
     }
@@ -532,7 +605,7 @@ export default function ConfigPage() {
       }
       await loadTools()
     } catch (err) {
-      setError(getErrorMessage(err, '更新工具状态失败'))
+      setError(getErrorMessage(err, t('config.errors.updateToolStatus')))
     }
   }
 
@@ -553,20 +626,20 @@ export default function ConfigPage() {
         await loadApiKeys()
       }
     } catch (err) {
-      setError(getErrorMessage(err, '创建 API Key 失败'))
+      setError(getErrorMessage(err, t('config.errors.createApiKey')))
     } finally {
       setCreatingKey(false)
     }
   }
 
   const removeApiKey = async (id: string) => {
-    if (!window.confirm('确认删除这个 API Key 吗？删除后无法恢复。')) return
+    if (!window.confirm(t('config.confirm.deleteApiKey'))) return
     try {
       setError(null)
       await apiClient.delete('/api-keys/' + id)
       await loadApiKeys()
     } catch (err) {
-      setError(getErrorMessage(err, '删除 API Key 失败'))
+      setError(getErrorMessage(err, t('config.errors.deleteApiKey')))
     }
   }
 
@@ -575,11 +648,11 @@ export default function ConfigPage() {
       setCreatingWebhook(true)
       setError(null)
       if (!/^https?:\/\/.+/i.test(webhookForm.url.trim())) {
-        setError('Webhook URL 必须是 http(s) 地址')
+        setError(t('config.errors.webhookUrlInvalid'))
         return
       }
       if (webhookForm.secret.trim().length < MIN_WEBHOOK_SECRET_LENGTH) {
-        setError(`Webhook secret 至少 ${MIN_WEBHOOK_SECRET_LENGTH} 个字符`)
+        setError(t('config.errors.webhookSecretMin', { min: MIN_WEBHOOK_SECRET_LENGTH }))
         return
       }
       const events = webhookForm.eventsText
@@ -587,7 +660,7 @@ export default function ConfigPage() {
         .map((item) => item.trim())
         .filter(Boolean)
       if (events.length === 0) {
-        setError('至少需要一个事件名称')
+        setError(t('config.errors.webhookEventRequired'))
         return
       }
       await apiClient.post('/webhooks', {
@@ -599,7 +672,7 @@ export default function ConfigPage() {
       setWebhookForm({ url: '', secret: '', eventsText: DEFAULT_EVENTS.join(',') })
       await loadWebhooks()
     } catch (err) {
-      setError(getErrorMessage(err, '创建 Webhook 失败'))
+      setError(getErrorMessage(err, t('config.errors.createWebhook')))
     } finally {
       setCreatingWebhook(false)
     }
@@ -611,7 +684,7 @@ export default function ConfigPage() {
       await apiClient.patch('/webhooks/' + item.id, { isActive: !item.isActive })
       await loadWebhooks()
     } catch (err) {
-      setError(getErrorMessage(err, '更新 Webhook 失败'))
+      setError(getErrorMessage(err, t('config.errors.updateWebhook')))
     }
   }
 
@@ -621,20 +694,20 @@ export default function ConfigPage() {
       setError(null)
       await apiClient.post('/webhooks/' + id + '/test')
     } catch (err) {
-      setError(getErrorMessage(err, '测试 Webhook 失败'))
+      setError(getErrorMessage(err, t('config.errors.testWebhook')))
     } finally {
       setTestingWebhookId(null)
     }
   }
 
   const removeWebhook = async (id: string) => {
-    if (!window.confirm('确认删除这个 Webhook 吗？删除后无法恢复。')) return
+    if (!window.confirm(t('config.confirm.deleteWebhook'))) return
     try {
       setError(null)
       await apiClient.delete('/webhooks/' + id)
       await loadWebhooks()
     } catch (err) {
-      setError(getErrorMessage(err, '删除 Webhook 失败'))
+      setError(getErrorMessage(err, t('config.errors.deleteWebhook')))
     }
   }
 
@@ -678,9 +751,9 @@ export default function ConfigPage() {
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold text-text-primary">配置管理</h1>
+            <h1 className="text-2xl font-semibold text-text-primary">{t('config.header.title')}</h1>
             <p className="mt-1 text-sm text-text-secondary">
-              统一管理 LLM、Tools、API Key、Webhook。
+              {t('config.header.subtitle')}
             </p>
           </div>
           <Button
@@ -688,7 +761,7 @@ export default function ConfigPage() {
             onClick={loadData}
             leftIcon={<Loader2 size={16} className={refreshingAll || isAnySectionLoading ? 'animate-spin' : ''} />}
           >
-            刷新
+            {t('common.refresh')}
           </Button>
         </div>
 
@@ -721,7 +794,7 @@ export default function ConfigPage() {
           <Card className="border-border-default">
             <CardContent className="flex items-center justify-center py-16">
               <Loader2 size={22} className="animate-spin text-primary-500" />
-              <span className="ml-2 text-sm text-text-secondary">加载配置中...</span>
+              <span className="ml-2 text-sm text-text-secondary">{t('config.loading')}</span>
             </CardContent>
           </Card>
         ) : (
@@ -733,7 +806,7 @@ export default function ConfigPage() {
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <Cpu size={18} className="text-primary-400" />
-                        <h2 className="text-lg font-semibold text-text-primary">模型路由默认值</h2>
+                        <h2 className="text-lg font-semibold text-text-primary">{t('config.llm.routingDefaults')}</h2>
                       </div>
                       <Button
                         size="xs"
@@ -741,7 +814,7 @@ export default function ConfigPage() {
                         leftIcon={<RefreshCw size={13} className={sectionLoading.llm ? 'animate-spin' : ''} />}
                         onClick={loadLlmData}
                       >
-                        刷新
+                        {t('common.refresh')}
                       </Button>
                     </div>
                     {sectionErrors.llm && (
@@ -765,14 +838,14 @@ export default function ConfigPage() {
                       onClick={saveModelConfig}
                       loading={savingModelDefaults}
                     >
-                      保存模型路由
+                      {t('config.llm.saveRouting')}
                     </Button>
                   </CardContent>
                 </Card>
 
                 <Card className="border-border-default">
                   <CardContent className="p-5 space-y-3">
-                    <h2 className="text-lg font-semibold text-text-primary">Provider 配置</h2>
+                    <h2 className="text-lg font-semibold text-text-primary">{t('config.llm.providerConfig')}</h2>
                     {(Object.keys(llmConfig?.providers || {}) as ProviderKey[]).map((providerKey) => {
                       const cfg = llmConfig?.providers[providerKey]
                       const status = llmStatusMap.get(providerKey)
@@ -789,7 +862,7 @@ export default function ConfigPage() {
                             </p>
                             <div className="flex items-center gap-2">
                               <Badge variant={status?.available ? 'success' : 'outline'}>
-                                {status?.available ? '可用' : '未配置'}
+                                {status?.available ? t('config.status.available') : t('config.status.notConfigured')}
                               </Badge>
                               <Button
                                 size="xs"
@@ -797,19 +870,19 @@ export default function ConfigPage() {
                                 leftIcon={<Pencil size={12} />}
                                 onClick={() => openProviderConfigDialog(providerKey)}
                               >
-                                编辑
+                                {t('common.edit')}
                               </Button>
                             </div>
                           </div>
                           <p className="mt-1 text-xs text-text-tertiary">
-                            API Key: {cfg.apiKeyConfigured ? (cfg.apiKeyPreview || '已配置') : '未配置'}
+                            API Key: {cfg.apiKeyConfigured ? (cfg.apiKeyPreview || t('config.status.configured')) : t('config.status.notConfigured')}
                           </p>
                           <p className="mt-1 truncate text-xs text-text-tertiary">
-                            Endpoint: {cfg.baseUrl || '未设置'}
+                            Endpoint: {cfg.baseUrl || t('config.common.notSet')}
                           </p>
                           <details className="mt-2">
                             <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary">
-                              查看模型列表（{status?.models?.length ?? 0}）
+                              {t('config.llm.viewModels')}（{status?.models?.length ?? 0}）
                             </summary>
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {(status?.models || []).map((model) => (
@@ -839,14 +912,14 @@ export default function ConfigPage() {
                       <h2 className="text-lg font-semibold text-text-primary">Tools</h2>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-text-tertiary">活跃 {activeToolsCount}</span>
+                      <span className="text-xs text-text-tertiary">{t('config.tools.activeCount', { count: activeToolsCount })}</span>
                       <Button
                         size="xs"
                         variant="tertiary"
                         leftIcon={<RefreshCw size={13} className={sectionLoading.tools ? 'animate-spin' : ''} />}
                         onClick={loadTools}
                       >
-                        刷新
+                        {t('common.refresh')}
                       </Button>
                     </div>
                   </div>
@@ -857,9 +930,9 @@ export default function ConfigPage() {
 
                   <div className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-text-primary">工具配置（仅启停与参数）</p>
+                      <p className="text-sm font-medium text-text-primary">{t('config.tools.configTitle')}</p>
                       <Badge variant={runtimeSkills.available ? 'success' : 'outline'}>
-                        {runtimeSkills.available ? '已连接' : '未连接'}
+                        {runtimeSkills.available ? t('config.status.connected') : t('config.status.disconnected')}
                       </Badge>
                     </div>
                     {runtimeSkillsErrorText && (
@@ -867,9 +940,9 @@ export default function ConfigPage() {
                     )}
                     <div className="mt-2 space-y-2">
                       {sectionLoading.tools && tools.length === 0 ? (
-                        <p className="text-sm text-text-secondary">正在加载工具列表...</p>
+                        <p className="text-sm text-text-secondary">{t('config.tools.loading')}</p>
                       ) : tools.length === 0 ? (
-                        <p className="text-sm text-text-secondary">暂无工具配置数据（V2 不支持新增/删除 Tool）</p>
+                        <p className="text-sm text-text-secondary">{t('config.tools.empty')}</p>
                       ) : (
                         tools.map((tool) => (
                           <div
@@ -884,14 +957,17 @@ export default function ConfigPage() {
                                   {tool.description ? ` · ${tool.description}` : ''}
                                 </p>
                                 <p className="mt-1 text-xs text-text-tertiary">
-                                  风险: {tool.config?.riskLevel || 'low'} · 审批:{' '}
-                                  {tool.config?.requiresApproval ? '开启' : '关闭'}
+                                  {t('config.tools.risk')}: {tool.config?.riskLevel || 'low'} · {t('config.tools.approval')}:{' '}
+                                  {tool.config?.requiresApproval ? t('config.tools.on') : t('config.tools.off')}
+                                  {tool.config?.requiresApproval
+                                    ? ` · ${t('config.tools.approvalScope')}: ${String(tool.config?.approvalScope || 'session')}`
+                                    : ''}
                                 </p>
                               </div>
                               <div className="flex items-center gap-1">
-                                {tool.isBuiltin && <Badge variant="outline">内置</Badge>}
+                                {tool.isBuiltin && <Badge variant="outline">{t('config.tools.builtIn')}</Badge>}
                                 <Badge variant={tool.isActive ? 'success' : 'outline'}>
-                                  {tool.isActive ? '启用' : '停用'}
+                                  {tool.isActive ? t('config.status.enabled') : t('config.status.disabled')}
                                 </Badge>
                               </div>
                             </div>
@@ -902,10 +978,10 @@ export default function ConfigPage() {
                                 leftIcon={<Pencil size={12} />}
                                 onClick={() => openEditToolDialog(tool)}
                               >
-                                配置
+                                {t('config.tools.configure')}
                               </Button>
                               <Button size="xs" variant="tertiary" onClick={() => toggleToolStatus(tool)}>
-                                {tool.isActive ? '停用' : '启用'}
+                                {tool.isActive ? t('config.tools.disable') : t('config.tools.enable')}
                               </Button>
                             </div>
                           </div>
@@ -932,10 +1008,10 @@ export default function ConfigPage() {
                         leftIcon={<RefreshCw size={13} className={sectionLoading.apiKeys ? 'animate-spin' : ''} />}
                         onClick={loadApiKeys}
                       >
-                        刷新
+                        {t('common.refresh')}
                       </Button>
                       <Button size="sm" leftIcon={<Plus size={14} />} onClick={() => setShowCreateKey(true)}>
-                        新建 Key
+                        {t('config.apiKeys.newKey')}
                       </Button>
                     </div>
                   </div>
@@ -945,11 +1021,11 @@ export default function ConfigPage() {
                   <div className="space-y-2">
                     {sectionLoading.apiKeys && apiKeys.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
-                        正在加载 API Key...
+                        {t('config.apiKeys.loading')}
                       </p>
                     ) : apiKeys.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
-                        暂无 API Key
+                        {t('config.apiKeys.empty')}
                       </p>
                     ) : (
                       apiKeys.map((item) => (
@@ -961,7 +1037,7 @@ export default function ConfigPage() {
                             </div>
                             <div className="flex items-center gap-2">
                               <Badge variant={item.isActive ? 'success' : 'outline'}>
-                                {item.isActive ? '启用' : '停用'}
+                                {item.isActive ? t('config.status.enabled') : t('config.status.disabled')}
                               </Badge>
                               <button
                                 type="button"
@@ -973,7 +1049,7 @@ export default function ConfigPage() {
                             </div>
                           </div>
                           <p className="mt-2 text-xs text-text-tertiary">
-                            最近使用: {formatDate(item.lastUsedAt)} · 过期: {formatDate(item.expiresAt)}
+                            {t('config.apiKeys.lastUsed')}: {formatDate(item.lastUsedAt, locale, t)} · {t('config.apiKeys.expires')}: {formatDate(item.expiresAt, locale, t)}
                           </p>
                         </div>
                       ))
@@ -998,10 +1074,10 @@ export default function ConfigPage() {
                         leftIcon={<RefreshCw size={13} className={sectionLoading.webhooks ? 'animate-spin' : ''} />}
                         onClick={loadWebhooks}
                       >
-                        刷新
+                        {t('common.refresh')}
                       </Button>
                       <Button size="sm" leftIcon={<Plus size={14} />} onClick={() => setShowCreateWebhook(true)}>
-                        新建 Webhook
+                        {t('config.webhooks.newWebhook')}
                       </Button>
                     </div>
                   </div>
@@ -1011,11 +1087,11 @@ export default function ConfigPage() {
                   <div className="space-y-2">
                     {sectionLoading.webhooks && webhooks.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
-                        正在加载 Webhook...
+                        {t('config.webhooks.loading')}
                       </p>
                     ) : webhooks.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
-                        暂无 Webhook
+                        {t('config.webhooks.empty')}
                       </p>
                     ) : (
                       webhooks.map((item) => (
@@ -1024,12 +1100,12 @@ export default function ConfigPage() {
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-text-primary">{item.url}</p>
                               <p className="mt-1 text-xs text-text-tertiary">
-                                事件: {item.events.join(', ')} · 创建时间: {formatDate(item.createdAt)}
+                                {t('config.webhooks.events')}: {item.events.join(', ')} · {t('config.webhooks.createdAt')}: {formatDate(item.createdAt, locale, t)}
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
                               <Badge variant={item.isActive ? 'success' : 'outline'}>
-                                {item.isActive ? '启用' : '停用'}
+                                {item.isActive ? t('config.status.enabled') : t('config.status.disabled')}
                               </Badge>
                               <Button
                                 size="xs"
@@ -1040,7 +1116,7 @@ export default function ConfigPage() {
                                 <TestTube2 size={13} />
                               </Button>
                               <Button size="xs" variant="tertiary" onClick={() => toggleWebhook(item)}>
-                                {item.isActive ? '停用' : '启用'}
+                                {item.isActive ? t('config.tools.disable') : t('config.tools.enable')}
                               </Button>
                               <button
                                 type="button"
@@ -1065,18 +1141,18 @@ export default function ConfigPage() {
       <Modal
         open={showProviderConfigModal}
         onClose={() => setShowProviderConfigModal(false)}
-        title="编辑 LLM Provider"
+        title={t('config.modals.provider.title')}
         description={providerConfigForm.provider}
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowProviderConfigModal(false)}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={saveProviderConfig}
               loading={providerConfigSaving}
             >
-              保存
+              {t('common.save')}
             </Button>
           </>
         }
@@ -1084,7 +1160,7 @@ export default function ConfigPage() {
         <div className="space-y-4">
           <Input
             type="password"
-            placeholder="新 API Key（留空则不修改）"
+            placeholder={t('config.modals.provider.apiKeyPlaceholder')}
             value={providerConfigForm.apiKey}
             onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, apiKey: e.target.value }))}
           />
@@ -1101,7 +1177,7 @@ export default function ConfigPage() {
                 setProviderConfigForm((prev) => ({ ...prev, clearApiKey: e.target.checked }))
               }
             />
-            清除已有 API Key
+            {t('config.modals.provider.clearApiKey')}
           </label>
         </div>
       </Modal>
@@ -1109,35 +1185,35 @@ export default function ConfigPage() {
       <Modal
         open={showEditTool}
         onClose={() => setShowEditTool(false)}
-        title="工具配置"
+        title={t('config.modals.tool.title')}
         description={toolForm.id || ''}
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowEditTool(false)} disabled={savingTool}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button onClick={saveToolConfig} loading={savingTool}>
-              保存
+              {t('common.save')}
             </Button>
           </>
         }
       >
         <div className="space-y-3">
           <p className="text-xs text-text-tertiary">
-            V2 仅支持配置内建工具参数与启停，不支持修改工具名称/类型，不支持新增或删除。
+            {t('config.modals.tool.description')}
           </p>
           <Input
-            placeholder="工具名称"
+            placeholder={t('config.modals.tool.namePlaceholder')}
             value={toolForm.name}
             disabled
           />
           <Input
-            placeholder="工具类型"
+            placeholder={t('config.modals.tool.typePlaceholder')}
             value={toolForm.type}
             disabled
           />
           <Input
-            placeholder="timeout 毫秒（可选，>=1000）"
+            placeholder={t('config.modals.tool.timeoutPlaceholder')}
             value={toolForm.timeoutMs}
             onChange={(e) => setToolForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
           />
@@ -1147,10 +1223,10 @@ export default function ConfigPage() {
               checked={toolForm.requiresApproval}
               onChange={(e) => setToolForm((prev) => ({ ...prev, requiresApproval: e.target.checked }))}
             />
-            高风险操作需要人工审批（HITL）
+            {t('config.modals.tool.hitl')}
           </label>
           <div className="space-y-1">
-            <p className="text-xs text-text-tertiary">风险等级</p>
+            <p className="text-xs text-text-tertiary">{t('config.modals.tool.riskLevel')}</p>
             <select
               className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
               value={toolForm.riskLevel}
@@ -1167,34 +1243,119 @@ export default function ConfigPage() {
               <option value="critical">critical</option>
             </select>
           </div>
-          {toolForm.name !== 'code_executor' && toolForm.name !== 'file_io' ? (
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{t('config.modals.tool.approvalScope')}</p>
+            <select
+              className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+              value={toolForm.approvalScope}
+              onChange={(e) =>
+                setToolForm((prev) => ({
+                  ...prev,
+                  approvalScope: e.target.value as ApprovalScope,
+                }))
+              }
+            >
+              <option value="session">{t('config.modals.tool.approvalScopes.session')}</option>
+              <option value="session_action">{t('config.modals.tool.approvalScopes.sessionAction')}</option>
+              <option value="action">{t('config.modals.tool.approvalScopes.action')}</option>
+              <option value="target">{t('config.modals.tool.approvalScopes.target')}</option>
+              <option value="tool">{t('config.modals.tool.approvalScopes.tool')}</option>
+              <option value="call">{t('config.modals.tool.approvalScopes.call')}</option>
+            </select>
+            <p className="text-[11px] text-text-tertiary">{t('config.modals.tool.approvalScopeHint')}</p>
+          </div>
+          <Input
+            placeholder={t('config.modals.tool.approvalDedupeKeysPlaceholder')}
+            value={toolForm.approvalDedupeKeys}
+            onChange={(e) => setToolForm((prev) => ({ ...prev, approvalDedupeKeys: e.target.value }))}
+          />
+          {toolForm.name !== 'code_executor' &&
+          toolForm.name !== 'file_io' &&
+          toolForm.name !== 'browser_automation' ? (
             <>
               <Input
-                placeholder="API Endpoint（可选）"
+                placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
                 value={toolForm.apiEndpoint}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, apiEndpoint: e.target.value }))}
               />
               <Input
                 type="password"
-                placeholder="API Key（留空不修改）"
+                placeholder={t('config.modals.tool.apiKeyPlaceholder')}
                 value={toolForm.apiKey}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, apiKey: e.target.value }))}
               />
             </>
           ) : (
             <p className="text-xs text-text-tertiary">
-              {toolForm.name} 无需配置 API Endpoint / API Key。
+              {t('config.modals.tool.noApiNeeded', { tool: toolForm.name })}
             </p>
           )}
+          {toolForm.name === 'browser_automation' ? (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={toolForm.headless}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, headless: e.target.checked }))}
+                />
+                {t('config.modals.tool.browser.headless')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={toolForm.allowLocalhost}
+                  onChange={(e) =>
+                    setToolForm((prev) => ({
+                      ...prev,
+                      allowLocalhost: e.target.checked,
+                    }))
+                  }
+                />
+                {t('config.modals.tool.browser.allowLocalhost')}
+              </label>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{t('config.modals.tool.browser.browserType')}</p>
+                <select
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.browserType}
+                  onChange={(e) =>
+                    setToolForm((prev) => ({
+                      ...prev,
+                      browserType: e.target.value as 'chromium' | 'firefox' | 'webkit',
+                    }))
+                  }
+                >
+                  <option value="chromium">chromium</option>
+                  <option value="firefox">firefox</option>
+                  <option value="webkit">webkit</option>
+                </select>
+              </div>
+              <Input
+                placeholder={t('config.modals.tool.browser.allowedDomainsPlaceholder')}
+                value={toolForm.allowedDomains}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, allowedDomains: e.target.value }))}
+              />
+              <Input
+                placeholder={t('config.modals.tool.browser.blockedDomainsPlaceholder')}
+                value={toolForm.blockedDomains}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, blockedDomains: e.target.value }))}
+              />
+              <Input
+                placeholder={t('config.modals.tool.browser.maxTextLengthPlaceholder')}
+                value={toolForm.maxTextLength}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, maxTextLength: e.target.value }))}
+              />
+            </div>
+          ) : null}
           {toolForm.name === 'file_io' ? (
             <div className="space-y-2">
               <Input
-                placeholder="根目录（可选，如 /Users/xxx）"
+                placeholder={t('config.modals.tool.rootPathPlaceholder')}
                 value={toolForm.rootPath}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, rootPath: e.target.value }))}
               />
               <Input
-                placeholder="maxReadBytes（可选，正整数）"
+                placeholder={t('config.modals.tool.maxReadBytesPlaceholder')}
                 value={toolForm.maxReadBytes}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, maxReadBytes: e.target.value }))}
               />
@@ -1206,22 +1367,22 @@ export default function ConfigPage() {
       <Modal
         open={showCreateKey}
         onClose={() => setShowCreateKey(false)}
-        title="创建 API Key"
-        description="完整密钥只会展示一次。"
+        title={t('config.modals.apiKey.title')}
+        description={t('config.modals.apiKey.description')}
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowCreateKey(false)}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button onClick={createApiKey} loading={creatingKey} disabled={!newKeyName.trim()}>
-              创建
+              {t('common.create')}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <Input
-            placeholder="Key 名称"
+            placeholder={t('config.modals.apiKey.namePlaceholder')}
             value={newKeyName}
             onChange={(e) => setNewKeyName(e.target.value)}
           />
@@ -1236,19 +1397,19 @@ export default function ConfigPage() {
       <Modal
         open={showCreateWebhook}
         onClose={() => setShowCreateWebhook(false)}
-        title="创建 Webhook"
-        description="events 用逗号分隔，最少一个事件。"
+        title={t('config.modals.webhook.title')}
+        description={t('config.modals.webhook.description')}
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowCreateWebhook(false)}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={createWebhook}
               loading={creatingWebhook}
               disabled={!webhookForm.url.trim() || !webhookForm.secret.trim()}
             >
-              创建
+              {t('common.create')}
             </Button>
           </>
         }
@@ -1261,7 +1422,7 @@ export default function ConfigPage() {
             onChange={(e) => setWebhookForm((prev) => ({ ...prev, url: e.target.value }))}
           />
           <Input
-            placeholder="secret(至少16字符)"
+            placeholder={t('config.modals.webhook.secretPlaceholder')}
             value={webhookForm.secret}
             onChange={(e) => setWebhookForm((prev) => ({ ...prev, secret: e.target.value }))}
           />
@@ -1276,12 +1437,12 @@ export default function ConfigPage() {
       <Modal
         open={!!createdKey}
         onClose={() => setCreatedKey(null)}
-        title="API Key 已创建"
-        description="请立即保存，关闭后不再显示。"
-        footer={<Button onClick={() => setCreatedKey(null)}>我已保存</Button>}
+        title={t('config.modals.createdKey.title')}
+        description={t('config.modals.createdKey.description')}
+        footer={<Button onClick={() => setCreatedKey(null)}>{t('config.modals.createdKey.saved')}</Button>}
       >
         <div className="rounded-md border border-border-subtle bg-bg-surface p-3">
-          <p className="text-xs text-text-tertiary">完整密钥</p>
+          <p className="text-xs text-text-tertiary">{t('config.modals.createdKey.fullKey')}</p>
           <p className="mt-2 break-all font-mono text-sm text-primary-300">{createdKey?.key}</p>
         </div>
       </Modal>
