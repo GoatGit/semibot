@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Plus, Trash2, MessageSquare, Bot, AlertCircle } from 'lucide-react'
+import { Plus, Trash2, MessageSquare, Bot, AlertCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Session } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 /**
  * Chat Page - 会话列表页面
@@ -19,16 +20,22 @@ import type { ApiResponse, Session } from '@/types'
  */
 export default function ChatPage() {
   const router = useRouter()
+  const { locale, t } = useLocale()
   const [sessions, setSessions] = useState<Session[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
   // 加载会话列表
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
     try {
-      setIsLoading(true)
+      if (mode === 'initial') {
+        setIsLoading(true)
+      } else {
+        setIsRefreshing(true)
+      }
       setError(null)
 
       const response = await apiClient.get<ApiResponse<Session[]>>('/sessions')
@@ -36,18 +43,22 @@ export default function ChatPage() {
       if (response.success && response.data) {
         setSessions(response.data)
       } else {
-        throw new Error(response.error?.message ?? '加载会话列表失败')
+        throw new Error(response.error?.message ?? (locale === 'en-US' ? 'Failed to load sessions' : '加载会话列表失败'))
       }
     } catch (err) {
       console.error('[Chat] 加载会话列表失败:', err)
-      setError(err instanceof Error ? err.message : '加载会话列表失败')
+      setError(err instanceof Error ? err.message : (locale === 'en-US' ? 'Failed to load sessions' : '加载会话列表失败'))
     } finally {
-      setIsLoading(false)
+      if (mode === 'initial') {
+        setIsLoading(false)
+      } else {
+        setIsRefreshing(false)
+      }
     }
-  }, [])
+  }, [locale])
 
   useEffect(() => {
-    loadSessions()
+    void loadSessions('initial')
   }, [loadSessions])
 
   // 创建新会话
@@ -69,10 +80,16 @@ export default function ChatPage() {
       setConfirmDeleteId(null)
     } catch (err) {
       console.error('[Chat] 删除会话失败:', err)
-      setError(err instanceof Error ? err.message : '删除会话失败')
+      setError(err instanceof Error ? err.message : (locale === 'en-US' ? 'Failed to delete session' : '删除会话失败'))
     } finally {
       setIsDeleting(false)
     }
+  }
+
+  // 刷新会话
+  const handleRefreshSessions = async () => {
+    if (isLoading || isRefreshing) return
+    await loadSessions('refresh')
   }
 
   // 格式化时间
@@ -83,13 +100,13 @@ export default function ChatPage() {
     const days = Math.floor(diff / (1000 * 60 * 60 * 24))
 
     if (days === 0) {
-      return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
     } else if (days === 1) {
-      return '昨天'
+      return locale === 'en-US' ? 'Yesterday' : '昨天'
     } else if (days < 7) {
-      return `${days} 天前`
+      return locale === 'en-US' ? `${days}d ago` : `${days} 天前`
     } else {
-      return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+      return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
     }
   }
 
@@ -98,7 +115,7 @@ export default function ChatPage() {
     return (
       <div className="flex flex-col items-center justify-center flex-1 min-h-0 bg-bg-base">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" />
-        <p className="mt-4 text-text-secondary">加载会话列表...</p>
+        <p className="mt-4 text-text-secondary">{locale === 'en-US' ? 'Loading sessions...' : '加载会话列表...'}</p>
       </div>
     )
   }
@@ -108,15 +125,30 @@ export default function ChatPage() {
       {/* 侧边栏 - 会话列表 */}
       <aside className="w-80 border-r border-border-subtle bg-bg-surface flex flex-col">
         <div className="p-4 border-b border-border-subtle">
-          <Button
-            type="button"
-            className="w-full"
-            leftIcon={<Plus size={16} />}
-            onClick={handleCreateSession}
-            data-testid="new-session-btn"
-          >
-            新建会话
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="flex-1 border-border-default bg-bg-base text-text-primary hover:bg-interactive-hover"
+              leftIcon={<Plus size={16} />}
+              onClick={handleCreateSession}
+              data-testid="new-session-btn"
+            >
+              {t('chat.newChat')}
+            </Button>
+            <Button
+              type="button"
+              variant="tertiary"
+              size="sm"
+              className="h-10 px-3 border border-border-default text-text-secondary hover:text-text-primary"
+              onClick={handleRefreshSessions}
+              disabled={isRefreshing}
+              leftIcon={<RefreshCw size={14} className={clsx(isRefreshing && 'animate-spin')} />}
+              aria-label={locale === 'en-US' ? 'Refresh sessions' : '刷新会话'}
+            >
+              {locale === 'en-US' ? 'Refresh' : '刷新'}
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -132,8 +164,10 @@ export default function ChatPage() {
           {sessions.length === 0 && !error ? (
             <div className="p-6 text-center">
               <MessageSquare size={48} className="mx-auto text-text-tertiary mb-4" />
-              <p className="text-text-secondary text-sm">暂无会话</p>
-              <p className="text-text-tertiary text-xs mt-1">点击上方按钮创建新会话</p>
+              <p className="text-text-secondary text-sm">{locale === 'en-US' ? 'No sessions' : '暂无会话'}</p>
+              <p className="text-text-tertiary text-xs mt-1">
+                {locale === 'en-US' ? 'Click above to start a new chat' : '点击上方按钮创建新会话'}
+              </p>
             </div>
           ) : (
             <div className="p-3 space-y-1">
@@ -158,7 +192,7 @@ export default function ChatPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">
-                        {session.title ?? '未命名会话'}
+                        {session.title ?? (locale === 'en-US' ? 'Untitled chat' : '未命名会话')}
                       </p>
                       <p className="text-xs text-text-tertiary">
                         {formatTime(session.createdAt)}
@@ -176,7 +210,7 @@ export default function ChatPage() {
                       'text-text-tertiary hover:text-error-500 hover:bg-error-500/10',
                       'transition-all duration-fast'
                     )}
-                    aria-label="删除会话"
+                    aria-label={locale === 'en-US' ? 'Delete session' : '删除会话'}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -194,13 +228,15 @@ export default function ChatPage() {
             <MessageSquare size={40} className="text-primary-400" />
           </div>
           <h1 className="text-2xl font-semibold text-text-primary mb-3">
-            选择一个会话开始对话
+            {locale === 'en-US' ? 'Select a session to start' : '选择一个会话开始对话'}
           </h1>
           <p className="text-text-secondary mb-6">
-            从左侧选择一个已有会话，或创建新会话开始与 AI 助手交流
+            {locale === 'en-US'
+              ? 'Pick an existing session from the left, or create a new one to chat with your AI assistant.'
+              : '从左侧选择一个已有会话，或创建新会话开始与 AI 助手交流'}
           </p>
           <Button onClick={handleCreateSession} leftIcon={<Plus size={16} />}>
-            创建新会话
+            {locale === 'en-US' ? 'Create New Chat' : '创建新会话'}
           </Button>
         </div>
       </div>
@@ -210,7 +246,9 @@ export default function ChatPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-sm rounded-lg bg-bg-surface border border-border-default p-6 space-y-4">
             <h3 className="text-lg font-semibold text-text-primary">确认删除会话</h3>
-            <p className="text-sm text-text-secondary">删除后该会话的消息将无法恢复。</p>
+            <p className="text-sm text-text-secondary">
+              {locale === 'en-US' ? 'Messages in this session cannot be recovered after deletion.' : '删除后该会话的消息将无法恢复。'}
+            </p>
             <div className="flex items-center justify-end gap-2">
               <Button
                 variant="secondary"
@@ -218,7 +256,7 @@ export default function ChatPage() {
                 onClick={() => setConfirmDeleteId(null)}
                 disabled={isDeleting}
               >
-                取消
+                {t('common.cancel')}
               </Button>
               <Button
                 variant="destructive"
@@ -226,7 +264,7 @@ export default function ChatPage() {
                 onClick={() => handleDeleteSession(confirmDeleteId)}
                 loading={isDeleting}
               >
-                确认删除
+                {locale === 'en-US' ? 'Delete' : '确认删除'}
               </Button>
             </div>
           </div>

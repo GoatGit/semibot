@@ -17,22 +17,24 @@ import {
   Puzzle,
   User,
   LogOut,
+  Languages,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Session } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface NavItem {
   icon: React.ReactNode
-  label: string
+  labelKey: string
   href: string
 }
 
 const navItems: NavItem[] = [
-  { icon: <Home size={20} />, label: '首页', href: '/' },
-  { icon: <Bot size={20} />, label: 'Agents', href: '/agents' },
-  { icon: <Sparkles size={20} />, label: 'Skills', href: '/skills' },
-  { icon: <Puzzle size={20} />, label: 'MCP', href: '/mcp' },
+  { icon: <Home size={20} />, labelKey: 'nav.dashboard', href: '/' },
+  { icon: <Bot size={20} />, labelKey: 'nav.agents', href: '/agents' },
+  { icon: <Sparkles size={20} />, labelKey: 'nav.skills', href: '/skills' },
+  { icon: <Puzzle size={20} />, labelKey: 'nav.mcpServers', href: '/mcp' },
 ]
 
 /**
@@ -50,6 +52,7 @@ const NAVBAR_SESSION_LIMIT = 10
 export function NavBar() {
   const { navBarExpanded } = useLayoutStore()
   const { user, logout } = useAuthStore()
+  const { locale, setLocale, t } = useLocale()
   const pathname = usePathname()
   const router = useRouter()
   const [isHovered, setIsHovered] = useState(false)
@@ -194,13 +197,51 @@ export function NavBar() {
         </div>
       </div>
 
+      {/* 语言切换 */}
+      {isExpanded && (
+        <div className="px-3 py-2 border-b border-border-subtle">
+          <div className="flex items-center justify-between rounded-md border border-border-default bg-bg-base px-2.5 py-1.5">
+            <div className="flex items-center gap-1.5 text-text-tertiary">
+              <Languages size={14} />
+              <span className="text-xs font-medium">{locale === 'en-US' ? 'Language' : '语言'}</span>
+            </div>
+            <div className="inline-flex rounded-md border border-border-subtle bg-bg-surface p-0.5">
+              <button
+                type="button"
+                className={clsx(
+                  'px-2 py-0.5 text-xs rounded transition-colors',
+                  locale === 'zh-CN'
+                    ? 'bg-interactive-active text-text-primary'
+                    : 'text-text-tertiary hover:text-text-primary'
+                )}
+                onClick={() => setLocale('zh-CN')}
+              >
+                中文
+              </button>
+              <button
+                type="button"
+                className={clsx(
+                  'px-2 py-0.5 text-xs rounded transition-colors',
+                  locale === 'en-US'
+                    ? 'bg-interactive-active text-text-primary'
+                    : 'text-text-tertiary hover:text-text-primary'
+                )}
+                onClick={() => setLocale('en-US')}
+              >
+                EN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 导航项 */}
       <div ref={scrollContainerRef} className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
         {navItems.map((item) => (
           <NavButton
             key={item.href}
             icon={item.icon}
-            label={item.label}
+            label={t(item.labelKey)}
             href={item.href}
             active={pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))}
             expanded={isExpanded}
@@ -213,7 +254,7 @@ export function NavBar() {
         {/* 新建会话按钮 */}
         <NavButton
           icon={<Plus size={20} />}
-          label="新建会话"
+          label={t('chat.newChat')}
           href="/chat/new"
           active={pathname === '/chat/new'}
           expanded={isExpanded}
@@ -236,7 +277,7 @@ export function NavBar() {
                 ))}
               </>
             ) : sessions.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-text-tertiary">暂无会话</p>
+              <p className="px-3 py-2 text-xs text-text-tertiary">{locale === 'en-US' ? 'No sessions' : '暂无会话'}</p>
             ) : (
               <>
                 {sessions.map((session) => (
@@ -244,6 +285,7 @@ export function NavBar() {
                     key={session.id}
                     session={session}
                     active={pathname === `/chat/${session.id}`}
+                    locale={locale}
                   />
                 ))}
                 {isLoadingMore && (
@@ -277,7 +319,7 @@ export function NavBar() {
             </div>
             {isExpanded && (
               <span className="text-sm font-medium truncate">
-                {user?.name || '用户'}
+                {user?.name || (locale === 'en-US' ? 'User' : '用户')}
               </span>
             )}
           </button>
@@ -299,7 +341,7 @@ export function NavBar() {
                 onClick={() => setShowUserMenu(false)}
               >
                 <Settings size={14} />
-                设置
+                {t('nav.settings')}
               </Link>
               <div className="border-t border-border-subtle" />
               <button
@@ -315,7 +357,7 @@ export function NavBar() {
                 }}
               >
                 <LogOut size={14} />
-                退出登录
+                {t('auth.logout')}
               </button>
             </div>
           )}
@@ -359,9 +401,10 @@ function NavButton({ icon, label, href, active, expanded, variant = 'default' }:
 interface SessionItemProps {
   session: Session
   active?: boolean
+  locale: string
 }
 
-function formatSessionTime(dateString: string): string {
+function formatSessionTime(dateString: string, locale: string): string {
   const date = new Date(dateString)
   if (isNaN(date.getTime())) {
     return '--'
@@ -371,16 +414,16 @@ function formatSessionTime(dateString: string): string {
   const days = Math.floor(diff / MS_PER_DAY)
 
   if (days === 0) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
   } else if (days === 1) {
-    return '昨天'
+    return locale === 'en-US' ? 'Yesterday' : '昨天'
   } else if (days < RELATIVE_TIME_DAYS_THRESHOLD) {
-    return `${days} 天前`
+    return locale === 'en-US' ? `${days}d ago` : `${days} 天前`
   }
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 }
 
-function SessionItem({ session, active }: SessionItemProps) {
+function SessionItem({ session, active, locale }: SessionItemProps) {
   return (
     <Link
       href={`/chat/${session.id}`}
@@ -394,8 +437,8 @@ function SessionItem({ session, active }: SessionItemProps) {
     >
       <MessageSquare size={16} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm truncate">{session.title ?? '未命名会话'}</div>
-        <div className="text-xs text-text-tertiary">{formatSessionTime(session.createdAt)}</div>
+        <div className="text-sm truncate">{session.title ?? (locale === 'en-US' ? 'Untitled chat' : '未命名会话')}</div>
+        <div className="text-xs text-text-tertiary">{formatSessionTime(session.createdAt, locale)}</div>
       </div>
     </Link>
   )
