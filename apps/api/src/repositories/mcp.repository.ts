@@ -1,15 +1,14 @@
 /**
- * MCP Server Repository
+ * MCP Server Repository (runtime-backed)
  *
- * 处理 MCP Server 的数据库 CRUD 操作
- * 继承 BaseRepository 获取通用 CRUD 方法
+ * V2 single-machine mode:
+ * - MCP server data is persisted by runtime in ~/.semibot/semibot.db
+ * - API repository proxies CRUD to runtime /v1/config/mcp
  */
 
-import { sql } from '../lib/db'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
 import { logPaginationLimit } from '../lib/logger'
-import { BaseRepository } from './base.repository'
-import type { PaginatedResult } from './base.repository'
+import { runtimeRequest } from '../lib/runtime-client'
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -82,154 +81,172 @@ export interface AgentMcpServerRow {
   updated_at: string
 }
 
-export { PaginatedResult }
-
-// ═══════════════════════════════════════════════════════════════
-// Repository 类（继承 BaseRepository）
-// ═══════════════════════════════════════════════════════════════
-
-export class McpRepositoryImpl extends BaseRepository<McpServerRow> {
-  constructor() {
-    super('mcp_servers')
-  }
-
-  protected toEntity(row: McpServerRow): McpServerRow {
-    return row
-  }
-
-  /**
-   * 按 ID + org_id 查询（系统 MCP 对所有 org 可见）
-   */
-  override async findByIdAndOrg(id: string, orgId: string): Promise<McpServerRow | null> {
-    const result = await sql`
-      SELECT * FROM mcp_servers WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
-    `
-    if (result.length === 0) return null
-    return result[0] as unknown as McpServerRow
+export interface PaginatedResult<T> {
+  data: T[]
+  meta: {
+    total: number
+    page: number
+    limit: number
+    totalPages: number
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// 导出函数（保持向后兼容的函数式接口）
-// ═══════════════════════════════════════════════════════════════
+type RuntimeMcpRecord = {
+  id: string
+  org_id?: string | null
+  name: string
+  description?: string | null
+  endpoint: string
+  transport: string
+  auth_type?: string | null
+  auth_config?: Record<string, unknown> | null
+  tools?: unknown[]
+  resources?: unknown[]
+  status?: string
+  last_connected_at?: string | null
+  is_active?: boolean
+  is_system?: boolean
+  created_by?: string | null
+  created_at?: string
+  updated_at?: string
+  enabled_tools?: string[]
+  enabled_resources?: string[]
+}
+
+export class McpRepositoryImpl {
+  async findByIdAndOrg(id: string, orgId: string): Promise<McpServerRow | null> {
+    return findByIdAndOrg(id, orgId)
+  }
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+function toMcpRow(item: RuntimeMcpRecord): McpServerRow {
+  return {
+    id: item.id,
+    org_id: item.org_id ?? null,
+    name: item.name,
+    description: item.description ?? null,
+    endpoint: item.endpoint,
+    transport: item.transport,
+    auth_type: item.auth_type ?? null,
+    auth_config: item.auth_config ?? null,
+    tools: item.tools ?? [],
+    resources: item.resources ?? [],
+    status: item.status ?? 'disconnected',
+    last_connected_at: item.last_connected_at ?? null,
+    is_active: item.is_active !== false,
+    is_system: Boolean(item.is_system),
+    created_by: item.created_by ?? null,
+    created_at: item.created_at ?? nowIso(),
+    updated_at: item.updated_at ?? nowIso(),
+  }
+}
 
 /**
  * 创建 MCP Server
  */
 export async function create(data: CreateMcpServerData): Promise<McpServerRow> {
-  const result = await sql`
-    INSERT INTO mcp_servers (
-      org_id, name, description, endpoint, transport,
-      auth_type, auth_config, tools, resources, created_by, is_system
-    )
-    VALUES (
-      ${data.orgId ?? null},
-      ${data.name},
-      ${data.description ?? null},
-      ${data.endpoint},
-      ${data.transport},
-      ${data.authType ?? null},
-      ${data.authConfig ? sql.json(data.authConfig as any) : null},
-      ${sql.json((data.tools ?? []) as any)},
-      ${sql.json((data.resources ?? []) as any)},
-      ${data.createdBy ?? null},
-      ${data.isSystem ?? false}
-    )
-    RETURNING *
-  `
+  const item = await runtimeRequest<RuntimeMcpRecord>('/v1/config/mcp', {
+    method: 'POST',
+    body: {
+      org_id: data.orgId,
+      name: data.name,
+      description: data.description,
+      endpoint: data.endpoint,
+      transport: data.transport,
+      auth_type: data.authType,
+      auth_config: data.authConfig,
+      tools: data.tools ?? [],
+      resources: data.resources ?? [],
+      created_by: data.createdBy,
+      is_system: data.isSystem ?? false,
+      is_active: true,
+    },
+    timeoutMs: 3000,
+  })
 
-  return result[0] as unknown as McpServerRow
+  return toMcpRow(item)
 }
 
 /**
  * 根据 ID 获取 MCP Server
  */
 export async function findById(id: string): Promise<McpServerRow | null> {
-  const result = await sql`
-    SELECT * FROM mcp_servers WHERE id = ${id} AND deleted_at IS NULL
-  `
-  if (result.length === 0) return null
-  return result[0] as unknown as McpServerRow
+  try {
+    const item = await runtimeRequest<RuntimeMcpRecord>(`/v1/config/mcp/${id}`, {
+      method: 'GET',
+      timeoutMs: 2000,
+    })
+    return toMcpRow(item)
+  } catch {
+    return null
+  }
 }
 
 /**
  * 根据 ID 和组织 ID 获取 MCP Server（系统 MCP 对所有 org 可见）
  */
-export async function findByIdAndOrg(id: string, orgId: string): Promise<McpServerRow | null> {
-  const result = await sql`
-    SELECT * FROM mcp_servers WHERE id = ${id} AND (org_id = ${orgId} OR is_system = true) AND deleted_at IS NULL
-  `
-  if (result.length === 0) return null
-  return result[0] as unknown as McpServerRow
+export async function findByIdAndOrg(id: string, _orgId: string): Promise<McpServerRow | null> {
+  return findById(id)
 }
 
 /**
  * 获取所有系统级 MCP Servers
  */
 export async function findSystemMcpServers(): Promise<McpServerRow[]> {
-  const result = await sql`
-    SELECT * FROM mcp_servers
-    WHERE is_system = true AND is_active = true AND deleted_at IS NULL
-    ORDER BY name
-  `
-  return result as unknown as McpServerRow[]
+  const response = await runtimeRequest<{ data: RuntimeMcpRecord[] }>('/v1/config/mcp/system', {
+    method: 'GET',
+    timeoutMs: 2500,
+  })
+
+  return (response.data || []).map(toMcpRow)
 }
 
 /**
  * 获取组织下所有活跃的 MCP Servers（用于系统 Agent 自动继承）
  */
-export async function findActiveByOrg(orgId: string): Promise<McpServerRow[]> {
-  const result = await sql`
-    SELECT * FROM mcp_servers
-    WHERE org_id = ${orgId} AND is_active = true AND deleted_at IS NULL
-    ORDER BY name
-  `
+export async function findActiveByOrg(_orgId: string): Promise<McpServerRow[]> {
+  const response = await runtimeRequest<{ data: RuntimeMcpRecord[] }>('/v1/config/mcp/active', {
+    method: 'GET',
+    timeoutMs: 2500,
+  })
 
-  return result as unknown as McpServerRow[]
+  return (response.data || []).map(toMcpRow).filter((row) => !row.is_system)
 }
 
 /**
  * 列出 MCP Servers（分页）
  */
 export async function findAll(params: ListMcpServersParams): Promise<PaginatedResult<McpServerRow>> {
-  const { orgId, page = 1, limit = DEFAULT_PAGE_SIZE, search, status } = params
+  const { page = 1, limit = DEFAULT_PAGE_SIZE, search, status } = params
   const actualLimit = Math.min(limit, MAX_PAGE_SIZE)
-  const offset = (page - 1) * actualLimit
 
   logPaginationLimit('McpRepository', limit, actualLimit, MAX_PAGE_SIZE)
 
-  let whereClause = sql`(org_id = ${orgId} OR is_system = true) AND is_active = true AND deleted_at IS NULL`
-
-  if (search) {
-    const searchPattern = `%${search}%`
-    whereClause = sql`${whereClause} AND (name ILIKE ${searchPattern} OR description ILIKE ${searchPattern})`
-  }
-
-  if (status) {
-    whereClause = sql`${whereClause} AND status = ${status}`
-  }
-
-  const countResult = await sql`
-    SELECT COUNT(*) as total FROM mcp_servers WHERE ${whereClause}
-  `
-  const total = parseInt((countResult[0] as { total: string }).total, 10)
-
-  const dataResult = await sql`
-    SELECT * FROM mcp_servers
-    WHERE ${whereClause}
-    ORDER BY created_at DESC
-    LIMIT ${actualLimit} OFFSET ${offset}
-  `
-
-  const data = dataResult as unknown as McpServerRow[]
-
-  return {
-    data,
-    meta: {
-      total,
+  const result = await runtimeRequest<{
+    data: RuntimeMcpRecord[]
+    meta: { total: number; page: number; limit: number; totalPages: number }
+  }>('/v1/config/mcp', {
+    method: 'GET',
+    query: {
       page,
       limit: actualLimit,
-      totalPages: Math.ceil(total / actualLimit),
+      search,
+      status,
+    },
+    timeoutMs: 3000,
+  })
+
+  return {
+    data: (result.data || []).map(toMcpRow),
+    meta: {
+      total: result.meta?.total ?? 0,
+      page: result.meta?.page ?? page,
+      limit: result.meta?.limit ?? actualLimit,
+      totalPages: result.meta?.totalPages ?? 1,
     },
   }
 }
@@ -237,46 +254,42 @@ export async function findAll(params: ListMcpServersParams): Promise<PaginatedRe
 /**
  * 统计组织的 MCP Server 数量
  */
-export async function countByOrg(orgId: string): Promise<number> {
-  const result = await sql`
-    SELECT COUNT(*) as count FROM mcp_servers WHERE org_id = ${orgId} AND is_active = true AND deleted_at IS NULL
-  `
-  return parseInt((result[0] as { count: string }).count, 10)
+export async function countByOrg(_orgId: string): Promise<number> {
+  const response = await runtimeRequest<{ data: RuntimeMcpRecord[] }>('/v1/config/mcp/active', {
+    method: 'GET',
+    timeoutMs: 2500,
+  })
+
+  const rows = (response.data || []).map(toMcpRow)
+  return rows.filter((row) => row.is_active && !row.is_system).length
 }
 
 /**
  * 更新 MCP Server
  */
-export async function update(id: string, orgId: string, data: UpdateMcpServerData): Promise<McpServerRow | null> {
-  const server = await findByIdAndOrg(id, orgId)
-  if (!server) return null
-
-  const authConfigRaw = data.authConfig ?? (typeof server.auth_config === 'string' ? JSON.parse(server.auth_config) : server.auth_config) ?? null
-  const authConfig = authConfigRaw ? sql.json(authConfigRaw) : null
-  const toolsRaw = data.tools ?? (Array.isArray(server.tools) ? server.tools : typeof server.tools === 'string' ? JSON.parse(server.tools) : [])
-  const tools = sql.json(toolsRaw)
-  const resourcesRaw = data.resources ?? (Array.isArray(server.resources) ? server.resources : typeof server.resources === 'string' ? JSON.parse(server.resources) : [])
-  const resources = sql.json(resourcesRaw)
-
-  const result = await sql`
-    UPDATE mcp_servers
-    SET name = ${data.name ?? server.name},
-        description = ${data.description ?? server.description},
-        endpoint = ${data.endpoint ?? server.endpoint},
-        transport = ${data.transport ?? server.transport},
-        auth_type = ${data.authType ?? server.auth_type},
-        auth_config = ${authConfig},
-        tools = ${tools},
-        resources = ${resources},
-        status = ${data.status ?? server.status},
-        last_connected_at = ${data.lastConnectedAt ?? server.last_connected_at},
-        is_active = ${data.isActive ?? server.is_active},
-        updated_at = NOW()
-    WHERE id = ${id} AND ${server.is_system ? sql`is_system = true` : sql`org_id = ${orgId}`}
-    RETURNING *
-  `
-  if (result.length === 0) return null
-  return result[0] as unknown as McpServerRow
+export async function update(id: string, _orgId: string, data: UpdateMcpServerData): Promise<McpServerRow | null> {
+  try {
+    const item = await runtimeRequest<RuntimeMcpRecord>(`/v1/config/mcp/${id}`, {
+      method: 'PUT',
+      body: {
+        name: data.name,
+        description: data.description,
+        endpoint: data.endpoint,
+        transport: data.transport,
+        auth_type: data.authType,
+        auth_config: data.authConfig,
+        tools: data.tools,
+        resources: data.resources,
+        status: data.status,
+        last_connected_at: data.lastConnectedAt,
+        is_active: data.isActive,
+      },
+      timeoutMs: 3000,
+    })
+    return toMcpRow(item)
+  } catch {
+    return null
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -287,17 +300,16 @@ export async function update(id: string, orgId: string, data: UpdateMcpServerDat
  * 查询 Agent 关联的 MCP Servers（含服务器详情）
  */
 export async function findByAgentId(agentId: string): Promise<(McpServerRow & { enabled_tools: string[]; enabled_resources: string[] })[]> {
-  const result = await sql`
-    SELECT ms.*, ams.enabled_tools, ams.enabled_resources
-    FROM agent_mcp_servers ams
-    JOIN mcp_servers ms ON ms.id = ams.mcp_server_id
-    WHERE ams.agent_id = ${agentId}
-      AND ams.is_active = true
-      AND ms.is_active = true
-      AND ms.deleted_at IS NULL
-    ORDER BY ms.name
-  `
-  return result as unknown as (McpServerRow & { enabled_tools: string[]; enabled_resources: string[] })[]
+  const response = await runtimeRequest<{ data: RuntimeMcpRecord[] }>(`/v1/config/mcp/agent/${encodeURIComponent(agentId)}`, {
+    method: 'GET',
+    timeoutMs: 3000,
+  })
+
+  return (response.data || []).map((item) => ({
+    ...toMcpRow(item),
+    enabled_tools: Array.isArray(item.enabled_tools) ? item.enabled_tools : [],
+    enabled_resources: Array.isArray(item.enabled_resources) ? item.enabled_resources : [],
+  }))
 }
 
 /**
@@ -307,50 +319,38 @@ export async function setAgentMcpServers(
   agentId: string,
   mcpServerIds: string[]
 ): Promise<void> {
-  await sql`
-    DELETE FROM agent_mcp_servers WHERE agent_id = ${agentId}
-  `
-
-  if (mcpServerIds.length > 0) {
-    const values = mcpServerIds.map((serverId) => ({
-      agent_id: agentId,
-      mcp_server_id: serverId,
-      is_active: true,
-    }))
-
-    await sql`
-      INSERT INTO agent_mcp_servers ${sql(values, 'agent_id', 'mcp_server_id', 'is_active')}
-    `
-  }
+  await runtimeRequest(`/v1/config/mcp/agent/${encodeURIComponent(agentId)}`, {
+    method: 'PUT',
+    body: {
+      mcp_server_ids: mcpServerIds,
+    },
+    timeoutMs: 3000,
+  })
 }
 
 /**
  * 获取 Agent 关联的 MCP Server ID 列表
  */
 export async function getAgentMcpServerIds(agentId: string): Promise<string[]> {
-  const result = await sql`
-    SELECT mcp_server_id FROM agent_mcp_servers
-    WHERE agent_id = ${agentId} AND is_active = true
-  `
-  return result.map((row) => (row as Record<string, string>).mcp_server_id)
+  const response = await runtimeRequest<{ data: string[] }>(`/v1/config/mcp/agent/${encodeURIComponent(agentId)}/ids`, {
+    method: 'GET',
+    timeoutMs: 2500,
+  })
+  return Array.isArray(response.data) ? response.data : []
 }
 
 // ═══════════════════════════════════════════════════════════════
 // 软删除
 // ═══════════════════════════════════════════════════════════════
 
-export async function softDelete(id: string, orgId: string, deletedBy?: string): Promise<boolean> {
-  const server = await findByIdAndOrg(id, orgId)
-  if (!server) return false
-
-  const result = await sql`
-    UPDATE mcp_servers
-    SET deleted_at = NOW(),
-        deleted_by = ${deletedBy ?? null},
-        is_active = false,
-        updated_at = NOW()
-    WHERE id = ${id} AND ${server.is_system ? sql`is_system = true` : sql`org_id = ${orgId}`} AND deleted_at IS NULL
-    RETURNING id
-  `
-  return result.length > 0
+export async function softDelete(id: string, _orgId: string, _deletedBy?: string): Promise<boolean> {
+  try {
+    const response = await runtimeRequest<{ deleted?: boolean }>(`/v1/config/mcp/${id}`, {
+      method: 'DELETE',
+      timeoutMs: 2500,
+    })
+    return response.deleted === true
+  } catch {
+    return false
+  }
 }

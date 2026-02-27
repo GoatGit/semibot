@@ -16,9 +16,26 @@ interface RuntimeSkillsPayload {
   skills?: string[]
 }
 
-function getRuntimeBaseUrl(): string {
-  const raw = process.env.RUNTIME_URL || 'http://localhost:8901'
-  return raw.replace(/\/+$/, '')
+function normalizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/+$/, '')
+}
+
+function getRuntimeBaseUrls(): string[] {
+  const fallbackUrls = ['http://localhost:8765', 'http://localhost:8901', 'http://localhost:8801']
+  const configured = (process.env.RUNTIME_URL || '')
+    .split(',')
+    .map((value) => normalizeBaseUrl(value))
+    .filter(Boolean)
+
+  // Prefer configured runtime URL(s), but keep local fallback ports for resilience.
+  return Array.from(new Set([...configured, ...fallbackUrls]))
+}
+
+function stringifyError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return 'runtime unreachable'
 }
 
 /**
@@ -30,56 +47,53 @@ router.get(
   authenticate,
   combinedRateLimit,
   asyncHandler(async (_req: AuthRequest, res: Response) => {
-    const baseUrl = getRuntimeBaseUrl()
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 3000)
+    const baseUrls = getRuntimeBaseUrls()
+    const errors: string[] = []
 
-    try {
-      const response = await fetch(`${baseUrl}/v1/skills`, {
-        method: 'GET',
-        signal: controller.signal,
-      })
-      clearTimeout(timeout)
+    for (const baseUrl of baseUrls) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 1500)
 
-      if (!response.ok) {
+      try {
+        const response = await fetch(`${baseUrl}/v1/skills`, {
+          method: 'GET',
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
+
+        if (!response.ok) {
+          errors.push(`${baseUrl}: runtime returned ${response.status}`)
+          continue
+        }
+
+        const payload = (await response.json()) as RuntimeSkillsPayload
         res.json({
           success: true,
           data: {
-            available: false,
-            tools: [],
-            skills: [],
+            available: true,
+            tools: Array.isArray(payload.tools) ? payload.tools : [],
+            skills: Array.isArray(payload.skills) ? payload.skills : [],
             source: baseUrl,
-            error: `runtime returned ${response.status}`,
           },
         })
         return
+      } catch (error) {
+        clearTimeout(timeout)
+        errors.push(`${baseUrl}: ${stringifyError(error)}`)
       }
-
-      const payload = (await response.json()) as RuntimeSkillsPayload
-      res.json({
-        success: true,
-        data: {
-          available: true,
-          tools: Array.isArray(payload.tools) ? payload.tools : [],
-          skills: Array.isArray(payload.skills) ? payload.skills : [],
-          source: baseUrl,
-        },
-      })
-      return
-    } catch (error) {
-      clearTimeout(timeout)
-      res.json({
-        success: true,
-        data: {
-          available: false,
-          tools: [],
-          skills: [],
-          source: baseUrl,
-          error: error instanceof Error ? error.message : 'runtime unreachable',
-        },
-      })
-      return
     }
+
+    res.json({
+      success: true,
+      data: {
+        available: false,
+        tools: [],
+        skills: [],
+        source: baseUrls[0] || '',
+        error: errors.join('; ') || 'runtime unreachable',
+      },
+    })
+    return
   })
 )
 

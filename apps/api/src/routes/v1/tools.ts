@@ -15,42 +15,16 @@ const router: Router = Router()
 // Schema 定义
 // ═══════════════════════════════════════════════════════════════
 
-const createToolSchema = z.object({
-  name: z.string().min(1).max(100),
-  description: z.string().max(1000).optional(),
-  type: z.string().min(1).max(50),
-  schema: z
-    .object({
-      parameters: z.record(z.unknown()).optional(),
-      returns: z.record(z.unknown()).optional(),
-    })
-    .optional(),
-  config: z
-    .object({
-      timeout: z.number().min(1000).max(300000).optional(),
-      retryAttempts: z.number().min(0).max(5).optional(),
-      requiresApproval: z.boolean().optional(),
-      rateLimit: z.number().min(1).max(1000).optional(),
-    })
-    .optional(),
-})
-
 const updateToolSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  description: z.string().max(1000).optional(),
-  type: z.string().min(1).max(50).optional(),
-  schema: z
-    .object({
-      parameters: z.record(z.unknown()).optional(),
-      returns: z.record(z.unknown()).optional(),
-    })
-    .optional(),
   config: z
     .object({
       timeout: z.number().min(1000).max(300000).optional(),
       retryAttempts: z.number().min(0).max(5).optional(),
       requiresApproval: z.boolean().optional(),
       rateLimit: z.number().min(1).max(1000).optional(),
+      apiEndpoint: z.string().url().optional(),
+      apiKey: z.string().max(500).optional(),
+      permissions: z.array(z.string().min(1).max(100)).max(50).optional(),
     })
     .optional(),
   isActive: z.boolean().optional(),
@@ -72,24 +46,20 @@ const listToolsQuerySchema = z.object({
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * POST /tools - 创建 Tool
+ * POST /tools - 禁止创建 Tool（V2: tools 仅支持内建）
  */
 router.post(
   '/',
   authenticate,
   combinedRateLimit,
   requirePermission('tools:write'),
-  validate(createToolSchema, 'body'),
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const orgId = req.user!.orgId
-    const userId = req.user!.userId
-    const input = req.body
-
-    const tool = await toolService.createTool(orgId, userId, input)
-
-    res.status(201).json({
-      success: true,
-      data: tool,
+  asyncHandler(async (_req: AuthRequest, res: Response) => {
+    res.status(405).json({
+      success: false,
+      error: {
+        code: 'TOOL_CREATE_DISABLED',
+        message: 'V2 不支持新增 Tool。Tools 为内建能力，仅支持配置与启停。',
+      },
     })
   })
 )
@@ -142,17 +112,18 @@ router.get(
  * PUT /tools/:id - 更新 Tool
  */
 router.put(
-  '/:id',
+  '/by-name/:name',
   authenticate,
   combinedRateLimit,
   requirePermission('tools:write'),
   validate(updateToolSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const orgId = req.user!.orgId
-    const toolId = req.params.id
+    const userId = req.user!.userId
+    const toolName = req.params.name
     const input = req.body
 
-    const tool = await toolService.updateTool(orgId, toolId, input)
+    const tool = await toolService.upsertBuiltinToolConfig(orgId, userId, toolName, input)
 
     res.json({
       success: true,
@@ -162,20 +133,45 @@ router.put(
 )
 
 /**
- * DELETE /tools/:id - 删除 Tool
+ * PUT /tools/:id - 更新 Tool 配置
+ */
+router.put(
+  '/:id',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('tools:write'),
+  validate(updateToolSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const orgId = req.user!.orgId
+    const userId = req.user!.userId
+    const toolId = req.params.id
+    const input = req.body
+
+    const tool = await toolService.updateTool(orgId, toolId, input, userId)
+
+    res.json({
+      success: true,
+      data: tool,
+    })
+  })
+)
+
+/**
+ * DELETE /tools/:id - 禁止删除 Tool（V2: tools 仅支持内建）
  */
 router.delete(
   '/:id',
   authenticate,
   combinedRateLimit,
   requirePermission('tools:write'),
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const orgId = req.user!.orgId
-    const toolId = req.params.id
-
-    await toolService.deleteTool(orgId, toolId)
-
-    res.status(204).send()
+  asyncHandler(async (_req: AuthRequest, res: Response) => {
+    res.status(405).json({
+      success: false,
+      error: {
+        code: 'TOOL_DELETE_DISABLED',
+        message: 'V2 不支持删除 Tool。Tools 为内建能力，仅支持配置与启停。',
+      },
+    })
   })
 )
 

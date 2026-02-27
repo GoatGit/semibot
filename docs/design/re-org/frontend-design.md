@@ -119,9 +119,15 @@ app/
   - Tools、API Keys、Webhook
   - Runtime 注册能力（tools/skills）可见性
 - 关键约束：
+  - Tools 页面只展示“统一工具列表”，不区分“Runtime 内置工具/其他工具”两个分区
   - 前端配置修改必须写入 runtime 生效源
+  - Tools / MCP 配置持久化到 `~/.semibot/semibot.db`（runtime SQLite），不走 Postgres
   - 配置变更后应有“已同步到 runtime”反馈
   - 不再展示组织配置（V2 单用户模式）
+  - Tools 固定为内建能力：前端不提供新增/删除入口，只允许配置与启停（如权限、限流、超时、必要时的 endpoint/key）
+  - `code_executor` 不展示 endpoint/key 配置项
+  - `xlsx` / `pdf` 归类为 Skills，不在 Tools 配置页展示为可配置 Tool
+  - `file_io` 权限需提供细粒度开关（`file.read` / `file.write` / `file.list`）
 
 ## 6. 前端状态与数据流
 

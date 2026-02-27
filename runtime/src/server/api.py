@@ -30,6 +30,7 @@ from src.server.feishu import (
     verify_callback_token,
 )
 from src.server.feishu_notifier import FeishuNotifier, SendFn
+from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
 
 
@@ -107,6 +108,7 @@ def create_app(
         router=EventRouter(action_executor),
         rules_path=rules,
     )
+    config_store = RuntimeConfigStore(db_path=db)
     if feishu_webhook_url or feishu_webhook_urls:
         feishu_notifier = FeishuNotifier(
             webhook_url=feishu_webhook_url,
@@ -225,6 +227,19 @@ def create_app(
         normalized = {item for item in requested if item in allowed}
         return normalized or allowed
 
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
     def _collect_runtime_index(limit: int = 1000) -> tuple[dict[str, str], set[str]]:
         sessions: dict[str, str] = {}
         agents: set[str] = set()
@@ -254,10 +269,222 @@ def create_app(
     @app.get("/v1/skills")
     async def list_skills() -> dict[str, Any]:
         registry = create_default_registry()
+        tool_names = registry.list_tools()
+        skill_names = registry.list_skills()
+        # Conceptual split for V2 UI/ops:
+        # xlsx/pdf are exposed as "skills", not configurable builtin tools.
+        skill_like_tools = {"xlsx", "pdf"}
+        tools = [name for name in tool_names if name not in skill_like_tools]
+        skills = sorted(set(skill_names + [name for name in tool_names if name in skill_like_tools]))
         return {
-            "tools": registry.list_tools(),
-            "skills": registry.list_skills(),
+            "tools": tools,
+            "skills": skills,
         }
+
+    @app.get("/v1/config/tools")
+    async def list_config_tools(
+        page: int = Query(default=1, ge=1),
+        limit: int = Query(default=100, ge=1, le=500),
+        search: str | None = Query(default=None),
+        tool_type: str | None = Query(default=None, alias="type"),
+        include_builtin: str | None = Query(default=None),
+        include_builtin_camel: str | None = Query(default=None, alias="includeBuiltin"),
+    ) -> dict[str, Any]:
+        include_value = include_builtin if include_builtin is not None else include_builtin_camel
+        result = config_store.list_tools(
+            include_builtin=_to_bool(include_value, True),
+            page=page,
+            limit=limit,
+            search=search,
+            tool_type=tool_type,
+        )
+        return result
+
+    @app.post("/v1/config/tools")
+    async def create_config_tool(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        item = config_store.create_tool(
+            {
+                "name": str(payload.get("name") or "").strip(),
+                "description": payload.get("description"),
+                "type": payload.get("type") or "builtin",
+                "schema": payload.get("schema") or {},
+                "config": payload.get("config") or {},
+                "is_builtin": _to_bool(payload.get("is_builtin", payload.get("isBuiltin")), True),
+                "is_active": _to_bool(payload.get("is_active", payload.get("isActive")), True),
+                "org_id": payload.get("org_id", payload.get("orgId")),
+                "created_by": payload.get("created_by", payload.get("createdBy")),
+            }
+        )
+        return item
+
+    @app.get("/v1/config/tools/by-name/{tool_name}")
+    async def get_config_tool_by_name(tool_name: str) -> dict[str, Any]:
+        item = config_store.get_tool_by_name(tool_name)
+        if not item:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return item
+
+    @app.put("/v1/config/tools/by-name/{tool_name}")
+    async def upsert_config_tool_by_name(tool_name: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        item = config_store.upsert_tool_by_name(
+            tool_name,
+            {
+                "description": payload.get("description"),
+                "type": payload.get("type"),
+                "schema": payload.get("schema"),
+                "config": payload.get("config"),
+                "is_builtin": _to_bool(payload.get("is_builtin", payload.get("isBuiltin")), True),
+                "is_active": _to_bool(payload.get("is_active", payload.get("isActive")), True),
+                "org_id": payload.get("org_id", payload.get("orgId")),
+                "created_by": payload.get("created_by", payload.get("createdBy")),
+            },
+        )
+        return item
+
+    @app.get("/v1/config/tools/{tool_id}")
+    async def get_config_tool(tool_id: str) -> dict[str, Any]:
+        item = config_store.get_tool_by_id(tool_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return item
+
+    @app.put("/v1/config/tools/{tool_id}")
+    async def update_config_tool(tool_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        patch: dict[str, Any] = {}
+        if "description" in payload:
+            patch["description"] = payload.get("description")
+        if "type" in payload:
+            patch["type"] = payload.get("type")
+        if "schema" in payload:
+            patch["schema"] = payload.get("schema")
+        if "config" in payload and isinstance(payload.get("config"), dict):
+            patch["config"] = payload.get("config")
+        if "is_active" in payload or "isActive" in payload:
+            patch["is_active"] = _to_bool(payload.get("is_active", payload.get("isActive")))
+        item = config_store.update_tool(tool_id, patch)
+        if not item:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return item
+
+    @app.delete("/v1/config/tools/{tool_id}")
+    async def delete_config_tool(tool_id: str) -> dict[str, Any]:
+        deleted = config_store.soft_delete_tool(tool_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return {"deleted": True}
+
+    @app.get("/v1/config/mcp/system")
+    async def list_system_mcp_servers() -> dict[str, Any]:
+        return {"data": config_store.find_system_mcp_servers()}
+
+    @app.get("/v1/config/mcp/active")
+    async def list_active_mcp_servers() -> dict[str, Any]:
+        return {"data": config_store.find_active_mcp_servers()}
+
+    @app.get("/v1/config/mcp/agent/{agent_id}")
+    async def list_agent_mcp_servers(agent_id: str) -> dict[str, Any]:
+        return {"data": config_store.find_mcp_servers_by_agent(agent_id)}
+
+    @app.put("/v1/config/mcp/agent/{agent_id}")
+    async def set_agent_mcp_servers(agent_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        ids = payload.get("mcp_server_ids", payload.get("mcpServerIds")) or []
+        if not isinstance(ids, list):
+            raise HTTPException(status_code=400, detail="invalid_mcp_server_ids")
+        config_store.set_agent_mcp_servers(agent_id, [str(item) for item in ids])
+        return {"updated": True, "agent_id": agent_id, "mcp_server_ids": ids}
+
+    @app.get("/v1/config/mcp/agent/{agent_id}/ids")
+    async def list_agent_mcp_server_ids(agent_id: str) -> dict[str, Any]:
+        return {"data": config_store.get_agent_mcp_server_ids(agent_id)}
+
+    @app.get("/v1/config/mcp")
+    async def list_config_mcp_servers(
+        page: int = Query(default=1, ge=1),
+        limit: int = Query(default=20, ge=1, le=500),
+        search: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        return config_store.list_mcp_servers(page=page, limit=limit, search=search, status=status, only_active=True)
+
+    @app.post("/v1/config/mcp")
+    async def create_config_mcp_server(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        name = str(payload.get("name") or "").strip()
+        endpoint = str(payload.get("endpoint") or "").strip()
+        if not name or not endpoint:
+            raise HTTPException(status_code=400, detail="name_and_endpoint_required")
+        item = config_store.create_mcp_server(
+            {
+                "org_id": payload.get("org_id", payload.get("orgId")),
+                "name": name,
+                "description": payload.get("description"),
+                "endpoint": endpoint,
+                "transport": payload.get("transport") or "streamable_http",
+                "auth_type": payload.get("auth_type", payload.get("authType")),
+                "auth_config": payload.get("auth_config", payload.get("authConfig")),
+                "tools": payload.get("tools") or [],
+                "resources": payload.get("resources") or [],
+                "status": payload.get("status") or "disconnected",
+                "last_connected_at": payload.get("last_connected_at", payload.get("lastConnectedAt")),
+                "is_active": _to_bool(payload.get("is_active", payload.get("isActive")), True),
+                "is_system": _to_bool(payload.get("is_system", payload.get("isSystem")), False),
+                "created_by": payload.get("created_by", payload.get("createdBy")),
+            }
+        )
+        return item
+
+    @app.get("/v1/config/mcp/{server_id}")
+    async def get_config_mcp_server(server_id: str) -> dict[str, Any]:
+        item = config_store.get_mcp_server(server_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="mcp_server_not_found")
+        return item
+
+    @app.put("/v1/config/mcp/{server_id}")
+    async def update_config_mcp_server(server_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        patch: dict[str, Any] = {}
+        for key in (
+            "name",
+            "description",
+            "endpoint",
+            "transport",
+            "tools",
+            "resources",
+            "status",
+            "auth_type",
+            "auth_config",
+            "last_connected_at",
+        ):
+            if key in payload:
+                patch[key] = payload.get(key)
+
+        if "authType" in payload:
+            patch["auth_type"] = payload.get("authType")
+        if "authConfig" in payload:
+            patch["auth_config"] = payload.get("authConfig")
+        if "lastConnectedAt" in payload:
+            patch["last_connected_at"] = payload.get("lastConnectedAt")
+        if "is_active" in payload or "isActive" in payload:
+            patch["is_active"] = _to_bool(payload.get("is_active", payload.get("isActive")), True)
+        if "is_system" in payload or "isSystem" in payload:
+            patch["is_system"] = _to_bool(payload.get("is_system", payload.get("isSystem")), False)
+
+        item = config_store.update_mcp_server(server_id, patch)
+        if not item:
+            raise HTTPException(status_code=404, detail="mcp_server_not_found")
+        return item
+
+    @app.delete("/v1/config/mcp/{server_id}")
+    async def delete_config_mcp_server(server_id: str) -> dict[str, Any]:
+        deleted = config_store.soft_delete_mcp_server(server_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="mcp_server_not_found")
+        return {"deleted": True}
 
     @app.get("/v1/sessions")
     async def list_sessions(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:

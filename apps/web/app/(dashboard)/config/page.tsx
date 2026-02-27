@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { apiClient } from '@/lib/api'
+import { formatRuntimeStatusError } from '@/lib/runtime-status'
 
 interface ApiResponse<T> {
   success: boolean
@@ -88,6 +89,9 @@ interface ToolItem {
     retryAttempts?: number
     requiresApproval?: boolean
     rateLimit?: number
+    apiEndpoint?: string
+    apiKey?: string
+    permissions?: string[]
   }
   isBuiltin: boolean
   isActive: boolean
@@ -109,12 +113,16 @@ type ToolForm = {
   id?: string
   name: string
   type: string
-  description: string
   timeoutMs: string
+  apiEndpoint: string
+  apiKey: string
+  permissionsText: string
 }
 
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
 const MIN_WEBHOOK_SECRET_LENGTH = 16
+const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io']
+const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
 function formatDate(dateString?: string): string {
   if (!dateString) return '未设置'
@@ -139,6 +147,38 @@ function getErrorMessage(error: unknown, fallback: string): string {
     if (payload.message) return payload.message
   }
   return fallback
+}
+
+function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
+  const runtimeFiltered = runtimeTools.filter((name) => !NON_TOOL_SKILLS.includes(name))
+  const dbFiltered = dbTools.filter((item) => !NON_TOOL_SKILLS.includes(item.name))
+  const byName = new Map(dbFiltered.map((item) => [item.name, item]))
+  const merged: ToolItem[] = runtimeFiltered.map((name) => {
+    const db = byName.get(name)
+    return {
+      id: db?.id || `builtin:${name}`,
+      name,
+      type: db?.type || 'builtin',
+      description: db?.description || '',
+      config: db?.config || {},
+      isBuiltin: true,
+      isActive: db?.isActive ?? true,
+    }
+  })
+
+  for (const item of dbFiltered) {
+    if (!runtimeFiltered.includes(item.name)) {
+      merged.push(item)
+    }
+  }
+  return merged
+}
+
+function parsePermissions(text: string): string[] {
+  return text
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 export default function ConfigPage() {
@@ -180,14 +220,15 @@ export default function ConfigPage() {
     skills: [],
     source: '',
   })
-  const [showCreateTool, setShowCreateTool] = useState(false)
   const [showEditTool, setShowEditTool] = useState(false)
   const [savingTool, setSavingTool] = useState(false)
   const [toolForm, setToolForm] = useState<ToolForm>({
     name: '',
     type: 'custom',
-    description: '',
     timeoutMs: '',
+    apiEndpoint: '',
+    apiKey: '',
+    permissionsText: '',
   })
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
@@ -248,25 +289,31 @@ export default function ConfigPage() {
         apiClient.get<ApiResponse<RuntimeSkillsData>>('/runtime/skills'),
       ])
 
-      if (toolsRes.status === 'fulfilled' && toolsRes.value.success) {
-        setTools(toolsRes.value.data || [])
-        setSectionErrors((prev) => ({ ...prev, tools: null }))
-      } else {
-        setTools([])
-        setSectionErrors((prev) => ({ ...prev, tools: 'Tools 列表加载失败' }))
-      }
+      const dbTools =
+        toolsRes.status === 'fulfilled' && toolsRes.value.success ? (toolsRes.value.data || []) : []
+      const runtimeData: RuntimeSkillsData =
+        runtimeRes.status === 'fulfilled' && runtimeRes.value.success
+          ? runtimeRes.value.data
+          : {
+              available: false,
+              tools: [],
+              skills: [],
+              source: '',
+              error: 'Runtime 内置工具读取失败',
+            }
 
-      if (runtimeRes.status === 'fulfilled' && runtimeRes.value.success) {
-        setRuntimeSkills(runtimeRes.value.data)
-      } else {
-        setRuntimeSkills({
-          available: false,
-          tools: [],
-          skills: [],
-          source: '',
-          error: 'Runtime 内置工具读取失败',
-        })
-      }
+      const unifiedTools = Array.from(
+        new Set([...(runtimeData.tools || []), ...MIN_BUILTIN_TOOLS])
+      ).filter((name) => !NON_TOOL_SKILLS.includes(name))
+      setRuntimeSkills({ ...runtimeData, tools: unifiedTools })
+      setTools(mergeTools(unifiedTools, dbTools))
+      setSectionErrors((prev) => ({
+        ...prev,
+        tools:
+          toolsRes.status === 'fulfilled' && toolsRes.value.success
+            ? null
+            : 'Tools 配置读取失败（Runtime 工具清单已显示）',
+      }))
     } catch (err) {
       setTools([])
       setSectionErrors((prev) => ({
@@ -383,85 +430,112 @@ export default function ConfigPage() {
     }
   }
 
-  const openCreateToolDialog = () => {
-    setToolForm({ name: '', type: 'custom', description: '', timeoutMs: '' })
-    setShowCreateTool(true)
-  }
-
   const openEditToolDialog = (tool: ToolItem) => {
+    const permissions = Array.isArray(tool.config?.permissions)
+      ? tool.config!.permissions!
+      : tool.name === 'file_io'
+        ? ['file.read', 'file.write', 'file.list']
+        : []
     setToolForm({
       id: tool.id,
       name: tool.name,
       type: tool.type || 'custom',
-      description: tool.description || '',
       timeoutMs: tool.config?.timeout ? String(tool.config.timeout) : '',
+      apiEndpoint: tool.config?.apiEndpoint || '',
+      apiKey: '',
+      permissionsText: permissions.join(','),
     })
     setShowEditTool(true)
   }
 
-  const saveTool = async (mode: 'create' | 'edit') => {
-    if (!toolForm.name.trim() || !toolForm.type.trim()) {
-      setError('工具名称和类型不能为空')
-      return
-    }
+  const setFileIoPermission = (permission: string, enabled: boolean) => {
+    setToolForm((prev) => {
+      const current = new Set(parsePermissions(prev.permissionsText))
+      if (enabled) {
+        current.add(permission)
+      } else {
+        current.delete(permission)
+      }
+      return {
+        ...prev,
+        permissionsText: Array.from(current).join(','),
+      }
+    })
+  }
 
+  const saveToolConfig = async () => {
+    const supportsApiCredentials = toolForm.name !== 'code_executor' && toolForm.name !== 'file_io'
     const timeout = toolForm.timeoutMs.trim()
     if (timeout && (!/^\d+$/.test(timeout) || Number(timeout) < 1000)) {
       setError('timeout 必须是 >= 1000 的整数（毫秒）')
       return
     }
 
+    const endpoint = supportsApiCredentials ? toolForm.apiEndpoint.trim() : ''
+    if (endpoint) {
+      try {
+        // eslint-disable-next-line no-new
+        new URL(endpoint)
+      } catch {
+        setError('apiEndpoint 必须是合法 URL')
+        return
+      }
+    }
+
+    const permissions = parsePermissions(toolForm.permissionsText)
+    const permissionsPayload = toolForm.name === 'file_io'
+      ? permissions
+      : permissions.length > 0
+        ? permissions
+        : undefined
+
     const payload = {
-      name: toolForm.name.trim(),
-      type: toolForm.type.trim(),
-      description: toolForm.description.trim() || undefined,
-      config: timeout ? { timeout: Number(timeout) } : undefined,
+      config: {
+        ...(timeout ? { timeout: Number(timeout) } : {}),
+        ...(endpoint ? { apiEndpoint: endpoint } : {}),
+        ...(supportsApiCredentials && toolForm.apiKey.trim()
+          ? { apiKey: toolForm.apiKey.trim() }
+          : {}),
+        ...(permissionsPayload !== undefined ? { permissions: permissionsPayload } : {}),
+      },
     }
 
     try {
       setSavingTool(true)
       setError(null)
 
-      if (mode === 'create') {
-        await apiClient.post('/tools', payload)
-        setShowCreateTool(false)
-      } else {
-        if (!toolForm.id) {
-          setError('缺少工具 ID，无法保存')
-          return
-        }
-        await apiClient.put('/tools/' + toolForm.id, payload)
-        setShowEditTool(false)
+      if (!toolForm.id) {
+        setError('缺少工具 ID，无法保存')
+        return
       }
+      if (toolForm.id.startsWith('builtin:')) {
+        await apiClient.put('/tools/by-name/' + encodeURIComponent(toolForm.name), payload)
+      } else {
+        await apiClient.put('/tools/' + toolForm.id, payload)
+      }
+      setShowEditTool(false)
 
       await loadTools()
     } catch (err) {
-      setError(getErrorMessage(err, mode === 'create' ? '创建工具失败' : '更新工具失败'))
+      setError(getErrorMessage(err, '更新工具配置失败'))
     } finally {
       setSavingTool(false)
     }
   }
 
   const toggleToolStatus = async (tool: ToolItem) => {
-    if (tool.isBuiltin) return
     try {
       setError(null)
-      await apiClient.put('/tools/' + tool.id, { isActive: !tool.isActive })
+      if (tool.id.startsWith('builtin:')) {
+        await apiClient.put('/tools/by-name/' + encodeURIComponent(tool.name), {
+          isActive: !tool.isActive,
+        })
+      } else {
+        await apiClient.put('/tools/' + tool.id, { isActive: !tool.isActive })
+      }
       await loadTools()
     } catch (err) {
       setError(getErrorMessage(err, '更新工具状态失败'))
-    }
-  }
-
-  const removeTool = async (tool: ToolItem) => {
-    if (tool.isBuiltin) return
-    if (!window.confirm(`确认删除工具“${tool.name}”吗？删除后无法恢复。`)) return
-    try {
-      setError(null)
-      await apiClient.delete('/tools/' + tool.id)
-      await loadTools()
-    } catch (err) {
-      setError(getErrorMessage(err, '删除工具失败'))
     }
   }
 
@@ -577,6 +651,10 @@ export default function ConfigPage() {
     () => tools.filter((tool) => tool.isActive).length,
     [tools]
   )
+  const runtimeSkillsErrorText = useMemo(
+    () => formatRuntimeStatusError(runtimeSkills.error, runtimeSkills.source),
+    [runtimeSkills.error, runtimeSkills.source]
+  )
 
   const tabs = useMemo(
     () => [
@@ -588,12 +666,12 @@ export default function ConfigPage() {
       {
         id: 'tools' as const,
         label: 'Tools',
-        count: runtimeSkills.tools.length + tools.length,
+        count: tools.length,
       },
       { id: 'apiKeys' as const, label: 'API Keys', count: apiKeys.length },
       { id: 'webhooks' as const, label: 'Webhooks', count: webhooks.length },
     ],
-    [apiKeys.length, llmProviders, runtimeSkills.tools.length, tools.length, webhooks.length]
+    [apiKeys.length, llmProviders, tools.length, webhooks.length]
   )
 
   const isAnySectionLoading = Object.values(sectionLoading).some(Boolean)
@@ -773,9 +851,6 @@ export default function ConfigPage() {
                       >
                         刷新
                       </Button>
-                      <Button size="xs" leftIcon={<Plus size={13} />} onClick={openCreateToolDialog}>
-                        新建
-                      </Button>
                     </div>
                   </div>
 
@@ -785,37 +860,19 @@ export default function ConfigPage() {
 
                   <div className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-text-primary">Runtime 内置工具</p>
+                      <p className="text-sm font-medium text-text-primary">工具配置（仅启停与参数）</p>
                       <Badge variant={runtimeSkills.available ? 'success' : 'outline'}>
                         {runtimeSkills.available ? '已连接' : '未连接'}
                       </Badge>
                     </div>
-                    {runtimeSkills.error && (
-                      <p className="mt-2 text-xs text-warning-500">{runtimeSkills.error}</p>
+                    {runtimeSkillsErrorText && (
+                      <p className="mt-2 text-xs text-warning-500">{runtimeSkillsErrorText}</p>
                     )}
-                    {runtimeSkills.tools.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {runtimeSkills.tools.map((toolName) => (
-                          <span
-                            key={toolName}
-                            className="rounded border border-border-subtle px-1.5 py-0.5 text-[11px] text-text-tertiary"
-                          >
-                            {toolName}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="mt-2 text-xs text-text-tertiary">暂无内置工具数据</p>
-                    )}
-                  </div>
-
-                  <div className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
-                    <p className="text-sm font-medium text-text-primary">数据库工具（可编辑）</p>
                     <div className="mt-2 space-y-2">
                       {sectionLoading.tools && tools.length === 0 ? (
                         <p className="text-sm text-text-secondary">正在加载工具列表...</p>
                       ) : tools.length === 0 ? (
-                        <p className="text-sm text-text-secondary">暂无数据库工具，可点击“新建”添加</p>
+                        <p className="text-sm text-text-secondary">暂无工具配置数据（V2 不支持新增/删除 Tool）</p>
                       ) : (
                         tools.map((tool) => (
                           <div
@@ -829,6 +886,11 @@ export default function ConfigPage() {
                                   {tool.type}
                                   {tool.description ? ` · ${tool.description}` : ''}
                                 </p>
+                                {Array.isArray(tool.config?.permissions) && tool.config!.permissions!.length > 0 && (
+                                  <p className="mt-1 text-xs text-text-tertiary">
+                                    权限: {tool.config!.permissions!.join(', ')}
+                                  </p>
+                                )}
                               </div>
                               <div className="flex items-center gap-1">
                                 {tool.isBuiltin && <Badge variant="outline">内置</Badge>}
@@ -837,29 +899,19 @@ export default function ConfigPage() {
                                 </Badge>
                               </div>
                             </div>
-                            {!tool.isBuiltin && (
-                              <div className="mt-2 flex items-center gap-2">
-                                <Button
-                                  size="xs"
-                                  variant="tertiary"
-                                  leftIcon={<Pencil size={12} />}
-                                  onClick={() => openEditToolDialog(tool)}
-                                >
-                                  编辑
-                                </Button>
-                                <Button size="xs" variant="tertiary" onClick={() => toggleToolStatus(tool)}>
-                                  {tool.isActive ? '停用' : '启用'}
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant="tertiary"
-                                  leftIcon={<Trash2 size={12} />}
-                                  onClick={() => removeTool(tool)}
-                                >
-                                  删除
-                                </Button>
-                              </div>
-                            )}
+                            <div className="mt-2 flex items-center gap-2">
+                              <Button
+                                size="xs"
+                                variant="tertiary"
+                                leftIcon={<Pencil size={12} />}
+                                onClick={() => openEditToolDialog(tool)}
+                              >
+                                配置
+                              </Button>
+                              <Button size="xs" variant="tertiary" onClick={() => toggleToolStatus(tool)}>
+                                {tool.isActive ? '停用' : '启用'}
+                              </Button>
+                            </div>
                           </div>
                         ))
                       )}
@@ -1059,82 +1111,94 @@ export default function ConfigPage() {
       </Modal>
 
       <Modal
-        open={showCreateTool}
-        onClose={() => setShowCreateTool(false)}
-        title="新建工具"
-        description="创建一个可在平台中启用的数据库工具定义。"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setShowCreateTool(false)} disabled={savingTool}>
-              取消
-            </Button>
-            <Button onClick={() => saveTool('create')} loading={savingTool}>
-              创建
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <Input
-            placeholder="工具名称（如 stock_researcher）"
-            value={toolForm.name}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, name: e.target.value }))}
-          />
-          <Input
-            placeholder="工具类型（如 custom / api）"
-            value={toolForm.type}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, type: e.target.value }))}
-          />
-          <Input
-            placeholder="描述（可选）"
-            value={toolForm.description}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, description: e.target.value }))}
-          />
-          <Input
-            placeholder="timeout 毫秒（可选，>=1000）"
-            value={toolForm.timeoutMs}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
-          />
-        </div>
-      </Modal>
-
-      <Modal
         open={showEditTool}
         onClose={() => setShowEditTool(false)}
-        title="编辑工具"
+        title="工具配置"
         description={toolForm.id || ''}
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowEditTool(false)} disabled={savingTool}>
               取消
             </Button>
-            <Button onClick={() => saveTool('edit')} loading={savingTool}>
+            <Button onClick={saveToolConfig} loading={savingTool}>
               保存
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <div className="space-y-3">
+          <p className="text-xs text-text-tertiary">
+            V2 仅支持配置内建工具参数与启停，不支持修改工具名称/类型，不支持新增或删除。
+          </p>
           <Input
             placeholder="工具名称"
             value={toolForm.name}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, name: e.target.value }))}
+            disabled
           />
           <Input
             placeholder="工具类型"
             value={toolForm.type}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, type: e.target.value }))}
-          />
-          <Input
-            placeholder="描述（可选）"
-            value={toolForm.description}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, description: e.target.value }))}
+            disabled
           />
           <Input
             placeholder="timeout 毫秒（可选，>=1000）"
             value={toolForm.timeoutMs}
             onChange={(e) => setToolForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
           />
+          {toolForm.name !== 'code_executor' && toolForm.name !== 'file_io' ? (
+            <>
+              <Input
+                placeholder="API Endpoint（可选）"
+                value={toolForm.apiEndpoint}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, apiEndpoint: e.target.value }))}
+              />
+              <Input
+                type="password"
+                placeholder="API Key（留空不修改）"
+                value={toolForm.apiKey}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+              />
+            </>
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              {toolForm.name} 无需配置 API Endpoint / API Key。
+            </p>
+          )}
+          {toolForm.name === 'file_io' ? (
+            <div className="space-y-2">
+              <p className="text-sm text-text-secondary">file_io 权限</p>
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={parsePermissions(toolForm.permissionsText).includes('file.read')}
+                  onChange={(e) => setFileIoPermission('file.read', e.target.checked)}
+                />
+                允许读取文件（file.read）
+              </label>
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={parsePermissions(toolForm.permissionsText).includes('file.write')}
+                  onChange={(e) => setFileIoPermission('file.write', e.target.checked)}
+                />
+                允许写入文件（file.write）
+              </label>
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={parsePermissions(toolForm.permissionsText).includes('file.list')}
+                  onChange={(e) => setFileIoPermission('file.list', e.target.checked)}
+                />
+                允许列目录（file.list）
+              </label>
+            </div>
+          ) : (
+            <Input
+              placeholder="权限（逗号分隔，如 search.read,file.write）"
+              value={toolForm.permissionsText}
+              onChange={(e) => setToolForm((prev) => ({ ...prev, permissionsText: e.target.value }))}
+            />
+          )}
         </div>
       </Modal>
 

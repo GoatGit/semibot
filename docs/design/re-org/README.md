@@ -73,6 +73,34 @@ A：当前阶段建议复用原有 `Next.js + React + Tailwind`。这是最低�
 **Q：会话里报错“执行平面未就绪（状态: provisioning）”是什么意思？**  
 A：表示控制平面已下发启动，但执行平面进程尚未成功连回 `/ws/vm`。重构后已修复一个关键兼容问题：`python -m src.main` 在带 `VM_USER_ID/VM_TOKEN` 环境变量且无子命令时，会自动进入执行平面模式（而不是报 CLI 参数错误）。若仍出现该报错，先检查 `/tmp/semibot-runtime-<user_id>.log`、`GET /api/v1/vm/status`，必要时调用 `POST /api/v1/vm/rebootstrap`。
 
+**Q：Semibot 的 Tools 可以新增/删除吗？**  
+A：不可以。V2 中 Tools 统一按“内建能力”管理，前端与 API 都不提供新增/删除。可配置项包括：启停、权限、限流、超时，以及“需要外部服务”的工具的 endpoint/key。`code_executor` 不需要 endpoint/key。建议最小内建集至少覆盖 `search`、`code_executor`、`file_io`（读写/列目录）。`xlsx` / `pdf` 归类为 Skills，不计入 Tools。
+
+**Q：前端里 Tools 要区分“Runtime 内置工具”和“其他工具”吗？**  
+A：不区分。配置中心只展示一个统一工具列表，用户只关心“这个工具能不能用、怎么配”，而不是工具来源。
+
+**Q：file_io 的权限能否细粒度控制？**  
+A：可以。支持按 `file.read` / `file.write` / `file.list` 分别开关；在配置页里用复选框直接配置，保存后写入对应工具配置。
+
+**Q：Tools / MCP 配置存储在哪里？**  
+A：统一存储在本地 `~/.semibot/semibot.db`（runtime SQLite）。API 不再依赖 Postgres 的 `tools` / `mcp_servers` 持久化。`~/.semibot/config.toml` 仅保留基础运行参数（路径、默认模型等）。
+
+**Q：旧版 Postgres 的 Tools / MCP 数据怎么迁移？**  
+A：可用脚本 `runtime/scripts/migrate_pg_config_to_sqlite.py` 一次性迁移。
+```bash
+cd runtime
+.venv/bin/python scripts/migrate_pg_config_to_sqlite.py \
+  --database-url 'postgresql://localhost:5432/semibot' \
+  --clear-existing
+```
+仅查看源数据数量（不落库）：
+```bash
+cd runtime
+.venv/bin/python scripts/migrate_pg_config_to_sqlite.py \
+  --database-url 'postgresql://localhost:5432/semibot' \
+  --dry-run
+```
+
 ## 文档索引
 
 ### 架构与核心

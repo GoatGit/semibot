@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Wrench, RefreshCw, AlertCircle, Cpu } from 'lucide-react'
+import { Wrench, RefreshCw, AlertCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { apiClient } from '@/lib/api'
+import { formatRuntimeStatusError } from '@/lib/runtime-status'
 
 interface ApiResponse<T> {
   success: boolean
@@ -28,6 +29,31 @@ interface RuntimeSkillsData {
   skills: string[]
   source: string
   error?: string
+}
+const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io']
+const NON_TOOL_SKILLS = ['xlsx', 'pdf']
+
+function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
+  const runtimeFiltered = runtimeTools.filter((name) => !NON_TOOL_SKILLS.includes(name))
+  const dbFiltered = dbTools.filter((item) => !NON_TOOL_SKILLS.includes(item.name))
+  const byName = new Map(dbFiltered.map((item) => [item.name, item]))
+  const merged: ToolItem[] = runtimeFiltered.map((name) => {
+    const db = byName.get(name)
+    return {
+      id: db?.id || `builtin:${name}`,
+      name,
+      type: db?.type || 'builtin',
+      description: db?.description || '',
+      isBuiltin: true,
+      isActive: db?.isActive ?? true,
+    }
+  })
+  for (const item of dbFiltered) {
+    if (!runtimeFiltered.includes(item.name)) {
+      merged.push(item)
+    }
+  }
+  return merged
 }
 
 export default function ToolsPage() {
@@ -52,23 +78,22 @@ export default function ToolsPage() {
         apiClient.get<ApiResponse<RuntimeSkillsData>>('/runtime/skills'),
       ])
 
-      if (toolsRes.status === 'fulfilled' && toolsRes.value.success) {
-        setTools(toolsRes.value.data || [])
-      } else {
-        setTools([])
-      }
-
-      if (runtimeRes.status === 'fulfilled' && runtimeRes.value.success) {
-        setRuntime(runtimeRes.value.data)
-      } else {
-        setRuntime({
-          available: false,
-          tools: [],
-          skills: [],
-          source: '',
-          error: 'Runtime 未连接',
-        })
-      }
+      const dbTools = toolsRes.status === 'fulfilled' && toolsRes.value.success ? (toolsRes.value.data || []) : []
+      const runtimeData: RuntimeSkillsData =
+        runtimeRes.status === 'fulfilled' && runtimeRes.value.success
+          ? runtimeRes.value.data
+          : {
+              available: false,
+              tools: [],
+              skills: [],
+              source: '',
+              error: 'Runtime 未连接',
+            }
+      const unifiedTools = Array.from(new Set([...(runtimeData.tools || []), ...MIN_BUILTIN_TOOLS])).filter(
+        (name) => !NON_TOOL_SKILLS.includes(name)
+      )
+      setRuntime({ ...runtimeData, tools: unifiedTools })
+      setTools(mergeTools(unifiedTools, dbTools))
 
       if (
         (toolsRes.status === 'rejected' || !toolsRes.value.success) &&
@@ -86,13 +111,18 @@ export default function ToolsPage() {
   }, [loadData])
 
   const stats = useMemo(() => {
-    const dbActive = tools.filter((item) => item.isActive).length
+    const active = tools.filter((item) => item.isActive).length
     return {
-      runtimeTools: runtime.tools.length,
-      dbTools: tools.length,
-      dbActive,
+      allTools: tools.length,
+      active,
+      runtimeConnected: runtime.available ? 1 : 0,
     }
-  }, [runtime.tools.length, tools])
+  }, [runtime.available, tools])
+
+  const runtimeErrorText = useMemo(
+    () => formatRuntimeStatusError(runtime.error, runtime.source),
+    [runtime.error, runtime.source]
+  )
 
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
@@ -106,7 +136,7 @@ export default function ToolsPage() {
                   Tools 能力中心
                 </h1>
                 <p className="mt-2 text-sm text-text-secondary">
-                  查看 Runtime 内置工具与数据库工具定义，确保执行能力可用。
+                  所有工具统一视图：内建工具可配置启停与参数，不区分来源。
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -131,52 +161,23 @@ export default function ToolsPage() {
         )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <StatCard label="Runtime Tools" value={stats.runtimeTools} />
-          <StatCard label="DB Tools" value={stats.dbTools} />
-          <StatCard label="Active DB Tools" value={stats.dbActive} />
+          <StatCard label="Tools 总数" value={stats.allTools} />
+          <StatCard label="已启用" value={stats.active} />
+          <StatCard label="Runtime 连接" value={stats.runtimeConnected} />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4">
           <Card className="border-border-default">
             <CardContent className="p-5">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
-                  <Cpu size={18} className="text-primary-400" />
-                  Runtime 内置工具
-                </h2>
+                <h2 className="text-lg font-semibold text-text-primary">工具配置</h2>
                 <Badge variant={runtime.available ? 'success' : 'outline'}>
                   {runtime.available ? '已连接' : '未连接'}
                 </Badge>
               </div>
-              {runtime.error && (
-                <p className="mt-2 text-xs text-warning-500">{runtime.error}</p>
+              {runtimeErrorText && (
+                <p className="mt-2 text-xs text-warning-500">{runtimeErrorText}</p>
               )}
-              <p className="mt-2 text-xs text-text-tertiary break-all">
-                source: {runtime.source || '--'}
-              </p>
-
-              {isLoading ? (
-                <p className="mt-4 text-sm text-text-secondary">加载中...</p>
-              ) : runtime.tools.length > 0 ? (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {runtime.tools.map((name) => (
-                    <span
-                      key={name}
-                      className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-secondary"
-                    >
-                      {name}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-4 text-sm text-text-secondary">暂无 Runtime 工具数据</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-border-default">
-            <CardContent className="p-5">
-              <h2 className="text-lg font-semibold text-text-primary">数据库工具</h2>
               {isLoading ? (
                 <p className="mt-4 text-sm text-text-secondary">加载中...</p>
               ) : tools.length > 0 ? (
@@ -207,7 +208,7 @@ export default function ToolsPage() {
                   ))}
                 </div>
               ) : (
-                <p className="mt-4 text-sm text-text-secondary">暂无数据库工具</p>
+                <p className="mt-4 text-sm text-text-secondary">暂无工具配置（V2 不支持新增/删除 Tool）</p>
               )}
             </CardContent>
           </Card>

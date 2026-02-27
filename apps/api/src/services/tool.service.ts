@@ -11,6 +11,76 @@ import * as toolRepository from '../repositories/tool.repository'
 import { createLogger } from '../lib/logger'
 
 const toolLogger = createLogger('tool')
+const NON_TOOL_SKILL_NAMES = new Set(['xlsx', 'pdf'])
+
+const BUILTIN_TOOL_TEMPLATES: Record<
+  string,
+  { description: string; type: string; config: ToolConfig }
+> = {
+  search: {
+    description: '内建搜索工具',
+    type: 'builtin',
+    config: {
+      timeout: 15000,
+      rateLimit: 120,
+      requiresApproval: false,
+      permissions: ['search.read'],
+    },
+  },
+  web_search: {
+    description: '内建 Web 搜索工具',
+    type: 'builtin',
+    config: {
+      timeout: 15000,
+      rateLimit: 120,
+      requiresApproval: false,
+      permissions: ['search.read'],
+    },
+  },
+  code_executor: {
+    description: '内建代码执行工具',
+    type: 'builtin',
+    config: {
+      timeout: 60000,
+      rateLimit: 60,
+      requiresApproval: true,
+      permissions: ['code.run'],
+    },
+  },
+  file_io: {
+    description: '内建本地文件读写工具',
+    type: 'builtin',
+    config: {
+      timeout: 10000,
+      rateLimit: 120,
+      requiresApproval: true,
+      permissions: ['file.read', 'file.write', 'file.list'],
+    },
+  },
+}
+
+function getBuiltinTemplate(toolName: string): { description: string; type: string; config: ToolConfig } {
+  return (
+    BUILTIN_TOOL_TEMPLATES[toolName] ?? {
+      description: `Builtin tool: ${toolName}`,
+      type: 'builtin',
+      config: {
+        timeout: 15000,
+        rateLimit: 100,
+      },
+    }
+  )
+}
+
+function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig | undefined {
+  if (!config) return undefined
+  const sanitized: ToolConfig = { ...config }
+  if (toolName === 'code_executor') {
+    delete sanitized.apiEndpoint
+    delete sanitized.apiKey
+  }
+  return sanitized
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
@@ -54,10 +124,6 @@ export interface CreateToolInput {
 }
 
 export interface UpdateToolInput {
-  name?: string
-  description?: string
-  type?: string
-  schema?: ToolSchema
   config?: ToolConfig
   isActive?: boolean
 }
@@ -152,6 +218,9 @@ export async function getTool(orgId: string, toolId: string): Promise<Tool> {
   if (row.org_id !== orgId && !row.is_builtin) {
     throw createError(TOOL_NOT_FOUND)
   }
+  if (NON_TOOL_SKILL_NAMES.has((row.name || '').toLowerCase())) {
+    throw createError(TOOL_NOT_FOUND)
+  }
 
   return rowToTool(row)
 }
@@ -172,9 +241,14 @@ export async function listTools(
     type: options.type,
   })
 
+  const filtered = result.data.filter((row) => !NON_TOOL_SKILL_NAMES.has((row.name || '').toLowerCase()))
   return {
-    data: result.data.map(rowToTool),
-    meta: result.meta,
+    data: filtered.map(rowToTool),
+    meta: {
+      ...result.meta,
+      total: filtered.length,
+      totalPages: Math.max(1, Math.ceil(filtered.length / (result.meta.limit || 1))),
+    },
   }
 }
 
@@ -184,35 +258,117 @@ export async function listTools(
 export async function updateTool(
   orgId: string,
   toolId: string,
-  input: UpdateToolInput
+  input: UpdateToolInput,
+  userId?: string
 ): Promise<Tool> {
   // 先获取现有 Tool
   const existing = await getTool(orgId, toolId)
 
-  // 内置 Tool 不可修改
-  if (existing.isBuiltin) {
+  // 只允许更新当前组织 Tool 或内建 Tool 的配置/状态
+  if (existing.orgId !== orgId && !existing.isBuiltin) {
     throw createError(TOOL_NOT_FOUND)
   }
+  if (NON_TOOL_SKILL_NAMES.has(existing.name.toLowerCase())) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  const template = existing.isBuiltin ? getBuiltinTemplate(existing.name.toLowerCase()) : null
+  const sanitizedInputConfig = sanitizeToolConfig(existing.name.toLowerCase(), input.config)
 
-  // 确保只能更新自己组织的 Tool
-  if (existing.orgId !== orgId) {
-    throw createError(TOOL_NOT_FOUND)
-  }
+  const mergedConfig =
+    sanitizedInputConfig !== undefined
+      ? ({
+          ...(template?.config ?? {}),
+          ...(existing.config || {}),
+          ...sanitizedInputConfig,
+        } as ToolConfig)
+      : undefined
 
   const row = await toolRepository.update(toolId, {
-    name: input.name,
-    description: input.description,
-    type: input.type,
-    schema: input.schema,
-    config: input.config,
+    config: mergedConfig,
     isActive: input.isActive,
-  })
+  }, userId)
 
   if (!row) {
     throw createError(TOOL_NOT_FOUND)
   }
 
   return rowToTool(row)
+}
+
+/**
+ * 按内建工具名创建/更新配置（若不存在则自动创建配置记录）
+ */
+export async function upsertBuiltinToolConfig(
+  orgId: string,
+  userId: string,
+  toolName: string,
+  input: UpdateToolInput
+): Promise<Tool> {
+  const normalizedName = toolName.trim().toLowerCase()
+  if (!normalizedName) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  if (NON_TOOL_SKILL_NAMES.has(normalizedName)) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  const template = getBuiltinTemplate(normalizedName)
+  const sanitizedInputConfig = sanitizeToolConfig(normalizedName, input.config)
+
+  const existing = await toolRepository.findByNameAndOrg(normalizedName, orgId)
+
+  if (!existing) {
+    const config = {
+      ...template.config,
+      ...(sanitizedInputConfig ?? {}),
+    }
+    const created = await toolRepository.create({
+      orgId,
+      name: normalizedName,
+      description: template.description,
+      type: template.type,
+      schema: {},
+      config,
+      isBuiltin: true,
+      createdBy: userId,
+    })
+
+    // 新建后允许显式设置 isActive
+    if (input.isActive === false) {
+      const updated = await toolRepository.update(created.id, { isActive: false }, userId)
+      return rowToTool(updated ?? created)
+    }
+    return rowToTool(created)
+  }
+
+  if (existing.org_id !== orgId && !existing.is_builtin) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+
+  const mergedConfig =
+    sanitizedInputConfig !== undefined
+      ? ({
+          ...template.config,
+          ...(existing.config as ToolConfig),
+          ...sanitizedInputConfig,
+        } as ToolConfig)
+      : ({
+          ...template.config,
+          ...(existing.config as ToolConfig),
+        } as ToolConfig)
+
+  const updated = await toolRepository.update(
+    existing.id,
+    {
+      config: mergedConfig,
+      isActive: input.isActive,
+    },
+    userId
+  )
+
+  if (!updated) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  return rowToTool(updated)
 }
 
 /**
