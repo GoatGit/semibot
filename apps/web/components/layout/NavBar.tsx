@@ -18,9 +18,11 @@ import {
   Activity,
   Workflow,
   ShieldCheck,
+  Languages,
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Session } from '@/types'
+import { useLocale } from '@/components/providers/LocaleProvider'
 
 interface NavItem {
   icon: React.ReactNode
@@ -56,6 +58,7 @@ const NAVBAR_SESSION_LIMIT = 10
 export function NavBar() {
   const { navBarExpanded } = useLayoutStore()
   const pathname = usePathname()
+  const { locale, setLocale } = useLocale()
   const [isHovered, setIsHovered] = useState(false)
   const [sessions, setSessions] = useState<Session[]>([])
   const [isLoadingSessions, setIsLoadingSessions] = useState(false)
@@ -154,6 +157,10 @@ export function NavBar() {
     setIsHovered(false)
   }, [])
 
+  const toggleLocale = useCallback(() => {
+    setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN')
+  }, [locale, setLocale])
+
   return (
     <nav
       onMouseEnter={handleMouseEnter}
@@ -168,11 +175,16 @@ export function NavBar() {
       {/* Logo 区域 */}
       <div
         className={clsx(
-          'flex items-center h-14 px-4',
+          'px-3 py-3',
           'border-b border-border-subtle'
         )}
       >
-        <div className="flex items-center gap-2">
+        <div
+          className={clsx(
+            'flex items-center',
+            isExpanded ? 'gap-2 px-1' : 'justify-center'
+          )}
+        >
           <div className="w-8 h-8 rounded-lg bg-primary-500 flex items-center justify-center">
             <Bot size={18} className="text-neutral-950" />
           </div>
@@ -182,6 +194,27 @@ export function NavBar() {
             </span>
           )}
         </div>
+        <button
+          type="button"
+          onClick={toggleLocale}
+          className={clsx(
+            'mt-2 w-full h-8 rounded-md border border-border-default',
+            'text-xs transition-colors',
+            'hover:bg-interactive-hover hover:text-text-primary',
+            'text-text-secondary',
+            isExpanded ? 'flex items-center justify-between px-2.5' : 'flex items-center justify-center'
+          )}
+          title={locale === 'zh-CN' ? 'Switch to English' : '切换到中文'}
+          aria-label={locale === 'zh-CN' ? 'Switch to English' : '切换到中文'}
+        >
+          <span className="flex items-center gap-1.5">
+            <Languages size={14} />
+            {isExpanded && <span>{locale === 'zh-CN' ? '语言' : 'Language'}</span>}
+          </span>
+          {isExpanded && (
+            <span className="font-medium text-text-primary">{locale === 'zh-CN' ? '中文' : 'EN'}</span>
+          )}
+        </button>
       </div>
 
       {/* 导航项 */}
