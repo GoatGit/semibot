@@ -40,7 +40,9 @@ function resolveStoredLocale(): Locale {
 }
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(() => resolveStoredLocale())
+  // 为避免 hydration mismatch，首屏始终与服务端一致（DEFAULT_LANGUAGE）。
+  // 挂载后再从 localStorage 回填用户语言偏好。
+  const [locale, setLocaleState] = useState<Locale>(DEFAULT_LANGUAGE)
 
   useEffect(() => {
     const nextLocale = resolveStoredLocale()
