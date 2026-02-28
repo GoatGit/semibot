@@ -127,6 +127,7 @@ export default function EventsPage() {
   const [eventType, setEventType] = useState('')
   const [replayingId, setReplayingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null)
 
   const {
@@ -157,6 +158,7 @@ export default function EventsPage() {
   const handleReplay = async (eventId: string) => {
     try {
       setActionError(null)
+      setActionNotice(null)
       setReplayingId(eventId)
       await replayEvent(eventId)
     } catch (err) {
@@ -167,6 +169,8 @@ export default function EventsPage() {
   }
 
   const handleCreateRuleFromEvent = (type: string) => {
+    setActionError(null)
+    setActionNotice(null)
     const encoded = encodeURIComponent(type)
     router.push(`/rules?create=1&eventType=${encoded}`)
   }
@@ -175,9 +179,11 @@ export default function EventsPage() {
     try {
       if (!value) return
       await navigator.clipboard.writeText(value)
-      setActionError(t(successKey))
+      setActionError(null)
+      setActionNotice(t(successKey))
     } catch {
       setActionError(t('events.error.copy'))
+      setActionNotice(null)
     }
   }
 
@@ -271,6 +277,11 @@ export default function EventsPage() {
             {actionError || error}
           </div>
         )}
+        {actionNotice && (
+          <div className="rounded-lg border border-success-500/30 bg-success-500/10 px-4 py-3 text-sm text-success-500">
+            {actionNotice}
+          </div>
+        )}
 
         <div className="space-y-3">
           {isLoading && events.length === 0 ? (
@@ -284,98 +295,96 @@ export default function EventsPage() {
               </Card>
             ))
           ) : events.length > 0 ? (
-            events.map((event) => (
-              <Card key={event.id} className="border-border-subtle">
-                <CardContent className="p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      {(() => {
-                        const meta = eventTypeToDisplay(event.eventType, t)
-                        return (
-                          <div className="mb-2 flex items-center gap-2">
-                            <Badge variant={getCategoryVariant(meta.category)}>
-                              {t(`events.categories.${meta.category}`) !== `events.categories.${meta.category}`
-                                ? t(`events.categories.${meta.category}`)
-                                : meta.category}
-                            </Badge>
-                            <p className="font-medium text-text-primary break-all">{meta.title}</p>
+            events.map((event) => {
+              const meta = eventTypeToDisplay(event.eventType, t)
+              const categoryLabelKey = `events.categories.${meta.category}`
+              const categoryLabel = t(categoryLabelKey) !== categoryLabelKey ? t(categoryLabelKey) : meta.category
+              const payloadSummaryText = summarizePayloadText(event.payload)
+              const payloadSummaryItems = summarizePayload(event.payload, t)
+              return (
+                <Card key={event.id} className="border-border-subtle">
+                  <CardContent className="p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="mb-2 flex items-center gap-2">
+                          <Badge variant={getCategoryVariant(meta.category)}>{categoryLabel}</Badge>
+                          <p className="font-medium text-text-primary break-all">{meta.title}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm text-text-secondary break-all">{event.eventType}</p>
+                          <Badge variant={mapRiskVariant(event.riskHint)}>
+                            {t('events.riskLabel')} {event.riskHint || t('events.unknown')}
+                          </Badge>
+                        </div>
+                        <div className="mt-1 text-xs text-text-secondary">
+                          {event.id} · {event.source} · {formatTime(event.createdAt, locale)}
+                        </div>
+                        {event.subject && (
+                          <div className="mt-2 text-sm text-text-secondary break-all">
+                            {t('events.subject')}: {event.subject}
                           </div>
-                        )
-                      })()}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm text-text-secondary break-all">{event.eventType}</p>
-                        <Badge variant={mapRiskVariant(event.riskHint)}>
-                          {t('events.riskLabel')} {event.riskHint || t('events.unknown')}
-                        </Badge>
+                        )}
+                        {payloadSummaryText && (
+                          <p className="mt-2 text-sm text-text-primary">{payloadSummaryText}</p>
+                        )}
+                        {payloadSummaryItems.length > 0 && (
+                          <div className="mt-2 grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
+                            {payloadSummaryItems.map((item, index) => (
+                              <div key={`${event.id}-${index}`} className="rounded border border-border-subtle bg-bg-elevated px-2 py-1 text-text-secondary">
+                                <span className="text-text-tertiary">{item.label}：</span>
+                                <span className="break-all">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="mt-1 text-xs text-text-secondary">
-                        {event.id} · {event.source} · {formatTime(event.createdAt, locale)}
-                      </div>
-                      {event.subject && (
-                        <div className="mt-2 text-sm text-text-secondary break-all">
-                          {t('events.subject')}: {event.subject}
-                        </div>
-                      )}
-                      {summarizePayloadText(event.payload) && (
-                        <p className="mt-2 text-sm text-text-primary">{summarizePayloadText(event.payload)}</p>
-                      )}
-                      {summarizePayload(event.payload, t).length > 0 && (
-                        <div className="mt-2 grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
-                          {summarizePayload(event.payload, t).map((item, index) => (
-                            <div key={`${event.id}-${index}`} className="rounded border border-border-subtle bg-bg-elevated px-2 py-1 text-text-secondary">
-                              <span className="text-text-tertiary">{item.label}：</span>
-                              <span className="break-all">{item.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
 
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Plus size={14} />}
-                        onClick={() => handleCreateRuleFromEvent(event.eventType)}
-                      >
-                        {t('events.createRule')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Copy size={14} />}
-                        onClick={() => void handleCopy(event.eventType, 'events.copyTypeSuccess')}
-                      >
-                        {t('events.copyType')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setEventType(event.eventType)}
-                      >
-                        {t('events.filterSameType')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setSelectedEvent(event)}
-                      >
-                        {t('events.details')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<RotateCcw size={14} />}
-                        loading={replayingId === event.id}
-                        onClick={() => void handleReplay(event.id)}
-                      >
-                        {t('events.replay')}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          leftIcon={<Plus size={14} />}
+                          onClick={() => handleCreateRuleFromEvent(event.eventType)}
+                        >
+                          {t('events.createRule')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          leftIcon={<Copy size={14} />}
+                          onClick={() => void handleCopy(event.eventType, 'events.copyTypeSuccess')}
+                        >
+                          {t('events.copyType')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setEventType(event.eventType)}
+                        >
+                          {t('events.filterSameType')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setSelectedEvent(event)}
+                        >
+                          {t('events.details')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          leftIcon={<RotateCcw size={14} />}
+                          loading={replayingId === event.id}
+                          onClick={() => void handleReplay(event.id)}
+                        >
+                          {t('events.replay')}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
+                  </CardContent>
+                </Card>
+              )
+            })
           ) : (
             <Card className="border-border-subtle">
               <CardContent className="p-8 text-center text-sm text-text-secondary">
