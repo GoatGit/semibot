@@ -377,3 +377,6 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
   - `semibot gateway doctor`
   - `semibot gateway doctor --provider telegram`
   - `semibot gateway doctor --strict-warnings`
+- Telegram Webhook 连通自检：
+  - `semibot gateway webhook-check --provider telegram`
+  - `semibot gateway webhook-check --provider telegram --public-base-url https://xxxx.ngrok-free.app`

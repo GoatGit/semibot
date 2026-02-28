@@ -131,6 +131,16 @@ semibot gateway doctor --provider telegram
 semibot gateway doctor --strict-warnings
 ```
 
+**Q：如何检查 Telegram Webhook 是否真的挂好了？**  
+A：使用 webhook 自检命令（会调用 Telegram `getWebhookInfo`）：
+```bash
+semibot gateway webhook-check --provider telegram
+```
+若你使用 ngrok，可带期望地址比对：
+```bash
+semibot gateway webhook-check --provider telegram --public-base-url https://xxxx.ngrok-free.app
+```
+
 **Q：Gateway 会话和 runtime session 的关系是什么？**  
 A：采用“统一 Gateway Context Service”方案。`chat_id + bot_id`（或飞书等价键）映射一个固定主会话；每次新任务创建独立 runtime session 执行；任务结束只把最小结果（摘要/产物链接/审批结论）回写主会话，不做全量 merge。这样 runtime 仍保持单层 session，Gateway 侧保留完整对话上下文与审计链路。
 

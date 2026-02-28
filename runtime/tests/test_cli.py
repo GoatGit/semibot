@@ -1017,6 +1017,110 @@ def test_gateway_doctor_strict_warnings_mode(tmp_path: Path, capsys) -> None:
     assert payload_strict["summary"]["degraded"] >= 1
 
 
+def test_gateway_webhook_check_success(monkeypatch, tmp_path: Path, capsys) -> None:
+    from src.server.config_store import RuntimeConfigStore
+
+    db_path = tmp_path / "semibot.db"
+    store = RuntimeConfigStore(db_path=str(db_path))
+    created = store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instance_key": "tg-webhook-ok",
+            "is_active": True,
+            "config": {"botToken": "123456:token_ok"},
+        }
+    )
+
+    def _fake_http_json_request(*, method: str, url: str, payload=None, timeout: float = 5.0):
+        del payload, timeout
+        assert method == "GET"
+        assert "getWebhookInfo" in url
+        return {
+            "ok": True,
+            "result": {
+                "url": "https://example.ngrok-free.app/v1/integrations/telegram/webhook",
+                "pending_update_count": 0,
+            },
+        }
+
+    monkeypatch.setattr("src.cli._http_json_request", _fake_http_json_request)
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "webhook-check",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(db_path),
+            "--instance-id",
+            str(created["id"]),
+            "--public-base-url",
+            "https://example.ngrok-free.app",
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "webhook-check"
+    assert payload["summary"]["healthy"] == 1
+    assert payload["instances"][0]["status"] == "healthy"
+
+
+def test_gateway_webhook_check_detects_url_mismatch_in_strict_mode(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    from src.server.config_store import RuntimeConfigStore
+
+    db_path = tmp_path / "semibot.db"
+    store = RuntimeConfigStore(db_path=str(db_path))
+    created = store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instance_key": "tg-webhook-mismatch",
+            "is_active": True,
+            "config": {"botToken": "123456:token_ok"},
+        }
+    )
+
+    def _fake_http_json_request(*, method: str, url: str, payload=None, timeout: float = 5.0):
+        del method, url, payload, timeout
+        return {
+            "ok": True,
+            "result": {
+                "url": "https://wrong.example.com/v1/integrations/telegram/webhook",
+                "pending_update_count": 2,
+            },
+        }
+
+    monkeypatch.setattr("src.cli._http_json_request", _fake_http_json_request)
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "webhook-check",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(db_path),
+            "--instance-id",
+            str(created["id"]),
+            "--expected-url",
+            "https://expected.example.com/v1/integrations/telegram/webhook",
+            "--strict-warnings",
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["degraded"] == 1
+    warnings = payload["instances"][0]["warnings"]
+    assert "telegram_webhook_url_mismatch" in warnings
+    assert any(item.startswith("telegram_pending_updates:") for item in warnings)
+
+
 def test_gateway_create_update_and_test_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
 

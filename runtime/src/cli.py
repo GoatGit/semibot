@@ -1947,6 +1947,131 @@ def cmd_gateway_doctor(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS if ok else EXIT_CONFIG_ERROR
 
 
+def _telegram_get_webhook_info(bot_token: str) -> dict[str, Any]:
+    token = str(bot_token or "").strip()
+    if not token:
+        raise RuntimeError("empty bot token")
+    url = f"https://api.telegram.org/bot{token}/getWebhookInfo"
+    try:
+        payload = _http_json_request(method="GET", url=url, timeout=12.0)
+    except Exception as exc:
+        message = str(exc).replace(token, "<redacted>")
+        raise RuntimeError(message) from exc
+    if payload.get("ok") is not True:
+        description = str(payload.get("description") or "telegram api error")
+        raise RuntimeError(description)
+    result = payload.get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def cmd_gateway_webhook_check(args: argparse.Namespace) -> int:
+    provider = str(getattr(args, "provider", "telegram") or "telegram").strip().lower()
+    db_path = str(getattr(args, "db_path", _default_db_path()))
+    instance_id = str(getattr(args, "instance_id", "") or "").strip()
+    strict_warnings = bool(getattr(args, "strict_warnings", False))
+    expected_url = str(getattr(args, "expected_url", "") or "").strip()
+    public_base_url = str(getattr(args, "public_base_url", "") or "").strip().rstrip("/")
+    if not expected_url and public_base_url:
+        expected_url = f"{public_base_url}/v1/integrations/telegram/webhook"
+
+    store = RuntimeConfigStore(db_path=db_path)
+    if provider not in {"telegram", "all"}:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="webhook-check",
+                code="UNSUPPORTED_PROVIDER",
+                message="webhook-check currently supports telegram only",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    source_items = store.list_gateway_instances(provider="telegram")
+    if instance_id:
+        source_items = [item for item in source_items if str(item.get("id") or "") == instance_id]
+        if not source_items:
+            _print_json(
+                _error_payload(
+                    resource="gateway",
+                    action="webhook-check",
+                    code="GATEWAY_INSTANCE_NOT_FOUND",
+                    message=f"gateway instance not found: {instance_id}",
+                )
+            )
+            return EXIT_NOT_FOUND
+
+    reports: list[dict[str, Any]] = []
+    for item in source_items:
+        cfg = item.get("config")
+        cfg_map = cfg if isinstance(cfg, dict) else {}
+        token = str(cfg_map.get("botToken") or "").strip()
+        instance_report: dict[str, Any] = {
+            "id": item.get("id"),
+            "instanceKey": item.get("instance_key"),
+            "provider": "telegram",
+            "isActive": bool(item.get("is_active")),
+            "errors": [],
+            "warnings": [],
+            "result": {},
+            "status": "healthy",
+        }
+        if not token:
+            instance_report["errors"].append("telegram_missing_bot_token")
+            instance_report["status"] = "broken"
+            reports.append(instance_report)
+            continue
+        try:
+            result = _telegram_get_webhook_info(token)
+            instance_report["result"] = result
+        except Exception as exc:
+            instance_report["errors"].append(f"telegram_webhook_info_failed:{exc}")
+            instance_report["status"] = "broken"
+            reports.append(instance_report)
+            continue
+
+        current_url = str(instance_report["result"].get("url") or "").strip()
+        if not current_url:
+            instance_report["warnings"].append("telegram_webhook_url_empty")
+        if expected_url and current_url and current_url.rstrip("/") != expected_url.rstrip("/"):
+            instance_report["warnings"].append("telegram_webhook_url_mismatch")
+        pending = instance_report["result"].get("pending_update_count")
+        if isinstance(pending, int) and pending > 0:
+            instance_report["warnings"].append(f"telegram_pending_updates:{pending}")
+
+        if instance_report["errors"]:
+            instance_report["status"] = "broken"
+        elif instance_report["warnings"]:
+            instance_report["status"] = "degraded"
+        reports.append(instance_report)
+
+    broken = [item for item in reports if item["status"] == "broken"]
+    degraded = [item for item in reports if item["status"] == "degraded"]
+    healthy = [item for item in reports if item["status"] == "healthy"]
+    ok = not broken and (not strict_warnings or not degraded)
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "webhook-check",
+            "provider": "telegram",
+            "db_path": db_path,
+            "instance_id": instance_id or None,
+            "expected_url": expected_url or None,
+            "summary": {
+                "total": len(reports),
+                "healthy": len(healthy),
+                "degraded": len(degraded),
+                "broken": len(broken),
+                "strictWarnings": strict_warnings,
+            },
+            "instances": reports,
+            "ok": ok,
+        }
+    )
+    return EXIT_SUCCESS if ok else EXIT_CONFIG_ERROR
+
+
 def cmd_gateway_list(args: argparse.Namespace) -> int:
     runtime_url = _runtime_base_url(args)
     ready_error = _require_runtime_server(runtime_url)
@@ -5250,6 +5375,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Treat degraded status (warnings) as failure",
     )
     gateway_doctor_parser.set_defaults(func=cmd_gateway_doctor)
+
+    gateway_webhook_check_parser = gateway_subparsers.add_parser(
+        "webhook-check",
+        help="Check telegram webhook registration and pending updates",
+    )
+    gateway_webhook_check_parser.add_argument(
+        "--provider",
+        choices=["telegram", "all", "feishu"],
+        default="telegram",
+        help="Provider scope (currently telegram only)",
+    )
+    gateway_webhook_check_parser.add_argument("--instance-id", default=None, help="Optional gateway instance ID")
+    gateway_webhook_check_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
+    gateway_webhook_check_parser.add_argument("--expected-url", default=None, help="Expected webhook URL")
+    gateway_webhook_check_parser.add_argument(
+        "--public-base-url",
+        default=None,
+        help="Public base URL used to derive expected webhook URL",
+    )
+    gateway_webhook_check_parser.add_argument(
+        "--strict-warnings",
+        action="store_true",
+        help="Treat degraded status (warnings) as failure",
+    )
+    gateway_webhook_check_parser.set_defaults(func=cmd_gateway_webhook_check)
 
     gateway_list_parser = gateway_subparsers.add_parser("list", help="List gateway instances")
     gateway_list_parser.add_argument("--provider", default=None, help="Optional provider filter")
