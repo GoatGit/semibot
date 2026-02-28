@@ -25,21 +25,22 @@ from src.events.models import Event
 from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.events.runtime_action_executor import RuntimeActionExecutor
 from src.runtime_service import run_task_once
-from src.server.feishu import (
+from src.gateway.adapters.feishu_adapter import (
     maybe_url_verification,
     normalize_message_event,
     parse_card_action,
     verify_callback_token,
 )
-from src.server.telegram import normalize_update as normalize_telegram_update
-from src.server.telegram import parse_callback_action as parse_telegram_callback_action
-from src.server.telegram import verify_webhook_secret as verify_telegram_webhook_secret
-from src.server.approval_text import extract_message_text, parse_approval_text_command
-from src.server.feishu_notifier import FeishuNotifier, SendFn
-from src.server.telegram_notifier import (
+from src.gateway.adapters.telegram_adapter import normalize_update as normalize_telegram_update
+from src.gateway.adapters.telegram_adapter import parse_callback_action as parse_telegram_callback_action
+from src.gateway.adapters.telegram_adapter import verify_webhook_secret as verify_telegram_webhook_secret
+from src.gateway.context_service import GatewayContextService
+from src.gateway.notifiers.feishu_notifier import FeishuNotifier, SendFn
+from src.gateway.notifiers.telegram_notifier import (
     SendFn as TelegramSendFn,
 )
-from src.server.telegram_notifier import TelegramNotifier
+from src.gateway.notifiers.telegram_notifier import TelegramNotifier
+from src.gateway.parsers.approval_text import extract_message_text, parse_approval_text_command
 from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
 
@@ -126,6 +127,13 @@ def create_app(
     # Expose runtime db path for tool-level config readers (e.g. SearchTool).
     os.environ["SEMIBOT_EVENTS_DB_PATH"] = db
     config_store = RuntimeConfigStore(db_path=db)
+    gateway_context = GatewayContextService(
+        db_path=db,
+        config_store=config_store,
+        task_runner=_task_runner,
+        runtime_db_path=db,
+        rules_path=rules,
+    )
 
     def _to_bool(value: Any, default: bool = False) -> bool:
         if isinstance(value, bool):
@@ -160,6 +168,13 @@ def create_app(
         if provider == "telegram":
             return bool(telegram_bot_token)
         return False
+
+    def _telegram_bot_id(token: str | None) -> str | None:
+        value = str(token or "").strip()
+        if ":" not in value:
+            return None
+        prefix = value.split(":", 1)[0].strip()
+        return prefix or None
 
     def _build_feishu_notifier() -> FeishuNotifier | None:
         cfg = _provider_config("feishu")
@@ -243,36 +258,6 @@ def create_app(
             await telegram_notifier.handle_event(event)
 
     engine.bus.subscribe(_gateway_event_sink)
-
-    async def _run_telegram_chat_task(*, text: str, chat_id: str | None) -> None:
-        reply_text = ""
-        session_id = f"tg_{chat_id}" if chat_id else None
-        try:
-            result = await _task_runner(
-                task=text,
-                db_path=db,
-                rules_path=rules,
-                agent_id="semibot",
-                session_id=session_id,
-                model=None,
-                system_prompt=None,
-            )
-            reply_text = str(result.get("final_response") or "").strip()
-            if not reply_text:
-                error = str(result.get("error") or "").strip()
-                reply_text = f"任务执行失败：{error}" if error else "任务已执行，但没有可返回的结果。"
-        except Exception as exc:
-            reply_text = f"任务执行失败：{exc}"
-
-        notifier = _build_telegram_notifier()
-        if not notifier or not _provider_active("telegram"):
-            return
-        target_chat_id = (chat_id or "").strip() or None
-        if not target_chat_id:
-            target_chat_id = str(_provider_config("telegram").get("defaultChatId") or "").strip() or None
-        if not target_chat_id:
-            return
-        await notifier.send_message(text=reply_text, chat_id=target_chat_id)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -546,6 +531,21 @@ def create_app(
         provider = str(item.get("provider") or "")
         config = item.get("config")
         config_map = config if isinstance(config, dict) else {}
+        addressing_policy = (
+            config_map.get("addressingPolicy")
+            if isinstance(config_map.get("addressingPolicy"), dict)
+            else None
+        )
+        proactive_policy = (
+            config_map.get("proactivePolicy")
+            if isinstance(config_map.get("proactivePolicy"), dict)
+            else None
+        )
+        context_policy = (
+            config_map.get("contextPolicy")
+            if isinstance(config_map.get("contextPolicy"), dict)
+            else None
+        )
         is_active = bool(item.get("is_active"))
         return {
             "id": item.get("id"),
@@ -557,6 +557,9 @@ def create_app(
             "requiresApproval": bool(item.get("requires_approval")),
             "status": _gateway_status(provider, is_active, config_map),
             "config": _mask_gateway_config(provider, config_map),
+            "addressingPolicy": addressing_policy,
+            "proactivePolicy": proactive_policy,
+            "contextPolicy": context_policy,
             "updatedAt": item.get("updated_at"),
         }
 
@@ -819,9 +822,16 @@ def create_app(
                 payload.get("requiresApproval", payload.get("requires_approval")),
                 False,
             )
+        merged_config: dict[str, Any] = {}
         config_payload = payload.get("config")
         if isinstance(config_payload, dict):
-            patch["config"] = config_payload
+            merged_config.update(config_payload)
+        for key in ("addressingPolicy", "proactivePolicy", "contextPolicy"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                merged_config[key] = value
+        if merged_config:
+            patch["config"] = merged_config
         clear_fields = payload.get("clearFields", payload.get("clear_fields"))
         if isinstance(clear_fields, list):
             patch["clear_fields"] = [str(item) for item in clear_fields if isinstance(item, str)]
@@ -854,6 +864,68 @@ def create_app(
             )
             return {"sent": sent}
         raise HTTPException(status_code=400, detail="unsupported_gateway_provider")
+
+    @app.get("/v1/gateway/conversations")
+    async def list_gateway_conversations(
+        provider: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        items = gateway_context.list_conversations(provider=provider, limit=limit)
+        return {
+            "data": [
+                {
+                    "conversation_id": item["id"],
+                    "provider": item["provider"],
+                    "gateway_key": item["gateway_key"],
+                    "main_context_id": item["main_context_id"],
+                    "latest_context_version": item["latest_context_version"],
+                    "status": item["status"],
+                    "updated_at": item["updated_at"],
+                }
+                for item in items
+            ]
+        }
+
+    @app.get("/v1/gateway/conversations/{conversation_id}/runs")
+    async def list_gateway_conversation_runs(
+        conversation_id: str,
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        rows = gateway_context.list_task_runs(conversation_id, limit=limit)
+        return {
+            "data": [
+                {
+                    "run_id": row["id"],
+                    "runtime_session_id": row["runtime_session_id"],
+                    "snapshot_version": row["snapshot_version"],
+                    "status": row["status"],
+                    "result_summary": row["result_summary"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in rows
+            ]
+        }
+
+    @app.get("/v1/gateway/conversations/{conversation_id}/context")
+    async def get_gateway_conversation_context(
+        conversation_id: str,
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> dict[str, Any]:
+        messages = gateway_context.list_context(conversation_id, limit=limit)
+        return {
+            "conversation_id": conversation_id,
+            "messages": [
+                {
+                    "id": item["id"],
+                    "version": item["context_version"],
+                    "role": item["role"],
+                    "content": item["content"],
+                    "metadata": item["metadata"],
+                    "created_at": item["created_at"],
+                }
+                for item in messages
+            ],
+        }
 
     @app.get("/v1/sessions")
     async def list_sessions(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
@@ -1158,12 +1230,46 @@ def create_app(
                 subject=str(event.subject) if isinstance(event.subject, str) else None,
                 trace_payload=payload,
             )
+        gateway_result = None
+        if (
+            event.event_type == "chat.message.received"
+            and text
+            and not approval_command
+            and isinstance(event.payload, dict)
+        ):
+            async def _feishu_result_sender(reply_text: str, _context: dict[str, Any]) -> bool:
+                notifier = _build_feishu_notifier()
+                if not notifier or not _provider_active("feishu"):
+                    return False
+                return await notifier.send_markdown(
+                    title="Semibot",
+                    content=reply_text,
+                    channel="default",
+                )
+
+            gateway_result = await gateway_context.ingest_message(
+                provider="feishu",
+                event_payload=event.payload,
+                source=event.source,
+                subject=str(event.subject) if isinstance(event.subject, str) else None,
+                text=text,
+                agent_id="semibot",
+                force_execute=False,
+                on_result=_feishu_result_sender,
+            )
         return {
             "accepted": True,
             "event_id": event.event_id,
             "event_type": event.event_type,
             "matched_rules": len(outcomes),
             "approval_command": approval_command,
+            "addressed": gateway_result.get("addressed") if gateway_result else None,
+            "should_execute": gateway_result.get("should_execute") if gateway_result else None,
+            "address_reason": gateway_result.get("address_reason") if gateway_result else None,
+            "conversation_id": gateway_result.get("conversation_id") if gateway_result else None,
+            "main_context_id": gateway_result.get("main_context_id") if gateway_result else None,
+            "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
+            "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
         }
 
     @app.post("/v1/integrations/feishu/card-actions")
@@ -1265,7 +1371,10 @@ def create_app(
         if not verify_telegram_webhook_secret(request.headers, webhook_secret):
             raise HTTPException(status_code=401, detail="invalid_telegram_secret")
 
-        normalized = normalize_telegram_update(payload)
+        normalized = normalize_telegram_update(
+            payload,
+            bot_id=_telegram_bot_id(token),
+        )
         if not normalized:
             return {"accepted": False, "reason": "unsupported_telegram_event"}
         allowed_chat_ids_raw = tg_cfg.get("allowedChatIds")
@@ -1318,6 +1427,7 @@ def create_app(
                 }
 
         text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
+        gateway_result = None
         if text and not approval_command:
             approval_command = await _handle_text_approval_command(
                 text=text,
@@ -1325,13 +1435,23 @@ def create_app(
                 subject=str(event.subject) if isinstance(event.subject, str) else None,
                 trace_payload=payload,
             )
-            if not approval_command and event.event_type == "chat.message.received":
-                chat_id = event.payload.get("chat_id") if isinstance(event.payload, dict) else None
-                asyncio.create_task(
-                    _run_telegram_chat_task(
-                        text=text,
-                        chat_id=str(chat_id) if chat_id is not None else None,
-                    )
+            if not approval_command and event.event_type == "chat.message.received" and isinstance(event.payload, dict):
+                async def _telegram_result_sender(reply_text: str, ctx: dict[str, Any]) -> bool:
+                    notifier = _build_telegram_notifier()
+                    if not notifier or not _provider_active("telegram"):
+                        return False
+                    target_chat_id = str(ctx.get("chat_id") or "").strip() or None
+                    return await notifier.send_message(text=reply_text, chat_id=target_chat_id)
+
+                gateway_result = await gateway_context.ingest_message(
+                    provider="telegram",
+                    event_payload=event.payload,
+                    source=event.source,
+                    subject=str(event.subject) if isinstance(event.subject, str) else None,
+                    text=text,
+                    agent_id="semibot",
+                    force_execute=False,
+                    on_result=_telegram_result_sender,
                 )
 
         return {
@@ -1340,6 +1460,13 @@ def create_app(
             "event_type": event.event_type,
             "matched_rules": len(outcomes),
             "approval_command": approval_command,
+            "addressed": gateway_result.get("addressed") if gateway_result else None,
+            "should_execute": gateway_result.get("should_execute") if gateway_result else None,
+            "address_reason": gateway_result.get("address_reason") if gateway_result else None,
+            "conversation_id": gateway_result.get("conversation_id") if gateway_result else None,
+            "main_context_id": gateway_result.get("main_context_id") if gateway_result else None,
+            "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
+            "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
         }
 
     @app.post("/v1/integrations/telegram/outbound/test")

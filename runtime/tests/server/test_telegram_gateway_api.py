@@ -275,3 +275,80 @@ async def test_telegram_allowed_chat_ids_guard(tmp_path: Path):
         )
         assert allowed.status_code == 200
         assert allowed.json()["accepted"] is True
+
+
+@pytest.mark.asyncio
+async def test_gateway_context_endpoints_and_mention_only_policy(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        task = str(kwargs.get("task") or "")
+        return {
+            "status": "success",
+            "task": task,
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": f"done: {task}",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        enable = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "token_abc",
+                    "defaultChatId": "-100001",
+                    "addressingPolicy": {
+                        "mode": "mention_only",
+                        "allowReplyToBot": True,
+                        "commandPrefixes": ["/ask", "/run"],
+                    },
+                },
+            },
+        )
+        assert enable.status_code == 200
+
+        resp = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 99,
+                "message": {
+                    "message_id": 201,
+                    "chat": {"id": -100001, "type": "supergroup"},
+                    "from": {"id": 7788},
+                    "text": "plain message without mention",
+                },
+            },
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["accepted"] is True
+        assert payload["should_execute"] is False
+        assert payload["addressed"] is False
+        assert payload["task_run_id"] is None
+        assert all(item["payload"]["text"] != "done: plain message without mention" for item in sent)
+
+        convs = await client.get("/v1/gateway/conversations")
+        assert convs.status_code == 200
+        assert len(convs.json()["data"]) >= 1
+        conv_id = convs.json()["data"][0]["conversation_id"]
+
+        ctx_resp = await client.get(f"/v1/gateway/conversations/{conv_id}/context")
+        assert ctx_resp.status_code == 200
+        assert len(ctx_resp.json()["messages"]) >= 1

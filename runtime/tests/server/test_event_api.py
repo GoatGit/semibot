@@ -175,8 +175,8 @@ async def test_event_api_health_and_skills(tmp_path: Path, monkeypatch):
 
         skills = await client.get("/v1/skills")
         assert skills.status_code == 200
-        assert skills.json()["tools"] == ["code_executor", "pdf"]
-        assert skills.json()["skills"] == ["analyst"]
+        assert skills.json()["tools"] == ["code_executor"]
+        assert skills.json()["skills"] == ["analyst", "pdf"]
 
 
 @pytest.mark.asyncio
