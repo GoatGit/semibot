@@ -449,6 +449,11 @@
     "and": "与",
     "period": "。",
     "risk": "风险",
+    "detail": {
+      "tool": "工具 {tool}",
+      "action": "执行动作 {action}",
+      "target": "目标 {target}"
+    },
     "riskLevel": {
       "low": "低",
       "medium": "中",
@@ -456,8 +461,8 @@
     }
   },
   "toolsPage": {
-    "title": "Tools 能力中心",
-    "subtitle": "所有工具统一视图：内建工具可配置启停与参数，不区分来源。",
+    "title": "工具中心",
+    "subtitle": "统一查看工具能力：内置工具可启用/停用并进行配置。",
     "openConfig": "进入配置管理",
     "configTitle": "工具配置",
     "connected": "已连接",
@@ -465,15 +470,21 @@
     "builtin": "内置",
     "enabled": "启用",
     "disabled": "停用",
-    "empty": "暂无工具配置（V2 不支持新增/删除 Tool）",
-    "runtimeUnavailable": "Runtime 未连接",
+    "empty": "暂无工具配置（V2 暂不支持新增/删除工具）",
+    "runtimeUnavailable": "运行时未连接",
     "error": {
       "load": "工具数据加载失败，请检查 API 与 Runtime 状态"
     },
     "stats": {
-      "total": "Tools 总数",
+      "total": "工具总数",
       "enabled": "已启用",
-      "runtimeConnected": "Runtime 连接"
+      "runtimeConnected": "运行时连接"
+    },
+    "builtinDescriptions": {
+      "search": "内建搜索工具",
+      "code_executor": "内建代码执行工具",
+      "file_io": "内建本地文件读写工具",
+      "browser_automation": "内建浏览器自动化工具（Playwright）"
     }
   },
   "rules": {

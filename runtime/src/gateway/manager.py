@@ -108,6 +108,54 @@ class GatewayManager:
                     bindings[chat_id] = agent_id
         return bindings
 
+    @staticmethod
+    def _normalized_string_list(value: Any) -> list[str]:
+        raw_items: list[Any] = []
+        if isinstance(value, list):
+            raw_items = value
+        elif isinstance(value, str):
+            raw_items = value.split(",")
+        values: list[str] = []
+        for item in raw_items:
+            text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text)
+        return values
+
+    @classmethod
+    def _normalize_gateway_config_patch(cls, provider: str | None, value: Any) -> dict[str, Any]:
+        config = dict(value) if isinstance(value, dict) else {}
+        normalized = dict(config)
+        provider_name = str(provider or "").strip().lower()
+
+        chat_bindings_raw: Any | None = None
+        if "chatBindings" in normalized:
+            chat_bindings_raw = normalized.get("chatBindings")
+        elif "chat_bindings" in normalized:
+            chat_bindings_raw = normalized.pop("chat_bindings")
+        if chat_bindings_raw is not None:
+            bindings_map = cls._parse_chat_bindings(chat_bindings_raw)
+            normalized["chatBindings"] = [
+                {"chatId": chat_id, "agentId": agent_id}
+                for chat_id, agent_id in bindings_map.items()
+            ]
+
+        if "notifyEventTypes" in normalized or "notify_event_types" in normalized:
+            notify_raw = normalized.get("notifyEventTypes")
+            if notify_raw is None and "notify_event_types" in normalized:
+                notify_raw = normalized.pop("notify_event_types")
+            normalized["notifyEventTypes"] = cls._normalized_string_list(notify_raw)
+
+        if provider_name == "telegram" and (
+            "allowedChatIds" in normalized or "allowed_chat_ids" in normalized
+        ):
+            allowed_raw = normalized.get("allowedChatIds")
+            if allowed_raw is None and "allowed_chat_ids" in normalized:
+                allowed_raw = normalized.pop("allowed_chat_ids")
+            normalized["allowedChatIds"] = cls._normalized_string_list(allowed_raw)
+
+        return normalized
+
     def _gateway_agent_id(
         self,
         provider: str,
@@ -375,6 +423,8 @@ class GatewayManager:
         if not isinstance(provider, str) or not provider.strip():
             raise GatewayManagerError("provider_required")
         patch = self._payload_to_gateway_patch(payload)
+        if isinstance(patch.get("config"), dict):
+            patch["config"] = self._normalize_gateway_config_patch(provider, patch.get("config"))
         patch["provider"] = provider
         if "instanceKey" in payload:
             patch["instance_key"] = payload.get("instanceKey")
@@ -388,6 +438,11 @@ class GatewayManager:
 
     def update_gateway_instance(self, instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         patch = self._payload_to_gateway_patch(payload)
+        existing = self._get_instance(instance_id)
+        if not existing:
+            raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+        if isinstance(patch.get("config"), dict):
+            patch["config"] = self._normalize_gateway_config_patch(existing.get("provider"), patch.get("config"))
         try:
             updated = self.config_store.update_gateway_instance(instance_id, patch)
         except ValueError:
@@ -489,6 +544,8 @@ class GatewayManager:
 
     def upsert_gateway_config(self, provider: str, payload: dict[str, Any]) -> dict[str, Any]:
         patch = self._payload_to_gateway_patch(payload)
+        if isinstance(patch.get("config"), dict):
+            patch["config"] = self._normalize_gateway_config_patch(provider, patch.get("config"))
 
         try:
             item = self.config_store.upsert_gateway_config(provider, patch)

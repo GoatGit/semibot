@@ -210,10 +210,10 @@ export default function SkillDefinitionsPage() {
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col">
+    <div className="flex-1 overflow-y-auto bg-bg-base">
+      <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
         {/* 头部 */}
-        <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
+        <header className="border-b border-border-subtle pb-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-semibold text-text-primary">{t('skillsPage.title')}</h1>
@@ -302,7 +302,7 @@ export default function SkillDefinitionsPage() {
         </header>
 
         {/* 技能列表 */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div>
           {filteredDefinitions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-16 h-16 rounded-2xl bg-bg-elevated flex items-center justify-center mb-4">

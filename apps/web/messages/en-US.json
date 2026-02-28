@@ -434,13 +434,13 @@
     "approve": "Approve",
     "reject": "Reject",
     "empty": "No approvals",
-    "unknownEvent": "unknown event",
+    "unknownEvent": "Unknown event",
     "status": {
-      "all": "All status",
-      "pending": "pending",
-      "approved": "approved",
-      "rejected": "rejected",
-      "expired": "expired"
+      "all": "All statuses",
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "expired": "Expired"
     },
     "error": {
       "action": "Approval action failed"
@@ -449,10 +449,15 @@
     "and": "and",
     "period": ".",
     "risk": "Risk",
+    "detail": {
+      "tool": "Tool {tool}",
+      "action": "Action {action}",
+      "target": "Target {target}"
+    },
     "riskLevel": {
-      "low": "low",
-      "medium": "medium",
-      "high": "high"
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
     }
   },
   "toolsPage": {
@@ -474,6 +479,12 @@
       "total": "Total Tools",
       "enabled": "Enabled",
       "runtimeConnected": "Runtime Connected"
+    },
+    "builtinDescriptions": {
+      "search": "Built-in web search tool",
+      "code_executor": "Built-in code execution tool",
+      "file_io": "Built-in local file read/write tool",
+      "browser_automation": "Built-in browser automation tool (Playwright)"
     }
   },
   "rules": {

@@ -580,9 +580,9 @@ export default function McpPage() {
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col">
-        <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
+    <div className="flex-1 overflow-y-auto bg-bg-base">
+      <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
+        <header className="border-b border-border-subtle pb-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-semibold text-text-primary">{t('mcp.title')}</h1>
@@ -657,7 +657,7 @@ export default function McpPage() {
           )}
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div>
           {error && (
             <div className="mb-4 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500 flex items-center justify-between">
               <span>{error}</span>

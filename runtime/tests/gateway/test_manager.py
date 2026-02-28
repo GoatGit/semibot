@@ -260,11 +260,25 @@ async def test_gateway_manager_multi_instance_create_update_delete(tmp_path: Pat
         {
             "displayName": "Telegram Ops V2",
             "isDefault": True,
-            "config": {"defaultChatId": "-100001"},
+            "config": {
+                "defaultChatId": "-100001",
+                "allowedChatIds": ["-100001", " -100002 ", "-100001"],
+                "chatBindings": [
+                    {"chatId": "-100001", "agentId": "ops"},
+                    {"chatId": "-100001", "agentId": "ops-v2"},
+                    {"chatId": "-100002", "agentId": "risk"},
+                    {"chatId": "-100003", "agentId": ""},
+                ],
+            },
         },
     )
     assert updated["displayName"] == "Telegram Ops V2"
     assert updated["isDefault"] is True
+    assert updated["config"]["allowedChatIds"] == ["-100001", "-100002"]
+    assert updated["config"]["chatBindings"] == [
+        {"chatId": "-100001", "agentId": "ops-v2"},
+        {"chatId": "-100002", "agentId": "risk"},
+    ]
 
     removed = manager.delete_gateway_instance(str(created["id"]))
     assert removed["deleted"] is True

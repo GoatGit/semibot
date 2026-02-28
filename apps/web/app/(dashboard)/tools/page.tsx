@@ -57,6 +57,17 @@ function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
   return merged
 }
 
+function getLocalizedToolDescription(
+  tool: ToolItem,
+  t: (key: string, params?: Record<string, string | number>) => string
+): string {
+  if (!tool.isBuiltin) return tool.description || ''
+  const key = `toolsPage.builtinDescriptions.${tool.name}`
+  const localized = t(key)
+  if (localized !== key) return localized
+  return tool.description || ''
+}
+
 export default function ToolsPage() {
   const router = useRouter()
   const { t } = useLocale()
@@ -184,30 +195,33 @@ export default function ToolsPage() {
                 <p className="mt-4 text-sm text-text-secondary">{t('common.loading')}</p>
               ) : tools.length > 0 ? (
                 <div className="mt-4 space-y-2">
-                  {tools.map((tool) => (
-                    <div
-                      key={tool.id}
-                      className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-text-primary">
-                            {tool.name}
-                          </p>
-                          <p className="mt-1 text-xs text-text-tertiary">
-                            {tool.type}
-                            {tool.description ? ` · ${tool.description}` : ''}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {tool.isBuiltin && <Badge variant="outline">{t('toolsPage.builtin')}</Badge>}
-                          <Badge variant={tool.isActive ? 'success' : 'outline'}>
-                            {tool.isActive ? t('toolsPage.enabled') : t('toolsPage.disabled')}
-                          </Badge>
+                  {tools.map((tool) => {
+                    const description = getLocalizedToolDescription(tool, t)
+                    return (
+                      <div
+                        key={tool.id}
+                        className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-text-primary">
+                              {tool.name}
+                            </p>
+                            <p className="mt-1 text-xs text-text-tertiary">
+                              {tool.type}
+                              {description ? ` · ${description}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {tool.isBuiltin && <Badge variant="outline">{t('toolsPage.builtin')}</Badge>}
+                            <Badge variant={tool.isActive ? 'success' : 'outline'}>
+                              {tool.isActive ? t('toolsPage.enabled') : t('toolsPage.disabled')}
+                            </Badge>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : (
                 <p className="mt-4 text-sm text-text-secondary">{t('toolsPage.empty')}</p>

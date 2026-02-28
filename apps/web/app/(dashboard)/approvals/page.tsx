@@ -29,6 +29,26 @@ function formatTime(dateString: string, locale: string): string {
   return date.toLocaleString(locale)
 }
 
+function buildApprovalDetail(
+  approval: ApprovalRecord,
+  t: (key: string, params?: Record<string, string | number>) => string
+): string {
+  const parts: string[] = []
+
+  if (approval.toolName) {
+    parts.push(t('approvals.detail.tool', { tool: `\`${approval.toolName}\`` }))
+  }
+  if (approval.action) {
+    parts.push(t('approvals.detail.action', { action: `\`${approval.action}\`` }))
+  }
+  if (approval.target) {
+    parts.push(t('approvals.detail.target', { target: `\`${approval.target}\`` }))
+  }
+
+  if (parts.length > 0) return parts.join(' · ')
+  return approval.summary || ''
+}
+
 export default function ApprovalsPage() {
   const { locale, t } = useLocale()
   const statusOptions = [
@@ -181,62 +201,65 @@ export default function ApprovalsPage() {
               </Card>
             ))
           ) : approvals.length > 0 ? (
-            approvals.map((approval) => (
-              <Card key={approval.id} className="border-border-subtle">
-                <CardContent className="p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-medium text-text-primary">{approval.id}</p>
-                        <Badge variant={mapStatusVariant(approval.status)}>
-                          {approval.status === 'pending' && t('approvals.status.pending')}
-                          {approval.status === 'approved' && t('approvals.status.approved')}
-                          {approval.status === 'rejected' && t('approvals.status.rejected')}
-                          {approval.status === 'expired' && t('approvals.status.expired')}
-                        </Badge>
-                        <Badge variant={mapRiskVariant(approval.riskLevel)}>
-                          {t('approvals.risk')} {approval.riskLevel === 'high' ? t('approvals.riskLevel.high') : approval.riskLevel === 'medium' ? t('approvals.riskLevel.medium') : t('approvals.riskLevel.low')}
-                        </Badge>
+            approvals.map((approval) => {
+              const detailText = buildApprovalDetail(approval, t)
+              return (
+                <Card key={approval.id} className="border-border-subtle">
+                  <CardContent className="p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium text-text-primary">{approval.id}</p>
+                          <Badge variant={mapStatusVariant(approval.status)}>
+                            {approval.status === 'pending' && t('approvals.status.pending')}
+                            {approval.status === 'approved' && t('approvals.status.approved')}
+                            {approval.status === 'rejected' && t('approvals.status.rejected')}
+                            {approval.status === 'expired' && t('approvals.status.expired')}
+                          </Badge>
+                          <Badge variant={mapRiskVariant(approval.riskLevel)}>
+                            {t('approvals.risk')} {approval.riskLevel === 'high' ? t('approvals.riskLevel.high') : approval.riskLevel === 'medium' ? t('approvals.riskLevel.medium') : t('approvals.riskLevel.low')}
+                          </Badge>
+                        </div>
+                        <div className="mt-1 text-xs text-text-secondary">
+                          {approval.eventType || t('approvals.unknownEvent')} · {formatTime(approval.createdAt, locale)}
+                        </div>
+                        {detailText && (
+                          <p className="mt-2 text-sm text-text-primary break-words">
+                            {detailText}
+                          </p>
+                        )}
+                        {approval.reason && (
+                          <p className="mt-2 text-sm text-text-secondary">{approval.reason}</p>
+                        )}
                       </div>
-                      <div className="mt-1 text-xs text-text-secondary">
-                        {approval.eventType || t('approvals.unknownEvent')} · {formatTime(approval.createdAt, locale)}
-                      </div>
-                      {(approval.summary || approval.toolName || approval.action || approval.target) && (
-                        <p className="mt-2 text-sm text-text-primary break-words">
-                          {approval.summary || [approval.toolName, approval.action, approval.target].filter(Boolean).join(' · ')}
-                        </p>
-                      )}
-                      {approval.reason && (
-                        <p className="mt-2 text-sm text-text-secondary">{approval.reason}</p>
+
+                      {approval.status === 'pending' && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            leftIcon={<CheckCircle2 size={14} />}
+                            loading={resolvingId === approval.id}
+                            onClick={() => void handleResolve(approval.id, 'approve')}
+                          >
+                            {t('approvals.approve')}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            leftIcon={<XCircle size={14} />}
+                            loading={resolvingId === approval.id}
+                            onClick={() => void handleResolve(approval.id, 'reject')}
+                          >
+                            {t('approvals.reject')}
+                          </Button>
+                        </div>
                       )}
                     </div>
-
-                    {approval.status === 'pending' && (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          leftIcon={<CheckCircle2 size={14} />}
-                          loading={resolvingId === approval.id}
-                          onClick={() => void handleResolve(approval.id, 'approve')}
-                        >
-                          {t('approvals.approve')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          leftIcon={<XCircle size={14} />}
-                          loading={resolvingId === approval.id}
-                          onClick={() => void handleResolve(approval.id, 'reject')}
-                        >
-                          {t('approvals.reject')}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))
+                  </CardContent>
+                </Card>
+              )
+            })
           ) : (
             <Card className="border-border-subtle">
               <CardContent className="p-8 text-center text-sm text-text-secondary">
