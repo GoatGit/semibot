@@ -55,6 +55,7 @@ from src.events.models import Event, utc_now
 from src.events.rule_evaluator import RuleEvaluator
 from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.server.api import create_app
+from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
 from src.utils.logging import setup_logging
 
@@ -1292,6 +1293,132 @@ def _gateway_exit_code_from_error(error: Exception) -> int:
     return EXIT_EXTERNAL_ERROR
 
 
+def _mask_secret_for_output(value: str, *, keep_prefix: int = 3, keep_suffix: int = 3) -> str:
+    raw = value.strip()
+    if not raw:
+        return ""
+    if len(raw) <= keep_prefix + keep_suffix:
+        return "*" * len(raw)
+    return f"{raw[:keep_prefix]}***{raw[-keep_suffix:]}"
+
+
+def _parse_env_csv(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    values: list[str] = []
+    for item in raw.split(","):
+        text = item.strip()
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
+def _parse_env_json_map(raw: str | None) -> tuple[dict[str, Any] | None, str | None]:
+    if not raw:
+        return None, None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, "invalid_json"
+    if not isinstance(parsed, dict):
+        return None, "not_object"
+    return parsed, None
+
+
+def _build_gateway_patch_from_env(provider: str) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str]]:
+    normalized = provider.strip().lower()
+    patch: dict[str, Any] = {"config": {}, "is_active": True}
+    preview: dict[str, Any] = {}
+    env_keys: list[str] = []
+    warnings: list[str] = []
+
+    if normalized == "telegram":
+        token = str(os.getenv("SEMIBOT_TELEGRAM_BOT_TOKEN", "")).strip()
+        if token:
+            patch["config"]["botToken"] = token
+            preview["botToken"] = _mask_secret_for_output(token)
+            env_keys.append("SEMIBOT_TELEGRAM_BOT_TOKEN")
+
+        default_chat_id = str(os.getenv("SEMIBOT_TELEGRAM_DEFAULT_CHAT_ID", "")).strip()
+        if default_chat_id:
+            patch["config"]["defaultChatId"] = default_chat_id
+            preview["defaultChatId"] = default_chat_id
+            env_keys.append("SEMIBOT_TELEGRAM_DEFAULT_CHAT_ID")
+
+        webhook_secret = str(os.getenv("SEMIBOT_TELEGRAM_WEBHOOK_SECRET", "")).strip()
+        if webhook_secret:
+            patch["config"]["webhookSecret"] = webhook_secret
+            preview["webhookSecret"] = _mask_secret_for_output(webhook_secret)
+            env_keys.append("SEMIBOT_TELEGRAM_WEBHOOK_SECRET")
+
+        notify_event_types = _parse_env_csv(os.getenv("SEMIBOT_TELEGRAM_NOTIFY_EVENT_TYPES"))
+        if notify_event_types:
+            patch["config"]["notifyEventTypes"] = notify_event_types
+            preview["notifyEventTypes"] = notify_event_types
+            env_keys.append("SEMIBOT_TELEGRAM_NOTIFY_EVENT_TYPES")
+
+    elif normalized == "feishu":
+        verify_token = str(os.getenv("SEMIBOT_FEISHU_VERIFY_TOKEN", "")).strip()
+        if verify_token:
+            patch["config"]["verifyToken"] = verify_token
+            preview["verifyToken"] = _mask_secret_for_output(verify_token)
+            env_keys.append("SEMIBOT_FEISHU_VERIFY_TOKEN")
+
+        webhook_url = str(os.getenv("SEMIBOT_FEISHU_WEBHOOK_URL", "")).strip()
+        if webhook_url:
+            patch["config"]["webhookUrl"] = webhook_url
+            preview["webhookUrl"] = webhook_url
+            env_keys.append("SEMIBOT_FEISHU_WEBHOOK_URL")
+
+        webhooks_raw = os.getenv("SEMIBOT_FEISHU_WEBHOOKS_JSON")
+        webhooks, webhooks_error = _parse_env_json_map(webhooks_raw)
+        if webhooks_raw is not None:
+            env_keys.append("SEMIBOT_FEISHU_WEBHOOKS_JSON")
+        if webhooks_error:
+            warnings.append(f"SEMIBOT_FEISHU_WEBHOOKS_JSON:{webhooks_error}")
+        elif isinstance(webhooks, dict):
+            normalized_webhooks = {
+                str(key).strip(): str(value).strip()
+                for key, value in webhooks.items()
+                if str(key).strip() and isinstance(value, str) and str(value).strip()
+            }
+            if normalized_webhooks:
+                patch["config"]["webhookChannels"] = normalized_webhooks
+                preview["webhookChannels"] = normalized_webhooks
+
+        notify_event_types = _parse_env_csv(os.getenv("SEMIBOT_FEISHU_NOTIFY_EVENT_TYPES"))
+        if notify_event_types:
+            patch["config"]["notifyEventTypes"] = notify_event_types
+            preview["notifyEventTypes"] = notify_event_types
+            env_keys.append("SEMIBOT_FEISHU_NOTIFY_EVENT_TYPES")
+
+        templates_raw = os.getenv("SEMIBOT_FEISHU_TEMPLATES_JSON")
+        templates, templates_error = _parse_env_json_map(templates_raw)
+        if templates_raw is not None:
+            env_keys.append("SEMIBOT_FEISHU_TEMPLATES_JSON")
+        if templates_error:
+            warnings.append(f"SEMIBOT_FEISHU_TEMPLATES_JSON:{templates_error}")
+        elif isinstance(templates, dict):
+            normalized_templates: dict[str, dict[str, str]] = {}
+            for event_type, tpl in templates.items():
+                if not isinstance(event_type, str) or not isinstance(tpl, dict):
+                    continue
+                title = str(tpl.get("title") or "").strip()
+                content = str(tpl.get("content") or "").strip()
+                if not title and not content:
+                    continue
+                normalized_templates[event_type.strip()] = {"title": title, "content": content}
+            if normalized_templates:
+                patch["config"]["templates"] = normalized_templates
+                preview["templates"] = normalized_templates
+
+    if not patch["config"]:
+        patch = {}
+
+    env_keys = sorted(set(env_keys))
+    return patch, preview, env_keys, warnings
+
+
 def _chat_send_first_turn_via_runtime(
     args: argparse.Namespace,
     *,
@@ -1535,6 +1662,78 @@ def cmd_run(args: argparse.Namespace) -> int:
         }
     )
     return EXIT_SUCCESS if result.get("status") == "completed" else EXIT_EXTERNAL_ERROR
+
+
+def cmd_gateway_migrate_env(args: argparse.Namespace) -> int:
+    provider_arg = str(getattr(args, "provider", "all") or "all").strip().lower()
+    providers = [provider_arg] if provider_arg in {"feishu", "telegram"} else ["feishu", "telegram"]
+    db_path = str(getattr(args, "db_path", _default_db_path()))
+    dry_run = bool(getattr(args, "dry_run", False))
+
+    store = RuntimeConfigStore(db_path=db_path)
+    results: list[dict[str, Any]] = []
+    migrated = 0
+    skipped = 0
+
+    for provider in providers:
+        patch, preview, env_keys, warnings = _build_gateway_patch_from_env(provider)
+        if not patch:
+            skipped += 1
+            results.append(
+                {
+                    "provider": provider,
+                    "status": "skipped",
+                    "reason": "no_env_values",
+                    "envKeys": env_keys,
+                    "warnings": warnings,
+                }
+            )
+            continue
+
+        if dry_run:
+            results.append(
+                {
+                    "provider": provider,
+                    "status": "preview",
+                    "envKeys": env_keys,
+                    "warnings": warnings,
+                    "patch": {"isActive": True, "config": preview},
+                }
+            )
+            continue
+
+        payload = {"is_active": True, "config": patch.get("config")}
+        item = store.upsert_gateway_config(provider, payload)
+        migrated += 1
+        results.append(
+            {
+                "provider": provider,
+                "status": "migrated",
+                "id": item.get("id"),
+                "instanceKey": item.get("instance_key"),
+                "isActive": bool(item.get("is_active")),
+                "envKeys": env_keys,
+                "warnings": warnings,
+                "configKeys": sorted((item.get("config") or {}).keys()),
+            }
+        )
+
+    ok = migrated > 0 or dry_run or all(item.get("status") == "skipped" for item in results)
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "migrate-env",
+            "db_path": db_path,
+            "provider": provider_arg,
+            "dry_run": dry_run,
+            "migrated": migrated,
+            "skipped": skipped,
+            "results": results,
+            "ok": ok,
+        }
+    )
+    return EXIT_SUCCESS if ok else EXIT_CONFIG_ERROR
 
 
 def cmd_gateway_list(args: argparse.Namespace) -> int:
@@ -4811,6 +5010,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     gateway_parser = subparsers.add_parser("gateway", help="Gateway instance operations")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
+
+    gateway_migrate_env_parser = gateway_subparsers.add_parser(
+        "migrate-env",
+        help="Migrate gateway env vars into local sqlite gateway config",
+    )
+    gateway_migrate_env_parser.add_argument(
+        "--provider",
+        choices=["all", "feishu", "telegram"],
+        default="all",
+        help="Target provider to migrate",
+    )
+    gateway_migrate_env_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
+    gateway_migrate_env_parser.add_argument("--dry-run", action="store_true", help="Preview without writing DB")
+    gateway_migrate_env_parser.set_defaults(func=cmd_gateway_migrate_env)
 
     gateway_list_parser = gateway_subparsers.add_parser("list", help="List gateway instances")
     gateway_list_parser.add_argument("--provider", default=None, help="Optional provider filter")

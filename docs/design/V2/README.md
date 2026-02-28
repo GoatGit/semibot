@@ -88,6 +88,16 @@ A：统一存储在本地 `~/.semibot/semibot.db`（runtime SQLite）。API 不�
 **Q：Gateway（飞书/Telegram）配置存储在哪里？**  
 A：同样存储在本地 `~/.semibot/semibot.db`。V2 将在配置中心新增 `Gateway` 配置域，统一管理飞书与 Telegram 的入站/出站参数，保留 Webhook 配置用于通用事件回调，不与聊天网关混用。
 
+**Q：旧环境变量（`SEMIBOT_FEISHU_*` / `SEMIBOT_TELEGRAM_*`）如何迁移到 SQLite？**  
+A：使用 CLI 一次性迁移：
+```bash
+semibot gateway migrate-env
+```
+只预览不落库：
+```bash
+semibot gateway migrate-env --provider telegram --dry-run
+```
+
 **Q：Gateway 字段都填好后，怎么真正用起来？**  
 A：按下面顺序：
 1. 在配置管理里把对应 Gateway 设为“启用”，并保存。  

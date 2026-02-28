@@ -870,6 +870,71 @@ def test_gateway_list_command(monkeypatch, capsys) -> None:
     assert payload["items"][0]["id"] == "gw_inst_1"
 
 
+def test_gateway_migrate_env_dry_run(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setenv("SEMIBOT_TELEGRAM_BOT_TOKEN", "123456:abc_xyz")
+    monkeypatch.setenv("SEMIBOT_TELEGRAM_DEFAULT_CHAT_ID", "-10070001")
+    monkeypatch.setenv("SEMIBOT_TELEGRAM_NOTIFY_EVENT_TYPES", "approval.requested, task.completed")
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "migrate-env",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(tmp_path / "semibot.db"),
+            "--dry-run",
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "migrate-env"
+    assert payload["dry_run"] is True
+    assert payload["migrated"] == 0
+    assert payload["results"][0]["status"] == "preview"
+    assert payload["results"][0]["patch"]["config"]["defaultChatId"] == "-10070001"
+    assert payload["results"][0]["patch"]["config"]["botToken"].startswith("123")
+    assert payload["results"][0]["patch"]["config"]["botToken"].endswith("xyz")
+
+
+def test_gateway_migrate_env_writes_sqlite(monkeypatch, tmp_path: Path, capsys) -> None:
+    from src.server.config_store import RuntimeConfigStore
+
+    monkeypatch.setenv("SEMIBOT_FEISHU_VERIFY_TOKEN", "verify_token_xxx")
+    monkeypatch.setenv("SEMIBOT_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/hook/test")
+    monkeypatch.setenv("SEMIBOT_FEISHU_NOTIFY_EVENT_TYPES", "approval.requested")
+    monkeypatch.setenv("SEMIBOT_FEISHU_WEBHOOKS_JSON", '{"ops":"https://open.feishu.cn/hook/ops"}')
+
+    db_path = tmp_path / "semibot.db"
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "migrate-env",
+            "--provider",
+            "feishu",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["migrated"] == 1
+    assert payload["results"][0]["status"] == "migrated"
+
+    store = RuntimeConfigStore(db_path=str(db_path))
+    item = store.get_gateway_config("feishu")
+    assert item is not None
+    cfg = item["config"]
+    assert cfg["verifyToken"] == "verify_token_xxx"
+    assert cfg["webhookUrl"] == "https://open.feishu.cn/hook/test"
+    assert cfg["notifyEventTypes"] == ["approval.requested"]
+    assert cfg["webhookChannels"] == {"ops": "https://open.feishu.cn/hook/ops"}
+
+
 def test_gateway_create_update_and_test_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
 

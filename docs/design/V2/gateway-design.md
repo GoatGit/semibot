@@ -338,8 +338,10 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 
 - 启动时读取旧环境变量（Feishu）作为 fallback
 - 若 DB 中有对应 provider 配置，DB 优先级高于环境变量
-- 提供一次性迁移命令（后续实现）：
+- 提供一次性迁移命令（已实现）：
   - `semibot gateway migrate-env`
+  - `semibot gateway migrate-env --provider telegram --dry-run`
+  - `semibot gateway migrate-env --provider feishu --db-path ~/.semibot/semibot.db`
 
 ## 8.2 向后兼容
 
