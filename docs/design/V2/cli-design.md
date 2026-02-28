@@ -190,6 +190,15 @@ semibot sessions show <session_id>
 semibot sessions export <session_id> --format md --out ./session.md
 semibot sessions resume <session_id>
 
+# Gateway（多实例）
+semibot gateway list [--provider telegram]
+semibot gateway show <instance_id>
+semibot gateway create --provider telegram [--instance-key bot-a] [--patch '{"displayName":"Bot A"}']
+semibot gateway update <instance_id> --patch '{"isActive":false}'
+semibot gateway delete <instance_id> --yes
+semibot gateway test <instance_id> [--text "ping" --chat-id "-100123"]
+semibot gateway batch --action enable|disable|delete --instance-ids <id1,id2> [--provider telegram] [--yes]
+
 # 技能 / MCP / 工具
 semibot skills list
 semibot skills install <git_or_registry_url>

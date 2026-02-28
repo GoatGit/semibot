@@ -42,6 +42,24 @@ export interface UpdateGatewayData {
   clearFields?: string[]
 }
 
+export interface GatewayBatchData {
+  action: 'enable' | 'disable' | 'delete'
+  instanceIds: string[]
+  provider?: GatewayProvider
+  ignoreMissing?: boolean
+}
+
+export interface GatewayBatchRow {
+  action: GatewayBatchData['action']
+  requested: string[]
+  targets: string[]
+  changed: string[]
+  unchanged: string[]
+  blocked: Array<{ instanceId: string; reason: string }>
+  missing: string[]
+  failed: Array<{ instanceId: string; error: string }>
+}
+
 type RuntimeGatewayRow = {
   id?: string
   instanceKey?: string
@@ -239,5 +257,18 @@ export async function testByInstanceId(
     method: 'POST',
     body: payload,
     timeoutMs: 5000,
+  })
+}
+
+export async function batchByInstanceIds(data: GatewayBatchData): Promise<GatewayBatchRow> {
+  return runtimeRequest<GatewayBatchRow>('/v1/config/gateway-instances/batch', {
+    method: 'POST',
+    body: {
+      action: data.action,
+      instanceIds: data.instanceIds,
+      provider: data.provider,
+      ignoreMissing: data.ignoreMissing,
+    },
+    timeoutMs: 10000,
   })
 }

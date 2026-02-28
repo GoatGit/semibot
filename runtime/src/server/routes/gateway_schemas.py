@@ -128,3 +128,29 @@ class GatewayInstanceCreateRequest(GatewayConfigPatchRequest):
         if "instance_key" in self.model_fields_set:
             payload["instance_key"] = self.instance_key
         return payload
+
+
+class GatewayBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    action: str
+    instance_ids: list[str] = Field(
+        validation_alias=AliasChoices("instance_ids", "instanceIds"),
+    )
+    provider: str | None = None
+    ignore_missing: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ignore_missing", "ignoreMissing"),
+    )
+
+    def to_manager_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "action": self.action,
+            "instanceIds": self.instance_ids,
+            "ignoreMissing": self.ignore_missing,
+        }
+        if "provider" in self.model_fields_set:
+            payload["provider"] = self.provider
+        if self.model_extra:
+            payload.update(self.model_extra)
+        return payload

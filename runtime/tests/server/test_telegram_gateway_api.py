@@ -424,6 +424,63 @@ async def test_telegram_multi_instance_routing_by_webhook_secret(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_gateway_instances_batch_endpoint(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/v1/config/gateway-instances",
+            json={
+                "provider": "telegram",
+                "instanceKey": "tg-extra",
+                "displayName": "Telegram Extra",
+                "isActive": False,
+                "config": {"botToken": "333333:token_c"},
+            },
+        )
+        assert created.status_code == 201
+        extra_id = created.json()["id"]
+
+        listing = await client.get("/v1/config/gateway-instances?provider=telegram")
+        assert listing.status_code == 200
+        items = listing.json()["data"]
+        default_id = next(item["id"] for item in items if item.get("isDefault") is True)
+
+        enable_resp = await client.post(
+            "/v1/config/gateway-instances/batch",
+            json={
+                "action": "enable",
+                "instanceIds": [extra_id],
+            },
+        )
+        assert enable_resp.status_code == 200
+        enable_data = enable_resp.json()
+        assert enable_data["changed"] == [extra_id]
+        assert enable_data["failed"] == []
+
+        delete_resp = await client.post(
+            "/v1/config/gateway-instances/batch",
+            json={
+                "action": "delete",
+                "instanceIds": [default_id, extra_id],
+                "ignoreMissing": True,
+            },
+        )
+        assert delete_resp.status_code == 200
+        delete_data = delete_resp.json()
+        assert extra_id in delete_data["changed"]
+        blocked_ids = {row["instanceId"] for row in delete_data["blocked"]}
+        assert default_id in blocked_ids
+
+
+@pytest.mark.asyncio
 async def test_gateway_context_endpoints_and_mention_only_policy(tmp_path: Path):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"

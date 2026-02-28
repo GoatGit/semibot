@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 
 from src.gateway.manager import GatewayManager, GatewayManagerError
 from src.server.routes.gateway_schemas import (
+    GatewayBatchRequest,
     GatewayConfigPatchRequest,
     GatewayInstanceCreateRequest,
     GatewayProviderTestRequest,
@@ -30,6 +31,13 @@ def register_gateway_routes(app: FastAPI, gateway_manager: GatewayManager) -> No
     async def create_gateway_instance(req: GatewayInstanceCreateRequest) -> dict[str, Any]:
         try:
             return gateway_manager.create_gateway_instance(req.to_manager_payload())
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    @app.post("/v1/config/gateway-instances/batch")
+    async def batch_gateway_instances(req: GatewayBatchRequest) -> dict[str, Any]:
+        try:
+            return gateway_manager.batch_gateway_instances(req.to_manager_payload())
         except GatewayManagerError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 

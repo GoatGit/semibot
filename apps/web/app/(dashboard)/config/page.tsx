@@ -122,6 +122,7 @@ type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks'
 type ProviderKey = keyof LlmConfigData['providers']
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram'
+type GatewayFilter = 'all' | GatewayProvider
 type GatewayAddressingMode = 'mention_only' | 'all_messages'
 type GatewayProactiveMode = 'silent' | 'risk_based' | 'always'
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
@@ -161,6 +162,17 @@ interface GatewayItem {
   proactivePolicy?: GatewayProactivePolicy
   contextPolicy?: GatewayContextPolicy
   updatedAt: string
+}
+
+interface GatewayBatchResult {
+  action: 'enable' | 'disable' | 'delete'
+  requested: string[]
+  targets: string[]
+  changed: string[]
+  unchanged: string[]
+  blocked: Array<{ instanceId: string; reason: string }>
+  missing: string[]
+  failed: Array<{ instanceId: string; error: string }>
 }
 
 type GatewayForm = {
@@ -334,6 +346,9 @@ export default function ConfigPage() {
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
   const [gateways, setGateways] = useState<GatewayItem[]>([])
+  const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
+  const [selectedGatewayIds, setSelectedGatewayIds] = useState<string[]>([])
+  const [gatewayBatchLoading, setGatewayBatchLoading] = useState(false)
   const [showGatewayModal, setShowGatewayModal] = useState(false)
   const [savingGateway, setSavingGateway] = useState(false)
   const [testingGateway, setTestingGateway] = useState<string | null>(null)
@@ -1053,6 +1068,127 @@ export default function ConfigPage() {
     }
   }
 
+  const toggleGatewaySelected = useCallback((id: string) => {
+    setSelectedGatewayIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
+  }, [])
+
+  const filteredGateways = useMemo(
+    () => (gatewayFilter === 'all' ? gateways : gateways.filter((item) => item.provider === gatewayFilter)),
+    [gatewayFilter, gateways]
+  )
+
+  const allGatewaysSelected = useMemo(
+    () =>
+      filteredGateways.length > 0 &&
+      filteredGateways.every((item) => selectedGatewayIds.includes(item.id)),
+    [filteredGateways, selectedGatewayIds]
+  )
+
+  const toggleSelectAllGateways = useCallback(() => {
+    setSelectedGatewayIds((prev) => {
+      if (filteredGateways.length === 0) return prev
+      const filteredIds = filteredGateways.map((item) => item.id)
+      const allSelected = filteredIds.every((id) => prev.includes(id))
+      if (allSelected) return prev.filter((id) => !filteredIds.includes(id))
+      return Array.from(new Set([...prev, ...filteredIds]))
+    })
+  }, [filteredGateways])
+
+  const selectedGatewayItems = useMemo(
+    () => filteredGateways.filter((item) => selectedGatewayIds.includes(item.id)),
+    [filteredGateways, selectedGatewayIds]
+  )
+
+  const runGatewayBatchAction = useCallback(
+    async (action: 'enable' | 'disable' | 'delete') => {
+      if (selectedGatewayItems.length === 0) {
+        setError(t('config.gateways.batchSelectHint'))
+        return
+      }
+
+      let targets = selectedGatewayItems
+      if (action === 'delete') {
+        targets = selectedGatewayItems.filter((item) => !item.isDefault)
+        if (targets.length === 0) {
+          setError(t('config.gateways.batchNoDeletable'))
+          return
+        }
+        if (!window.confirm(t('config.confirm.deleteGateways', { count: targets.length }))) {
+          return
+        }
+      }
+
+      try {
+        setGatewayBatchLoading(true)
+        setError(null)
+        const response = await apiClient.post<ApiResponse<GatewayBatchResult>>('/gateways/instances/batch', {
+          action,
+          instanceIds: targets.map((item) => item.id),
+          ignoreMissing: true,
+        })
+        if (!response.success) {
+          throw new Error(t('config.errors.updateGateway'))
+        }
+        const failed = (response.data.failed?.length || 0) + (response.data.blocked?.length || 0)
+        if (failed > 0) {
+          setError(
+            t('config.gateways.batchPartialFailed', {
+              success: response.data.changed?.length || 0,
+              failed,
+            })
+          )
+        }
+        if (action === 'delete') {
+          const deletedIds = new Set(response.data.changed || [])
+          setSelectedGatewayIds((prev) => prev.filter((id) => !deletedIds.has(id)))
+        }
+        await loadGateways()
+      } catch (err) {
+        setError(getErrorMessage(err, t('config.errors.updateGateway')))
+      } finally {
+        setGatewayBatchLoading(false)
+      }
+    },
+    [loadGateways, selectedGatewayItems, t]
+  )
+
+  const runGatewayBatchTest = useCallback(async () => {
+    if (selectedGatewayItems.length === 0) {
+      setError(t('config.gateways.batchSelectHint'))
+      return
+    }
+    try {
+      setGatewayBatchLoading(true)
+      setError(null)
+      const settled = await Promise.allSettled(
+        selectedGatewayItems.map((item) => {
+          const payload =
+            item.provider === 'telegram'
+              ? { text: 'Semibot gateway test' }
+              : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
+          return apiClient.post(`/gateways/instances/${item.id}/test`, payload)
+        })
+      )
+      const failed = settled.filter((result) => result.status === 'rejected').length
+      if (failed > 0) {
+        setError(
+          t('config.gateways.batchTestPartialFailed', {
+            success: selectedGatewayItems.length - failed,
+            failed,
+          })
+        )
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, t('config.errors.testGateway')))
+    } finally {
+      setGatewayBatchLoading(false)
+    }
+  }, [selectedGatewayItems, t])
+
+  useEffect(() => {
+    setSelectedGatewayIds((prev) => prev.filter((id) => gateways.some((item) => item.id === id)))
+  }, [gateways])
+
   const llmStatusMap = useMemo(() => {
     const map = new Map<string, LlmProviderStatus>()
     llmProviders.forEach((item) => map.set(item.name, item))
@@ -1064,9 +1200,10 @@ export default function ConfigPage() {
     [tools]
   )
   const activeGatewaysCount = useMemo(
-    () => gateways.filter((item) => item.isActive).length,
-    [gateways]
+    () => filteredGateways.filter((item) => item.isActive).length,
+    [filteredGateways]
   )
+  const selectedGatewayCount = useMemo(() => selectedGatewayItems.length, [selectedGatewayItems])
   const runtimeSkillsErrorText = useMemo(
     () => formatRuntimeStatusError(runtimeSkills.error, runtimeSkills.source),
     [runtimeSkills.error, runtimeSkills.source]
@@ -1373,6 +1510,7 @@ export default function ConfigPage() {
                         variant="tertiary"
                         leftIcon={<RefreshCw size={13} className={sectionLoading.gateways ? 'animate-spin' : ''} />}
                         onClick={loadGateways}
+                        disabled={gatewayBatchLoading}
                       >
                         {t('common.refresh')}
                       </Button>
@@ -1381,27 +1519,137 @@ export default function ConfigPage() {
                   {sectionErrors.gateways && (
                     <p className="text-xs text-warning-500">{sectionErrors.gateways}</p>
                   )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      data-testid="gateways-filter-all"
+                      type="button"
+                      className={clsx(
+                        'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                        gatewayFilter === 'all'
+                          ? 'border-primary-500/50 bg-primary-500/10 text-primary-400'
+                          : 'border-border-subtle text-text-secondary hover:bg-bg-surface'
+                      )}
+                      onClick={() => setGatewayFilter('all')}
+                      disabled={gatewayBatchLoading}
+                    >
+                      {t('config.gateways.filterAll')}
+                    </button>
+                    <button
+                      data-testid="gateways-filter-telegram"
+                      type="button"
+                      className={clsx(
+                        'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                        gatewayFilter === 'telegram'
+                          ? 'border-primary-500/50 bg-primary-500/10 text-primary-400'
+                          : 'border-border-subtle text-text-secondary hover:bg-bg-surface'
+                      )}
+                      onClick={() => setGatewayFilter('telegram')}
+                      disabled={gatewayBatchLoading}
+                    >
+                      {t('config.gateways.filterTelegram')}
+                    </button>
+                    <button
+                      data-testid="gateways-filter-feishu"
+                      type="button"
+                      className={clsx(
+                        'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                        gatewayFilter === 'feishu'
+                          ? 'border-primary-500/50 bg-primary-500/10 text-primary-400'
+                          : 'border-border-subtle text-text-secondary hover:bg-bg-surface'
+                      )}
+                      onClick={() => setGatewayFilter('feishu')}
+                      disabled={gatewayBatchLoading}
+                    >
+                      {t('config.gateways.filterFeishu')}
+                    </button>
+                  </div>
+                  {filteredGateways.length > 0 && (
+                    <label className="flex items-center gap-2 text-sm text-text-secondary">
+                      <input
+                        data-testid="gateways-select-all"
+                        type="checkbox"
+                        className="rounded border-border-default"
+                        checked={allGatewaysSelected}
+                        onChange={toggleSelectAllGateways}
+                        disabled={gatewayBatchLoading}
+                      />
+                      {t('config.gateways.selectAllVisible')}
+                    </label>
+                  )}
+                  {selectedGatewayCount > 0 && (
+                    <div className="rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-text-primary">
+                        {t('config.gateways.selectedCount', { count: selectedGatewayCount })}
+                      </span>
+                      <Button
+                        data-testid="gateways-batch-enable"
+                        size="xs"
+                        variant="tertiary"
+                        disabled={gatewayBatchLoading}
+                        onClick={() => void runGatewayBatchAction('enable')}
+                      >
+                        {t('config.gateways.batchEnable')}
+                      </Button>
+                      <Button
+                        data-testid="gateways-batch-disable"
+                        size="xs"
+                        variant="tertiary"
+                        disabled={gatewayBatchLoading}
+                        onClick={() => void runGatewayBatchAction('disable')}
+                      >
+                        {t('config.gateways.batchDisable')}
+                      </Button>
+                      <Button
+                        data-testid="gateways-batch-test"
+                        size="xs"
+                        variant="tertiary"
+                        disabled={gatewayBatchLoading}
+                        onClick={() => void runGatewayBatchTest()}
+                      >
+                        {t('config.gateways.batchTest')}
+                      </Button>
+                      <Button
+                        data-testid="gateways-batch-delete"
+                        size="xs"
+                        variant="tertiary"
+                        disabled={gatewayBatchLoading}
+                        onClick={() => void runGatewayBatchAction('delete')}
+                      >
+                        {t('config.gateways.batchDelete')}
+                      </Button>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     {sectionLoading.gateways && gateways.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
                         {t('config.gateways.loading')}
                       </p>
-                    ) : gateways.length === 0 ? (
+                    ) : filteredGateways.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
                         {t('config.gateways.empty')}
                       </p>
                     ) : (
-                      gateways.map((item) => (
+                      filteredGateways.map((item) => (
                         <div key={item.id} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
                           <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-text-primary">{item.displayName}</p>
-                              <p className="mt-1 text-xs text-text-tertiary">
-                                {item.provider}
-                                {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
-                                {t('config.gateways.updatedAt')}:{' '}
-                                {formatDate(item.updatedAt, locale, t)}
-                              </p>
+                            <div className="min-w-0 flex items-start gap-3">
+                              <input
+                                data-testid={`gateway-select-${item.id}`}
+                                type="checkbox"
+                                className="mt-1 rounded border-border-default"
+                                checked={selectedGatewayIds.includes(item.id)}
+                                onChange={() => toggleGatewaySelected(item.id)}
+                                disabled={gatewayBatchLoading}
+                              />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium text-text-primary">{item.displayName}</p>
+                                <p className="mt-1 text-xs text-text-tertiary">
+                                  {item.provider}
+                                  {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
+                                  {t('config.gateways.updatedAt')}:{' '}
+                                  {formatDate(item.updatedAt, locale, t)}
+                                </p>
+                              </div>
                             </div>
                             <div className="flex items-center gap-2">
                               {item.isDefault && <Badge variant="outline">{t('config.gateways.defaultTag')}</Badge>}
@@ -1413,6 +1661,7 @@ export default function ConfigPage() {
                                 variant="tertiary"
                                 leftIcon={<Pencil size={12} />}
                                 onClick={() => openGatewayDialog(item)}
+                                disabled={gatewayBatchLoading}
                               >
                                 {t('common.edit')}
                               </Button>
@@ -1420,7 +1669,7 @@ export default function ConfigPage() {
                                 size="xs"
                                 variant="tertiary"
                                 onClick={() => testGateway(item)}
-                                disabled={testingGateway === item.id}
+                                disabled={testingGateway === item.id || gatewayBatchLoading}
                               >
                                 {t('config.gateways.test')}
                               </Button>
@@ -1430,6 +1679,7 @@ export default function ConfigPage() {
                                   variant="tertiary"
                                   leftIcon={<Trash2 size={12} />}
                                   onClick={() => removeGateway(item)}
+                                  disabled={gatewayBatchLoading}
                                 >
                                   {t('common.delete')}
                                 </Button>

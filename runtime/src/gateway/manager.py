@@ -351,6 +351,82 @@ class GatewayManager:
             raise GatewayManagerError("gateway_instance_not_found", status_code=404)
         return {"deleted": True}
 
+    def batch_gateway_instances(self, payload: dict[str, Any]) -> dict[str, Any]:
+        action = str(payload.get("action") or "").strip().lower()
+        if action not in {"enable", "disable", "delete"}:
+            raise GatewayManagerError("unsupported_batch_action")
+
+        ids_raw = payload.get("instanceIds", payload.get("instance_ids"))
+        if not isinstance(ids_raw, list):
+            raise GatewayManagerError("instance_ids_required")
+        requested: list[str] = []
+        for item in ids_raw:
+            value = str(item).strip() if isinstance(item, str) else ""
+            if value and value not in requested:
+                requested.append(value)
+        if not requested:
+            raise GatewayManagerError("instance_ids_required")
+
+        provider = payload.get("provider")
+        if provider is not None and not isinstance(provider, str):
+            raise GatewayManagerError("unsupported_gateway_provider")
+        provider_filter = str(provider).strip() if isinstance(provider, str) and provider.strip() else None
+        try:
+            all_items = self.config_store.list_gateway_instances(provider=provider_filter)
+        except ValueError:
+            raise GatewayManagerError("unsupported_gateway_provider") from None
+        by_id = {
+            str(item.get("id")): item
+            for item in all_items
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        ignore_missing = self._to_bool(payload.get("ignoreMissing", payload.get("ignore_missing")), False)
+        missing = [instance_id for instance_id in requested if instance_id not in by_id]
+        if missing and not ignore_missing:
+            raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+        targets = [instance_id for instance_id in requested if instance_id in by_id]
+
+        changed: list[str] = []
+        unchanged: list[str] = []
+        blocked: list[dict[str, str]] = []
+        failed: list[dict[str, str]] = []
+        for instance_id in targets:
+            current = by_id.get(instance_id) or {}
+            try:
+                if action in {"enable", "disable"}:
+                    expected = action == "enable"
+                    if bool(current.get("is_active")) == expected:
+                        unchanged.append(instance_id)
+                        continue
+                    updated = self.config_store.update_gateway_instance(instance_id, {"is_active": expected})
+                    if updated:
+                        changed.append(instance_id)
+                    else:
+                        failed.append({"instanceId": instance_id, "error": "update_failed"})
+                    continue
+
+                if bool(current.get("is_default")):
+                    blocked.append({"instanceId": instance_id, "reason": "default_instance"})
+                    continue
+                deleted = self.config_store.soft_delete_gateway_instance(instance_id)
+                if deleted:
+                    changed.append(instance_id)
+                else:
+                    failed.append({"instanceId": instance_id, "error": "delete_failed"})
+            except Exception as exc:
+                failed.append({"instanceId": instance_id, "error": str(exc)})
+
+        return {
+            "action": action,
+            "requested": requested,
+            "targets": targets,
+            "changed": changed,
+            "unchanged": unchanged,
+            "blocked": blocked,
+            "missing": missing,
+            "failed": failed,
+        }
+
     def get_gateway_config(self, provider: str) -> dict[str, Any]:
         try:
             item = self.config_store.get_gateway_config(provider)

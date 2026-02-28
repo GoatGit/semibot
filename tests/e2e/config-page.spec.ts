@@ -260,6 +260,68 @@ async function setupConfigPageMocks(page: Page, onLlmConfigPut?: (payload: any) 
 
     await route.continue()
   })
+
+  await page.route('**/api/v1/gateways/instances/batch', async (route, request) => {
+    if (request.method() !== 'POST') {
+      await route.continue()
+      return
+    }
+    const payload = request.postDataJSON() as {
+      action?: 'enable' | 'disable' | 'delete'
+      instanceIds?: string[]
+      ignoreMissing?: boolean
+    }
+    const action = payload?.action || 'enable'
+    const requested = Array.from(new Set((payload?.instanceIds || []).filter(Boolean)))
+    const changed: string[] = []
+    const unchanged: string[] = []
+    const blocked: Array<{ instanceId: string; reason: string }> = []
+    const missing: string[] = []
+
+    for (const id of requested) {
+      const item = gatewayState[id]
+      if (!item) {
+        missing.push(id)
+        continue
+      }
+      if (action === 'enable') {
+        if (item.isActive) unchanged.push(id)
+        else {
+          item.isActive = true
+          changed.push(id)
+        }
+        continue
+      }
+      if (action === 'disable') {
+        if (!item.isActive) unchanged.push(id)
+        else {
+          item.isActive = false
+          changed.push(id)
+        }
+        continue
+      }
+      if (item.isDefault) {
+        blocked.push({ instanceId: id, reason: 'default_instance' })
+      } else {
+        delete gatewayState[id]
+        changed.push(id)
+      }
+    }
+
+    await json(route, {
+      success: true,
+      data: {
+        action,
+        requested,
+        targets: requested.filter((id) => gatewayState[id] || changed.includes(id)),
+        changed,
+        unchanged,
+        blocked,
+        missing,
+        failed: [],
+      },
+    })
+  })
 }
 
 test.describe('Config Page', () => {
@@ -480,5 +542,81 @@ test.describe('Config Page', () => {
 
     await tgCard.getByRole('button', { name: '测试' }).click()
     await expect.poll(() => gatewayTestCalls.length).toBeGreaterThan(0)
+  })
+
+  test('should batch enable/disable selected gateway instances', async ({ page }) => {
+    const batchCalls: Array<{ url: string; payload: any }> = []
+    const testCalls: Array<{ url: string; payload: any }> = []
+    page.on('request', (request) => {
+      if (request.method() !== 'POST') return
+      if (request.url().includes('/api/v1/gateways/instances/batch')) {
+        batchCalls.push({
+          url: request.url(),
+          payload: request.postDataJSON(),
+        })
+        return
+      }
+      if (request.url().includes('/api/v1/gateways/instances/') && request.url().endsWith('/test')) {
+        testCalls.push({
+          url: request.url(),
+          payload: request.postDataJSON(),
+        })
+      }
+    })
+
+    await setupConfigPageMocks(page)
+    await page.goto('/config')
+    await page.getByRole('button', { name: 'Gateways' }).click()
+
+    await page.getByTestId('gateway-select-gw-telegram').check()
+    await page.getByTestId('gateways-batch-enable').click()
+    await expect.poll(() => batchCalls.length).toBeGreaterThanOrEqual(1)
+    expect(batchCalls[0].url).toContain('/api/v1/gateways/instances/batch')
+    expect(batchCalls[0].payload).toMatchObject({
+      action: 'enable',
+      instanceIds: ['gw-telegram'],
+    })
+
+    await page.getByTestId('gateways-select-all').check()
+    await page.getByTestId('gateways-batch-disable').click()
+
+    await expect.poll(() => batchCalls.length).toBeGreaterThanOrEqual(2)
+    expect(batchCalls[1].payload).toMatchObject({
+      action: 'disable',
+      instanceIds: ['gw-feishu', 'gw-telegram'],
+    })
+
+    await page.getByTestId('gateways-batch-test').click()
+    await expect.poll(() => testCalls.length).toBeGreaterThanOrEqual(2)
+    const testUrls = testCalls.map((item) => item.url)
+    expect(testUrls).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('/api/v1/gateways/instances/gw-feishu/test'),
+        expect.stringContaining('/api/v1/gateways/instances/gw-telegram/test'),
+      ])
+    )
+  })
+
+  test('should batch action only within filtered provider scope', async ({ page }) => {
+    const batchCalls: Array<{ payload: any }> = []
+    page.on('request', (request) => {
+      if (request.method() !== 'POST') return
+      if (!request.url().includes('/api/v1/gateways/instances/batch')) return
+      batchCalls.push({ payload: request.postDataJSON() })
+    })
+
+    await setupConfigPageMocks(page)
+    await page.goto('/config')
+    await page.getByRole('button', { name: 'Gateways' }).click()
+
+    await page.getByTestId('gateways-filter-telegram').click()
+    await page.getByTestId('gateways-select-all').check()
+    await page.getByTestId('gateways-batch-disable').click()
+
+    await expect.poll(() => batchCalls.length).toBeGreaterThanOrEqual(1)
+    expect(batchCalls[0].payload).toMatchObject({
+      action: 'disable',
+      instanceIds: ['gw-telegram'],
+    })
   })
 })

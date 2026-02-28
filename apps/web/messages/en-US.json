@@ -222,7 +222,8 @@
     "confirm": {
       "deleteApiKey": "Delete this API key? This action cannot be undone.",
       "deleteWebhook": "Delete this webhook? This action cannot be undone.",
-      "deleteGateway": "Delete this gateway instance? This action cannot be undone."
+      "deleteGateway": "Delete this gateway instance? This action cannot be undone.",
+      "deleteGateways": "Delete the selected {count} gateway instances? This action cannot be undone."
     },
     "llm": {
       "routingDefaults": "Model routing defaults",
@@ -250,6 +251,19 @@
       "activeCount": "Active {count}",
       "newTelegram": "New Telegram",
       "newFeishu": "New Feishu",
+      "filterAll": "All",
+      "filterTelegram": "Telegram",
+      "filterFeishu": "Feishu",
+      "selectAllVisible": "Select all visible",
+      "selectedCount": "{count} selected",
+      "batchEnable": "Batch enable",
+      "batchDisable": "Batch disable",
+      "batchTest": "Batch test",
+      "batchDelete": "Batch delete",
+      "batchSelectHint": "Select at least one gateway instance first.",
+      "batchNoDeletable": "Only default instances are selected. They cannot be deleted in batch.",
+      "batchPartialFailed": "Batch action partially failed: {success} succeeded, {failed} failed.",
+      "batchTestPartialFailed": "Batch test partially failed: {success} succeeded, {failed} failed.",
       "defaultTag": "Default",
       "loading": "Loading gateways...",
       "empty": "No gateways",

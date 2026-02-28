@@ -222,7 +222,8 @@
     "confirm": {
       "deleteApiKey": "确认删除这个 API Key 吗？删除后无法恢复。",
       "deleteWebhook": "确认删除这个 Webhook 吗？删除后无法恢复。",
-      "deleteGateway": "确认删除这个 Gateway 实例吗？删除后无法恢复。"
+      "deleteGateway": "确认删除这个 Gateway 实例吗？删除后无法恢复。",
+      "deleteGateways": "确认删除选中的 {count} 个 Gateway 实例吗？删除后无法恢复。"
     },
     "llm": {
       "routingDefaults": "模型路由默认值",
@@ -250,6 +251,19 @@
       "activeCount": "启用 {count}",
       "newTelegram": "新建 Telegram",
       "newFeishu": "新建 Feishu",
+      "filterAll": "全部",
+      "filterTelegram": "Telegram",
+      "filterFeishu": "Feishu",
+      "selectAllVisible": "全选当前列表",
+      "selectedCount": "已选择 {count} 项",
+      "batchEnable": "批量启用",
+      "batchDisable": "批量停用",
+      "batchTest": "批量测试",
+      "batchDelete": "批量删除",
+      "batchSelectHint": "请先勾选至少一个 Gateway 实例。",
+      "batchNoDeletable": "选中的实例均为默认实例，无法批量删除。",
+      "batchPartialFailed": "批量操作部分失败：成功 {success}，失败 {failed}。",
+      "batchTestPartialFailed": "批量测试部分失败：成功 {success}，失败 {failed}。",
       "defaultTag": "默认",
       "loading": "正在加载 Gateway...",
       "empty": "暂无 Gateway 配置",

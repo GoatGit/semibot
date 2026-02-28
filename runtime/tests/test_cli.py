@@ -11,7 +11,13 @@ from typing import Any
 
 import pytest
 
-from src.cli import _banner_lines, _default_log_level, _require_runtime_server, _sanitize_terminal_text, build_parser
+from src.cli import (
+    _banner_lines,
+    _default_log_level,
+    _require_runtime_server,
+    _sanitize_terminal_text,
+    build_parser,
+)
 from src.events.models import Event
 
 
@@ -833,6 +839,230 @@ def test_mcp_call_returns_disabled_error(tmp_path, capsys) -> None:
     assert exit_code == 3
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == "MCP_SERVER_DISABLED"
+
+
+def test_gateway_list_command(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
+
+    def _fake_list(base_url: str, *, provider: str | None = None) -> dict[str, Any]:
+        assert base_url == "http://127.0.0.1:8765"
+        assert provider == "telegram"
+        return {
+            "data": [
+                {
+                    "id": "gw_inst_1",
+                    "provider": "telegram",
+                    "displayName": "Telegram Bot A",
+                }
+            ]
+        }
+
+    monkeypatch.setattr("src.cli._gateway_list_instances_via_runtime", _fake_list)
+
+    parser = build_parser()
+    args = parser.parse_args(["gateway", "list", "--provider", "telegram"])
+    exit_code = args.func(args)
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["resource"] == "gateway"
+    assert payload["action"] == "list"
+    assert payload["count"] == 1
+    assert payload["items"][0]["id"] == "gw_inst_1"
+
+
+def test_gateway_create_update_and_test_commands(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
+
+    def _fake_create(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert base_url == "http://127.0.0.1:8765"
+        assert payload["provider"] == "telegram"
+        assert payload["instance_key"] == "bot-a"
+        assert payload["displayName"] == "Bot A"
+        return {"id": "gw_inst_2", **payload}
+
+    def _fake_update(base_url: str, instance_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        assert base_url == "http://127.0.0.1:8765"
+        assert instance_id == "gw_inst_2"
+        assert patch == {"isActive": False}
+        return {"id": instance_id, **patch}
+
+    def _fake_test(base_url: str, instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert base_url == "http://127.0.0.1:8765"
+        assert instance_id == "gw_inst_2"
+        assert payload["text"] == "ping"
+        assert payload["chat_id"] == "-10001"
+        return {"ok": True}
+
+    monkeypatch.setattr("src.cli._gateway_create_instance_via_runtime", _fake_create)
+    monkeypatch.setattr("src.cli._gateway_update_instance_via_runtime", _fake_update)
+    monkeypatch.setattr("src.cli._gateway_test_instance_via_runtime", _fake_test)
+
+    parser = build_parser()
+
+    args_create = parser.parse_args(
+        [
+            "gateway",
+            "create",
+            "--provider",
+            "telegram",
+            "--instance-key",
+            "bot-a",
+            "--patch",
+            '{"displayName":"Bot A"}',
+        ]
+    )
+    assert args_create.func(args_create) == 0
+    payload_create = json.loads(capsys.readouterr().out)
+    assert payload_create["action"] == "create"
+    assert payload_create["item"]["id"] == "gw_inst_2"
+
+    args_update = parser.parse_args(
+        [
+            "gateway",
+            "update",
+            "gw_inst_2",
+            "--patch",
+            '{"isActive": false}',
+        ]
+    )
+    assert args_update.func(args_update) == 0
+    payload_update = json.loads(capsys.readouterr().out)
+    assert payload_update["action"] == "update"
+    assert payload_update["item"]["isActive"] is False
+
+    args_test = parser.parse_args(
+        [
+            "gateway",
+            "test",
+            "gw_inst_2",
+            "--text",
+            "ping",
+            "--chat-id",
+            "-10001",
+        ]
+    )
+    assert args_test.func(args_test) == 0
+    payload_test = json.loads(capsys.readouterr().out)
+    assert payload_test["action"] == "test"
+    assert payload_test["result"]["ok"] is True
+
+
+def test_gateway_delete_requires_confirmation(capsys) -> None:
+    parser = build_parser()
+    args = parser.parse_args(["gateway", "delete", "gw_inst_3"])
+    exit_code = args.func(args)
+    assert exit_code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "CONFIRMATION_REQUIRED"
+
+
+def test_gateway_batch_enable_and_delete(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
+    batch_calls: list[dict[str, Any]] = []
+
+    def _fake_list(base_url: str, *, provider: str | None = None) -> dict[str, Any]:
+        assert base_url == "http://127.0.0.1:8765"
+        assert provider == "telegram"
+        return {
+            "data": [
+                {"id": "gw_inst_a", "provider": "telegram", "isActive": False},
+                {"id": "gw_inst_b", "provider": "telegram", "isActive": True},
+            ]
+        }
+
+    def _fake_batch(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert base_url == "http://127.0.0.1:8765"
+        batch_calls.append(payload)
+        if payload["action"] == "enable":
+            return {
+                "action": "enable",
+                "requested": payload["instanceIds"],
+                "targets": payload["instanceIds"],
+                "changed": ["gw_inst_a"],
+                "unchanged": ["gw_inst_b"],
+                "blocked": [],
+                "missing": [],
+                "failed": [],
+            }
+        return {
+            "action": "delete",
+            "requested": payload["instanceIds"],
+            "targets": payload["instanceIds"],
+            "changed": ["gw_inst_b"],
+            "unchanged": [],
+            "blocked": [],
+            "missing": [],
+            "failed": [],
+        }
+
+    monkeypatch.setattr("src.cli._gateway_list_instances_via_runtime", _fake_list)
+    monkeypatch.setattr("src.cli._gateway_batch_instances_via_runtime", _fake_batch)
+
+    parser = build_parser()
+    args_enable = parser.parse_args(
+        [
+            "gateway",
+            "batch",
+            "--action",
+            "enable",
+            "--provider",
+            "telegram",
+            "--instance-ids",
+            "gw_inst_a,gw_inst_b",
+        ]
+    )
+    assert args_enable.func(args_enable) == 0
+    payload_enable = json.loads(capsys.readouterr().out)
+    assert payload_enable["action"] == "batch"
+    assert payload_enable["batch_action"] == "enable"
+    assert payload_enable["changed"] == ["gw_inst_a"]
+    assert payload_enable["unchanged"] == ["gw_inst_b"]
+    assert batch_calls[0]["instanceIds"] == ["gw_inst_a", "gw_inst_b"]
+    assert batch_calls[0]["action"] == "enable"
+
+    args_delete = parser.parse_args(
+        [
+            "gateway",
+            "batch",
+            "--action",
+            "delete",
+            "--provider",
+            "telegram",
+            "--instance-ids",
+            "gw_inst_b",
+            "--yes",
+        ]
+    )
+    assert args_delete.func(args_delete) == 0
+    payload_delete = json.loads(capsys.readouterr().out)
+    assert payload_delete["batch_action"] == "delete"
+    assert payload_delete["changed"] == ["gw_inst_b"]
+    assert batch_calls[1]["instanceIds"] == ["gw_inst_b"]
+    assert batch_calls[1]["action"] == "delete"
+
+
+def test_gateway_batch_delete_requires_confirmation(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
+    monkeypatch.setattr(
+        "src.cli._gateway_list_instances_via_runtime",
+        lambda _base_url, provider=None: {"data": [{"id": "gw_inst_x", "provider": provider or "telegram"}]},
+    )
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "batch",
+            "--action",
+            "delete",
+            "--instance-ids",
+            "gw_inst_x",
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "CONFIRMATION_REQUIRED"
 
 
 def test_memory_search_command(monkeypatch, capsys) -> None:

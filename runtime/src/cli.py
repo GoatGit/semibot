@@ -13,21 +13,22 @@ import json
 import os
 import re
 import select
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 import tomllib
-import termios
 import tty
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 import uvicorn
@@ -46,15 +47,13 @@ from src.bootstrap import (
 )
 from src.bootstrap import (
     ensure_runtime_home,
-)
-from src.bootstrap import (
     semibot_home,
 )
 from src.events.event_engine import EventEngine
 from src.events.event_store import EventStore
 from src.events.models import Event, utc_now
-from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.events.rule_evaluator import RuleEvaluator
+from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.server.api import create_app
 from src.skills.bootstrap import create_default_registry
 from src.utils.logging import setup_logging
@@ -396,6 +395,39 @@ def _parse_json_arg(raw: str, *, field_name: str) -> tuple[Any | None, str | Non
         return json.loads(raw), None
     except json.JSONDecodeError as exc:
         return None, f"invalid {field_name} json: {exc}"
+
+
+def _load_json_object(
+    *,
+    raw: str | None,
+    file_path: str | None,
+    field_name: str,
+    required: bool = False,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if raw and file_path:
+        return None, f"cannot use both --{field_name} and --{field_name}-file"
+
+    if not raw and not file_path:
+        if required:
+            return None, f"missing --{field_name} or --{field_name}-file"
+        return {}, None
+
+    if file_path:
+        path = Path(file_path).expanduser()
+        if not path.exists():
+            return None, f"{field_name} file not found: {path}"
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return None, f"failed reading {field_name} file: {exc}"
+
+    assert raw is not None
+    parsed, error = _parse_json_arg(raw, field_name=field_name)
+    if error:
+        return None, error
+    if not isinstance(parsed, dict):
+        return None, f"invalid {field_name} json: expected object"
+    return parsed, None
 
 
 def _error_payload(*, resource: str, action: str, code: str, message: str) -> dict[str, Any]:
@@ -1160,6 +1192,73 @@ def _runtime_resolve_approval(base_url: str, approval_id: str, decision: str) ->
     )
 
 
+def _gateway_list_instances_via_runtime(base_url: str, *, provider: str | None = None) -> dict[str, Any]:
+    url = f"{base_url}/v1/config/gateway-instances"
+    if provider:
+        url = f"{url}?provider={quote(provider)}"
+    return _http_json_request(method="GET", url=url, timeout=10.0)
+
+
+def _gateway_get_instance_via_runtime(base_url: str, instance_id: str) -> dict[str, Any]:
+    return _http_json_request(
+        method="GET",
+        url=f"{base_url}/v1/config/gateway-instances/{quote(instance_id)}",
+        timeout=10.0,
+    )
+
+
+def _gateway_create_instance_via_runtime(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _http_json_request(
+        method="POST",
+        url=f"{base_url}/v1/config/gateway-instances",
+        payload=payload,
+        timeout=10.0,
+    )
+
+
+def _gateway_update_instance_via_runtime(
+    base_url: str,
+    instance_id: str,
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    return _http_json_request(
+        method="PUT",
+        url=f"{base_url}/v1/config/gateway-instances/{quote(instance_id)}",
+        payload=patch,
+        timeout=10.0,
+    )
+
+
+def _gateway_delete_instance_via_runtime(base_url: str, instance_id: str) -> dict[str, Any]:
+    return _http_json_request(
+        method="DELETE",
+        url=f"{base_url}/v1/config/gateway-instances/{quote(instance_id)}",
+        timeout=10.0,
+    )
+
+
+def _gateway_test_instance_via_runtime(
+    base_url: str,
+    instance_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    return _http_json_request(
+        method="POST",
+        url=f"{base_url}/v1/config/gateway-instances/{quote(instance_id)}/test",
+        payload=payload,
+        timeout=20.0,
+    )
+
+
+def _gateway_batch_instances_via_runtime(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _http_json_request(
+        method="POST",
+        url=f"{base_url}/v1/config/gateway-instances/batch",
+        payload=payload,
+        timeout=20.0,
+    )
+
+
 def _extract_pending_approval_ids(result: dict[str, Any]) -> list[str]:
     runtime_events = result.get("runtime_events")
     if not isinstance(runtime_events, list):
@@ -1182,6 +1281,15 @@ def _extract_pending_approval_ids(result: dict[str, Any]) -> list[str]:
 def _is_http_not_found_error(error: Exception) -> bool:
     text = str(error).lower()
     return "http 404" in text or "not found" in text
+
+
+def _gateway_exit_code_from_error(error: Exception) -> int:
+    text = str(error).lower()
+    if _is_http_not_found_error(error):
+        return EXIT_NOT_FOUND
+    if "http 400" in text or "http 409" in text or "http 422" in text:
+        return EXIT_CONFIG_ERROR
+    return EXIT_EXTERNAL_ERROR
 
 
 def _chat_send_first_turn_via_runtime(
@@ -1427,6 +1535,485 @@ def cmd_run(args: argparse.Namespace) -> int:
         }
     )
     return EXIT_SUCCESS if result.get("status") == "completed" else EXIT_EXTERNAL_ERROR
+
+
+def cmd_gateway_list(args: argparse.Namespace) -> int:
+    runtime_url = _runtime_base_url(args)
+    ready_error = _require_runtime_server(runtime_url)
+    if ready_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="connect",
+                code="RUNTIME_UNAVAILABLE",
+                message=ready_error,
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    try:
+        response = _gateway_list_instances_via_runtime(runtime_url, provider=getattr(args, "provider", None))
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="list",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    items = response.get("data")
+    if not isinstance(items, list):
+        items = []
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "list",
+            "runtime_url": runtime_url,
+            "provider": getattr(args, "provider", None),
+            "count": len(items),
+            "items": items,
+        }
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_gateway_show(args: argparse.Namespace) -> int:
+    runtime_url = _runtime_base_url(args)
+    ready_error = _require_runtime_server(runtime_url)
+    if ready_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="connect",
+                code="RUNTIME_UNAVAILABLE",
+                message=ready_error,
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    try:
+        response = _gateway_get_instance_via_runtime(runtime_url, args.instance_id)
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="show",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "show",
+            "runtime_url": runtime_url,
+            "instance_id": args.instance_id,
+            "item": response,
+        }
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_gateway_create(args: argparse.Namespace) -> int:
+    runtime_url = _runtime_base_url(args)
+    ready_error = _require_runtime_server(runtime_url)
+    if ready_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="connect",
+                code="RUNTIME_UNAVAILABLE",
+                message=ready_error,
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    patch, patch_error = _load_json_object(
+        raw=getattr(args, "patch", None),
+        file_path=getattr(args, "patch_file", None),
+        field_name="patch",
+        required=False,
+    )
+    if patch_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="create",
+                code="PATCH_INVALID",
+                message=patch_error,
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    payload: dict[str, Any] = {"provider": args.provider}
+    if getattr(args, "instance_key", None):
+        payload["instance_key"] = args.instance_key
+    payload.update(patch or {})
+    try:
+        response = _gateway_create_instance_via_runtime(runtime_url, payload)
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="create",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "create",
+            "runtime_url": runtime_url,
+            "provider": args.provider,
+            "instance_key": getattr(args, "instance_key", None),
+            "item": response,
+            "ok": True,
+        }
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_gateway_update(args: argparse.Namespace) -> int:
+    runtime_url = _runtime_base_url(args)
+    ready_error = _require_runtime_server(runtime_url)
+    if ready_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="connect",
+                code="RUNTIME_UNAVAILABLE",
+                message=ready_error,
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    patch, patch_error = _load_json_object(
+        raw=getattr(args, "patch", None),
+        file_path=getattr(args, "patch_file", None),
+        field_name="patch",
+        required=True,
+    )
+    if patch_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="update",
+                code="PATCH_INVALID",
+                message=patch_error,
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    try:
+        response = _gateway_update_instance_via_runtime(runtime_url, args.instance_id, patch or {})
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="update",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "update",
+            "runtime_url": runtime_url,
+            "instance_id": args.instance_id,
+            "item": response,
+            "ok": True,
+        }
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_gateway_delete(args: argparse.Namespace) -> int:
+    if not bool(getattr(args, "yes", False) or getattr(args, "confirm_yes", False)):
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="delete",
+                code="CONFIRMATION_REQUIRED",
+                message="re-run with --yes for delete",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    runtime_url = _runtime_base_url(args)
+    ready_error = _require_runtime_server(runtime_url)
+    if ready_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="connect",
+                code="RUNTIME_UNAVAILABLE",
+                message=ready_error,
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    try:
+        response = _gateway_delete_instance_via_runtime(runtime_url, args.instance_id)
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="delete",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "delete",
+            "runtime_url": runtime_url,
+            "instance_id": args.instance_id,
+            "result": response,
+            "ok": True,
+        }
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_gateway_test(args: argparse.Namespace) -> int:
+    runtime_url = _runtime_base_url(args)
+    ready_error = _require_runtime_server(runtime_url)
+    if ready_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="connect",
+                code="RUNTIME_UNAVAILABLE",
+                message=ready_error,
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    payload, payload_error = _load_json_object(
+        raw=getattr(args, "payload", None),
+        file_path=getattr(args, "payload_file", None),
+        field_name="payload",
+        required=False,
+    )
+    if payload_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="test",
+                code="PAYLOAD_INVALID",
+                message=payload_error,
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    merged_payload: dict[str, Any] = dict(payload or {})
+    if getattr(args, "text", None):
+        merged_payload["text"] = args.text
+    if getattr(args, "title", None):
+        merged_payload["title"] = args.title
+    if getattr(args, "content", None):
+        merged_payload["content"] = args.content
+    if getattr(args, "channel", None):
+        merged_payload["channel"] = args.channel
+    if getattr(args, "chat_id", None):
+        merged_payload["chat_id"] = args.chat_id
+    try:
+        response = _gateway_test_instance_via_runtime(runtime_url, args.instance_id, merged_payload)
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="test",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "test",
+            "runtime_url": runtime_url,
+            "instance_id": args.instance_id,
+            "result": response,
+            "ok": True,
+        }
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_gateway_batch(args: argparse.Namespace) -> int:
+    runtime_url = _runtime_base_url(args)
+    ready_error = _require_runtime_server(runtime_url)
+    if ready_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="connect",
+                code="RUNTIME_UNAVAILABLE",
+                message=ready_error,
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    provider = getattr(args, "provider", None)
+    try:
+        response = _gateway_list_instances_via_runtime(runtime_url, provider=provider)
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="batch",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    raw_items = response.get("data")
+    if not isinstance(raw_items, list):
+        raw_items = []
+    items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        instance_id = raw.get("id")
+        if not isinstance(instance_id, str) or not instance_id:
+            continue
+        items.append(raw)
+
+    by_id = {str(item["id"]): item for item in items}
+    options = sorted(by_id.keys())
+    selected, selection_error = _resolve_batch_selection(
+        options=options,
+        names_arg=getattr(args, "instance_ids", None),
+        select_all=bool(getattr(args, "all", False)),
+        interactive=bool(getattr(args, "interactive", False)),
+    )
+    if selection_error:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="batch",
+                code="BATCH_SELECTION_INVALID",
+                message=selection_error,
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    missing = [instance_id for instance_id in selected if instance_id not in by_id]
+    if missing and not bool(getattr(args, "ignore_missing", False)):
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="batch",
+                code="GATEWAY_INSTANCE_NOT_FOUND",
+                message=f"instances not found: {', '.join(missing)}",
+            )
+        )
+        return EXIT_NOT_FOUND
+    targets = [instance_id for instance_id in selected if instance_id in by_id]
+
+    action = str(getattr(args, "action", "")).strip().lower()
+    if action == "delete" and not bool(getattr(args, "yes", False) or getattr(args, "confirm_yes", False)):
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="batch",
+                code="CONFIRMATION_REQUIRED",
+                message="re-run with --yes for batch delete",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    if action not in {"enable", "disable", "delete"}:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="batch",
+                code="BATCH_ACTION_INVALID",
+                message=f"unsupported batch action: {action}",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    try:
+        result = _gateway_batch_instances_via_runtime(
+            runtime_url,
+            {
+                "action": action,
+                "instanceIds": targets,
+                "provider": provider,
+                "ignoreMissing": bool(getattr(args, "ignore_missing", False)),
+            },
+        )
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="batch",
+                code="GATEWAY_REQUEST_FAILED",
+                message=str(exc),
+            )
+        )
+        return _gateway_exit_code_from_error(exc)
+
+    changed = result.get("changed")
+    if not isinstance(changed, list):
+        changed = []
+    unchanged = result.get("unchanged")
+    if not isinstance(unchanged, list):
+        unchanged = []
+    failed = result.get("failed")
+    if not isinstance(failed, list):
+        failed = []
+    blocked = result.get("blocked")
+    if not isinstance(blocked, list):
+        blocked = []
+    missing_runtime = result.get("missing")
+    if not isinstance(missing_runtime, list):
+        missing_runtime = missing
+
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "batch",
+            "runtime_url": runtime_url,
+            "provider": provider,
+            "batch_action": action,
+            "requested": selected,
+            "targets": targets,
+            "changed": changed,
+            "unchanged": unchanged,
+            "blocked": blocked,
+            "missing": missing_runtime,
+            "failed": failed,
+            "ok": not failed,
+        }
+    )
+    return EXIT_SUCCESS if not failed else EXIT_EXTERNAL_ERROR
 
 
 def _parse_cron_jobs_json(raw: str | None) -> tuple[list[dict[str, Any]] | None, str | None]:
@@ -4221,6 +4808,96 @@ def build_parser() -> argparse.ArgumentParser:
         help="Runtime service base URL",
     )
     run_parser.set_defaults(func=cmd_run)
+
+    gateway_parser = subparsers.add_parser("gateway", help="Gateway instance operations")
+    gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
+
+    gateway_list_parser = gateway_subparsers.add_parser("list", help="List gateway instances")
+    gateway_list_parser.add_argument("--provider", default=None, help="Optional provider filter")
+    gateway_list_parser.add_argument(
+        "--server-url",
+        default=str(os.getenv("SEMIBOT_RUNTIME_URL", "http://127.0.0.1:8765")),
+        help="Runtime service base URL",
+    )
+    gateway_list_parser.set_defaults(func=cmd_gateway_list)
+
+    gateway_show_parser = gateway_subparsers.add_parser("show", help="Show one gateway instance")
+    gateway_show_parser.add_argument("instance_id", help="Gateway instance ID")
+    gateway_show_parser.add_argument(
+        "--server-url",
+        default=str(os.getenv("SEMIBOT_RUNTIME_URL", "http://127.0.0.1:8765")),
+        help="Runtime service base URL",
+    )
+    gateway_show_parser.set_defaults(func=cmd_gateway_show)
+
+    gateway_create_parser = gateway_subparsers.add_parser("create", help="Create one gateway instance")
+    gateway_create_parser.add_argument("--provider", required=True, help="Provider name, e.g. telegram/feishu")
+    gateway_create_parser.add_argument("--instance-key", default=None, help="Optional stable instance key")
+    gateway_create_parser.add_argument("--patch", default=None, help="Gateway patch JSON object")
+    gateway_create_parser.add_argument("--patch-file", default=None, help="Gateway patch JSON file path")
+    gateway_create_parser.add_argument(
+        "--server-url",
+        default=str(os.getenv("SEMIBOT_RUNTIME_URL", "http://127.0.0.1:8765")),
+        help="Runtime service base URL",
+    )
+    gateway_create_parser.set_defaults(func=cmd_gateway_create)
+
+    gateway_update_parser = gateway_subparsers.add_parser("update", help="Update one gateway instance")
+    gateway_update_parser.add_argument("instance_id", help="Gateway instance ID")
+    gateway_update_parser.add_argument("--patch", default=None, help="Gateway patch JSON object")
+    gateway_update_parser.add_argument("--patch-file", default=None, help="Gateway patch JSON file path")
+    gateway_update_parser.add_argument(
+        "--server-url",
+        default=str(os.getenv("SEMIBOT_RUNTIME_URL", "http://127.0.0.1:8765")),
+        help="Runtime service base URL",
+    )
+    gateway_update_parser.set_defaults(func=cmd_gateway_update)
+
+    gateway_delete_parser = gateway_subparsers.add_parser("delete", help="Delete one gateway instance")
+    gateway_delete_parser.add_argument("instance_id", help="Gateway instance ID")
+    gateway_delete_parser.add_argument("--yes", dest="confirm_yes", action="store_true", help="Skip confirmation")
+    gateway_delete_parser.add_argument(
+        "--server-url",
+        default=str(os.getenv("SEMIBOT_RUNTIME_URL", "http://127.0.0.1:8765")),
+        help="Runtime service base URL",
+    )
+    gateway_delete_parser.set_defaults(func=cmd_gateway_delete)
+
+    gateway_test_parser = gateway_subparsers.add_parser("test", help="Send one gateway test message")
+    gateway_test_parser.add_argument("instance_id", help="Gateway instance ID")
+    gateway_test_parser.add_argument("--payload", default=None, help="Gateway test payload JSON object")
+    gateway_test_parser.add_argument("--payload-file", default=None, help="Gateway test payload JSON file path")
+    gateway_test_parser.add_argument("--text", default=None, help="Telegram text")
+    gateway_test_parser.add_argument("--chat-id", default=None, help="Telegram chat ID")
+    gateway_test_parser.add_argument("--title", default=None, help="Feishu title")
+    gateway_test_parser.add_argument("--content", default=None, help="Feishu content")
+    gateway_test_parser.add_argument("--channel", default=None, help="Feishu channel")
+    gateway_test_parser.add_argument(
+        "--server-url",
+        default=str(os.getenv("SEMIBOT_RUNTIME_URL", "http://127.0.0.1:8765")),
+        help="Runtime service base URL",
+    )
+    gateway_test_parser.set_defaults(func=cmd_gateway_test)
+
+    gateway_batch_parser = gateway_subparsers.add_parser("batch", help="Batch manage gateway instances")
+    gateway_batch_parser.add_argument(
+        "--action",
+        choices=["enable", "disable", "delete"],
+        required=True,
+        help="Batch action",
+    )
+    gateway_batch_parser.add_argument("--provider", default=None, help="Optional provider filter")
+    gateway_batch_parser.add_argument("--instance-ids", default=None, help="Comma-separated gateway instance IDs")
+    gateway_batch_parser.add_argument("--all", action="store_true", help="Select all gateway instances")
+    gateway_batch_parser.add_argument("--interactive", action="store_true", help="Select gateway instances interactively")
+    gateway_batch_parser.add_argument("--ignore-missing", action="store_true", help="Ignore missing instance IDs")
+    gateway_batch_parser.add_argument("--yes", dest="confirm_yes", action="store_true", help="Skip confirmation")
+    gateway_batch_parser.add_argument(
+        "--server-url",
+        default=str(os.getenv("SEMIBOT_RUNTIME_URL", "http://127.0.0.1:8765")),
+        help="Runtime service base URL",
+    )
+    gateway_batch_parser.set_defaults(func=cmd_gateway_batch)
 
     serve_parser = subparsers.add_parser("serve", help="Manage runtime service via pm2")
     serve_subparsers = serve_parser.add_subparsers(dest="serve_action", required=True)

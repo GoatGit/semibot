@@ -23,6 +23,23 @@ export interface UpdateGatewayInput {
   clearFields?: string[]
 }
 
+export interface GatewayBatchInput {
+  action: 'enable' | 'disable' | 'delete'
+  instanceIds: string[]
+  ignoreMissing?: boolean
+}
+
+export interface GatewayBatchResult {
+  action: GatewayBatchInput['action']
+  requested: string[]
+  targets: string[]
+  changed: string[]
+  unchanged: string[]
+  blocked: Array<{ instanceId: string; reason: string }>
+  missing: string[]
+  failed: Array<{ instanceId: string; error: string }>
+}
+
 export async function listGateways(): Promise<Gateway[]> {
   return gatewayRepository.listGateways()
 }
@@ -99,4 +116,30 @@ export async function testGatewayInstance(
   payload: Record<string, unknown>
 ): Promise<{ sent: boolean }> {
   return gatewayRepository.testByInstanceId(instanceId, payload)
+}
+
+export async function batchGatewayInstances(input: GatewayBatchInput): Promise<GatewayBatchResult> {
+  const requested = Array.from(new Set(input.instanceIds.map((item) => item.trim()).filter(Boolean)))
+  if (requested.length === 0) {
+    return {
+      action: input.action,
+      requested: [],
+      targets: [],
+      changed: [],
+      unchanged: [],
+      blocked: [],
+      missing: [],
+      failed: [],
+    }
+  }
+
+  const result = await gatewayRepository.batchByInstanceIds({
+    action: input.action,
+    instanceIds: requested,
+    ignoreMissing: input.ignoreMissing,
+  })
+  if (result.missing?.length && !input.ignoreMissing) {
+    throw createError(RESOURCE_NOT_FOUND, `Gateway instance not found: ${result.missing[0]}`)
+  }
+  return result
 }

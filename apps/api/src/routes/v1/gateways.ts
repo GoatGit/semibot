@@ -31,6 +31,11 @@ const createGatewayInstanceSchema = updateGatewaySchema.extend({
   provider: providerSchema,
   instanceKey: z.string().min(1).max(128).optional(),
 })
+const gatewayBatchSchema = z.object({
+  action: z.enum(['enable', 'disable', 'delete']),
+  instanceIds: z.array(gatewayInstanceIdSchema).min(1),
+  ignoreMissing: z.boolean().optional(),
+})
 
 const testGatewaySchema = z.object({
   title: z.string().max(100).optional(),
@@ -74,6 +79,18 @@ router.post(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const data = await gatewayService.createGatewayInstance(req.body)
     res.status(201).json({ success: true, data })
+  })
+)
+
+router.post(
+  '/instances/batch',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('tools:write'),
+  validate(gatewayBatchSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const data = await gatewayService.batchGatewayInstances(req.body)
+    res.json({ success: true, data })
   })
 )
 
