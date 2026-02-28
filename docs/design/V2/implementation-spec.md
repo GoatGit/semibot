@@ -67,6 +67,7 @@ semibot/
 当前状态（2026-02-28）：
 
 - 已完成 `gateway/manager.py` 的第一轮收口：Gateway 配置读写、Feishu/Telegram webhook 入站、审批文本命令解析、出站通知测试、GCS 查询入口均在 manager 层。
+- 已完成 `gateway_instances` 多实例化改造：同 provider 支持多实例（多 bot），新增实例级配置 API（create/update/delete/test）。
 - 已新增 `server/routes/gateway.py`，把 Gateway 路由从 `server/api.py` 分离，`api.py` 仅做装配与注册。
 
 ## 2. 核心接口（签名）
@@ -117,7 +118,7 @@ class GatewayContextService:
 ```
 
 ```python
-# gateway policy schema (stored in gateway_configs.config_json common area)
+# gateway policy schema (stored in gateway_instances.config_json common area)
 class AddressingPolicy(TypedDict):
     mode: Literal["mention_only", "all_messages"]
     allowReplyToBot: bool
@@ -235,4 +236,4 @@ async def should_execute(self, provider, normalized):
 - `SEMIBOT_FEISHU_WEBHOOK_URL`：飞书默认出站 webhook（fallback）
 - `SEMIBOT_TELEGRAM_BOT_TOKEN`：Telegram bot token（fallback）
 - `SEMIBOT_TELEGRAM_DEFAULT_CHAT_ID`：Telegram 默认 chat（fallback）
-- 说明：以上环境变量在迁移期仅作为 fallback；长期配置源为 `~/.semibot/semibot.db` 的 `gateway_configs`
+- 说明：以上环境变量在迁移期仅作为 fallback；长期配置源为 `~/.semibot/semibot.db` 的 `gateway_instances`

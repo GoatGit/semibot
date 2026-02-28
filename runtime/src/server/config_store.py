@@ -135,9 +135,31 @@ class RuntimeConfigStore:
 
                 CREATE INDEX IF NOT EXISTS idx_gateway_configs_provider ON gateway_configs(provider);
                 CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_active);
+
+                CREATE TABLE IF NOT EXISTS gateway_instances (
+                  id TEXT PRIMARY KEY,
+                  instance_key TEXT NOT NULL UNIQUE,
+                  provider TEXT NOT NULL,
+                  display_name TEXT NOT NULL,
+                  is_default INTEGER NOT NULL DEFAULT 0,
+                  is_active INTEGER NOT NULL DEFAULT 0,
+                  mode TEXT NOT NULL DEFAULT 'webhook',
+                  risk_level TEXT NOT NULL DEFAULT 'high',
+                  requires_approval INTEGER NOT NULL DEFAULT 0,
+                  config_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  deleted_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gateway_instances_provider ON gateway_instances(provider);
+                CREATE INDEX IF NOT EXISTS idx_gateway_instances_active ON gateway_instances(is_active);
+                CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(provider, is_default);
                 """
             )
         self._seed_gateway_configs()
+        self._migrate_legacy_gateway_configs_to_instances()
+        self._seed_gateway_instances()
 
     def _seed_gateway_configs(self) -> None:
         now = _now_iso()
@@ -154,6 +176,100 @@ class RuntimeConfigStore:
                     ON CONFLICT(provider) DO NOTHING
                     """,
                     (str(uuid4()), provider, display_name, now, now),
+                )
+
+    def _default_gateway_display_name(self, provider: str) -> str:
+        return "Feishu" if provider == "feishu" else "Telegram"
+
+    def _seed_gateway_instances(self) -> None:
+        now = _now_iso()
+        with self._connect() as conn:
+            for provider in SUPPORTED_GATEWAY_PROVIDERS:
+                default_row = conn.execute(
+                    """
+                    SELECT id FROM gateway_instances
+                    WHERE provider = ? AND is_default = 1 AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (provider,),
+                ).fetchone()
+                if default_row:
+                    continue
+                fallback_row = conn.execute(
+                    """
+                    SELECT id FROM gateway_instances
+                    WHERE provider = ? AND deleted_at IS NULL
+                    ORDER BY updated_at DESC, created_at DESC
+                    LIMIT 1
+                    """,
+                    (provider,),
+                ).fetchone()
+                if fallback_row:
+                    conn.execute(
+                        """
+                        UPDATE gateway_instances
+                        SET is_default = 1, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, fallback_row["id"]),
+                    )
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO gateway_instances (
+                      id, instance_key, provider, display_name, is_default, is_active, mode,
+                      risk_level, requires_approval, config_json, created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, 1, 0, 'webhook', 'high', 0, '{}', ?, ?, NULL)
+                    """,
+                    (str(uuid4()), provider, provider, self._default_gateway_display_name(provider), now, now),
+                )
+
+    def _migrate_legacy_gateway_configs_to_instances(self) -> None:
+        with self._connect() as conn:
+            has_instance = conn.execute(
+                "SELECT 1 FROM gateway_instances WHERE deleted_at IS NULL LIMIT 1"
+            ).fetchone()
+            if has_instance:
+                return
+
+            rows = conn.execute(
+                """
+                SELECT * FROM gateway_configs
+                WHERE deleted_at IS NULL
+                ORDER BY provider ASC, updated_at DESC
+                """
+            ).fetchall()
+            if not rows:
+                return
+
+            seen_provider: set[str] = set()
+            for row in rows:
+                provider = str(row["provider"])
+                display_name = str(row["display_name"] or self._default_gateway_display_name(provider))
+                instance_key = provider if provider not in seen_provider else f"{provider}-{uuid4().hex[:6]}"
+                is_default = 1 if provider not in seen_provider else 0
+                seen_provider.add(provider)
+                conn.execute(
+                    """
+                    INSERT INTO gateway_instances (
+                      id, instance_key, provider, display_name, is_default, is_active, mode,
+                      risk_level, requires_approval, config_json, created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    """,
+                    (
+                        str(row["id"] or uuid4()),
+                        instance_key,
+                        provider,
+                        display_name,
+                        is_default,
+                        int(bool(row["is_active"])),
+                        str(row["mode"] or "webhook"),
+                        str(row["risk_level"] or "high"),
+                        int(bool(row["requires_approval"])),
+                        row["config_json"] if row["config_json"] is not None else "{}",
+                        str(row["created_at"] or _now_iso()),
+                        str(row["updated_at"] or _now_iso()),
+                    ),
                 )
 
     def _tool_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -357,11 +473,13 @@ class RuntimeConfigStore:
             "updated_at": row["updated_at"],
         }
 
-    def _gateway_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+    def _gateway_instance_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
             "id": row["id"],
+            "instance_key": row["instance_key"],
             "provider": row["provider"],
             "display_name": row["display_name"],
+            "is_default": bool(row["is_default"]),
             "is_active": bool(row["is_active"]),
             "mode": row["mode"],
             "risk_level": row["risk_level"],
@@ -377,62 +495,197 @@ class RuntimeConfigStore:
             raise ValueError(f"unsupported_gateway_provider:{value}")
         return value
 
-    def list_gateway_configs(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM gateway_configs
-                WHERE deleted_at IS NULL
-                ORDER BY provider ASC
-                """
-            ).fetchall()
-        found = {str(row["provider"]): row for row in rows}
-        data: list[dict[str, Any]] = []
-        for provider in SUPPORTED_GATEWAY_PROVIDERS:
-            row = found.get(provider)
-            if row is None:
-                continue
-            data.append(self._gateway_row_to_dict(row))
-        return data
+    def _legacy_gateway_from_instance(self, item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": item["id"],
+            "provider": item["provider"],
+            "display_name": item["display_name"],
+            "is_active": item["is_active"],
+            "mode": item["mode"],
+            "risk_level": item["risk_level"],
+            "requires_approval": item["requires_approval"],
+            "config": item["config"],
+            "created_at": item["created_at"],
+            "updated_at": item["updated_at"],
+        }
 
-    def get_gateway_config(self, provider: str) -> dict[str, Any] | None:
+    def _get_default_gateway_instance(self, provider: str) -> dict[str, Any] | None:
         normalized = self._normalize_gateway_provider(provider)
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM gateway_configs
-                WHERE provider = ? AND deleted_at IS NULL
+                SELECT * FROM gateway_instances
+                WHERE provider = ? AND is_default = 1 AND deleted_at IS NULL
+                ORDER BY updated_at DESC
+                LIMIT 1
                 """,
                 (normalized,),
             ).fetchone()
-        return self._gateway_row_to_dict(row) if row else None
+            if row:
+                return self._gateway_instance_row_to_dict(row)
+            fallback = conn.execute(
+                """
+                SELECT * FROM gateway_instances
+                WHERE provider = ? AND deleted_at IS NULL
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                """,
+                (normalized,),
+            ).fetchone()
+            return self._gateway_instance_row_to_dict(fallback) if fallback else None
 
-    def upsert_gateway_config(self, provider: str, patch: dict[str, Any]) -> dict[str, Any]:
+    def list_gateway_instances(self, *, provider: str | None = None) -> list[dict[str, Any]]:
+        args: list[Any] = []
+        where = "deleted_at IS NULL"
+        if provider:
+            normalized = self._normalize_gateway_provider(provider)
+            where += " AND provider = ?"
+            args.append(normalized)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM gateway_instances
+                WHERE {where}
+                ORDER BY provider ASC, is_default DESC, updated_at DESC
+                """,
+                tuple(args),
+            ).fetchall()
+        return [self._gateway_instance_row_to_dict(row) for row in rows]
+
+    def get_gateway_instance(self, instance_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM gateway_instances
+                WHERE id = ? AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (instance_id,),
+            ).fetchone()
+        return self._gateway_instance_row_to_dict(row) if row else None
+
+    def _ensure_provider_default_instance(self, provider: str) -> None:
         normalized = self._normalize_gateway_provider(provider)
-        existing = self.get_gateway_config(normalized)
-        if not existing:
-            self._seed_gateway_configs()
-            existing = self.get_gateway_config(normalized)
+        now = _now_iso()
+        with self._connect() as conn:
+            default_row = conn.execute(
+                """
+                SELECT id FROM gateway_instances
+                WHERE provider = ? AND is_default = 1 AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (normalized,),
+            ).fetchone()
+            if default_row:
+                return
+            fallback_row = conn.execute(
+                """
+                SELECT id FROM gateway_instances
+                WHERE provider = ? AND deleted_at IS NULL
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                """,
+                (normalized,),
+            ).fetchone()
+            if fallback_row:
+                conn.execute(
+                    """
+                    UPDATE gateway_instances
+                    SET is_default = 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, fallback_row["id"]),
+                )
+                return
+            conn.execute(
+                """
+                INSERT INTO gateway_instances (
+                  id, instance_key, provider, display_name, is_default, is_active, mode,
+                  risk_level, requires_approval, config_json, created_at, updated_at, deleted_at
+                ) VALUES (?, ?, ?, ?, 1, 0, 'webhook', 'high', 0, '{}', ?, ?, NULL)
+                """,
+                (str(uuid4()), normalized, normalized, self._default_gateway_display_name(normalized), now, now),
+            )
 
-        if not existing:
-            raise ValueError(f"gateway_not_found:{normalized}")
+    def create_gateway_instance(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_gateway_provider(str(payload.get("provider") or ""))
+        display_name = str(payload.get("display_name") or payload.get("displayName") or "").strip()
+        if not display_name:
+            display_name = self._default_gateway_display_name(normalized)
+        is_default = bool(payload.get("is_default", payload.get("isDefault", False)))
+        now = _now_iso()
+        instance_id = str(payload.get("id") or uuid4())
+        instance_key = str(payload.get("instance_key") or payload.get("instanceKey") or "").strip() or f"{normalized}-{uuid4().hex[:10]}"
+        config = payload.get("config")
+        config_map = config if isinstance(config, dict) else {}
+        with self._connect() as conn:
+            if is_default:
+                conn.execute(
+                    """
+                    UPDATE gateway_instances
+                    SET is_default = 0, updated_at = ?
+                    WHERE provider = ? AND deleted_at IS NULL
+                    """,
+                    (now, normalized),
+                )
+            conn.execute(
+                """
+                INSERT INTO gateway_instances (
+                  id, instance_key, provider, display_name, is_default, is_active, mode,
+                  risk_level, requires_approval, config_json, created_at, updated_at, deleted_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    instance_id,
+                    instance_key,
+                    normalized,
+                    display_name,
+                    1 if is_default else 0,
+                    1 if bool(payload.get("is_active", payload.get("isActive", False))) else 0,
+                    str(payload.get("mode") or "webhook"),
+                    str(payload.get("risk_level", payload.get("riskLevel", "high"))),
+                    1 if bool(payload.get("requires_approval", payload.get("requiresApproval", False))) else 0,
+                    _json_dumps(config_map),
+                    now,
+                    now,
+                ),
+            )
+        self._ensure_provider_default_instance(normalized)
+        item = self.get_gateway_instance(instance_id)
+        if not item:
+            raise ValueError("gateway_instance_create_failed")
+        return item
 
+    def update_gateway_instance(self, instance_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        existing = self.get_gateway_instance(instance_id)
+        if not existing:
+            return None
         now = _now_iso()
         merged_config = existing.get("config") or {}
         if isinstance(patch.get("config"), dict):
             merged_config = {**merged_config, **patch["config"]}
-
         clear_fields = patch.get("clear_fields")
         if isinstance(clear_fields, list):
             for key in clear_fields:
                 if isinstance(key, str) and key in merged_config:
                     merged_config.pop(key, None)
 
+        set_default = patch.get("is_default")
         with self._connect() as conn:
+            if set_default is True:
+                conn.execute(
+                    """
+                    UPDATE gateway_instances
+                    SET is_default = 0, updated_at = ?
+                    WHERE provider = ? AND deleted_at IS NULL
+                    """,
+                    (now, existing["provider"]),
+                )
             conn.execute(
                 """
-                UPDATE gateway_configs
+                UPDATE gateway_instances
                 SET display_name = ?,
+                    is_default = ?,
                     is_active = ?,
                     mode = ?,
                     risk_level = ?,
@@ -440,10 +693,11 @@ class RuntimeConfigStore:
                     config_json = ?,
                     updated_at = ?,
                     deleted_at = NULL
-                WHERE provider = ?
+                WHERE id = ?
                 """,
                 (
                     patch.get("display_name", existing.get("display_name")),
+                    1 if patch.get("is_default", existing.get("is_default", False)) else 0,
                     1 if patch.get("is_active", existing.get("is_active", False)) else 0,
                     patch.get("mode", existing.get("mode", "webhook")),
                     patch.get("risk_level", existing.get("risk_level", "high")),
@@ -455,12 +709,59 @@ class RuntimeConfigStore:
                     else 0,
                     _json_dumps(merged_config),
                     now,
-                    normalized,
+                    instance_id,
                 ),
             )
+        self._ensure_provider_default_instance(existing["provider"])
+        return self.get_gateway_instance(instance_id)
 
-        updated = self.get_gateway_config(normalized)
-        return updated or existing
+    def soft_delete_gateway_instance(self, instance_id: str) -> bool:
+        existing = self.get_gateway_instance(instance_id)
+        if not existing:
+            return False
+        now = _now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE gateway_instances
+                SET deleted_at = ?, is_active = 0, is_default = 0, updated_at = ?
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (now, now, instance_id),
+            )
+        self._ensure_provider_default_instance(existing["provider"])
+        return cur.rowcount > 0
+
+    def list_gateway_configs(self) -> list[dict[str, Any]]:
+        data: list[dict[str, Any]] = []
+        for provider in SUPPORTED_GATEWAY_PROVIDERS:
+            item = self._get_default_gateway_instance(provider)
+            if item is None:
+                continue
+            data.append(self._legacy_gateway_from_instance(item))
+        return data
+
+    def get_gateway_config(self, provider: str) -> dict[str, Any] | None:
+        normalized = self._normalize_gateway_provider(provider)
+        item = self._get_default_gateway_instance(normalized)
+        return self._legacy_gateway_from_instance(item) if item else None
+
+    def upsert_gateway_config(self, provider: str, patch: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_gateway_provider(provider)
+        existing = self.get_gateway_config(normalized)
+        if not existing:
+            self._seed_gateway_instances()
+            existing = self.get_gateway_config(normalized)
+
+        if not existing:
+            raise ValueError(f"gateway_not_found:{normalized}")
+        default_item = self._get_default_gateway_instance(normalized)
+        if not default_item:
+            raise ValueError(f"gateway_not_found:{normalized}")
+        updated = self.update_gateway_instance(default_item["id"], patch)
+        if not updated:
+            raise ValueError(f"gateway_not_found:{normalized}")
+        return self._legacy_gateway_from_instance(updated)
 
     def create_mcp_server(self, payload: dict[str, Any]) -> dict[str, Any]:
         server_id = str(payload.get("id") or uuid4())

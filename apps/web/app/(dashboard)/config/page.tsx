@@ -147,8 +147,10 @@ interface GatewayContextPolicy {
 
 interface GatewayItem {
   id: string
+  instanceKey?: string
   provider: GatewayProvider
   displayName: string
+  isDefault?: boolean
   isActive: boolean
   mode: string
   riskLevel: RiskLevel
@@ -162,7 +164,10 @@ interface GatewayItem {
 }
 
 type GatewayForm = {
+  id?: string
+  instanceKey: string
   provider: GatewayProvider
+  isDefault: boolean
   displayName: string
   isActive: boolean
   verifyToken: string
@@ -331,9 +336,12 @@ export default function ConfigPage() {
   const [gateways, setGateways] = useState<GatewayItem[]>([])
   const [showGatewayModal, setShowGatewayModal] = useState(false)
   const [savingGateway, setSavingGateway] = useState(false)
-  const [testingGateway, setTestingGateway] = useState<GatewayProvider | null>(null)
+  const [testingGateway, setTestingGateway] = useState<string | null>(null)
   const [gatewayForm, setGatewayForm] = useState<GatewayForm>({
+    id: undefined,
+    instanceKey: '',
     provider: 'feishu',
+    isDefault: false,
     displayName: '',
     isActive: false,
     verifyToken: '',
@@ -496,7 +504,7 @@ export default function ConfigPage() {
   const loadGateways = useCallback(async () => {
     setSectionLoadingFlag('gateways', true)
     try {
-      const response = await apiClient.get<ApiResponse<GatewayItem[]>>('/gateways')
+      const response = await apiClient.get<ApiResponse<GatewayItem[]>>('/gateways/instances')
       if (!response.success) {
         throw new Error(t('config.errors.gatewaysLoad'))
       }
@@ -871,7 +879,10 @@ export default function ConfigPage() {
       ? (addressingPolicyRaw?.commandPrefixes || []).map((item) => String(item)).join(',')
       : '/ask,/run,/approve,/reject'
     setGatewayForm({
+      id: gateway.id,
+      instanceKey: gateway.instanceKey || '',
       provider: gateway.provider,
+      isDefault: gateway.isDefault === true,
       displayName: gateway.displayName || gateway.provider,
       isActive: gateway.isActive,
       verifyToken: '',
@@ -898,6 +909,40 @@ export default function ConfigPage() {
     setShowGatewayModal(true)
   }
 
+  const openCreateGatewayDialog = (provider: GatewayProvider) => {
+    const defaultDisplayName = provider === 'telegram' ? 'Telegram' : 'Feishu'
+    const defaultAddressingMode: GatewayAddressingMode = provider === 'telegram' ? 'all_messages' : 'mention_only'
+    setGatewayForm({
+      id: undefined,
+      instanceKey: '',
+      provider,
+      isDefault: false,
+      displayName: defaultDisplayName,
+      isActive: false,
+      verifyToken: '',
+      clearVerifyToken: false,
+      webhookUrl: '',
+      botToken: '',
+      clearBotToken: false,
+      webhookSecret: '',
+      clearWebhookSecret: false,
+      defaultChatId: '',
+      allowedChatIds: '',
+      notifyEventTypes: '',
+      addressingMode: defaultAddressingMode,
+      allowReplyToBot: true,
+      executeOnUnaddressed: false,
+      commandPrefixes: '/ask,/run,/approve,/reject',
+      sessionContinuationWindowSec: '300',
+      proactiveMode: 'silent',
+      minRiskToNotify: 'high',
+      contextTtlDays: '30',
+      contextMaxRecentMessages: '200',
+      contextSummarizeEveryNMessages: '50',
+    })
+    setShowGatewayModal(true)
+  }
+
   const saveGatewayConfig = async () => {
     const parseCommaList = (value: string): string[] =>
       value
@@ -912,6 +957,7 @@ export default function ConfigPage() {
     const isTelegram = gatewayForm.provider === 'telegram'
     const payload: Record<string, unknown> = {
       displayName: gatewayForm.displayName.trim() || gatewayForm.provider,
+      isDefault: gatewayForm.isDefault,
       isActive: gatewayForm.isActive,
       config: {
         ...(isTelegram
@@ -962,7 +1008,15 @@ export default function ConfigPage() {
     try {
       setSavingGateway(true)
       setError(null)
-      await apiClient.put(`/gateways/${gatewayForm.provider}`, payload)
+      if (gatewayForm.id) {
+        await apiClient.put(`/gateways/instances/${gatewayForm.id}`, payload)
+      } else {
+        await apiClient.post('/gateways/instances', {
+          provider: gatewayForm.provider,
+          instanceKey: gatewayForm.instanceKey.trim() || undefined,
+          ...payload,
+        })
+      }
       setShowGatewayModal(false)
       await loadGateways()
     } catch (err) {
@@ -974,17 +1028,28 @@ export default function ConfigPage() {
 
   const testGateway = async (gateway: GatewayItem) => {
     try {
-      setTestingGateway(gateway.provider)
+      setTestingGateway(gateway.id)
       setError(null)
       const isTelegram = gateway.provider === 'telegram'
       const payload = isTelegram
         ? { text: 'Semibot gateway test' }
         : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
-      await apiClient.post(`/gateways/${gateway.provider}/test`, payload)
+      await apiClient.post(`/gateways/instances/${gateway.id}/test`, payload)
     } catch (err) {
       setError(getErrorMessage(err, t('config.errors.testGateway')))
     } finally {
       setTestingGateway(null)
+    }
+  }
+
+  const removeGateway = async (gateway: GatewayItem) => {
+    if (!window.confirm(t('config.confirm.deleteGateway'))) return
+    try {
+      setError(null)
+      await apiClient.delete(`/gateways/instances/${gateway.id}`)
+      await loadGateways()
+    } catch (err) {
+      setError(getErrorMessage(err, t('config.errors.deleteGateway')))
     }
   }
 
@@ -1290,6 +1355,22 @@ export default function ConfigPage() {
                       <Button
                         size="xs"
                         variant="tertiary"
+                        leftIcon={<Plus size={13} />}
+                        onClick={() => openCreateGatewayDialog('telegram')}
+                      >
+                        {t('config.gateways.newTelegram')}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="tertiary"
+                        leftIcon={<Plus size={13} />}
+                        onClick={() => openCreateGatewayDialog('feishu')}
+                      >
+                        {t('config.gateways.newFeishu')}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="tertiary"
                         leftIcon={<RefreshCw size={13} className={sectionLoading.gateways ? 'animate-spin' : ''} />}
                         onClick={loadGateways}
                       >
@@ -1311,16 +1392,19 @@ export default function ConfigPage() {
                       </p>
                     ) : (
                       gateways.map((item) => (
-                        <div key={item.provider} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
+                        <div key={item.id} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
                           <div className="flex items-start justify-between gap-4">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-text-primary">{item.displayName}</p>
                               <p className="mt-1 text-xs text-text-tertiary">
-                                {item.provider} · status: {item.status} · {t('config.gateways.updatedAt')}:{' '}
+                                {item.provider}
+                                {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
+                                {t('config.gateways.updatedAt')}:{' '}
                                 {formatDate(item.updatedAt, locale, t)}
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
+                              {item.isDefault && <Badge variant="outline">{t('config.gateways.defaultTag')}</Badge>}
                               <Badge variant={item.isActive ? 'success' : 'outline'}>
                                 {item.isActive ? t('config.status.enabled') : t('config.status.disabled')}
                               </Badge>
@@ -1336,10 +1420,20 @@ export default function ConfigPage() {
                                 size="xs"
                                 variant="tertiary"
                                 onClick={() => testGateway(item)}
-                                disabled={testingGateway === item.provider}
+                                disabled={testingGateway === item.id}
                               >
                                 {t('config.gateways.test')}
                               </Button>
+                              {!item.isDefault && (
+                                <Button
+                                  size="xs"
+                                  variant="tertiary"
+                                  leftIcon={<Trash2 size={12} />}
+                                  onClick={() => removeGateway(item)}
+                                >
+                                  {t('common.delete')}
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1738,11 +1832,26 @@ export default function ConfigPage() {
         }
       >
         <div className="space-y-3">
+          {!gatewayForm.id && (
+            <Input
+              placeholder={t('config.modals.gateway.instanceKeyPlaceholder')}
+              value={gatewayForm.instanceKey}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, instanceKey: e.target.value }))}
+            />
+          )}
           <Input
             placeholder={t('config.modals.gateway.displayNamePlaceholder')}
             value={gatewayForm.displayName}
             onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
           />
+          <label className="flex items-center gap-2 text-sm text-text-secondary">
+            <input
+              type="checkbox"
+              checked={gatewayForm.isDefault}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, isDefault: e.target.checked }))}
+            />
+            {t('config.modals.gateway.setDefault')}
+          </label>
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"

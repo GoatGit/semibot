@@ -207,6 +207,7 @@
       "updateToolConfig": "Failed to update tool config",
       "updateToolStatus": "Failed to update tool status",
       "updateGateway": "Failed to update gateway config",
+      "deleteGateway": "Failed to delete gateway instance",
       "testGateway": "Failed to test gateway connectivity",
       "createApiKey": "Failed to create API key",
       "deleteApiKey": "Failed to delete API key",
@@ -220,7 +221,8 @@
     },
     "confirm": {
       "deleteApiKey": "Delete this API key? This action cannot be undone.",
-      "deleteWebhook": "Delete this webhook? This action cannot be undone."
+      "deleteWebhook": "Delete this webhook? This action cannot be undone.",
+      "deleteGateway": "Delete this gateway instance? This action cannot be undone."
     },
     "llm": {
       "routingDefaults": "Model routing defaults",
@@ -246,6 +248,9 @@
     "gateways": {
       "title": "Gateways",
       "activeCount": "Active {count}",
+      "newTelegram": "New Telegram",
+      "newFeishu": "New Feishu",
+      "defaultTag": "Default",
       "loading": "Loading gateways...",
       "empty": "No gateways",
       "updatedAt": "Updated at",
@@ -306,7 +311,9 @@
       },
       "gateway": {
         "title": "Gateway configuration",
+        "instanceKeyPlaceholder": "instanceKey (optional, should be unique)",
         "displayNamePlaceholder": "Display name",
+        "setDefault": "Set as default instance",
         "enabled": "Enable this gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",
         "addressing": {

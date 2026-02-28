@@ -88,6 +88,10 @@ class GatewayProviderTestRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("chat_id", "chatId"),
     )
+    instance_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("instance_id", "instanceId"),
+    )
 
     def to_manager_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {}
@@ -97,6 +101,7 @@ class GatewayProviderTestRequest(BaseModel):
             "channel": "channel",
             "text": "text",
             "chat_id": "chat_id",
+            "instance_id": "instance_id",
         }
         for field_name in self.model_fields_set:
             key = mapping.get(field_name)
@@ -105,4 +110,21 @@ class GatewayProviderTestRequest(BaseModel):
             payload[key] = getattr(self, field_name)
         if self.model_extra:
             payload.update(self.model_extra)
+        return payload
+
+
+class GatewayInstanceCreateRequest(GatewayConfigPatchRequest):
+    provider: str = Field(
+        validation_alias=AliasChoices("provider"),
+    )
+    instance_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("instance_key", "instanceKey"),
+    )
+
+    def to_manager_payload(self) -> dict[str, Any]:
+        payload = super().to_manager_payload()
+        payload["provider"] = self.provider
+        if "instance_key" in self.model_fields_set:
+            payload["instance_key"] = self.instance_key
         return payload

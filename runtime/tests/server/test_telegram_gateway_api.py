@@ -329,6 +329,101 @@ async def test_telegram_allowed_chat_ids_guard(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_telegram_multi_instance_routing_by_webhook_secret(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        task = str(kwargs.get("task") or "")
+        return {
+            "status": "success",
+            "task": task,
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": f"done: {task}",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_a = await client.post(
+            "/v1/config/gateway-instances",
+            json={
+                "provider": "telegram",
+                "instanceKey": "tg-a",
+                "displayName": "Telegram A",
+                "isActive": True,
+                "config": {
+                    "botToken": "111111:token_a",
+                    "webhookSecret": "sec_a",
+                    "defaultChatId": "-100001",
+                },
+            },
+        )
+        assert create_a.status_code == 201
+        create_b = await client.post(
+            "/v1/config/gateway-instances",
+            json={
+                "provider": "telegram",
+                "instanceKey": "tg-b",
+                "displayName": "Telegram B",
+                "isActive": True,
+                "config": {
+                    "botToken": "222222:token_b",
+                    "webhookSecret": "sec_b",
+                    "defaultChatId": "-100002",
+                },
+            },
+        )
+        assert create_b.status_code == 201
+
+        denied = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={"update_id": 81, "message": {"message_id": 1, "chat": {"id": -100001}, "text": "hello"}},
+        )
+        assert denied.status_code == 409
+
+        accepted_a = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 82,
+                "message": {"message_id": 2, "chat": {"id": -100001}, "text": "hello from a"},
+            },
+            headers={"x-telegram-bot-api-secret-token": "sec_a"},
+        )
+        assert accepted_a.status_code == 200
+        assert accepted_a.json()["accepted"] is True
+
+        accepted_b = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 83,
+                "message": {"message_id": 3, "chat": {"id": -100002}, "text": "hello from b"},
+            },
+            headers={"x-telegram-bot-api-secret-token": "sec_b"},
+        )
+        assert accepted_b.status_code == 200
+        assert accepted_b.json()["accepted"] is True
+        await asyncio.sleep(0.05)
+        assert len(sent) >= 2
+        tokens = {item["token"] for item in sent}
+        assert "111111:token_a" in tokens
+        assert "222222:token_b" in tokens
+
+
+@pytest.mark.asyncio
 async def test_gateway_context_endpoints_and_mention_only_policy(tmp_path: Path):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"

@@ -14,6 +14,7 @@
 - 交互入口策略：`CLI` 作为主入口，`Web UI` 作为可选管理面板，`TUI` 暂不优先
 - Web UI 技术路线：优先复用现有 `Next.js + React + Tailwind`，不在当前阶段切换到新前端框架
 - Gateway 配置（飞书/Telegram）统一持久化到 runtime SQLite（`~/.semibot/semibot.db`）
+- Gateway 配置模型升级为 `gateway_instances`：同 provider 支持多实例（多 bot + 多 chat），provider 级接口保留兼容
 - Gateway 会话治理采用统一 `Gateway Context Service`：runtime 维持单层 session，外部聊天上下文在 Gateway 侧维护，执行结果仅最小回写主会话
 
 ## 待定项（需要后续实现时确认）

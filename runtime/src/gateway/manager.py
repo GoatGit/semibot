@@ -80,7 +80,21 @@ class GatewayManager:
         config = item.get("config")
         return config if isinstance(config, dict) else {}
 
+    def list_provider_instances(self, provider: str, *, active_only: bool = False) -> list[dict[str, Any]]:
+        try:
+            items = self.config_store.list_gateway_instances(provider=provider)
+        except ValueError:
+            return []
+        if not active_only:
+            return items
+        return [item for item in items if bool(item.get("is_active"))]
+
+    def _get_instance(self, instance_id: str) -> dict[str, Any] | None:
+        return self.config_store.get_gateway_instance(instance_id)
+
     def provider_active(self, provider: str) -> bool:
+        if self.list_provider_instances(provider, active_only=True):
+            return True
         item = self._get_gateway(provider)
         if item and item.get("is_active"):
             return True
@@ -98,8 +112,9 @@ class GatewayManager:
         prefix = value.split(":", 1)[0].strip()
         return prefix or None
 
-    def build_feishu_notifier(self) -> FeishuNotifier | None:
-        cfg = self.provider_config("feishu")
+    def build_feishu_notifier(self, instance: dict[str, Any] | None = None) -> FeishuNotifier | None:
+        cfg = instance.get("config") if isinstance(instance, dict) else self.provider_config("feishu")
+        cfg = cfg if isinstance(cfg, dict) else {}
         webhook_url = str(cfg.get("webhookUrl") or "").strip() or self.feishu_webhook_url
         webhook_channels = cfg.get("webhookChannels")
         webhook_urls = (
@@ -127,8 +142,9 @@ class GatewayManager:
             send_fn=self.feishu_send_fn,
         )
 
-    def build_telegram_notifier(self) -> TelegramNotifier | None:
-        cfg = self.provider_config("telegram")
+    def build_telegram_notifier(self, instance: dict[str, Any] | None = None) -> TelegramNotifier | None:
+        cfg = instance.get("config") if isinstance(instance, dict) else self.provider_config("telegram")
+        cfg = cfg if isinstance(cfg, dict) else {}
         token = str(cfg.get("botToken") or "").strip() or self.telegram_bot_token
         default_chat_id = str(cfg.get("defaultChatId") or "").strip() or self.telegram_default_chat_id
         if not token:
@@ -153,20 +169,36 @@ class GatewayManager:
         )
 
     async def handle_runtime_notify_payload(self, payload: dict[str, Any]) -> None:
-        feishu_notifier = self.build_feishu_notifier()
-        if feishu_notifier and self.provider_active("feishu"):
-            await feishu_notifier.send_notify_payload(payload)
-        telegram_notifier = self.build_telegram_notifier()
-        if telegram_notifier and self.provider_active("telegram"):
-            await telegram_notifier.send_notify_payload(payload)
+        feishu_items = self.list_provider_instances("feishu", active_only=True)
+        if not feishu_items and self.provider_active("feishu"):
+            feishu_items = [{}]
+        for item in feishu_items:
+            feishu_notifier = self.build_feishu_notifier(item)
+            if feishu_notifier:
+                await feishu_notifier.send_notify_payload(payload)
+        telegram_items = self.list_provider_instances("telegram", active_only=True)
+        if not telegram_items and self.provider_active("telegram"):
+            telegram_items = [{}]
+        for item in telegram_items:
+            telegram_notifier = self.build_telegram_notifier(item)
+            if telegram_notifier:
+                await telegram_notifier.send_notify_payload(payload)
 
     async def handle_engine_event(self, event: Event) -> None:
-        feishu_notifier = self.build_feishu_notifier()
-        if feishu_notifier and self.provider_active("feishu"):
-            await feishu_notifier.handle_event(event)
-        telegram_notifier = self.build_telegram_notifier()
-        if telegram_notifier and self.provider_active("telegram"):
-            await telegram_notifier.handle_event(event)
+        feishu_items = self.list_provider_instances("feishu", active_only=True)
+        if not feishu_items and self.provider_active("feishu"):
+            feishu_items = [{}]
+        for item in feishu_items:
+            feishu_notifier = self.build_feishu_notifier(item)
+            if feishu_notifier:
+                await feishu_notifier.handle_event(event)
+        telegram_items = self.list_provider_instances("telegram", active_only=True)
+        if not telegram_items and self.provider_active("telegram"):
+            telegram_items = [{}]
+        for item in telegram_items:
+            telegram_notifier = self.build_telegram_notifier(item)
+            if telegram_notifier:
+                await telegram_notifier.handle_event(event)
 
     def _mask_gateway_config(self, provider: str, config: dict[str, Any]) -> dict[str, Any]:
         masked = dict(config)
@@ -218,8 +250,10 @@ class GatewayManager:
         is_active = bool(item.get("is_active"))
         return {
             "id": item.get("id"),
+            "instanceKey": item.get("instance_key"),
             "provider": provider,
             "displayName": item.get("display_name") or provider,
+            "isDefault": bool(item.get("is_default")),
             "isActive": is_active,
             "mode": item.get("mode") or "webhook",
             "riskLevel": item.get("risk_level") or "high",
@@ -232,20 +266,7 @@ class GatewayManager:
             "updatedAt": item.get("updated_at"),
         }
 
-    def list_gateway_configs(self) -> list[dict[str, Any]]:
-        items = self.config_store.list_gateway_configs()
-        return [self.serialize_gateway_item(item) for item in items]
-
-    def get_gateway_config(self, provider: str) -> dict[str, Any]:
-        try:
-            item = self.config_store.get_gateway_config(provider)
-        except ValueError:
-            raise GatewayManagerError("unsupported_gateway_provider") from None
-        if not item:
-            raise GatewayManagerError("gateway_not_found", status_code=404)
-        return self.serialize_gateway_item(item)
-
-    def upsert_gateway_config(self, provider: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _payload_to_gateway_patch(self, payload: dict[str, Any]) -> dict[str, Any]:
         patch: dict[str, Any] = {}
         if "displayName" in payload:
             patch["display_name"] = payload.get("displayName")
@@ -253,6 +274,8 @@ class GatewayManager:
             patch["display_name"] = payload.get("display_name")
         if "isActive" in payload or "is_active" in payload:
             patch["is_active"] = self._to_bool(payload.get("isActive", payload.get("is_active")), False)
+        if "isDefault" in payload or "is_default" in payload:
+            patch["is_default"] = self._to_bool(payload.get("isDefault", payload.get("is_default")), False)
         if "mode" in payload:
             patch["mode"] = payload.get("mode")
         if "riskLevel" in payload or "risk_level" in payload:
@@ -277,6 +300,68 @@ class GatewayManager:
         clear_fields = payload.get("clearFields", payload.get("clear_fields"))
         if isinstance(clear_fields, list):
             patch["clear_fields"] = [str(item) for item in clear_fields if isinstance(item, str)]
+        return patch
+
+    def list_gateway_configs(self) -> list[dict[str, Any]]:
+        items = self.config_store.list_gateway_configs()
+        return [self.serialize_gateway_item(item) for item in items]
+
+    def list_gateway_instances(self, provider: str | None = None) -> list[dict[str, Any]]:
+        try:
+            items = self.config_store.list_gateway_instances(provider=provider)
+        except ValueError:
+            raise GatewayManagerError("unsupported_gateway_provider") from None
+        return [self.serialize_gateway_item(item) for item in items]
+
+    def get_gateway_instance(self, instance_id: str) -> dict[str, Any]:
+        item = self._get_instance(instance_id)
+        if not item:
+            raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+        return self.serialize_gateway_item(item)
+
+    def create_gateway_instance(self, payload: dict[str, Any]) -> dict[str, Any]:
+        provider = payload.get("provider")
+        if not isinstance(provider, str) or not provider.strip():
+            raise GatewayManagerError("provider_required")
+        patch = self._payload_to_gateway_patch(payload)
+        patch["provider"] = provider
+        if "instanceKey" in payload:
+            patch["instance_key"] = payload.get("instanceKey")
+        if "instance_key" in payload:
+            patch["instance_key"] = payload.get("instance_key")
+        try:
+            item = self.config_store.create_gateway_instance(patch)
+        except ValueError as exc:
+            raise GatewayManagerError(str(exc)) from exc
+        return self.serialize_gateway_item(item)
+
+    def update_gateway_instance(self, instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        patch = self._payload_to_gateway_patch(payload)
+        try:
+            updated = self.config_store.update_gateway_instance(instance_id, patch)
+        except ValueError:
+            raise GatewayManagerError("unsupported_gateway_provider") from None
+        if not updated:
+            raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+        return self.serialize_gateway_item(updated)
+
+    def delete_gateway_instance(self, instance_id: str) -> dict[str, Any]:
+        deleted = self.config_store.soft_delete_gateway_instance(instance_id)
+        if not deleted:
+            raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+        return {"deleted": True}
+
+    def get_gateway_config(self, provider: str) -> dict[str, Any]:
+        try:
+            item = self.config_store.get_gateway_config(provider)
+        except ValueError:
+            raise GatewayManagerError("unsupported_gateway_provider") from None
+        if not item:
+            raise GatewayManagerError("gateway_not_found", status_code=404)
+        return self.serialize_gateway_item(item)
+
+    def upsert_gateway_config(self, provider: str, payload: dict[str, Any]) -> dict[str, Any]:
+        patch = self._payload_to_gateway_patch(payload)
 
         try:
             item = self.config_store.upsert_gateway_config(provider, patch)
@@ -285,8 +370,16 @@ class GatewayManager:
         return self.serialize_gateway_item(item)
 
     async def test_gateway(self, provider: str, payload: dict[str, Any]) -> dict[str, Any]:
+        instance_id = str(payload.get("instance_id") or payload.get("instanceId") or "").strip() or None
+        target_instance: dict[str, Any] | None = None
+        if instance_id:
+            target_instance = self._get_instance(instance_id)
+            if not target_instance:
+                raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+            if str(target_instance.get("provider")) != provider:
+                raise GatewayManagerError("gateway_instance_provider_mismatch")
         if provider == "feishu":
-            notifier = self.build_feishu_notifier()
+            notifier = self.build_feishu_notifier(target_instance)
             if not notifier:
                 raise GatewayManagerError("feishu_not_configured")
             sent = await notifier.send_markdown(
@@ -296,7 +389,7 @@ class GatewayManager:
             )
             return {"sent": sent}
         if provider == "telegram":
-            notifier = self.build_telegram_notifier()
+            notifier = self.build_telegram_notifier(target_instance)
             if not notifier:
                 raise GatewayManagerError("telegram_not_configured")
             sent = await notifier.send_message(
@@ -454,20 +547,111 @@ class GatewayManager:
             "event_id": approval_action_event.event_id,
         }
 
+    @staticmethod
+    def _query_value(
+        query_params: Mapping[str, str] | None,
+        *keys: str,
+    ) -> str | None:
+        if not query_params:
+            return None
+        for key in keys:
+            value = str(query_params.get(key, "")).strip()
+            if value:
+                return value
+        return None
+
+    def _resolve_feishu_instance_for_ingest(
+        self,
+        payload: dict[str, Any],
+        query_params: Mapping[str, str] | None,
+    ) -> dict[str, Any] | None:
+        instance_id = self._query_value(query_params, "instanceId", "instance_id")
+        if instance_id:
+            item = self._get_instance(instance_id)
+            if item and str(item.get("provider")) == "feishu":
+                return item
+            raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+
+        active_items = self.list_provider_instances("feishu", active_only=True)
+        if not active_items:
+            return None
+
+        token_in_payload = ""
+        header = payload.get("header")
+        if isinstance(header, dict):
+            token_in_payload = str(header.get("token") or "").strip()
+        if not token_in_payload:
+            token_in_payload = str(payload.get("token") or "").strip()
+
+        matched: list[dict[str, Any]] = []
+        if token_in_payload:
+            for item in active_items:
+                cfg = item.get("config")
+                cfg_map = cfg if isinstance(cfg, dict) else {}
+                verify_token = str(cfg_map.get("verifyToken") or "").strip()
+                if verify_token and verify_token == token_in_payload:
+                    matched.append(item)
+            if len(matched) == 1:
+                return matched[0]
+            if len(matched) > 1:
+                raise GatewayManagerError("ambiguous_feishu_instance", status_code=409)
+
+        if len(active_items) == 1:
+            return active_items[0]
+        return None
+
+    def _resolve_telegram_instance_for_ingest(
+        self,
+        *,
+        headers: Mapping[str, str] | None,
+        query_params: Mapping[str, str] | None,
+    ) -> dict[str, Any] | None:
+        instance_id = self._query_value(query_params, "instanceId", "instance_id")
+        if instance_id:
+            item = self._get_instance(instance_id)
+            if item and str(item.get("provider")) == "telegram":
+                return item
+            raise GatewayManagerError("gateway_instance_not_found", status_code=404)
+
+        active_items = self.list_provider_instances("telegram", active_only=True)
+        if not active_items:
+            return None
+
+        secret = str(headers.get("x-telegram-bot-api-secret-token", "")).strip() if headers else ""
+        if secret:
+            matched: list[dict[str, Any]] = []
+            for item in active_items:
+                cfg = item.get("config")
+                cfg_map = cfg if isinstance(cfg, dict) else {}
+                webhook_secret = str(cfg_map.get("webhookSecret") or "").strip()
+                if webhook_secret and webhook_secret == secret:
+                    matched.append(item)
+            if len(matched) == 1:
+                return matched[0]
+            if len(matched) > 1:
+                raise GatewayManagerError("ambiguous_telegram_instance", status_code=409)
+
+        if len(active_items) == 1:
+            return active_items[0]
+        raise GatewayManagerError("ambiguous_telegram_instance", status_code=409)
+
     async def ingest_feishu_events(
         self,
         payload: dict[str, Any],
+        *,
+        query_params: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         data = payload if isinstance(payload, dict) else {}
-        feishu_cfg = self.provider_config("feishu")
-        feishu_enabled = self.provider_active("feishu")
+        target_instance = self._resolve_feishu_instance_for_ingest(data, query_params)
+        feishu_cfg_raw = (
+            target_instance.get("config")
+            if isinstance(target_instance, dict)
+            else self.provider_config("feishu")
+        )
+        feishu_cfg = feishu_cfg_raw if isinstance(feishu_cfg_raw, dict) else {}
+        feishu_enabled = bool(target_instance.get("is_active")) if target_instance else self.provider_active("feishu")
         verify_token = str(feishu_cfg.get("verifyToken") or "").strip() or self.feishu_verify_token
-        if (
-            not feishu_enabled
-            and not verify_token
-            and not self.feishu_webhook_url
-            and not self.feishu_webhook_urls
-        ):
+        if not feishu_enabled and not verify_token and not self.feishu_webhook_url and not self.feishu_webhook_urls:
             return {"accepted": False, "reason": "gateway_disabled"}
 
         challenge = maybe_url_verification(data)
@@ -512,8 +696,8 @@ class GatewayManager:
         ):
 
             async def _feishu_result_sender(reply_text: str, _context: dict[str, Any]) -> bool:
-                notifier = self.build_feishu_notifier()
-                if not notifier or not self.provider_active("feishu"):
+                notifier = self.build_feishu_notifier(target_instance)
+                if not notifier:
                     return False
                 return await notifier.send_markdown(
                     title="Semibot",
@@ -546,9 +730,20 @@ class GatewayManager:
             "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
         }
 
-    async def ingest_feishu_card_actions(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def ingest_feishu_card_actions(
+        self,
+        payload: dict[str, Any],
+        *,
+        query_params: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
         data = payload if isinstance(payload, dict) else {}
-        feishu_cfg = self.provider_config("feishu")
+        target_instance = self._resolve_feishu_instance_for_ingest(data, query_params)
+        feishu_cfg_raw = (
+            target_instance.get("config")
+            if isinstance(target_instance, dict)
+            else self.provider_config("feishu")
+        )
+        feishu_cfg = feishu_cfg_raw if isinstance(feishu_cfg_raw, dict) else {}
         verify_token = str(feishu_cfg.get("verifyToken") or "").strip() or self.feishu_verify_token
         if not verify_callback_token(data, verify_token):
             raise GatewayManagerError("invalid_feishu_token", status_code=401)
@@ -623,10 +818,17 @@ class GatewayManager:
         payload: dict[str, Any],
         *,
         headers: Mapping[str, str] | None,
+        query_params: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         data = payload if isinstance(payload, dict) else {}
-        tg_cfg = self.provider_config("telegram")
-        tg_enabled = self.provider_active("telegram")
+        target_instance = self._resolve_telegram_instance_for_ingest(headers=headers, query_params=query_params)
+        tg_cfg_raw = (
+            target_instance.get("config")
+            if isinstance(target_instance, dict)
+            else self.provider_config("telegram")
+        )
+        tg_cfg = tg_cfg_raw if isinstance(tg_cfg_raw, dict) else {}
+        tg_enabled = bool(target_instance.get("is_active")) if target_instance else self.provider_active("telegram")
         token = str(tg_cfg.get("botToken") or "").strip() or str(self.telegram_bot_token or "").strip()
         if not tg_enabled and not token:
             return {"accepted": False, "reason": "gateway_disabled"}
@@ -704,8 +906,8 @@ class GatewayManager:
             if not approval_command and event.event_type == "chat.message.received" and isinstance(event.payload, dict):
 
                 async def _telegram_result_sender(reply_text: str, ctx: dict[str, Any]) -> bool:
-                    notifier = self.build_telegram_notifier()
-                    if not notifier or not self.provider_active("telegram"):
+                    notifier = self.build_telegram_notifier(target_instance)
+                    if not notifier:
                         return False
                     target_chat_id = str(ctx.get("chat_id") or "").strip() or None
                     return await notifier.send_message(text=reply_text, chat_id=target_chat_id)

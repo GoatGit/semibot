@@ -134,10 +134,11 @@ app/
 
 ## 5.7 Gateway（新增）
 
-- 数据：`GET/PUT /v1/config/gateways/{provider}`，`POST /v1/config/gateways/{provider}/test`
-- provider：`feishu`、`telegram`
+- 数据（实例级）：`GET/POST /v1/config/gateway-instances`、`GET/PUT/DELETE /v1/config/gateway-instances/{instance_id}`、`POST /v1/config/gateway-instances/{instance_id}/test`
+- provider：`feishu`、`telegram`（同 provider 可多实例）
 - 核心能力：
-  - 启停网关与查看配置状态（ready/not_configured/disabled）
+  - 启停网关实例与查看配置状态（ready/not_configured/disabled）
+  - 新建/删除实例，支持设置 default instance（用于兼容 provider 旧接口）
   - 编辑飞书参数（verify token、webhook 等）
   - 编辑 Telegram 参数（bot token、chat id 白名单等）
   - 编辑通用策略参数：

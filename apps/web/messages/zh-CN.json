@@ -207,6 +207,7 @@
       "updateToolConfig": "更新工具配置失败",
       "updateToolStatus": "更新工具状态失败",
       "updateGateway": "更新 Gateway 配置失败",
+      "deleteGateway": "删除 Gateway 实例失败",
       "testGateway": "Gateway 连通性测试失败",
       "createApiKey": "创建 API Key 失败",
       "deleteApiKey": "删除 API Key 失败",
@@ -220,7 +221,8 @@
     },
     "confirm": {
       "deleteApiKey": "确认删除这个 API Key 吗？删除后无法恢复。",
-      "deleteWebhook": "确认删除这个 Webhook 吗？删除后无法恢复。"
+      "deleteWebhook": "确认删除这个 Webhook 吗？删除后无法恢复。",
+      "deleteGateway": "确认删除这个 Gateway 实例吗？删除后无法恢复。"
     },
     "llm": {
       "routingDefaults": "模型路由默认值",
@@ -246,6 +248,9 @@
     "gateways": {
       "title": "Gateways",
       "activeCount": "启用 {count}",
+      "newTelegram": "新建 Telegram",
+      "newFeishu": "新建 Feishu",
+      "defaultTag": "默认",
       "loading": "正在加载 Gateway...",
       "empty": "暂无 Gateway 配置",
       "updatedAt": "更新时间",
@@ -306,7 +311,9 @@
       },
       "gateway": {
         "title": "Gateway 配置",
+        "instanceKeyPlaceholder": "instanceKey（可选，建议唯一）",
         "displayNamePlaceholder": "显示名称",
+        "setDefault": "设为默认实例",
         "enabled": "启用此 Gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",
         "addressing": {

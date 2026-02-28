@@ -229,3 +229,42 @@ async def test_gateway_manager_text_approval_command(tmp_path: Path):
     approved = manager.engine.list_approvals(status="approved", limit=10)
     assert len(approved) == 1
     assert approved[0].approval_id == approval_id
+
+
+@pytest.mark.asyncio
+async def test_gateway_manager_multi_instance_create_update_delete(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    manager = _build_manager(db_path=db_path, rules_path=rules_path)
+
+    created = manager.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instanceKey": "tg-ops",
+            "displayName": "Telegram Ops",
+            "isActive": True,
+            "config": {"botToken": "987654:token_ops"},
+        }
+    )
+    assert created["provider"] == "telegram"
+    assert created["instanceKey"] == "tg-ops"
+    assert created["displayName"] == "Telegram Ops"
+
+    listing = manager.list_gateway_instances("telegram")
+    keys = {item.get("instanceKey") for item in listing}
+    assert "tg-ops" in keys
+
+    updated = manager.update_gateway_instance(
+        str(created["id"]),
+        {
+            "displayName": "Telegram Ops V2",
+            "isDefault": True,
+            "config": {"defaultChatId": "-100001"},
+        },
+    )
+    assert updated["displayName"] == "Telegram Ops V2"
+    assert updated["isDefault"] is True
+
+    removed = manager.delete_gateway_instance(str(created["id"]))
+    assert removed["deleted"] is True

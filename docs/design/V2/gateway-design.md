@@ -88,13 +88,15 @@ Gateway Notifier（provider-specific outbound）
 
 ## 3. 配置模型（SQLite）
 
-## 3.1 新表：`gateway_configs`
+## 3.1 新表：`gateway_instances`
 
 ```sql
-CREATE TABLE IF NOT EXISTS gateway_configs (
+CREATE TABLE IF NOT EXISTS gateway_instances (
   id TEXT PRIMARY KEY,
-  provider TEXT NOT NULL UNIQUE,          -- feishu | telegram
+  instance_key TEXT NOT NULL UNIQUE,      -- 业务可读实例键（如 tg-ops-a）
+  provider TEXT NOT NULL,                 -- feishu | telegram
   display_name TEXT NOT NULL,
+  is_default INTEGER NOT NULL DEFAULT 0,  -- 每 provider 至少一个 default
   is_active INTEGER NOT NULL DEFAULT 0,
   mode TEXT NOT NULL DEFAULT 'webhook',   -- webhook | polling(预留)
   risk_level TEXT NOT NULL DEFAULT 'high',
@@ -104,15 +106,19 @@ CREATE TABLE IF NOT EXISTS gateway_configs (
   updated_at TEXT NOT NULL,
   deleted_at TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_gateway_configs_provider ON gateway_configs(provider);
-CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_active);
+CREATE INDEX IF NOT EXISTS idx_gateway_instances_provider ON gateway_instances(provider);
+CREATE INDEX IF NOT EXISTS idx_gateway_instances_active ON gateway_instances(is_active);
+CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(provider, is_default);
 ```
 
 说明：
 
-- `provider` 固定枚举：`feishu`、`telegram`
+- `provider` 固定枚举：`feishu`、`telegram`，同一 provider 支持多实例（多 bot）
+- `instance_key` 用于 webhook 路由和运维识别
+- `is_default` 为兼容旧 `/v1/config/gateways/{provider}` 接口保留
 - `config_json` 存 provider 特有字段（见下文）
 - `is_active=false` 时，入站请求返回 `accepted=false, reason=gateway_disabled`
+- 兼容层：旧表 `gateway_configs` 仅用于历史迁移，不再作为主数据源
 
 ## 3.2 provider 配置字段（`config_json`）
 
@@ -169,11 +175,12 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
 
 ## 4.2 Gateway 卡片交互
 
-每个网关一张卡（Feishu / Telegram）：
+每个网关实例一张卡（同 provider 可多实例）：
 
 - 状态：`已启用 / 未启用 / 配置不完整`
 - 基础开关：`启用`、`停用`
 - 配置入口：`编辑`
+- 实例操作：`新建实例`、`删除实例`、`设为默认`
 - 连通性：`发送测试消息`
 - 最近状态：最近一次入站时间、最近一次出站结果
 
@@ -198,14 +205,21 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
 
 ## 5.1 配置管理 API（runtime）
 
+实例级（V2 主接口）：
+
+- `GET /v1/config/gateway-instances`
+- `POST /v1/config/gateway-instances`
+- `GET /v1/config/gateway-instances/{instance_id}`
+- `PUT /v1/config/gateway-instances/{instance_id}`
+- `DELETE /v1/config/gateway-instances/{instance_id}`
+- `POST /v1/config/gateway-instances/{instance_id}/test`
+
+兼容级（provider 视图，基于 default instance）：
+
 - `GET /v1/config/gateways`
-  - 返回网关列表（feishu/telegram）及脱敏配置
 - `GET /v1/config/gateways/{provider}`
-  - 返回单个网关详情
 - `PUT /v1/config/gateways/{provider}`
-  - 更新网关配置（支持部分字段 patch）
 - `POST /v1/config/gateways/{provider}/test`
-  - 发送测试消息（provider-specific）
 
 响应示例（`GET /v1/config/gateways`）：
 
@@ -214,6 +228,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
   "data": [
     {
       "provider": "feishu",
+      "instanceKey": "feishu-default",
       "isActive": true,
       "config": {
         "verifyToken": "***",
@@ -223,6 +238,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
     },
     {
       "provider": "telegram",
+      "instanceKey": "telegram-default",
       "isActive": false,
       "config": {
         "botToken": null,
@@ -241,6 +257,10 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
 - 新增：`POST /v1/integrations/telegram/webhook`
   - 接收 Telegram update（message / edited_message / callback_query）
   - 产出标准事件：`chat.message.received`、`approval.action`
+  - 路由定位实例优先级：
+    1. `instanceId` 查询参数
+    2. `x-telegram-bot-api-secret-token` 匹配实例 `webhookSecret`
+    3. 单活跃实例自动匹配
 
 ## 5.3 出站 API（测试/运维）
 

@@ -150,10 +150,12 @@ async function setupConfigPageMocks(page: Page, onLlmConfigPut?: (payload: any) 
   })
 
   const gatewayState = {
-    feishu: {
+    'gw-feishu': {
       id: 'gw-feishu',
+      instanceKey: 'feishu-default',
       provider: 'feishu',
       displayName: 'Feishu',
+      isDefault: true,
       isActive: true,
       mode: 'webhook',
       riskLevel: 'high',
@@ -166,10 +168,12 @@ async function setupConfigPageMocks(page: Page, onLlmConfigPut?: (payload: any) 
       },
       updatedAt: '2026-02-27T10:00:00.000Z',
     },
-    telegram: {
+    'gw-telegram': {
       id: 'gw-telegram',
+      instanceKey: 'telegram-default',
       provider: 'telegram',
       displayName: 'Telegram',
+      isDefault: true,
       isActive: false,
       mode: 'webhook',
       riskLevel: 'high',
@@ -184,38 +188,68 @@ async function setupConfigPageMocks(page: Page, onLlmConfigPut?: (payload: any) 
     },
   } as Record<string, any>
 
-  await page.route('**/api/v1/gateways**', async (route, request) => {
+  await page.route('**/api/v1/gateways/instances**', async (route, request) => {
     const method = request.method()
     if (method === 'GET') {
-      await json(route, { success: true, data: [gatewayState.feishu, gatewayState.telegram] })
+      await json(route, { success: true, data: Object.values(gatewayState) })
+      return
+    }
+    if (method === 'POST') {
+      const payload = request.postDataJSON() as any
+      const id = `gw-${Date.now()}`
+      gatewayState[id] = {
+        id,
+        instanceKey: payload?.instanceKey || `instance-${Date.now()}`,
+        provider: payload?.provider || 'telegram',
+        displayName: payload?.displayName || 'Gateway',
+        isDefault: payload?.isDefault === true,
+        isActive: payload?.isActive === true,
+        mode: payload?.mode || 'webhook',
+        riskLevel: payload?.riskLevel || 'high',
+        requiresApproval: payload?.requiresApproval === true,
+        status: 'ready',
+        config: payload?.config || {},
+        addressingPolicy: payload?.addressingPolicy,
+        proactivePolicy: payload?.proactivePolicy,
+        contextPolicy: payload?.contextPolicy,
+        updatedAt: '2026-02-27T10:00:00.000Z',
+      }
+      await json(route, { success: true, data: gatewayState[id] }, 201)
       return
     }
     await route.continue()
   })
 
-  await page.route('**/api/v1/gateways/*', async (route, request) => {
+  await page.route('**/api/v1/gateways/instances/*', async (route, request) => {
     const method = request.method()
     const url = request.url()
-    const tail = url.split('/api/v1/gateways/')[1] || ''
-    const [provider, action] = tail.split('/')
-    if (!provider || !gatewayState[provider]) {
+    const tail = url.split('/api/v1/gateways/instances/')[1] || ''
+    const [instanceId, action] = tail.split('/')
+    if (!instanceId || !gatewayState[instanceId]) {
       await route.continue()
       return
     }
 
     if (method === 'PUT') {
       const payload = request.postDataJSON() as any
-      const existing = gatewayState[provider]
-      gatewayState[provider] = {
+      const existing = gatewayState[instanceId]
+      gatewayState[instanceId] = {
         ...existing,
         ...(payload.displayName ? { displayName: payload.displayName } : {}),
+        ...(payload.isDefault !== undefined ? { isDefault: payload.isDefault } : {}),
         ...(payload.isActive !== undefined ? { isActive: payload.isActive } : {}),
         ...(payload.config ? { config: { ...existing.config, ...payload.config } } : {}),
         ...(payload.addressingPolicy ? { addressingPolicy: payload.addressingPolicy } : {}),
         ...(payload.proactivePolicy ? { proactivePolicy: payload.proactivePolicy } : {}),
         ...(payload.contextPolicy ? { contextPolicy: payload.contextPolicy } : {}),
       }
-      await json(route, { success: true, data: gatewayState[provider] })
+      await json(route, { success: true, data: gatewayState[instanceId] })
+      return
+    }
+
+    if (method === 'DELETE') {
+      delete gatewayState[instanceId]
+      await json(route, { success: true, data: { deleted: true } })
       return
     }
 
@@ -347,8 +381,10 @@ test.describe('Config Page', () => {
     const gatewayTestCalls: string[] = []
     let telegramState: any = {
       id: 'gw-telegram',
+      instanceKey: 'telegram-default',
       provider: 'telegram',
       displayName: 'Telegram',
+      isDefault: true,
       isActive: false,
       mode: 'webhook',
       riskLevel: 'high',
@@ -364,7 +400,7 @@ test.describe('Config Page', () => {
     }
 
     await setupConfigPageMocks(page)
-    await page.route('**/api/v1/gateways/telegram', async (route, request) => {
+    await page.route('**/api/v1/gateways/instances/gw-telegram', async (route, request) => {
       if (request.method() === 'PUT') {
         const payload = request.postDataJSON()
         gatewayPutPayloads.push(payload)
@@ -381,7 +417,7 @@ test.describe('Config Page', () => {
       }
       await json(route, { success: true, data: telegramState })
     })
-    await page.route('**/api/v1/gateways/telegram/test', async (route) => {
+    await page.route('**/api/v1/gateways/instances/gw-telegram/test', async (route) => {
       gatewayTestCalls.push(route.request().url())
       await json(route, { success: true, data: { sent: true } })
     })

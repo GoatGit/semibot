@@ -291,6 +291,38 @@ URL 验证响应：
 
 用于配置管理页的 `Gateways` Tab，统一管理 `feishu` 和 `telegram`。
 
+### `GET /v1/config/gateway-instances`
+
+说明：返回全部 Gateway 实例（同一 provider 可多实例）。
+
+### `POST /v1/config/gateway-instances`
+
+请求（示例）：
+
+```json
+{
+  "provider": "telegram",
+  "instanceKey": "tg-ops-a",
+  "displayName": "Telegram Ops A",
+  "isDefault": false,
+  "isActive": true,
+  "config": {
+    "botToken": "123456:ABCDEF",
+    "webhookSecret": "sec_xxx",
+    "defaultChatId": "-10012345678",
+    "allowedChatIds": ["-10012345678"]
+  }
+}
+```
+
+### `GET /v1/config/gateway-instances/{instance_id}`
+
+### `PUT /v1/config/gateway-instances/{instance_id}`
+
+### `DELETE /v1/config/gateway-instances/{instance_id}`
+
+### `POST /v1/config/gateway-instances/{instance_id}/test`
+
 ### `GET /v1/config/gateways`
 
 响应：
@@ -376,6 +408,8 @@ URL 验证响应：
   "sent": true
 }
 ```
+
+说明：`/v1/config/gateways/*` 仍保留兼容，语义是“操作 default instance”。
 
 ## Telegram Gateway API（新增）
 

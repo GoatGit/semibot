@@ -11,6 +11,7 @@ export type Gateway = gatewayRepository.GatewayRow
 
 export interface UpdateGatewayInput {
   displayName?: string
+  isDefault?: boolean
   isActive?: boolean
   mode?: string
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
@@ -26,10 +27,22 @@ export async function listGateways(): Promise<Gateway[]> {
   return gatewayRepository.listGateways()
 }
 
+export async function listGatewayInstances(provider?: GatewayProvider): Promise<Gateway[]> {
+  return gatewayRepository.listGatewayInstances(provider)
+}
+
 export async function getGateway(provider: GatewayProvider): Promise<Gateway> {
   const row = await gatewayRepository.findByProvider(provider)
   if (!row) {
     throw createError(RESOURCE_NOT_FOUND, `Gateway not found: ${provider}`)
+  }
+  return row
+}
+
+export async function getGatewayInstance(instanceId: string): Promise<Gateway> {
+  const row = await gatewayRepository.findByInstanceId(instanceId)
+  if (!row) {
+    throw createError(RESOURCE_NOT_FOUND, `Gateway instance not found: ${instanceId}`)
   }
   return row
 }
@@ -45,9 +58,45 @@ export async function updateGateway(
   return row
 }
 
+export async function createGatewayInstance(
+  input: UpdateGatewayInput & { provider: GatewayProvider; instanceKey?: string }
+): Promise<Gateway> {
+  const row = await gatewayRepository.createInstance(input)
+  if (!row) {
+    throw createError(RESOURCE_NOT_FOUND, 'Failed to create gateway instance')
+  }
+  return row
+}
+
+export async function updateGatewayInstance(
+  instanceId: string,
+  input: UpdateGatewayInput
+): Promise<Gateway> {
+  const row = await gatewayRepository.updateByInstanceId(instanceId, input)
+  if (!row) {
+    throw createError(RESOURCE_NOT_FOUND, `Gateway instance not found: ${instanceId}`)
+  }
+  return row
+}
+
+export async function deleteGatewayInstance(instanceId: string): Promise<{ deleted: boolean }> {
+  const deleted = await gatewayRepository.deleteByInstanceId(instanceId)
+  if (!deleted) {
+    throw createError(RESOURCE_NOT_FOUND, `Gateway instance not found: ${instanceId}`)
+  }
+  return { deleted: true }
+}
+
 export async function testGateway(
   provider: GatewayProvider,
   payload: Record<string, unknown>
 ): Promise<{ sent: boolean }> {
   return gatewayRepository.testByProvider(provider, payload)
+}
+
+export async function testGatewayInstance(
+  instanceId: string,
+  payload: Record<string, unknown>
+): Promise<{ sent: boolean }> {
+  return gatewayRepository.testByInstanceId(instanceId, payload)
 }
