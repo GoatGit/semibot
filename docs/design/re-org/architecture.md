@@ -80,11 +80,16 @@ Event Engine 是事件的统一入口和治理层，Orchestrator 是复杂任务
 - Orchestrator 决定"具体怎么做"（PLAN → ACT → OBSERVE → REFLECT）
 - 简单动作（notify、log_only）由 Event Engine 直接执行，不经过 Orchestrator
 
+Gateway 会话策略补充：
+- runtime 仅保留单层 `session_id` 执行模型
+- 外部聊天上下文（如 Telegram `chat_id + bot_id`）由 Gateway Context Service 维护
+- 每条任务使用独立 runtime session 执行，完成后仅最小结果回写到 Gateway 主会话
+
 ### 1.4 组件分层
 
 | 层 | 组件 | 职责 |
 |----|------|------|
-| 入口层 | CLI、HTTP API、Web UI、Gateway（飞书/Telegram） | 接收用户请求和外部事件 |
+| 入口层 | CLI、HTTP API、Web UI、Gateway（飞书/Telegram）+ Gateway Context Service | 接收用户请求和外部事件，统一维护外部会话上下文 |
 | 事件层 | Event Engine（Reflex Engine） | 事件归一化、规则匹配、治理判定、审批 |
 | 编排层 | Orchestrator（LangGraph） | 复杂任务的多步编排 |
 | 能力层 | Tools、MCPs、Skills | 具体执行能力 |
@@ -102,6 +107,7 @@ Event Engine 是事件的统一入口和治理层，Orchestrator 是复杂任务
 | CLI | 命令行交互，主入口 | P0 必须 |
 | HTTP API | FastAPI 轻量 HTTP 服务 | P1 重要 |
 | Gateway（飞书/Telegram） | 协作前台，详见 [gateway-design.md](./gateway-design.md) | P1 重要 |
+| Gateway Context Service | Gateway 统一会话治理（主会话固定、任务隔离、最小回写），详见 [gateway-context-service.md](./gateway-context-service.md) | P1 重要 |
 | Web UI | 可选的浏览器管理界面（建议复用 Next.js） | P2 可选 |
 | TUI | 终端交互界面（如 Textual） | 暂不优先（待需求验证） |
 

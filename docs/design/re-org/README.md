@@ -107,6 +107,36 @@ A：优先排查四项：
 3. `allowedChatIds` 未包含当前群 `chat_id`。  
 4. runtime 是旧版本：早期仅接收 Telegram 事件，不会自动回执对话。已在 V2 补齐“入站消息 -> 执行任务 -> 回发 Telegram”链路。更新后重启 runtime 生效。  
 
+**Q：Gateway 会话和 runtime session 的关系是什么？**  
+A：采用“统一 Gateway Context Service”方案。`chat_id + bot_id`（或飞书等价键）映射一个固定主会话；每次新任务创建独立 runtime session 执行；任务结束只把最小结果（摘要/产物链接/审批结论）回写主会话，不做全量 merge。这样 runtime 仍保持单层 session，Gateway 侧保留完整对话上下文与审计链路。
+
+**Q：飞书是否也支持这套“主会话固定 + 子任务隔离 + 最小回写”的架构？**  
+A：支持。飞书与 Telegram 使用同一套 Gateway Context Service。区别只在会话键归一化：Telegram 用 `chat_id + bot_id`，飞书用 `app_id + conversation_id`（群聊通常是 `chat_id`，单聊可归一化为 `open_id/union_id`）。两者都不在 runtime 内做父子 session 树。
+
+**Q：群聊里不 @bot，bot 能收到消息吗？能收到其他 bot 的消息吗？**  
+A：分平台：  
+1. Telegram：  
+   - 人类用户未 @ 的群消息：默认收不到（隐私模式开启时）。关闭隐私模式或将 bot 设为群管理员后可收到。  
+   - 其他 bot 发送的消息：收不到（Telegram Bot 官方限制，与隐私模式无关）。  
+2. 飞书：  
+   - 是否能收到未 @ 的群消息取决于应用类型、事件订阅与可见范围配置。Semibot 侧可统一支持“只在被 @ 时触发”或“接收全部群消息后再规则过滤”。  
+
+**Q：如果 bot 能收到全部群消息，如何避免误触发？**  
+A：在 Gateway Context Service 增加 `Addressing Gate`。流程是：  
+1. 所有消息先写入主会话上下文（可审计）。  
+2. 再判断是否在问 bot（@、回复 bot、命令前缀、短期会话延续、规则命中）。  
+3. 命中才创建 runtime 任务并继续执行。  
+4. 未命中只注入上下文，不执行、不回复 Telegram/飞书。  
+
+**Q：这种“全量接收 + Addressing Gate”设计有什么好处和坏处？**  
+A：  
+1. 好处：上下文更完整、主动提醒能力更强、审计链路更完整、飞书/Telegram 逻辑统一。  
+2. 坏处：存储与 token 成本上升、Addressing 误判风险、隐私合规压力增加、并发治理复杂度提高。  
+3. 建议默认策略：`全量接收 + 默认静默`（未命中不执行不回复），并配合风险分级、TTL、摘要压缩与群级开关。  
+
+**Q：新 Gateway 架构下，gateway 层代码应该抽离到哪个模块？**  
+A：建议抽离到独立模块 `runtime/src/gateway`，不要继续堆在 `runtime/src/server`。`server/api.py` 只负责 HTTP 路由，Gateway 业务逻辑统一放 `gateway/adapters`、`gateway/context_service.py`、`gateway/notifiers`、`gateway/parsers`、`gateway/store`、`gateway/policies`。  
+
 **Q：旧版 Postgres 的 Tools / MCP 数据怎么迁移？**  
 A：可用脚本 `runtime/scripts/migrate_pg_config_to_sqlite.py` 一次性迁移。
 ```bash
@@ -157,6 +187,7 @@ cd runtime
 | 文档 | 内容 |
 |------|------|
 | [Gateway 统一设计（飞书+Telegram）](./gateway-design.md) | 配置模型、API、事件映射、审批与迁移 |
+| [Gateway Context Service 详细方案](./gateway-context-service.md) | 主会话固定、任务隔离、单写者与最小回写 |
 | [飞书群聊接入](./feishu-gateway.md) | 群聊协作前台、卡片模板 |
 | [进化流水线](./evolution-pipeline.md) | 事件驱动技能进化 |
 

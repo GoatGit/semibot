@@ -1,6 +1,8 @@
-# Gateway 配置与 Telegram 接入详细设计
+# Gateway 统一设计（飞书 + Telegram）
 
-> 版本：2.0 | 日期：2026-02-28 | 状态：设计中（待实现）
+> 版本：2.0 | 日期：2026-02-28 | 状态：设计中（持续更新）
+>
+> 会话治理与 fork 策略详细方案见 [`gateway-context-service.md`](./gateway-context-service.md)。
 
 ## 1. 目标与边界
 
@@ -9,6 +11,7 @@
 - 在配置管理中新增统一 `Gateway` 配置域，集中管理飞书与 Telegram
 - 新增 Telegram Gateway（入站消息、出站通知、审批回执）
 - 让审批机制在 Web UI / CLI / 第三方聊天工具中保持一致（通用，不绑某个工具）
+- 引入统一 `Gateway Context Service`，实现“主会话固定 + 任务隔离 + 最小回写”
 
 ### 1.2 非目标（本阶段不做）
 
@@ -20,7 +23,7 @@
 
 - 本地单机优先，配置落地到 `~/.semibot/semibot.db`
 - 保持现有 Feishu 入站/出站能力兼容
-- Gateway 仅作为“消息入口/通知出口”，执行编排仍在 runtime Orchestrator
+- runtime 保持单层 session，不引入 runtime 父/子 session 树
 
 ---
 
@@ -32,6 +35,9 @@ Feishu / Telegram
         ▼
 Gateway Adapter（provider-specific）
         │ normalize / verify / idempotency
+        ▼
+Gateway Context Service（统一会话治理）
+        │ main_context 固定 + task_run 隔离 + 最小回写
         ▼
 Event Engine（chat.message.received / approval.action / ...）
         │
@@ -48,6 +54,8 @@ Gateway Notifier（provider-specific outbound）
   - 负责读取网关配置、构建适配器、管理启停状态
 - `server/gateways/base.py`
   - 统一接口：`verify` / `normalize_inbound` / `send_outbound`
+- `server/gateway_context_service.py`（新增）
+  - 统一维护 Gateway 主会话、任务运行映射、最小回写、审批聚合
 - `server/gateways/feishu_adapter.py`
   - 复用现有 `feishu.py` + `feishu_notifier.py`，逐步收敛到统一接口
 - `server/gateways/telegram_adapter.py`（新增）
@@ -58,8 +66,18 @@ Gateway Notifier（provider-specific outbound）
 ### 2.2 与 Event Engine 的关系
 
 - Gateway 不做业务决策，只做消息标准化与来源鉴别
+- Gateway Context Service 负责会话治理，不由 provider 适配器各自实现 fork/merge
 - 标准事件统一写入 `events`，并触发规则匹配
 - 审批动作统一写入 `approval.action` 事件，便于审计回放
+
+### 2.3 会话治理策略（定稿）
+
+1. `chat_id + bot_id`（或飞书等价键）映射固定 `main_context`。  
+2. 每条新任务创建独立 `runtime_session_id`，执行隔离。  
+3. 任务结束只做“最小结果回写”，不做全量 merge。  
+4. 会话血缘关系保存在 Gateway Context Service，不下沉到 runtime。  
+5. 该策略同时适用于 Telegram 与飞书，不为单一 Gateway 定制不同会话模型。  
+6. 群聊支持“全量接收”时，必须先过 `Addressing Gate`：未命中仅注入上下文，不触发执行、不回消息。  
 
 ---
 
@@ -92,6 +110,18 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
 - `is_active=false` 时，入站请求返回 `accepted=false, reason=gateway_disabled`
 
 ## 3.2 provider 配置字段（`config_json`）
+
+### 通用会话策略（跨 provider）
+
+- `addressingPolicy.mode`: `mention_only` | `all_messages`
+- `addressingPolicy.allowReplyToBot`: 是否把“回复 bot 消息”视为命中
+- `addressingPolicy.commandPrefixes`: 命令前缀（如 `/ask`, `/run`）
+- `addressingPolicy.sessionContinuationWindowSec`: 会话延续窗口（秒）
+- `proactivePolicy.mode`: `silent` | `risk_based` | `always`
+- `proactivePolicy.minRiskToNotify`: `low|medium|high|critical`
+- `contextPolicy.ttlDays`: 主会话上下文保留天数
+- `contextPolicy.maxRecentMessages`: 主会话保留最近消息条数
+- `contextPolicy.summarizeEveryNMessages`: 每 N 条消息触发一次摘要压缩
 
 ### Feishu
 
@@ -145,11 +175,16 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
 
 - Feishu：`verifyToken`、`webhookUrl`、`notifyEventTypes`
 - Telegram：`botToken`、`defaultChatId`、`allowedChatIds`、`notifyEventTypes`
+- 通用策略：
+  - Addressing：`mention_only/all_messages`、命令前缀、会话延续窗口
+  - Proactive：`silent/risk_based/always`、最小提醒风险级别
+  - Context：TTL、最近消息上限、摘要频率
 
 约束：
 
 - `botToken` 未配置时，Telegram 卡片提示“不可用”
 - `defaultChatId` 为空时允许保存，但禁用“发送测试消息”
+- `addressingPolicy.mode=all_messages` 时默认仍为“未命中不执行不回复”（默认静默）
 
 ---
 
@@ -215,6 +250,12 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
 - 普通消息：`message.text` → `chat.message.received`
 - 回复消息（含审批文本）：优先走 `approval_text` 解析，命中则触发审批
 - 按钮回调：`callback_query.data` → `approval.action` / `chat.card.action`
+
+## 6.1.1 Feishu 入站映射（同一会话策略）
+
+- 群/单聊消息：`im.message.receive_v1` → `chat.message.received`
+- 卡片操作：`card-actions` → `chat.card.action` / `approval.action`
+- 会话键归一化：`feishu:{app_id}:{conversation_id}`（见 `gateway-context-service.md`）
 
 ## 6.2 文本审批（通用）
 

@@ -243,7 +243,14 @@ URL 验证响应：
   "accepted": true,
   "event_id": "evt_feishu_xxx",
   "event_type": "chat.message.received",
-  "matched_rules": 1
+  "matched_rules": 1,
+  "addressed": true,
+  "should_execute": true,
+  "address_reason": "mention",
+  "conversation_id": "gconv_f_001",
+  "main_context_id": "gctx_f_main_001",
+  "task_run_id": "grun_f_001",
+  "runtime_session_id": "sess_f_task_001"
 }
 ```
 
@@ -321,11 +328,26 @@ URL 验证响应：
 
 ### `PUT /v1/config/gateways/{provider}`
 
-请求（Telegram 示例）：
+请求（通用策略 + Telegram 示例）：
 
 ```json
 {
   "isActive": true,
+  "addressingPolicy": {
+    "mode": "all_messages",
+    "allowReplyToBot": true,
+    "commandPrefixes": ["/ask", "/run", "/approve", "/reject"],
+    "sessionContinuationWindowSec": 300
+  },
+  "proactivePolicy": {
+    "mode": "risk_based",
+    "minRiskToNotify": "high"
+  },
+  "contextPolicy": {
+    "ttlDays": 30,
+    "maxRecentMessages": 200,
+    "summarizeEveryNMessages": 50
+  },
   "config": {
     "botToken": "123456:ABCDEF",
     "defaultChatId": "-10012345678",
@@ -392,13 +414,102 @@ URL 验证响应：
   "accepted": true,
   "event_id": "evt_tg_xxx",
   "event_type": "chat.message.received",
-  "matched_rules": 1
+  "matched_rules": 1,
+  "addressed": true,
+  "should_execute": true,
+  "address_reason": "mention",
+  "conversation_id": "gconv_tg_001",
+  "main_context_id": "gctx_tg_main_001",
+  "task_run_id": "grun_tg_001",
+  "runtime_session_id": "sess_tg_task_001"
+}
+```
+
+响应（未命中 Addressing Gate，仅注入上下文）：
+
+```json
+{
+  "accepted": true,
+  "event_id": "evt_tg_xxx",
+  "event_type": "chat.message.received",
+  "matched_rules": 0,
+  "addressed": false,
+  "should_execute": false,
+  "address_reason": "not_addressed",
+  "conversation_id": "gconv_tg_001",
+  "main_context_id": "gctx_tg_main_001",
+  "task_run_id": null,
+  "runtime_session_id": null
 }
 ```
 
 ### `POST /v1/integrations/telegram/outbound/test`
 
 用途：发送测试消息到 Telegram 默认 chat。
+
+## Gateway Context Service API（新增，运维/调试）
+
+说明：这组接口用于观测 Gateway 会话治理状态（主会话固定、任务隔离、最小回写）。
+
+### `GET /v1/gateway/conversations`
+
+响应：
+
+```json
+{
+  "data": [
+    {
+      "conversation_id": "gconv_tg_001",
+      "provider": "telegram",
+      "gateway_key": "telegram:8646880953:-5223952677",
+      "main_context_id": "gctx_tg_main_001",
+      "latest_context_version": 42,
+      "status": "active"
+    }
+  ]
+}
+```
+
+### `GET /v1/gateway/conversations/{conversation_id}/runs`
+
+响应：
+
+```json
+{
+  "data": [
+    {
+      "run_id": "grun_tg_001",
+      "runtime_session_id": "sess_tg_task_001",
+      "snapshot_version": 40,
+      "status": "done",
+      "result_summary": "已完成并生成报告链接"
+    }
+  ]
+}
+```
+
+### `GET /v1/gateway/conversations/{conversation_id}/context`
+
+响应：
+
+```json
+{
+  "conversation_id": "gconv_tg_001",
+  "main_context_id": "gctx_tg_main_001",
+  "messages": [
+    {
+      "version": 41,
+      "role": "user",
+      "content": "搜索最新AI新闻"
+    },
+    {
+      "version": 42,
+      "role": "assistant",
+      "content": "已完成，见报告链接..."
+    }
+  ]
+}
+```
 
 ## 12. `POST /v1/tasks/run`
 
