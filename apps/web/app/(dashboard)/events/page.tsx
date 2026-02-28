@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Activity, RefreshCw, RotateCcw, AlertCircle, Search } from 'lucide-react'
+import { Activity, RefreshCw, RotateCcw, AlertCircle, Search, Plus, Copy } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -25,7 +26,103 @@ function mapRiskVariant(risk?: EventRecord['riskHint']): 'default' | 'success' |
   return 'default'
 }
 
+function getCategoryVariant(category: string): 'outline' | 'success' | 'warning' {
+  if (category === 'tool' || category === 'approval') return 'warning'
+  if (category === 'system') return 'success'
+  return 'outline'
+}
+
+function eventTypeToDisplay(eventType: string, t: (key: string, params?: Record<string, string | number>) => string): {
+  title: string
+  category: string
+  action: string
+} {
+  const normalized = String(eventType || '').trim()
+  const parts = normalized.split('.')
+  const category = parts[0] || 'unknown'
+  const action = parts.slice(1).join('.') || 'unknown'
+  const categoryLabelKey = `events.categories.${category}`
+  const actionLabelKey = `events.actions.${action}`
+  const categoryLabel = t(categoryLabelKey)
+  const actionLabel = t(actionLabelKey)
+  const fallbackTitle = normalized || t('events.unknownEventType')
+  const title = `${categoryLabel !== categoryLabelKey ? categoryLabel : category} · ${actionLabel !== actionLabelKey ? actionLabel : action}`
+  return {
+    title: normalized ? title : fallbackTitle,
+    category,
+    action,
+  }
+}
+
+function summarizePayload(
+  payload: EventRecord['payload'],
+  t: (key: string, params?: Record<string, string | number>) => string
+): Array<{ label: string; value: string }> {
+  if (!payload || typeof payload !== 'object') return []
+
+  const read = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = payload[key]
+      if (value === null || value === undefined) continue
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        const text = String(value).trim()
+        if (text) return text
+      }
+    }
+    return ''
+  }
+
+  const items: Array<{ label: string; value: string }> = []
+  const message = read('message', 'summary', 'reason')
+  if (message) items.push({ label: t('events.summary.message'), value: message })
+
+  const tool = read('tool_name', 'toolName', 'tool')
+  if (tool) items.push({ label: t('events.summary.tool'), value: tool })
+
+  const action = read('action', 'operation', 'method')
+  if (action) items.push({ label: t('events.summary.action'), value: action })
+
+  const target = read('target', 'url', 'path', 'resource')
+  if (target) items.push({ label: t('events.summary.target'), value: target })
+
+  const status = read('status')
+  if (status) items.push({ label: t('events.summary.status'), value: status })
+
+  const replayId = read('replay_id', 'replayId')
+  if (replayId) items.push({ label: t('events.summary.replayId'), value: replayId })
+
+  const originalEventId = read('original_event_id', 'originalEventId')
+  if (originalEventId) items.push({ label: t('events.summary.originalEventId'), value: originalEventId })
+
+  if (items.length === 0) {
+    const pairs: Array<{ label: string; value: string }> = []
+    for (const [key, value] of Object.entries(payload)) {
+      if (value === null || value === undefined) continue
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        pairs.push({ label: key, value: String(value) })
+      }
+      if (pairs.length >= 3) break
+    }
+    return pairs
+  }
+  return items.slice(0, 6)
+}
+
+function summarizePayloadText(payload: EventRecord['payload']): string {
+  if (!payload || typeof payload !== 'object') return ''
+  const keys = ['message', 'summary', 'reason', 'status']
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  const firstScalar = Object.values(payload).find(
+    (value) => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+  )
+  return firstScalar !== undefined ? String(firstScalar) : ''
+}
+
 export default function EventsPage() {
+  const router = useRouter()
   const { locale, t } = useLocale()
   const [eventType, setEventType] = useState('')
   const [replayingId, setReplayingId] = useState<string | null>(null)
@@ -69,6 +166,21 @@ export default function EventsPage() {
     }
   }
 
+  const handleCreateRuleFromEvent = (type: string) => {
+    const encoded = encodeURIComponent(type)
+    router.push(`/rules?create=1&eventType=${encoded}`)
+  }
+
+  const handleCopy = async (value: string, successKey: string) => {
+    try {
+      if (!value) return
+      await navigator.clipboard.writeText(value)
+      setActionError(t(successKey))
+    } catch {
+      setActionError(t('events.error.copy'))
+    }
+  }
+
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
@@ -83,15 +195,25 @@ export default function EventsPage() {
                 <p className="mt-2 text-sm text-text-secondary">
                   {t('events.subtitle')}
                 </p>
+                <p className="mt-2 text-xs text-text-tertiary">{t('events.positioning')}</p>
               </div>
-              <Button
-                variant="secondary"
-                leftIcon={<RefreshCw size={16} />}
-                onClick={() => void refresh()}
-                disabled={isLoading}
-              >
-                {t('common.refresh')}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  leftIcon={<RefreshCw size={16} />}
+                  onClick={() => void refresh()}
+                  disabled={isLoading}
+                >
+                  {t('common.refresh')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  leftIcon={<Plus size={16} />}
+                  onClick={() => router.push('/rules?create=1')}
+                >
+                  {t('events.newRule')}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -167,8 +289,21 @@ export default function EventsPage() {
                 <CardContent className="p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
+                      {(() => {
+                        const meta = eventTypeToDisplay(event.eventType, t)
+                        return (
+                          <div className="mb-2 flex items-center gap-2">
+                            <Badge variant={getCategoryVariant(meta.category)}>
+                              {t(`events.categories.${meta.category}`) !== `events.categories.${meta.category}`
+                                ? t(`events.categories.${meta.category}`)
+                                : meta.category}
+                            </Badge>
+                            <p className="font-medium text-text-primary break-all">{meta.title}</p>
+                          </div>
+                        )
+                      })()}
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-medium text-text-primary break-all">{event.eventType}</p>
+                        <p className="text-sm text-text-secondary break-all">{event.eventType}</p>
                         <Badge variant={mapRiskVariant(event.riskHint)}>
                           {t('events.riskLabel')} {event.riskHint || t('events.unknown')}
                         </Badge>
@@ -181,15 +316,45 @@ export default function EventsPage() {
                           {t('events.subject')}: {event.subject}
                         </div>
                       )}
-                      {event.payload && (
-                        <pre className="mt-2 rounded-md bg-bg-elevated border border-border-subtle px-3 py-2 text-xs text-text-secondary overflow-x-auto">
-                          {JSON.stringify(event.payload, null, 2).slice(0, 240)}
-                          {JSON.stringify(event.payload).length > 240 ? t('events.truncated') : ''}
-                        </pre>
+                      {summarizePayloadText(event.payload) && (
+                        <p className="mt-2 text-sm text-text-primary">{summarizePayloadText(event.payload)}</p>
+                      )}
+                      {summarizePayload(event.payload, t).length > 0 && (
+                        <div className="mt-2 grid grid-cols-1 gap-1 text-xs md:grid-cols-2">
+                          {summarizePayload(event.payload, t).map((item, index) => (
+                            <div key={`${event.id}-${index}`} className="rounded border border-border-subtle bg-bg-elevated px-2 py-1 text-text-secondary">
+                              <span className="text-text-tertiary">{item.label}：</span>
+                              <span className="break-all">{item.value}</span>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
 
                     <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        leftIcon={<Plus size={14} />}
+                        onClick={() => handleCreateRuleFromEvent(event.eventType)}
+                      >
+                        {t('events.createRule')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        leftIcon={<Copy size={14} />}
+                        onClick={() => void handleCopy(event.eventType, 'events.copyTypeSuccess')}
+                      >
+                        {t('events.copyType')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setEventType(event.eventType)}
+                      >
+                        {t('events.filterSameType')}
+                      </Button>
                       <Button
                         size="sm"
                         variant="secondary"
@@ -238,6 +403,16 @@ export default function EventsPage() {
             <pre className="rounded-md bg-bg-elevated border border-border-subtle px-3 py-2 text-xs text-text-secondary overflow-x-auto max-h-[50vh]">
               {JSON.stringify(selectedEvent.payload ?? {}, null, 2)}
             </pre>
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Plus size={14} />}
+                onClick={() => handleCreateRuleFromEvent(selectedEvent.eventType)}
+              >
+                {t('events.createRule')}
+              </Button>
+            </div>
           </div>
         )}
       </Modal>
