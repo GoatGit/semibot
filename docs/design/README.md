@@ -54,6 +54,7 @@ Semibot 是一个极简的云原生 Agent 编排平台，让开发者能够快�
 - [原始需求](./原始需求.md) - 初始需求文档
 - [重构方案](./REFACTORING_PLAN.md) - 6 项重构设计方案
 - [Cron 调度设计](./CRON_SCHEDULING_DESIGN.md) - 定时任务（控制层调度 + 执行层执行）
+- [Gateway 入口与 Telegram 交互](./GATEWAY_ENTRY_INTERACTION_DESIGN.md) - 入口层边界、消息机制、`agent_id + session_id` 规范
 
 ### runtime/ — Runtime 引擎
 
