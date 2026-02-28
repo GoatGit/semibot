@@ -13,6 +13,7 @@ import {
   Trash2,
   TestTube2,
   Pencil,
+  MessageSquare,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -116,10 +117,40 @@ interface RuntimeSkillsData {
   error?: string
 }
 
-type ConfigTab = 'llm' | 'tools' | 'apiKeys' | 'webhooks'
-type SectionKey = 'llm' | 'tools' | 'apiKeys' | 'webhooks'
+type ConfigTab = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks'
+type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks'
 type ProviderKey = keyof LlmConfigData['providers']
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
+type GatewayProvider = 'feishu' | 'telegram'
+
+interface GatewayItem {
+  id: string
+  provider: GatewayProvider
+  displayName: string
+  isActive: boolean
+  mode: string
+  riskLevel: 'low' | 'medium' | 'high' | 'critical'
+  requiresApproval: boolean
+  status: 'ready' | 'disabled' | 'not_configured'
+  config: Record<string, unknown>
+  updatedAt: string
+}
+
+type GatewayForm = {
+  provider: GatewayProvider
+  displayName: string
+  isActive: boolean
+  verifyToken: string
+  clearVerifyToken: boolean
+  webhookUrl: string
+  botToken: string
+  clearBotToken: boolean
+  webhookSecret: string
+  clearWebhookSecret: boolean
+  defaultChatId: string
+  allowedChatIds: string
+  notifyEventTypes: string
+}
 
 type ToolForm = {
   id?: string
@@ -207,12 +238,14 @@ export default function ConfigPage() {
   const [sectionLoading, setSectionLoading] = useState<Record<SectionKey, boolean>>({
     llm: false,
     tools: false,
+    gateways: false,
     apiKeys: false,
     webhooks: false,
   })
   const [sectionErrors, setSectionErrors] = useState<Record<SectionKey, string | null>>({
     llm: null,
     tools: null,
+    gateways: null,
     apiKeys: null,
     webhooks: null,
   })
@@ -260,6 +293,26 @@ export default function ConfigPage() {
   })
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
+  const [gateways, setGateways] = useState<GatewayItem[]>([])
+  const [showGatewayModal, setShowGatewayModal] = useState(false)
+  const [savingGateway, setSavingGateway] = useState(false)
+  const [testingGateway, setTestingGateway] = useState<GatewayProvider | null>(null)
+  const [gatewayForm, setGatewayForm] = useState<GatewayForm>({
+    provider: 'feishu',
+    displayName: '',
+    isActive: false,
+    verifyToken: '',
+    clearVerifyToken: false,
+    webhookUrl: '',
+    botToken: '',
+    clearBotToken: false,
+    webhookSecret: '',
+    clearWebhookSecret: false,
+    defaultChatId: '',
+    allowedChatIds: '',
+    notifyEventTypes: '',
+  })
+
   const [showCreateKey, setShowCreateKey] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
   const [newKeyExpiresAt, setNewKeyExpiresAt] = useState('')
@@ -395,13 +448,33 @@ export default function ConfigPage() {
     }
   }, [setSectionLoadingFlag, t])
 
+  const loadGateways = useCallback(async () => {
+    setSectionLoadingFlag('gateways', true)
+    try {
+      const response = await apiClient.get<ApiResponse<GatewayItem[]>>('/gateways')
+      if (!response.success) {
+        throw new Error(t('config.errors.gatewaysLoad'))
+      }
+      setGateways(response.data || [])
+      setSectionErrors((prev) => ({ ...prev, gateways: null }))
+    } catch (err) {
+      setGateways([])
+      setSectionErrors((prev) => ({
+        ...prev,
+        gateways: getErrorMessage(err, t('config.errors.gatewaysLoad')),
+      }))
+    } finally {
+      setSectionLoadingFlag('gateways', false)
+    }
+  }, [setSectionLoadingFlag, t])
+
   const loadData = useCallback(async () => {
     setRefreshingAll(true)
     setError(null)
-    await Promise.all([loadLlmData(), loadTools(), loadApiKeys(), loadWebhooks()])
+    await Promise.all([loadLlmData(), loadTools(), loadGateways(), loadApiKeys(), loadWebhooks()])
     setLoading(false)
     setRefreshingAll(false)
-  }, [loadApiKeys, loadLlmData, loadTools, loadWebhooks])
+  }, [loadApiKeys, loadGateways, loadLlmData, loadTools, loadWebhooks])
 
   useEffect(() => {
     loadData()
@@ -711,6 +784,102 @@ export default function ConfigPage() {
     }
   }
 
+  const openGatewayDialog = (gateway: GatewayItem) => {
+    const cfg = gateway.config || {}
+    const allowedChatIds = Array.isArray(cfg.allowedChatIds)
+      ? (cfg.allowedChatIds as unknown[]).map((item) => String(item)).join(',')
+      : ''
+    const notifyEventTypes = Array.isArray(cfg.notifyEventTypes)
+      ? (cfg.notifyEventTypes as unknown[]).map((item) => String(item)).join(',')
+      : ''
+    setGatewayForm({
+      provider: gateway.provider,
+      displayName: gateway.displayName || gateway.provider,
+      isActive: gateway.isActive,
+      verifyToken: '',
+      clearVerifyToken: false,
+      webhookUrl: String(cfg.webhookUrl || ''),
+      botToken: '',
+      clearBotToken: false,
+      webhookSecret: '',
+      clearWebhookSecret: false,
+      defaultChatId: String(cfg.defaultChatId || ''),
+      allowedChatIds,
+      notifyEventTypes,
+    })
+    setShowGatewayModal(true)
+  }
+
+  const saveGatewayConfig = async () => {
+    const parseCommaList = (value: string): string[] =>
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+
+    const isTelegram = gatewayForm.provider === 'telegram'
+    const payload: Record<string, unknown> = {
+      displayName: gatewayForm.displayName.trim() || gatewayForm.provider,
+      isActive: gatewayForm.isActive,
+      config: {
+        ...(isTelegram
+          ? {
+              ...(gatewayForm.botToken.trim() && !gatewayForm.clearBotToken
+                ? { botToken: gatewayForm.botToken.trim() }
+                : {}),
+              ...(gatewayForm.webhookSecret.trim() && !gatewayForm.clearWebhookSecret
+                ? { webhookSecret: gatewayForm.webhookSecret.trim() }
+                : {}),
+              ...(gatewayForm.defaultChatId.trim() ? { defaultChatId: gatewayForm.defaultChatId.trim() } : {}),
+              allowedChatIds: parseCommaList(gatewayForm.allowedChatIds),
+              notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
+            }
+          : {
+              ...(gatewayForm.verifyToken.trim() && !gatewayForm.clearVerifyToken
+                ? { verifyToken: gatewayForm.verifyToken.trim() }
+                : {}),
+              ...(gatewayForm.webhookUrl.trim() ? { webhookUrl: gatewayForm.webhookUrl.trim() } : {}),
+              notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
+            }),
+      },
+    }
+    const clearFields: string[] = []
+    if (!isTelegram && gatewayForm.clearVerifyToken) clearFields.push('verifyToken')
+    if (isTelegram && gatewayForm.clearBotToken) clearFields.push('botToken')
+    if (isTelegram && gatewayForm.clearWebhookSecret) clearFields.push('webhookSecret')
+    if (clearFields.length > 0) {
+      payload.clearFields = clearFields
+    }
+
+    try {
+      setSavingGateway(true)
+      setError(null)
+      await apiClient.put(`/gateways/${gatewayForm.provider}`, payload)
+      setShowGatewayModal(false)
+      await loadGateways()
+    } catch (err) {
+      setError(getErrorMessage(err, t('config.errors.updateGateway')))
+    } finally {
+      setSavingGateway(false)
+    }
+  }
+
+  const testGateway = async (gateway: GatewayItem) => {
+    try {
+      setTestingGateway(gateway.provider)
+      setError(null)
+      const isTelegram = gateway.provider === 'telegram'
+      const payload = isTelegram
+        ? { text: 'Semibot gateway test' }
+        : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
+      await apiClient.post(`/gateways/${gateway.provider}/test`, payload)
+    } catch (err) {
+      setError(getErrorMessage(err, t('config.errors.testGateway')))
+    } finally {
+      setTestingGateway(null)
+    }
+  }
+
   const llmStatusMap = useMemo(() => {
     const map = new Map<string, LlmProviderStatus>()
     llmProviders.forEach((item) => map.set(item.name, item))
@@ -720,6 +889,10 @@ export default function ConfigPage() {
   const activeToolsCount = useMemo(
     () => tools.filter((tool) => tool.isActive).length,
     [tools]
+  )
+  const activeGatewaysCount = useMemo(
+    () => gateways.filter((item) => item.isActive).length,
+    [gateways]
   )
   const runtimeSkillsErrorText = useMemo(
     () => formatRuntimeStatusError(runtimeSkills.error, runtimeSkills.source),
@@ -738,10 +911,11 @@ export default function ConfigPage() {
         label: 'Tools',
         count: tools.length,
       },
+      { id: 'gateways' as const, label: 'Gateways', count: gateways.length },
       { id: 'apiKeys' as const, label: 'API Keys', count: apiKeys.length },
       { id: 'webhooks' as const, label: 'Webhooks', count: webhooks.length },
     ],
-    [apiKeys.length, llmProviders, tools.length, webhooks.length]
+    [apiKeys.length, gateways.length, llmProviders, tools.length, webhooks.length]
   )
 
   const isAnySectionLoading = Object.values(sectionLoading).some(Boolean)
@@ -988,6 +1162,81 @@ export default function ConfigPage() {
                         ))
                       )}
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {activeTab === 'gateways' && (
+              <Card className="border-border-default">
+                <CardContent className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare size={18} className="text-primary-400" />
+                      <h2 className="text-lg font-semibold text-text-primary">{t('config.gateways.title')}</h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-text-tertiary">
+                        {t('config.gateways.activeCount', { count: activeGatewaysCount })}
+                      </span>
+                      <Button
+                        size="xs"
+                        variant="tertiary"
+                        leftIcon={<RefreshCw size={13} className={sectionLoading.gateways ? 'animate-spin' : ''} />}
+                        onClick={loadGateways}
+                      >
+                        {t('common.refresh')}
+                      </Button>
+                    </div>
+                  </div>
+                  {sectionErrors.gateways && (
+                    <p className="text-xs text-warning-500">{sectionErrors.gateways}</p>
+                  )}
+                  <div className="space-y-2">
+                    {sectionLoading.gateways && gateways.length === 0 ? (
+                      <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
+                        {t('config.gateways.loading')}
+                      </p>
+                    ) : gateways.length === 0 ? (
+                      <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
+                        {t('config.gateways.empty')}
+                      </p>
+                    ) : (
+                      gateways.map((item) => (
+                        <div key={item.provider} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-text-primary">{item.displayName}</p>
+                              <p className="mt-1 text-xs text-text-tertiary">
+                                {item.provider} · status: {item.status} · {t('config.gateways.updatedAt')}:{' '}
+                                {formatDate(item.updatedAt, locale, t)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant={item.isActive ? 'success' : 'outline'}>
+                                {item.isActive ? t('config.status.enabled') : t('config.status.disabled')}
+                              </Badge>
+                              <Button
+                                size="xs"
+                                variant="tertiary"
+                                leftIcon={<Pencil size={12} />}
+                                onClick={() => openGatewayDialog(item)}
+                              >
+                                {t('common.edit')}
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="tertiary"
+                                onClick={() => testGateway(item)}
+                                disabled={testingGateway === item.provider}
+                              >
+                                {t('config.gateways.test')}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1361,6 +1610,123 @@ export default function ConfigPage() {
               />
             </div>
           ) : null}
+        </div>
+      </Modal>
+
+      <Modal
+        open={showGatewayModal}
+        onClose={() => setShowGatewayModal(false)}
+        title={t('config.modals.gateway.title')}
+        description={gatewayForm.provider}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowGatewayModal(false)} disabled={savingGateway}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={saveGatewayConfig} loading={savingGateway}>
+              {t('common.save')}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Input
+            placeholder={t('config.modals.gateway.displayNamePlaceholder')}
+            value={gatewayForm.displayName}
+            onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
+          />
+          <label className="flex items-center gap-2 text-sm text-text-secondary">
+            <input
+              type="checkbox"
+              checked={gatewayForm.isActive}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, isActive: e.target.checked }))}
+            />
+            {t('config.modals.gateway.enabled')}
+          </label>
+          {gatewayForm.provider === 'telegram' ? (
+            <>
+              <Input
+                type="password"
+                placeholder={t('config.modals.gateway.telegram.botTokenPlaceholder')}
+                value={gatewayForm.botToken}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, botToken: e.target.value }))}
+              />
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={gatewayForm.clearBotToken}
+                  onChange={(e) =>
+                    setGatewayForm((prev) => ({
+                      ...prev,
+                      clearBotToken: e.target.checked,
+                    }))
+                  }
+                />
+                {t('config.modals.gateway.telegram.clearBotToken')}
+              </label>
+              <Input
+                type="password"
+                placeholder={t('config.modals.gateway.telegram.webhookSecretPlaceholder')}
+                value={gatewayForm.webhookSecret}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookSecret: e.target.value }))}
+              />
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={gatewayForm.clearWebhookSecret}
+                  onChange={(e) =>
+                    setGatewayForm((prev) => ({
+                      ...prev,
+                      clearWebhookSecret: e.target.checked,
+                    }))
+                  }
+                />
+                {t('config.modals.gateway.telegram.clearWebhookSecret')}
+              </label>
+              <Input
+                placeholder={t('config.modals.gateway.telegram.defaultChatIdPlaceholder')}
+                value={gatewayForm.defaultChatId}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, defaultChatId: e.target.value }))}
+              />
+              <Input
+                placeholder={t('config.modals.gateway.telegram.allowedChatIdsPlaceholder')}
+                value={gatewayForm.allowedChatIds}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
+              />
+            </>
+          ) : (
+            <>
+              <Input
+                type="password"
+                placeholder={t('config.modals.gateway.feishu.verifyTokenPlaceholder')}
+                value={gatewayForm.verifyToken}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, verifyToken: e.target.value }))}
+              />
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={gatewayForm.clearVerifyToken}
+                  onChange={(e) =>
+                    setGatewayForm((prev) => ({
+                      ...prev,
+                      clearVerifyToken: e.target.checked,
+                    }))
+                  }
+                />
+                {t('config.modals.gateway.feishu.clearVerifyToken')}
+              </label>
+              <Input
+                placeholder={t('config.modals.gateway.feishu.webhookUrlPlaceholder')}
+                value={gatewayForm.webhookUrl}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
+              />
+            </>
+          )}
+          <Input
+            placeholder={t('config.modals.gateway.notifyEventTypesPlaceholder')}
+            value={gatewayForm.notifyEventTypes}
+            onChange={(e) => setGatewayForm((prev) => ({ ...prev, notifyEventTypes: e.target.value }))}
+          />
         </div>
       </Modal>
 

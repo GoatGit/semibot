@@ -2,6 +2,7 @@
 
 > 目标：把飞书群聊作为协作前台，与事件框架和审批机制联动。  
 > 约束：群聊只做协作前台，执行逻辑在 Orchestrator。
+> 说明：V2 已引入统一 Gateway 设计（飞书 + Telegram），本文件聚焦飞书 provider 细节；通用配置与接口见 [gateway-design.md](./gateway-design.md)。
 
 ## 1. 事件映射
 

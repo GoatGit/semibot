@@ -85,6 +85,28 @@ A：`browser_automation` 默认按高风险处理并开启 HITL 审批；默认�
 **Q：Tools / MCP 配置存储在哪里？**  
 A：统一存储在本地 `~/.semibot/semibot.db`（runtime SQLite）。API 不再依赖 Postgres 的 `tools` / `mcp_servers` 持久化。`~/.semibot/config.toml` 仅保留基础运行参数（路径、默认模型等）。
 
+**Q：Gateway（飞书/Telegram）配置存储在哪里？**  
+A：同样存储在本地 `~/.semibot/semibot.db`。V2 将在配置中心新增 `Gateway` 配置域，统一管理飞书与 Telegram 的入站/出站参数，保留 Webhook 配置用于通用事件回调，不与聊天网关混用。
+
+**Q：Gateway 字段都填好后，怎么真正用起来？**  
+A：按下面顺序：
+1. 在配置管理里把对应 Gateway 设为“启用”，并保存。  
+2. 先点一次“测试”，确认出站可达（Telegram 会发到 `defaultChatId`；飞书会发到 `webhookUrl`）。  
+3. 把第三方平台回调地址指向 Semibot runtime：  
+   - Telegram：`POST /v1/integrations/telegram/webhook`  
+   - 飞书事件：`POST /v1/integrations/feishu/events`  
+   - 飞书卡片动作：`POST /v1/integrations/feishu/card-actions`  
+4. 在群聊里直接发消息给机器人，Semibot 会收到 `chat.message.received` 事件并进入规则/编排流程。  
+5. 遇到审批时，可在聊天里回复：`同意` / `拒绝` / `/approve <id>` / `/reject <id>` / `全部同意` / `全部拒绝`。  
+6. 若本机运行（`127.0.0.1`）无法被外网访问，需要先用反向隧道（如 ngrok/cloudflared）暴露公网 HTTPS 地址，再配置到 Telegram/飞书。  
+
+**Q：Telegram 里 @bot 发消息没有反应，常见原因是什么？**  
+A：优先排查四项：
+1. Telegram Webhook 没正确指向 Semibot（`getWebhookInfo` 里的 `url`/`last_error_message` 异常）。  
+2. Bot 隐私模式拦截了群消息（建议在 BotFather 里 `setprivacy -> Disable`，或至少使用 `/命令`、回复 bot 消息、`@bot` 精确提及）。  
+3. `allowedChatIds` 未包含当前群 `chat_id`。  
+4. runtime 是旧版本：早期仅接收 Telegram 事件，不会自动回执对话。已在 V2 补齐“入站消息 -> 执行任务 -> 回发 Telegram”链路。更新后重启 runtime 生效。  
+
 **Q：旧版 Postgres 的 Tools / MCP 数据怎么迁移？**  
 A：可用脚本 `runtime/scripts/migrate_pg_config_to_sqlite.py` 一次性迁移。
 ```bash
@@ -134,6 +156,7 @@ cd runtime
 
 | 文档 | 内容 |
 |------|------|
+| [Gateway 统一设计（飞书+Telegram）](./gateway-design.md) | 配置模型、API、事件映射、审批与迁移 |
 | [飞书群聊接入](./feishu-gateway.md) | 群聊协作前台、卡片模板 |
 | [进化流水线](./evolution-pipeline.md) | 事件驱动技能进化 |
 

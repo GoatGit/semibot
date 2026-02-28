@@ -148,6 +148,81 @@ async function setupConfigPageMocks(page: Page, onLlmConfigPut?: (payload: any) 
     }
     await route.continue()
   })
+
+  const gatewayState = {
+    feishu: {
+      id: 'gw-feishu',
+      provider: 'feishu',
+      displayName: 'Feishu',
+      isActive: true,
+      mode: 'webhook',
+      riskLevel: 'high',
+      requiresApproval: false,
+      status: 'ready',
+      config: {
+        verifyToken: '***',
+        webhookUrl: 'https://open.feishu.cn/hook/demo',
+        notifyEventTypes: ['approval.requested'],
+      },
+      updatedAt: '2026-02-27T10:00:00.000Z',
+    },
+    telegram: {
+      id: 'gw-telegram',
+      provider: 'telegram',
+      displayName: 'Telegram',
+      isActive: false,
+      mode: 'webhook',
+      riskLevel: 'high',
+      requiresApproval: false,
+      status: 'not_configured',
+      config: {
+        botToken: null,
+        defaultChatId: null,
+        allowedChatIds: [],
+      },
+      updatedAt: '2026-02-27T10:00:00.000Z',
+    },
+  } as Record<string, any>
+
+  await page.route('**/api/v1/gateways**', async (route, request) => {
+    const method = request.method()
+    if (method === 'GET') {
+      await json(route, { success: true, data: [gatewayState.feishu, gatewayState.telegram] })
+      return
+    }
+    await route.continue()
+  })
+
+  await page.route('**/api/v1/gateways/*', async (route, request) => {
+    const method = request.method()
+    const url = request.url()
+    const tail = url.split('/api/v1/gateways/')[1] || ''
+    const [provider, action] = tail.split('/')
+    if (!provider || !gatewayState[provider]) {
+      await route.continue()
+      return
+    }
+
+    if (method === 'PUT') {
+      const payload = request.postDataJSON() as any
+      const existing = gatewayState[provider]
+      gatewayState[provider] = {
+        ...existing,
+        ...(payload.displayName ? { displayName: payload.displayName } : {}),
+        ...(payload.isActive !== undefined ? { isActive: payload.isActive } : {}),
+        ...(payload.config ? { config: { ...existing.config, ...payload.config } } : {}),
+      }
+      await json(route, { success: true, data: gatewayState[provider] })
+      return
+    }
+
+    if (method === 'POST' && action === 'test') {
+      await json(route, { success: true, data: { sent: true } })
+      return
+    }
+
+    await route.continue()
+  })
 }
 
 test.describe('Config Page', () => {
@@ -215,6 +290,7 @@ test.describe('Config Page', () => {
   })
 
   test('should save browser automation tool config', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1600 })
     const toolPayloads: any[] = []
     await setupConfigPageMocks(page)
     await page.route('**/api/v1/tools/by-name/browser_automation', async (route, request) => {
@@ -247,10 +323,9 @@ test.describe('Config Page', () => {
     )
     await page.getByPlaceholder('blockedDomains（可选，逗号分隔）').fill('localhost,127.0.0.1')
     await page.getByPlaceholder('maxTextLength（可选，100-500000）').fill('25000')
-    await page
-      .getByRole('dialog', { name: '工具配置' })
-      .getByRole('button', { name: '保存' })
-      .click()
+    const saveBtn = page.getByRole('dialog', { name: '工具配置' }).getByRole('button', { name: '保存' })
+    await saveBtn.scrollIntoViewIfNeeded()
+    await saveBtn.click({ force: true })
 
     await expect.poll(() => toolPayloads.length).toBeGreaterThan(0)
     expect(toolPayloads[0]).toMatchObject({
@@ -261,5 +336,69 @@ test.describe('Config Page', () => {
         maxTextLength: 25000,
       },
     })
+  })
+
+  test('should edit and test telegram gateway config', async ({ page }) => {
+    const gatewayPutPayloads: any[] = []
+    const gatewayTestCalls: string[] = []
+
+    await setupConfigPageMocks(page)
+    await page.route('**/api/v1/gateways/telegram', async (route, request) => {
+      if (request.method() === 'PUT') {
+        gatewayPutPayloads.push(request.postDataJSON())
+      }
+      await json(route, {
+        success: true,
+        data: {
+          id: 'gw-telegram',
+          provider: 'telegram',
+          displayName: 'Telegram Ops',
+          isActive: true,
+          mode: 'webhook',
+          riskLevel: 'high',
+          requiresApproval: false,
+          status: 'ready',
+          config: {
+            botToken: '***',
+            defaultChatId: '-10012345',
+            allowedChatIds: ['-10012345'],
+            notifyEventTypes: ['approval.requested', 'task.completed'],
+          },
+          updatedAt: '2026-02-27T10:00:00.000Z',
+        },
+      })
+    })
+    await page.route('**/api/v1/gateways/telegram/test', async (route) => {
+      gatewayTestCalls.push(route.request().url())
+      await json(route, { success: true, data: { sent: true } })
+    })
+
+    await page.goto('/config')
+    await page.getByRole('button', { name: 'Gateways' }).click()
+    await expect(page.getByRole('heading', { name: 'Gateways' })).toBeVisible()
+
+    const tgCard = page.locator('div').filter({ hasText: /^Telegram/ }).first()
+    await tgCard.getByRole('button', { name: '编辑' }).click()
+    await expect(page.getByRole('dialog', { name: 'Gateway 配置' })).toBeVisible()
+    await page.getByPlaceholder('显示名称').fill('Telegram Ops')
+    await page.getByPlaceholder('Telegram Bot Token（留空可清空）').fill('tg_token_123')
+    await page.getByPlaceholder('默认 Chat ID（可选）').fill('-10012345')
+    await page.getByPlaceholder('allowedChatIds（可选，逗号分隔）').fill('-10012345,-100999')
+    await page.getByPlaceholder('notifyEventTypes（可选，逗号分隔）').fill('approval.requested,task.completed')
+    await page.getByRole('dialog', { name: 'Gateway 配置' }).getByRole('button', { name: '保存' }).click()
+
+    await expect.poll(() => gatewayPutPayloads.length).toBeGreaterThan(0)
+    expect(gatewayPutPayloads[0]).toMatchObject({
+      displayName: 'Telegram Ops',
+      config: {
+        botToken: 'tg_token_123',
+        defaultChatId: '-10012345',
+        allowedChatIds: ['-10012345', '-100999'],
+        notifyEventTypes: ['approval.requested', 'task.completed'],
+      },
+    })
+
+    await tgCard.getByRole('button', { name: '测试' }).click()
+    await expect.poll(() => gatewayTestCalls.length).toBeGreaterThan(0)
   })
 })

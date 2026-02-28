@@ -84,7 +84,7 @@ Event Engine 是事件的统一入口和治理层，Orchestrator 是复杂任务
 
 | 层 | 组件 | 职责 |
 |----|------|------|
-| 入口层 | CLI、HTTP API、Web UI、群聊 | 接收用户请求和外部事件 |
+| 入口层 | CLI、HTTP API、Web UI、Gateway（飞书/Telegram） | 接收用户请求和外部事件 |
 | 事件层 | Event Engine（Reflex Engine） | 事件归一化、规则匹配、治理判定、审批 |
 | 编排层 | Orchestrator（LangGraph） | 复杂任务的多步编排 |
 | 能力层 | Tools、MCPs、Skills | 具体执行能力 |
@@ -101,7 +101,7 @@ Event Engine 是事件的统一入口和治理层，Orchestrator 是复杂任务
 |------|------|--------|
 | CLI | 命令行交互，主入口 | P0 必须 |
 | HTTP API | FastAPI 轻量 HTTP 服务 | P1 重要 |
-| 群聊（飞书） | 协作前台，详见 [feishu-gateway.md](./feishu-gateway.md) | P1 重要 |
+| Gateway（飞书/Telegram） | 协作前台，详见 [gateway-design.md](./gateway-design.md) | P1 重要 |
 | Web UI | 可选的浏览器管理界面（建议复用 Next.js） | P2 可选 |
 | TUI | 终端交互界面（如 Textual） | 暂不优先（待需求验证） |
 
@@ -289,6 +289,7 @@ SQLite 表结构包含：
 - `event_rules` — 事件规则
 - `event_rule_runs` — 规则执行记录
 - `approval_requests` — 审批请求
+- `gateway_configs` — 飞书/Telegram 网关配置
 
 完整表结构详见 [event-processing.md](./event-processing.md) 第 4 节。
 

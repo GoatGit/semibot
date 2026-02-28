@@ -18,8 +18,12 @@ semibot/
     replay_manager.py
     trigger_scheduler.py
   server/
-    feishu.py
-    feishu_notifier.py
+    gateway_manager.py
+    gateways/
+      base.py
+      feishu_adapter.py
+      telegram_adapter.py
+    approval_text.py
 ```
 
 职责说明：
@@ -33,8 +37,10 @@ semibot/
 - `attention_budget.py`：预算与冷却窗口  
 - `replay_manager.py`：事件回放  
 - `trigger_scheduler.py`：heartbeat/cron 周期事件触发  
-- `server/feishu.py`：飞书入站事件归一化与 token 校验  
-- `server/feishu_notifier.py`：飞书出站卡片通知（审批/结果）  
+- `server/gateway_manager.py`：统一加载 Gateway 配置并分发到对应 adapter  
+- `server/gateways/feishu_adapter.py`：飞书入站归一化与出站通知  
+- `server/gateways/telegram_adapter.py`：Telegram 入站归一化与出站通知  
+- `server/approval_text.py`：跨 Gateway 文本审批解析（同意/拒绝/approve/reject）  
 
 ## 2. 核心接口（签名）
 
@@ -113,13 +119,14 @@ async def handle_event(self, event):
 - `BaseAgent.run()` 触发 `agent.lifecycle.*`  
 - `UnifiedActionExecutor.execute()` 触发 `tool.exec.*`  
 - `AuditLogger` 写入 event_rule_runs 与 approval_requests  
-- `Feishu Gateway`（`/v1/integrations/feishu/*`）负责把群消息/卡片动作映射为标准事件  
-- `SEMIBOT_FEISHU_WEBHOOK_URL` 可开启事件到飞书的出站通知  
+- `Gateway Manager` 统一接入 `/v1/integrations/feishu/*` 与 `/v1/integrations/telegram/*`  
+- `GET/PUT /v1/config/gateways/{provider}` 由 runtime SQLite 驱动（非 Postgres）  
+- 文本审批解析复用 `approval_text.py`，在飞书/Telegram/Webhook 三条入口行为一致  
 
 ## 7. 关键配置（环境变量）
 
-- `SEMIBOT_FEISHU_VERIFY_TOKEN`：飞书回调 token 校验
-- `SEMIBOT_FEISHU_WEBHOOK_URL`：默认出站 webhook
-- `SEMIBOT_FEISHU_WEBHOOKS_JSON`：多通道 webhook 映射（JSON）
-- `SEMIBOT_FEISHU_NOTIFY_EVENT_TYPES`：出站订阅事件（逗号分隔）
-- `SEMIBOT_FEISHU_TEMPLATES_JSON`：按事件类型配置卡片模板（JSON）
+- `SEMIBOT_FEISHU_VERIFY_TOKEN`：飞书回调 token 校验（fallback）
+- `SEMIBOT_FEISHU_WEBHOOK_URL`：飞书默认出站 webhook（fallback）
+- `SEMIBOT_TELEGRAM_BOT_TOKEN`：Telegram bot token（fallback）
+- `SEMIBOT_TELEGRAM_DEFAULT_CHAT_ID`：Telegram 默认 chat（fallback）
+- 说明：以上环境变量在迁移期仅作为 fallback；长期配置源为 `~/.semibot/semibot.db` 的 `gateway_configs`

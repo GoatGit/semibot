@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
+SUPPORTED_GATEWAY_PROVIDERS = ("feishu", "telegram")
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -116,8 +118,43 @@ class RuntimeConfigStore:
 
                 CREATE INDEX IF NOT EXISTS idx_agent_mcp_servers_agent ON agent_mcp_servers(agent_id);
                 CREATE INDEX IF NOT EXISTS idx_agent_mcp_servers_server ON agent_mcp_servers(mcp_server_id);
+
+                CREATE TABLE IF NOT EXISTS gateway_configs (
+                  id TEXT PRIMARY KEY,
+                  provider TEXT NOT NULL UNIQUE,
+                  display_name TEXT NOT NULL,
+                  is_active INTEGER NOT NULL DEFAULT 0,
+                  mode TEXT NOT NULL DEFAULT 'webhook',
+                  risk_level TEXT NOT NULL DEFAULT 'high',
+                  requires_approval INTEGER NOT NULL DEFAULT 0,
+                  config_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  deleted_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gateway_configs_provider ON gateway_configs(provider);
+                CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_active);
                 """
             )
+        self._seed_gateway_configs()
+
+    def _seed_gateway_configs(self) -> None:
+        now = _now_iso()
+        with self._connect() as conn:
+            for provider in SUPPORTED_GATEWAY_PROVIDERS:
+                display_name = "Feishu" if provider == "feishu" else "Telegram"
+                conn.execute(
+                    """
+                    INSERT INTO gateway_configs (
+                      id, provider, display_name, is_active, mode,
+                      risk_level, requires_approval, config_json,
+                      created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, 0, 'webhook', 'high', 0, '{}', ?, ?, NULL)
+                    ON CONFLICT(provider) DO NOTHING
+                    """,
+                    (str(uuid4()), provider, display_name, now, now),
+                )
 
     def _tool_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
@@ -319,6 +356,111 @@ class RuntimeConfigStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def _gateway_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "provider": row["provider"],
+            "display_name": row["display_name"],
+            "is_active": bool(row["is_active"]),
+            "mode": row["mode"],
+            "risk_level": row["risk_level"],
+            "requires_approval": bool(row["requires_approval"]),
+            "config": _json_loads(row["config_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _normalize_gateway_provider(self, provider: str) -> str:
+        value = str(provider or "").strip().lower()
+        if value not in SUPPORTED_GATEWAY_PROVIDERS:
+            raise ValueError(f"unsupported_gateway_provider:{value}")
+        return value
+
+    def list_gateway_configs(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM gateway_configs
+                WHERE deleted_at IS NULL
+                ORDER BY provider ASC
+                """
+            ).fetchall()
+        found = {str(row["provider"]): row for row in rows}
+        data: list[dict[str, Any]] = []
+        for provider in SUPPORTED_GATEWAY_PROVIDERS:
+            row = found.get(provider)
+            if row is None:
+                continue
+            data.append(self._gateway_row_to_dict(row))
+        return data
+
+    def get_gateway_config(self, provider: str) -> dict[str, Any] | None:
+        normalized = self._normalize_gateway_provider(provider)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM gateway_configs
+                WHERE provider = ? AND deleted_at IS NULL
+                """,
+                (normalized,),
+            ).fetchone()
+        return self._gateway_row_to_dict(row) if row else None
+
+    def upsert_gateway_config(self, provider: str, patch: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_gateway_provider(provider)
+        existing = self.get_gateway_config(normalized)
+        if not existing:
+            self._seed_gateway_configs()
+            existing = self.get_gateway_config(normalized)
+
+        if not existing:
+            raise ValueError(f"gateway_not_found:{normalized}")
+
+        now = _now_iso()
+        merged_config = existing.get("config") or {}
+        if isinstance(patch.get("config"), dict):
+            merged_config = {**merged_config, **patch["config"]}
+
+        clear_fields = patch.get("clear_fields")
+        if isinstance(clear_fields, list):
+            for key in clear_fields:
+                if isinstance(key, str) and key in merged_config:
+                    merged_config.pop(key, None)
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE gateway_configs
+                SET display_name = ?,
+                    is_active = ?,
+                    mode = ?,
+                    risk_level = ?,
+                    requires_approval = ?,
+                    config_json = ?,
+                    updated_at = ?,
+                    deleted_at = NULL
+                WHERE provider = ?
+                """,
+                (
+                    patch.get("display_name", existing.get("display_name")),
+                    1 if patch.get("is_active", existing.get("is_active", False)) else 0,
+                    patch.get("mode", existing.get("mode", "webhook")),
+                    patch.get("risk_level", existing.get("risk_level", "high")),
+                    1
+                    if patch.get(
+                        "requires_approval",
+                        existing.get("requires_approval", False),
+                    )
+                    else 0,
+                    _json_dumps(merged_config),
+                    now,
+                    normalized,
+                ),
+            )
+
+        updated = self.get_gateway_config(normalized)
+        return updated or existing
 
     def create_mcp_server(self, payload: dict[str, Any]) -> dict[str, Any]:
         server_id = str(payload.get("id") or uuid4())

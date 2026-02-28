@@ -80,6 +80,19 @@ def main() -> None:
         except json.JSONDecodeError:
             feishu_templates = None
 
+    telegram_bot_token = os.getenv("SEMIBOT_TELEGRAM_BOT_TOKEN")
+    telegram_default_chat_id = os.getenv("SEMIBOT_TELEGRAM_DEFAULT_CHAT_ID")
+    telegram_webhook_secret = os.getenv("SEMIBOT_TELEGRAM_WEBHOOK_SECRET")
+    telegram_notify_event_types_raw = os.getenv("SEMIBOT_TELEGRAM_NOTIFY_EVENT_TYPES")
+    telegram_notify_event_types = None
+    if telegram_notify_event_types_raw:
+        parsed = {
+            item.strip()
+            for item in telegram_notify_event_types_raw.split(",")
+            if item.strip()
+        }
+        telegram_notify_event_types = parsed or None
+
     ensure_runtime_home(db_path=db_path, rules_path=rules_path)
 
     app = create_app(
@@ -92,6 +105,10 @@ def main() -> None:
         feishu_webhook_urls=feishu_webhook_urls,
         feishu_notify_event_types=feishu_notify_event_types,
         feishu_templates=feishu_templates,
+        telegram_bot_token=telegram_bot_token,
+        telegram_default_chat_id=telegram_default_chat_id,
+        telegram_webhook_secret=telegram_webhook_secret,
+        telegram_notify_event_types=telegram_notify_event_types,
     )
     uvicorn.run(app, host=host, port=port, log_level="info")
 

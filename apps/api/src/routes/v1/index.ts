@@ -24,6 +24,7 @@ import runtimeRouter from './runtime'
 import eventsRouter from './events'
 import rulesRouter from './rules'
 import approvalsRouter from './approvals'
+import gatewaysRouter from './gateways'
 
 const router: Router = Router()
 
@@ -63,5 +64,6 @@ router.use('/runtime', runtimeRouter)
 router.use('/events', eventsRouter)
 router.use('/rules', rulesRouter)
 router.use('/approvals', approvalsRouter)
+router.use('/gateways', gatewaysRouter)
 
 export default router

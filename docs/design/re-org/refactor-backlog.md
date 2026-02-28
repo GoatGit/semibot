@@ -22,11 +22,12 @@
 
 ## P2（协作增强）
 
-- 飞书 Gateway 接入
+- Gateway 接入（飞书 + Telegram）
 - 群聊卡片模板与审批回传
 - Supervisor-Worker 群聊协作视图
 - Web UI：新增 `events/rules/approvals` 三页与回放链路
 - Web UI：Dashboard 增加实时态势与待审批队列
+- Web UI：配置中心新增 `Gateway` 配置（飞书/Telegram）
 
 ## P3（进化增强）
 

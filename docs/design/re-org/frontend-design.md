@@ -117,17 +117,30 @@ app/
 - 统一管理：
   - LLM Provider 配置与默认模型路由
   - Tools、API Keys、Webhook
+  - Gateway（飞书、Telegram）
   - Runtime 注册能力（tools/skills）可见性
 - 关键约束：
   - Tools 页面只展示“统一工具列表”，不区分“Runtime 内置工具/其他工具”两个分区
   - 前端配置修改必须写入 runtime 生效源
   - Tools / MCP 配置持久化到 `~/.semibot/semibot.db`（runtime SQLite），不走 Postgres
+  - Gateway 配置也持久化到 `~/.semibot/semibot.db`
   - 配置变更后应有“已同步到 runtime”反馈
   - 不再展示组织配置（V2 单用户模式）
   - Tools 固定为内建能力：前端不提供新增/删除入口，只允许配置与启停（如权限、限流、超时、必要时的 endpoint/key）
   - `code_executor`、`file_io`、`browser_automation` 不展示 endpoint/key 配置项
   - `xlsx` / `pdf` 归类为 Skills，不在 Tools 配置页展示为可配置 Tool
   - Tools 风控配置以风险等级与 HITL 审批为主；`browser_automation` 额外支持 `allowLocalhost`、域名白/黑名单、`headless`、`browserType`
+  - Gateway Tab 统一管理飞书与 Telegram，不把聊天网关混在 Webhook Tab
+
+## 5.7 Gateway（新增）
+
+- 数据：`GET/PUT /v1/config/gateways/{provider}`，`POST /v1/config/gateways/{provider}/test`
+- provider：`feishu`、`telegram`
+- 核心能力：
+  - 启停网关与查看配置状态（ready/not_configured/disabled）
+  - 编辑飞书参数（verify token、webhook 等）
+  - 编辑 Telegram 参数（bot token、chat id 白名单等）
+  - 发送测试消息并展示最近连通性结果
 
 ## 6. 前端状态与数据流
 

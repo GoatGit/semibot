@@ -280,6 +280,126 @@ URL 验证响应：
 }
 ```
 
+## Gateway 配置 API（新增）
+
+用于配置管理页的 `Gateways` Tab，统一管理 `feishu` 和 `telegram`。
+
+### `GET /v1/config/gateways`
+
+响应：
+
+```json
+{
+  "data": [
+    {
+      "provider": "feishu",
+      "displayName": "Feishu",
+      "isActive": true,
+      "status": "ready",
+      "config": {
+        "verifyToken": "***",
+        "webhookUrl": "https://open.feishu.cn/..."
+      }
+    },
+    {
+      "provider": "telegram",
+      "displayName": "Telegram",
+      "isActive": false,
+      "status": "not_configured",
+      "config": {
+        "botToken": null,
+        "defaultChatId": null
+      }
+    }
+  ]
+}
+```
+
+### `GET /v1/config/gateways/{provider}`
+
+`provider`：`feishu` | `telegram`
+
+### `PUT /v1/config/gateways/{provider}`
+
+请求（Telegram 示例）：
+
+```json
+{
+  "isActive": true,
+  "config": {
+    "botToken": "123456:ABCDEF",
+    "defaultChatId": "-10012345678",
+    "allowedChatIds": ["-10012345678"],
+    "notifyEventTypes": ["approval.requested", "task.completed"]
+  }
+}
+```
+
+### `POST /v1/config/gateways/{provider}/test`
+
+请求：
+
+```json
+{
+  "message": "Semibot gateway connectivity test",
+  "channel": "default"
+}
+```
+
+响应：
+
+```json
+{
+  "sent": true
+}
+```
+
+## Telegram Gateway API（新增）
+
+### `POST /v1/integrations/telegram/webhook`
+
+用途：接收 Telegram Bot Webhook Update。
+
+请求（示例）：
+
+```json
+{
+  "update_id": 123456789,
+  "message": {
+    "message_id": 88,
+    "chat": { "id": -10012345678, "type": "supergroup" },
+    "text": "同意 appr_abc123"
+  }
+}
+```
+
+响应（审批命中）：
+
+```json
+{
+  "accepted": true,
+  "event_type": "approval.action",
+  "resolved": true,
+  "approval_id": "appr_abc123",
+  "decision": "approved"
+}
+```
+
+响应（普通消息）：
+
+```json
+{
+  "accepted": true,
+  "event_id": "evt_tg_xxx",
+  "event_type": "chat.message.received",
+  "matched_rules": 1
+}
+```
+
+### `POST /v1/integrations/telegram/outbound/test`
+
+用途：发送测试消息到 Telegram 默认 chat。
+
 ## 12. `POST /v1/tasks/run`
 
 用途：单次任务执行入口（CLI/WebUI 可直接调用），走本地 Orchestrator + Event Engine。

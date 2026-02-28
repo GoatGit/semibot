@@ -174,7 +174,7 @@
   "config": {
     "header": {
       "title": "Configuration",
-      "subtitle": "Manage LLM, tools, API keys and webhooks in one place."
+      "subtitle": "Manage LLM, tools, gateways, API keys and webhooks in one place."
     },
     "loading": "Loading configuration...",
     "common": {
@@ -194,6 +194,7 @@
       "runtimeToolsLoad": "Failed to read runtime built-in tools",
       "toolsConfigLoad": "Failed to load tool config (runtime tools are shown)",
       "toolsLoad": "Failed to load tools list",
+      "gatewaysLoad": "Failed to load gateways",
       "apiKeysLoad": "Failed to load API key list",
       "webhooksLoad": "Failed to load webhook list",
       "saveDefaultModel": "Failed to save default model config",
@@ -205,6 +206,8 @@
       "missingToolId": "Missing tool ID, unable to save",
       "updateToolConfig": "Failed to update tool config",
       "updateToolStatus": "Failed to update tool status",
+      "updateGateway": "Failed to update gateway config",
+      "testGateway": "Failed to test gateway connectivity",
       "createApiKey": "Failed to create API key",
       "deleteApiKey": "Failed to delete API key",
       "webhookUrlInvalid": "Webhook URL must be an http(s) address",
@@ -239,6 +242,14 @@
       "configure": "Configure",
       "disable": "Disable",
       "enable": "Enable"
+    },
+    "gateways": {
+      "title": "Gateways",
+      "activeCount": "Active {count}",
+      "loading": "Loading gateways...",
+      "empty": "No gateways",
+      "updatedAt": "Updated at",
+      "test": "Test"
     },
     "apiKeys": {
       "newKey": "New Key",
@@ -291,6 +302,25 @@
           "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. example.com,news.ycombinator.com)",
           "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
           "maxTextLengthPlaceholder": "maxTextLength (optional, 100-500000)"
+        }
+      },
+      "gateway": {
+        "title": "Gateway configuration",
+        "displayNamePlaceholder": "Display name",
+        "enabled": "Enable this gateway",
+        "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",
+        "feishu": {
+          "verifyTokenPlaceholder": "Feishu verify token (leave empty to clear)",
+          "webhookUrlPlaceholder": "Feishu webhook URL (optional)",
+          "clearVerifyToken": "Clear existing verify token"
+        },
+        "telegram": {
+          "botTokenPlaceholder": "Telegram bot token (leave empty to clear)",
+          "clearBotToken": "Clear existing bot token",
+          "webhookSecretPlaceholder": "Telegram webhook secret (optional)",
+          "clearWebhookSecret": "Clear existing webhook secret",
+          "defaultChatIdPlaceholder": "Default chat ID (optional)",
+          "allowedChatIdsPlaceholder": "allowedChatIds (optional, comma-separated)"
         }
       },
       "apiKey": {

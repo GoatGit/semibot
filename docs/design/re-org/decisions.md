@@ -6,12 +6,14 @@
 
 - 运行环境优先本地单机
 - 群聊入口优先飞书
+- 群聊 Gateway 扩展 Telegram，并在配置中心统一为 Gateway 配置域
 - 默认不依赖 PostgreSQL/Redis
 - Docker 为可选本地部署
 - 高风险动作默认 HITL 审批
 - 事件范围按 P0/P1/P2 分层推进
 - 交互入口策略：`CLI` 作为主入口，`Web UI` 作为可选管理面板，`TUI` 暂不优先
 - Web UI 技术路线：优先复用现有 `Next.js + React + Tailwind`，不在当前阶段切换到新前端框架
+- Gateway 配置（飞书/Telegram）统一持久化到 runtime SQLite（`~/.semibot/semibot.db`）
 
 ## 待定项（需要后续实现时确认）
 

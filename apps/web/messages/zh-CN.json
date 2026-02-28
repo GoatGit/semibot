@@ -174,7 +174,7 @@
   "config": {
     "header": {
       "title": "配置管理",
-      "subtitle": "统一管理 LLM、Tools、API Key、Webhook。"
+      "subtitle": "统一管理 LLM、Tools、Gateway、API Key、Webhook。"
     },
     "loading": "加载配置中...",
     "common": {
@@ -194,6 +194,7 @@
       "runtimeToolsLoad": "Runtime 内置工具读取失败",
       "toolsConfigLoad": "Tools 配置读取失败（Runtime 工具清单已显示）",
       "toolsLoad": "Tools 列表加载失败",
+      "gatewaysLoad": "Gateway 列表加载失败",
       "apiKeysLoad": "API Key 列表加载失败",
       "webhooksLoad": "Webhook 列表加载失败",
       "saveDefaultModel": "保存模型默认配置失败",
@@ -205,6 +206,8 @@
       "missingToolId": "缺少工具 ID，无法保存",
       "updateToolConfig": "更新工具配置失败",
       "updateToolStatus": "更新工具状态失败",
+      "updateGateway": "更新 Gateway 配置失败",
+      "testGateway": "Gateway 连通性测试失败",
       "createApiKey": "创建 API Key 失败",
       "deleteApiKey": "删除 API Key 失败",
       "webhookUrlInvalid": "Webhook URL 必须是 http(s) 地址",
@@ -239,6 +242,14 @@
       "configure": "配置",
       "disable": "停用",
       "enable": "启用"
+    },
+    "gateways": {
+      "title": "Gateways",
+      "activeCount": "启用 {count}",
+      "loading": "正在加载 Gateway...",
+      "empty": "暂无 Gateway 配置",
+      "updatedAt": "更新时间",
+      "test": "测试"
     },
     "apiKeys": {
       "newKey": "新建 Key",
@@ -291,6 +302,25 @@
           "allowedDomainsPlaceholder": "allowedDomains（可选，逗号分隔，如 example.com,news.ycombinator.com）",
           "blockedDomainsPlaceholder": "blockedDomains（可选，逗号分隔）",
           "maxTextLengthPlaceholder": "maxTextLength（可选，100-500000）"
+        }
+      },
+      "gateway": {
+        "title": "Gateway 配置",
+        "displayNamePlaceholder": "显示名称",
+        "enabled": "启用此 Gateway",
+        "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",
+        "feishu": {
+          "verifyTokenPlaceholder": "Feishu Verify Token（留空可清空）",
+          "webhookUrlPlaceholder": "Feishu Webhook URL（可选）",
+          "clearVerifyToken": "清空已有 Verify Token"
+        },
+        "telegram": {
+          "botTokenPlaceholder": "Telegram Bot Token（留空可清空）",
+          "clearBotToken": "清空已有 Bot Token",
+          "webhookSecretPlaceholder": "Telegram Webhook Secret（可选）",
+          "clearWebhookSecret": "清空已有 Webhook Secret",
+          "defaultChatIdPlaceholder": "默认 Chat ID（可选）",
+          "allowedChatIdsPlaceholder": "allowedChatIds（可选，逗号分隔）"
         }
       },
       "apiKey": {
