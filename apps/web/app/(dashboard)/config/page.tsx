@@ -181,6 +181,7 @@ type GatewayForm = {
   provider: GatewayProvider
   isDefault: boolean
   displayName: string
+  agentId: string
   isActive: boolean
   verifyToken: string
   clearVerifyToken: boolean
@@ -358,6 +359,7 @@ export default function ConfigPage() {
     provider: 'feishu',
     isDefault: false,
     displayName: '',
+    agentId: 'semibot',
     isActive: false,
     verifyToken: '',
     clearVerifyToken: false,
@@ -899,6 +901,7 @@ export default function ConfigPage() {
       provider: gateway.provider,
       isDefault: gateway.isDefault === true,
       displayName: gateway.displayName || gateway.provider,
+      agentId: String(cfg.agentId || cfg.defaultAgentId || 'semibot'),
       isActive: gateway.isActive,
       verifyToken: '',
       clearVerifyToken: false,
@@ -933,6 +936,7 @@ export default function ConfigPage() {
       provider,
       isDefault: false,
       displayName: defaultDisplayName,
+      agentId: 'semibot',
       isActive: false,
       verifyToken: '',
       clearVerifyToken: false,
@@ -970,11 +974,13 @@ export default function ConfigPage() {
     }
 
     const isTelegram = gatewayForm.provider === 'telegram'
+    const normalizedAgentId = gatewayForm.agentId.trim()
     const payload: Record<string, unknown> = {
       displayName: gatewayForm.displayName.trim() || gatewayForm.provider,
       isDefault: gatewayForm.isDefault,
       isActive: gatewayForm.isActive,
       config: {
+        ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
         ...(isTelegram
           ? {
               ...(gatewayForm.botToken.trim() && !gatewayForm.clearBotToken
@@ -1013,6 +1019,9 @@ export default function ConfigPage() {
       },
     }
     const clearFields: string[] = []
+    if (!normalizedAgentId) {
+      clearFields.push('agentId', 'defaultAgentId')
+    }
     if (!isTelegram && gatewayForm.clearVerifyToken) clearFields.push('verifyToken')
     if (isTelegram && gatewayForm.clearBotToken) clearFields.push('botToken')
     if (isTelegram && gatewayForm.clearWebhookSecret) clearFields.push('webhookSecret')
@@ -1646,6 +1655,7 @@ export default function ConfigPage() {
                                 <p className="mt-1 text-xs text-text-tertiary">
                                   {item.provider}
                                   {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
+                                  {t('config.gateways.agent')}: {String(item.config?.agentId || item.config?.defaultAgentId || 'semibot')} ·{' '}
                                   {t('config.gateways.updatedAt')}:{' '}
                                   {formatDate(item.updatedAt, locale, t)}
                                 </p>
@@ -2093,6 +2103,11 @@ export default function ConfigPage() {
             placeholder={t('config.modals.gateway.displayNamePlaceholder')}
             value={gatewayForm.displayName}
             onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
+          />
+          <Input
+            placeholder={t('config.modals.gateway.agentIdPlaceholder')}
+            value={gatewayForm.agentId}
+            onChange={(e) => setGatewayForm((prev) => ({ ...prev, agentId: e.target.value }))}
           />
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input

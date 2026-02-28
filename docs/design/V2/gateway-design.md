@@ -147,6 +147,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 
 ### Telegram（新增）
 
+- `agentId`: 该实例绑定的 runtime Agent（默认 `semibot`）
 - `botToken`: Telegram Bot Token（敏感字段）
 - `webhookSecret`: 可选，自定义 header secret
 - `webhookPath`: 默认 `/v1/integrations/telegram/webhook`
@@ -187,7 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 ## 4.3 字段表单（MVP）
 
 - Feishu：`verifyToken`、`webhookUrl`、`notifyEventTypes`
-- Telegram：`botToken`、`defaultChatId`、`allowedChatIds`、`notifyEventTypes`
+- Telegram：`agentId`、`botToken`、`defaultChatId`、`allowedChatIds`、`notifyEventTypes`
 - 通用策略：
   - Addressing：`mention_only/all_messages`、命令前缀、会话延续窗口
   - Proactive：`silent/risk_based/always`、最小提醒风险级别

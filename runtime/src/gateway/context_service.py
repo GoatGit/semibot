@@ -164,6 +164,7 @@ class GatewayContextService:
             "address_reason": decision.reason,
             "task_run_id": None,
             "runtime_session_id": None,
+            "agent_id": agent_id,
         }
 
         if not decision.should_execute:

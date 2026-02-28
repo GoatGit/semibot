@@ -307,6 +307,7 @@ URL 验证响应：
   "isDefault": false,
   "isActive": true,
   "config": {
+    "agentId": "fund-analyst",
     "botToken": "123456:ABCDEF",
     "webhookSecret": "sec_xxx",
     "defaultChatId": "-10012345678",
@@ -382,6 +383,7 @@ URL 验证响应：
     "summarizeEveryNMessages": 50
   },
   "config": {
+    "agentId": "fund-analyst",
     "botToken": "123456:ABCDEF",
     "defaultChatId": "-10012345678",
     "allowedChatIds": ["-10012345678"],

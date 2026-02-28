@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -334,11 +335,13 @@ async def test_telegram_multi_instance_routing_by_webhook_secret(tmp_path: Path)
     rules_path = tmp_path / "rules.json"
     _write_rules(rules_path)
     sent: list[dict] = []
+    runner_calls: list[dict[str, Any]] = []
 
     async def _send(token: str, payload: dict, timeout: float) -> None:
         sent.append({"token": token, "payload": payload, "timeout": timeout})
 
     async def _task_runner(**kwargs):
+        runner_calls.append(dict(kwargs))
         task = str(kwargs.get("task") or "")
         return {
             "status": "success",
@@ -364,11 +367,17 @@ async def test_telegram_multi_instance_routing_by_webhook_secret(tmp_path: Path)
                 "provider": "telegram",
                 "instanceKey": "tg-a",
                 "displayName": "Telegram A",
+                "isDefault": True,
                 "isActive": True,
                 "config": {
                     "botToken": "111111:token_a",
                     "webhookSecret": "sec_a",
                     "defaultChatId": "-100001",
+                    "agentId": "agent.alpha",
+                    "addressingPolicy": {
+                        "mode": "all_messages",
+                        "executeOnUnaddressed": True,
+                    },
                 },
             },
         )
@@ -384,6 +393,11 @@ async def test_telegram_multi_instance_routing_by_webhook_secret(tmp_path: Path)
                     "botToken": "222222:token_b",
                     "webhookSecret": "sec_b",
                     "defaultChatId": "-100002",
+                    "agentId": "agent.beta",
+                    "addressingPolicy": {
+                        "mode": "all_messages",
+                        "executeOnUnaddressed": True,
+                    },
                 },
             },
         )
@@ -405,6 +419,7 @@ async def test_telegram_multi_instance_routing_by_webhook_secret(tmp_path: Path)
         )
         assert accepted_a.status_code == 200
         assert accepted_a.json()["accepted"] is True
+        assert accepted_a.json()["should_execute"] is True
 
         accepted_b = await client.post(
             "/v1/integrations/telegram/webhook",
@@ -416,11 +431,19 @@ async def test_telegram_multi_instance_routing_by_webhook_secret(tmp_path: Path)
         )
         assert accepted_b.status_code == 200
         assert accepted_b.json()["accepted"] is True
+        assert accepted_b.json()["should_execute"] is True
         await asyncio.sleep(0.05)
         assert len(sent) >= 2
         tokens = {item["token"] for item in sent}
         assert "111111:token_a" in tokens
         assert "222222:token_b" in tokens
+        for _ in range(20):
+            if len(runner_calls) >= 2:
+                break
+            await asyncio.sleep(0.05)
+        agent_ids = {str(item.get("agent_id")) for item in runner_calls}
+        assert "agent.alpha" in agent_ids
+        assert "agent.beta" in agent_ids
 
 
 @pytest.mark.asyncio

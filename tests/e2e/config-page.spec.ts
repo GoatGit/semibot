@@ -492,6 +492,7 @@ test.describe('Config Page', () => {
     await tgCard.getByRole('button', { name: '编辑' }).click()
     await expect(page.getByRole('dialog', { name: 'Gateway 配置' })).toBeVisible()
     await page.getByPlaceholder('显示名称').fill('Telegram Ops')
+    await page.getByPlaceholder('Agent ID（默认 semibot）').fill('fund-analyst')
     await page.getByPlaceholder('Telegram Bot Token（留空可清空）').fill('tg_token_123')
     await page.getByPlaceholder('默认 Chat ID（可选）').fill('-10012345')
     await page.getByPlaceholder('allowedChatIds（可选，逗号分隔）').fill('-10012345,-100999')
@@ -517,6 +518,7 @@ test.describe('Config Page', () => {
     expect(gatewayPutPayloads[0]).toMatchObject({
       displayName: 'Telegram Ops',
       config: {
+        agentId: 'fund-analyst',
         botToken: 'tg_token_123',
         defaultChatId: '-10012345',
         allowedChatIds: ['-10012345', '-100999'],

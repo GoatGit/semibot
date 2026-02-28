@@ -267,6 +267,7 @@
       "defaultTag": "默认",
       "loading": "正在加载 Gateway...",
       "empty": "暂无 Gateway 配置",
+      "agent": "绑定 Agent",
       "updatedAt": "更新时间",
       "test": "测试"
     },
@@ -327,6 +328,7 @@
         "title": "Gateway 配置",
         "instanceKeyPlaceholder": "instanceKey（可选，建议唯一）",
         "displayNamePlaceholder": "显示名称",
+        "agentIdPlaceholder": "Agent ID（默认 semibot）",
         "setDefault": "设为默认实例",
         "enabled": "启用此 Gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",

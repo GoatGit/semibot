@@ -267,6 +267,7 @@
       "defaultTag": "Default",
       "loading": "Loading gateways...",
       "empty": "No gateways",
+      "agent": "Agent",
       "updatedAt": "Updated at",
       "test": "Test"
     },
@@ -327,6 +328,7 @@
         "title": "Gateway configuration",
         "instanceKeyPlaceholder": "instanceKey (optional, should be unique)",
         "displayNamePlaceholder": "Display name",
+        "agentIdPlaceholder": "Agent ID (default: semibot)",
         "setDefault": "Set as default instance",
         "enabled": "Enable this gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",

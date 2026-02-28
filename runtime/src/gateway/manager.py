@@ -80,6 +80,23 @@ class GatewayManager:
         config = item.get("config")
         return config if isinstance(config, dict) else {}
 
+    @staticmethod
+    def _normalized_agent_id(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        agent_id = value.strip()
+        return agent_id or None
+
+    def _gateway_agent_id(self, provider: str, instance: dict[str, Any] | None = None) -> str:
+        cfg = instance.get("config") if isinstance(instance, dict) else self.provider_config(provider)
+        cfg_map = cfg if isinstance(cfg, dict) else {}
+        resolved = (
+            self._normalized_agent_id(cfg_map.get("agentId"))
+            or self._normalized_agent_id(cfg_map.get("defaultAgentId"))
+            or "semibot"
+        )
+        return resolved
+
     def list_provider_instances(self, provider: str, *, active_only: bool = False) -> list[dict[str, Any]]:
         try:
             items = self.config_store.list_gateway_instances(provider=provider)
@@ -787,7 +804,7 @@ class GatewayManager:
                 source=event.source,
                 subject=str(event.subject) if isinstance(event.subject, str) else None,
                 text=text,
-                agent_id="semibot",
+                agent_id=self._gateway_agent_id("feishu", target_instance),
                 force_execute=False,
                 on_result=_feishu_result_sender,
             )
@@ -804,6 +821,7 @@ class GatewayManager:
             "main_context_id": gateway_result.get("main_context_id") if gateway_result else None,
             "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
             "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
+            "agent_id": gateway_result.get("agent_id") if gateway_result else None,
         }
 
     async def ingest_feishu_card_actions(
@@ -994,7 +1012,7 @@ class GatewayManager:
                     source=event.source,
                     subject=str(event.subject) if isinstance(event.subject, str) else None,
                     text=text,
-                    agent_id="semibot",
+                    agent_id=self._gateway_agent_id("telegram", target_instance),
                     force_execute=False,
                     on_result=_telegram_result_sender,
                 )
@@ -1012,6 +1030,7 @@ class GatewayManager:
             "main_context_id": gateway_result.get("main_context_id") if gateway_result else None,
             "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
             "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
+            "agent_id": gateway_result.get("agent_id") if gateway_result else None,
         }
 
     async def send_telegram_test(self, *, text: str, chat_id: str | None) -> dict[str, Any]:
