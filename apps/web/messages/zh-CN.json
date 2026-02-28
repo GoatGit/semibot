@@ -477,6 +477,17 @@
       "replay": "回放",
       "unknown": "未知"
     },
+    "actionNames": {
+      "bootCompleted": "启动完成",
+      "messageReceived": "消息接收",
+      "messageCompleted": "消息完成",
+      "execStarted": "执行开始",
+      "execCompleted": "执行完成",
+      "execFailed": "执行失败",
+      "lifecyclePreExecute": "执行前",
+      "lifecyclePostExecute": "执行后",
+      "queueTelemetry": "队列指标"
+    },
     "actions": {
       "boot.completed": "启动完成",
       "message.received": "消息接收",

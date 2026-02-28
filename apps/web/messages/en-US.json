@@ -477,6 +477,17 @@
       "replay": "Replay",
       "unknown": "Unknown"
     },
+    "actionNames": {
+      "bootCompleted": "Boot Completed",
+      "messageReceived": "Message Received",
+      "messageCompleted": "Message Completed",
+      "execStarted": "Execution Started",
+      "execCompleted": "Execution Completed",
+      "execFailed": "Execution Failed",
+      "lifecyclePreExecute": "Pre Execute",
+      "lifecyclePostExecute": "Post Execute",
+      "queueTelemetry": "Queue Telemetry"
+    },
     "actions": {
       "boot.completed": "Boot Completed",
       "message.received": "Message Received",
