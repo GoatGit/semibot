@@ -367,7 +367,8 @@
           "webhookSecretPlaceholder": "Telegram Webhook Secret（可选）",
           "clearWebhookSecret": "清空已有 Webhook Secret",
           "defaultChatIdPlaceholder": "默认 Chat ID（可选）",
-          "allowedChatIdsPlaceholder": "allowedChatIds（可选，逗号分隔）"
+          "allowedChatIdsPlaceholder": "allowedChatIds（可选，逗号分隔）",
+          "chatBindingsPlaceholder": "chatBindings（可选，每行一条：chatId=agentId）"
         }
       },
       "apiKey": {

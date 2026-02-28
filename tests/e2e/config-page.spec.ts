@@ -496,6 +496,9 @@ test.describe('Config Page', () => {
     await page.getByPlaceholder('Telegram Bot Token（留空可清空）').fill('tg_token_123')
     await page.getByPlaceholder('默认 Chat ID（可选）').fill('-10012345')
     await page.getByPlaceholder('allowedChatIds（可选，逗号分隔）').fill('-10012345,-100999')
+    await page
+      .getByPlaceholder('chatBindings（可选，每行一条：chatId=agentId）')
+      .fill('-10012345=fund-analyst\n-100999=risk-officer')
     await page.getByPlaceholder('notifyEventTypes（可选，逗号分隔）').fill('approval.requested,task.completed')
     const gatewayDialog = page.getByRole('dialog', { name: 'Gateway 配置' })
     await gatewayDialog.locator('select').nth(0).selectOption('all_messages')
@@ -522,6 +525,10 @@ test.describe('Config Page', () => {
         botToken: 'tg_token_123',
         defaultChatId: '-10012345',
         allowedChatIds: ['-10012345', '-100999'],
+        chatBindings: [
+          { chatId: '-10012345', agentId: 'fund-analyst' },
+          { chatId: '-100999', agentId: 'risk-officer' },
+        ],
         notifyEventTypes: ['approval.requested', 'task.completed'],
       },
       addressingPolicy: {

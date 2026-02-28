@@ -504,6 +504,110 @@ async def test_gateway_instances_batch_endpoint(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_telegram_chat_bindings_route_to_bound_agents(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict[str, Any]] = []
+    runner_calls: list[dict[str, Any]] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        runner_calls.append(dict(kwargs))
+        task = str(kwargs.get("task") or "")
+        return {
+            "status": "success",
+            "task": task,
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": f"done: {task}",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/v1/config/gateway-instances",
+            json={
+                "provider": "telegram",
+                "instanceKey": "tg-bindings",
+                "displayName": "Telegram Bindings",
+                "isDefault": True,
+                "isActive": True,
+                "config": {
+                    "botToken": "444444:token_d",
+                    "webhookSecret": "sec_d",
+                    "agentId": "agent.default",
+                    "addressingPolicy": {"mode": "all_messages", "executeOnUnaddressed": True},
+                    "chatBindings": [
+                        {"chatId": "-100111", "agentId": "agent.alpha"},
+                        {"chatId": "-100222", "agentId": "agent.beta"},
+                    ],
+                },
+            },
+        )
+        assert created.status_code == 201
+
+        first = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 201,
+                "message": {"message_id": 1, "chat": {"id": -100111, "type": "supergroup"}, "text": "hello alpha"},
+            },
+            headers={"x-telegram-bot-api-secret-token": "sec_d"},
+        )
+        assert first.status_code == 200
+        assert first.json()["accepted"] is True
+        assert first.json()["should_execute"] is True
+        assert first.json()["agent_id"] == "agent.alpha"
+
+        second = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 202,
+                "message": {"message_id": 2, "chat": {"id": -100222, "type": "supergroup"}, "text": "hello beta"},
+            },
+            headers={"x-telegram-bot-api-secret-token": "sec_d"},
+        )
+        assert second.status_code == 200
+        assert second.json()["accepted"] is True
+        assert second.json()["should_execute"] is True
+        assert second.json()["agent_id"] == "agent.beta"
+
+        fallback = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 203,
+                "message": {"message_id": 3, "chat": {"id": -100333, "type": "supergroup"}, "text": "hello default"},
+            },
+            headers={"x-telegram-bot-api-secret-token": "sec_d"},
+        )
+        assert fallback.status_code == 200
+        assert fallback.json()["accepted"] is True
+        assert fallback.json()["should_execute"] is True
+        assert fallback.json()["agent_id"] == "agent.default"
+
+        for _ in range(20):
+            if len(runner_calls) >= 3:
+                break
+            await asyncio.sleep(0.05)
+        observed = [str(item.get("agent_id")) for item in runner_calls]
+        assert "agent.alpha" in observed
+        assert "agent.beta" in observed
+        assert "agent.default" in observed
+        assert len(sent) >= 3
+
+
+@pytest.mark.asyncio
 async def test_gateway_context_endpoints_and_mention_only_policy(tmp_path: Path):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"

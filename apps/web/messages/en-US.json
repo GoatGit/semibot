@@ -367,7 +367,8 @@
           "webhookSecretPlaceholder": "Telegram webhook secret (optional)",
           "clearWebhookSecret": "Clear existing webhook secret",
           "defaultChatIdPlaceholder": "Default chat ID (optional)",
-          "allowedChatIdsPlaceholder": "allowedChatIds (optional, comma-separated)"
+          "allowedChatIdsPlaceholder": "allowedChatIds (optional, comma-separated)",
+          "chatBindingsPlaceholder": "chatBindings (optional, one per line: chatId=agentId)"
         }
       },
       "apiKey": {

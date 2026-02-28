@@ -192,6 +192,7 @@ type GatewayForm = {
   clearWebhookSecret: boolean
   defaultChatId: string
   allowedChatIds: string
+  chatBindingsText: string
   notifyEventTypes: string
   addressingMode: GatewayAddressingMode
   allowReplyToBot: boolean
@@ -370,6 +371,7 @@ export default function ConfigPage() {
     clearWebhookSecret: false,
     defaultChatId: '',
     allowedChatIds: '',
+    chatBindingsText: '',
     notifyEventTypes: '',
     addressingMode: 'mention_only',
     allowReplyToBot: true,
@@ -862,6 +864,19 @@ export default function ConfigPage() {
     const notifyEventTypes = Array.isArray(cfg.notifyEventTypes)
       ? (cfg.notifyEventTypes as unknown[]).map((item) => String(item)).join(',')
       : ''
+    const chatBindingsText = Array.isArray(cfg.chatBindings)
+      ? (cfg.chatBindings as unknown[])
+          .map((item) => {
+            if (!item || typeof item !== 'object') return ''
+            const row = item as Record<string, unknown>
+            const chatId = String(row.chatId || row.chat_id || '').trim()
+            const agentId = String(row.agentId || row.agent_id || '').trim()
+            if (!chatId || !agentId) return ''
+            return `${chatId}=${agentId}`
+          })
+          .filter(Boolean)
+          .join('\n')
+      : ''
     const addressingPolicyRaw =
       gateway.addressingPolicy && typeof gateway.addressingPolicy === 'object'
         ? gateway.addressingPolicy
@@ -912,6 +927,7 @@ export default function ConfigPage() {
       clearWebhookSecret: false,
       defaultChatId: String(cfg.defaultChatId || ''),
       allowedChatIds,
+      chatBindingsText,
       notifyEventTypes,
       addressingMode,
       allowReplyToBot: addressingPolicyRaw?.allowReplyToBot ?? true,
@@ -947,6 +963,7 @@ export default function ConfigPage() {
       clearWebhookSecret: false,
       defaultChatId: '',
       allowedChatIds: '',
+      chatBindingsText: '',
       notifyEventTypes: '',
       addressingMode: defaultAddressingMode,
       allowReplyToBot: true,
@@ -968,6 +985,19 @@ export default function ConfigPage() {
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean)
+    const parseChatBindings = (value: string): Array<{ chatId: string; agentId: string }> =>
+      value
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [chatIdRaw, agentIdRaw] = line.split('=')
+          const chatId = String(chatIdRaw || '').trim()
+          const agentId = String(agentIdRaw || '').trim()
+          if (!chatId || !agentId) return null
+          return { chatId, agentId }
+        })
+        .filter((row): row is { chatId: string; agentId: string } => Boolean(row))
     const parsePositiveInt = (value: string, fallback: number): number => {
       const parsed = Number.parseInt(value.trim(), 10)
       return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
@@ -991,6 +1021,7 @@ export default function ConfigPage() {
                 : {}),
               ...(gatewayForm.defaultChatId.trim() ? { defaultChatId: gatewayForm.defaultChatId.trim() } : {}),
               allowedChatIds: parseCommaList(gatewayForm.allowedChatIds),
+              chatBindings: parseChatBindings(gatewayForm.chatBindingsText),
               notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
             }
           : {
@@ -2174,6 +2205,13 @@ export default function ConfigPage() {
                 placeholder={t('config.modals.gateway.telegram.allowedChatIdsPlaceholder')}
                 value={gatewayForm.allowedChatIds}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
+              />
+              <textarea
+                className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-sm text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                rows={4}
+                placeholder={t('config.modals.gateway.telegram.chatBindingsPlaceholder')}
+                value={gatewayForm.chatBindingsText}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, chatBindingsText: e.target.value }))}
               />
             </>
           ) : (

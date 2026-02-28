@@ -153,6 +153,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 - `webhookPath`: 默认 `/v1/integrations/telegram/webhook`
 - `defaultChatId`: 默认通知 chat id（群或私聊）
 - `allowedChatIds`: 入站白名单（空表示不限制）
+- `chatBindings`: 按 chat_id 绑定 agent（可选，命中后覆盖 `agentId`）
 - `notifyEventTypes`: 订阅出站事件类型
 - `parseMode`: `Markdown` / `HTML`（默认 `Markdown`）
 - `disableLinkPreview`: 是否禁用预览
@@ -188,7 +189,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 ## 4.3 字段表单（MVP）
 
 - Feishu：`verifyToken`、`webhookUrl`、`notifyEventTypes`
-- Telegram：`agentId`、`botToken`、`defaultChatId`、`allowedChatIds`、`notifyEventTypes`
+- Telegram：`agentId`、`botToken`、`defaultChatId`、`allowedChatIds`、`chatBindings`、`notifyEventTypes`
 - 通用策略：
   - Addressing：`mention_only/all_messages`、命令前缀、会话延续窗口
   - Proactive：`silent/risk_based/always`、最小提醒风险级别

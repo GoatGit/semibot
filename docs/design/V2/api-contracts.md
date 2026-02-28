@@ -311,7 +311,11 @@ URL 验证响应：
     "botToken": "123456:ABCDEF",
     "webhookSecret": "sec_xxx",
     "defaultChatId": "-10012345678",
-    "allowedChatIds": ["-10012345678"]
+    "allowedChatIds": ["-10012345678"],
+    "chatBindings": [
+      { "chatId": "-10012345678", "agentId": "fund-analyst" },
+      { "chatId": "-10022334455", "agentId": "risk-officer" }
+    ]
   }
 }
 ```
@@ -387,6 +391,9 @@ URL 验证响应：
     "botToken": "123456:ABCDEF",
     "defaultChatId": "-10012345678",
     "allowedChatIds": ["-10012345678"],
+    "chatBindings": [
+      { "chatId": "-10012345678", "agentId": "fund-analyst" }
+    ],
     "notifyEventTypes": ["approval.requested", "task.completed"]
   }
 }

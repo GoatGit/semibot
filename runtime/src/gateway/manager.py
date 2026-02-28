@@ -87,9 +87,44 @@ class GatewayManager:
         agent_id = value.strip()
         return agent_id or None
 
-    def _gateway_agent_id(self, provider: str, instance: dict[str, Any] | None = None) -> str:
+    @classmethod
+    def _parse_chat_bindings(cls, value: Any) -> dict[str, str]:
+        bindings: dict[str, str] = {}
+        if isinstance(value, dict):
+            for key, agent in value.items():
+                chat_id = str(key).strip()
+                agent_id = cls._normalized_agent_id(agent)
+                if chat_id and agent_id:
+                    bindings[chat_id] = agent_id
+            return bindings
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                chat_id = str(item.get("chatId") or item.get("chat_id") or "").strip()
+                agent_id = cls._normalized_agent_id(item.get("agentId") or item.get("agent_id"))
+                enabled = cls._to_bool(item.get("enabled"), True)
+                if chat_id and agent_id and enabled:
+                    bindings[chat_id] = agent_id
+        return bindings
+
+    def _gateway_agent_id(
+        self,
+        provider: str,
+        instance: dict[str, Any] | None = None,
+        *,
+        event_payload: Mapping[str, Any] | None = None,
+    ) -> str:
         cfg = instance.get("config") if isinstance(instance, dict) else self.provider_config(provider)
         cfg_map = cfg if isinstance(cfg, dict) else {}
+        if provider == "telegram":
+            chat_id = str((event_payload or {}).get("chat_id") or "").strip()
+            if chat_id:
+                bindings = self._parse_chat_bindings(cfg_map.get("chatBindings"))
+                if chat_id in bindings:
+                    return bindings[chat_id]
+                if "*" in bindings:
+                    return bindings["*"]
         resolved = (
             self._normalized_agent_id(cfg_map.get("agentId"))
             or self._normalized_agent_id(cfg_map.get("defaultAgentId"))
@@ -1012,7 +1047,7 @@ class GatewayManager:
                     source=event.source,
                     subject=str(event.subject) if isinstance(event.subject, str) else None,
                     text=text,
-                    agent_id=self._gateway_agent_id("telegram", target_instance),
+                    agent_id=self._gateway_agent_id("telegram", target_instance, event_payload=event.payload),
                     force_execute=False,
                     on_result=_telegram_result_sender,
                 )

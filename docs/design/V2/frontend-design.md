@@ -140,7 +140,7 @@ app/
   - 启停网关实例与查看配置状态（ready/not_configured/disabled）
   - 新建/删除实例，支持设置 default instance（用于兼容 provider 旧接口）
   - 编辑飞书参数（verify token、webhook 等）
-  - 编辑 Telegram 参数（agent 绑定、bot token、chat id 白名单等）
+  - 编辑 Telegram 参数（agent 绑定、chat_id 白名单、chat_id→agent 绑定、bot token 等）
   - 编辑通用策略参数：
     - `addressingPolicy`（`mode`、`allowReplyToBot`、`executeOnUnaddressed`、`commandPrefixes`、`sessionContinuationWindowSec`）
     - `proactivePolicy`（`mode`、`minRiskToNotify`）
