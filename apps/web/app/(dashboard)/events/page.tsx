@@ -41,12 +41,26 @@ function eventTypeToDisplay(eventType: string, t: (key: string, params?: Record<
   const parts = normalized.split('.')
   const category = parts[0] || 'unknown'
   const action = parts.slice(1).join('.') || 'unknown'
+  const actionKeyMap: Record<string, string> = {
+    'boot.completed': 'events.actionNames.bootCompleted',
+    'message.received': 'events.actionNames.messageReceived',
+    'message.completed': 'events.actionNames.messageCompleted',
+    'exec.started': 'events.actionNames.execStarted',
+    'exec.completed': 'events.actionNames.execCompleted',
+    'exec.failed': 'events.actionNames.execFailed',
+    'lifecycle.pre_execute': 'events.actionNames.lifecyclePreExecute',
+    'lifecycle.post_execute': 'events.actionNames.lifecyclePostExecute',
+    'queue.telemetry': 'events.actionNames.queueTelemetry',
+  }
   const categoryLabelKey = `events.categories.${category}`
-  const actionLabelKey = `events.actions.${action}`
+  const actionLabelKey = actionKeyMap[action]
   const categoryLabel = t(categoryLabelKey)
-  const actionLabel = t(actionLabelKey)
+  const actionLabel =
+    actionLabelKey && t(actionLabelKey) !== actionKeyMap[action]
+      ? t(actionLabelKey)
+      : action.replace(/\./g, ' / ')
   const fallbackTitle = normalized || t('events.unknownEventType')
-  const title = `${categoryLabel !== categoryLabelKey ? categoryLabel : category} · ${actionLabel !== actionLabelKey ? actionLabel : action}`
+  const title = `${categoryLabel !== categoryLabelKey ? categoryLabel : category} · ${actionLabel}`
   return {
     title: normalized ? title : fallbackTitle,
     category,
