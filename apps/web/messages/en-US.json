@@ -329,6 +329,7 @@
         "instanceKeyPlaceholder": "instanceKey (optional, should be unique)",
         "displayNamePlaceholder": "Display name",
         "agentIdPlaceholder": "Agent ID (default: semibot)",
+        "chatBindingsPlaceholder": "chatBindings (optional, one per line: chatId=agentId)",
         "setDefault": "Set as default instance",
         "enabled": "Enable this gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",
@@ -367,8 +368,7 @@
           "webhookSecretPlaceholder": "Telegram webhook secret (optional)",
           "clearWebhookSecret": "Clear existing webhook secret",
           "defaultChatIdPlaceholder": "Default chat ID (optional)",
-          "allowedChatIdsPlaceholder": "allowedChatIds (optional, comma-separated)",
-          "chatBindingsPlaceholder": "chatBindings (optional, one per line: chatId=agentId)"
+          "allowedChatIdsPlaceholder": "allowedChatIds (optional, comma-separated)"
         }
       },
       "apiKey": {

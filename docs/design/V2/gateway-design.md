@@ -142,6 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 - `appId` / `appSecret`: 可选，用于后续 bot API
 - `webhookUrl`: 默认出站 webhook
 - `webhookChannels`: 多通道 webhook 映射（如 `default`, `risk`, `ops`）
+- `chatBindings`: 按会话（`chat_id`）绑定 agent（可选，命中后覆盖 `agentId`）
 - `notifyEventTypes`: 订阅出站事件类型
 - `templates`: 出站模板映射
 

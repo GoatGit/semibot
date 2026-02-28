@@ -1,7 +1,9 @@
 """Tests for Feishu gateway ingestion endpoints."""
 
+import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -107,6 +109,130 @@ async def test_feishu_message_event_ingestion(tmp_path: Path):
         data = get_event.json()
         assert data["subject"] == "oc_group_001"
         assert data["payload"]["content"]["text"] == "hello semibot"
+
+
+@pytest.mark.asyncio
+async def test_feishu_chat_bindings_route_to_bound_agents(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    runner_calls: list[dict[str, Any]] = []
+
+    async def _task_runner(**kwargs):
+        runner_calls.append(dict(kwargs))
+        task = str(kwargs.get("task") or "")
+        return {
+            "status": "success",
+            "task": task,
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": f"done: {task}",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/v1/config/gateway-instances",
+            json={
+                "provider": "feishu",
+                "instanceKey": "fs-bindings",
+                "displayName": "Feishu Bindings",
+                "isDefault": True,
+                "isActive": True,
+                "config": {
+                    "verifyToken": "token_bind",
+                    "agentId": "agent.default",
+                    "addressingPolicy": {"mode": "all_messages", "executeOnUnaddressed": True},
+                    "chatBindings": [
+                        {"chatId": "oc_group_001", "agentId": "agent.alpha"},
+                        {"chatId": "oc_group_002", "agentId": "agent.beta"},
+                    ],
+                },
+            },
+        )
+        assert created.status_code == 201
+
+        first = await client.post(
+            "/v1/integrations/feishu/events",
+            json={
+                "token": "token_bind",
+                "header": {"event_id": "evt_bind_001", "event_type": "im.message.receive_v1"},
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_1"}},
+                    "message": {
+                        "message_id": "om_bind_001",
+                        "chat_id": "oc_group_001",
+                        "chat_type": "group",
+                        "message_type": "text",
+                        "content": json.dumps({"text": "hello alpha"}, ensure_ascii=False),
+                    },
+                },
+            },
+        )
+        assert first.status_code == 200
+        assert first.json()["accepted"] is True
+        assert first.json()["should_execute"] is True
+        assert first.json()["agent_id"] == "agent.alpha"
+
+        second = await client.post(
+            "/v1/integrations/feishu/events",
+            json={
+                "token": "token_bind",
+                "header": {"event_id": "evt_bind_002", "event_type": "im.message.receive_v1"},
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_2"}},
+                    "message": {
+                        "message_id": "om_bind_002",
+                        "chat_id": "oc_group_002",
+                        "chat_type": "group",
+                        "message_type": "text",
+                        "content": json.dumps({"text": "hello beta"}, ensure_ascii=False),
+                    },
+                },
+            },
+        )
+        assert second.status_code == 200
+        assert second.json()["accepted"] is True
+        assert second.json()["should_execute"] is True
+        assert second.json()["agent_id"] == "agent.beta"
+
+        fallback = await client.post(
+            "/v1/integrations/feishu/events",
+            json={
+                "token": "token_bind",
+                "header": {"event_id": "evt_bind_003", "event_type": "im.message.receive_v1"},
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_3"}},
+                    "message": {
+                        "message_id": "om_bind_003",
+                        "chat_id": "oc_group_003",
+                        "chat_type": "group",
+                        "message_type": "text",
+                        "content": json.dumps({"text": "hello default"}, ensure_ascii=False),
+                    },
+                },
+            },
+        )
+        assert fallback.status_code == 200
+        assert fallback.json()["accepted"] is True
+        assert fallback.json()["should_execute"] is True
+        assert fallback.json()["agent_id"] == "agent.default"
+
+        for _ in range(20):
+            if len(runner_calls) >= 3:
+                break
+            await asyncio.sleep(0.05)
+        observed = [str(item.get("agent_id")) for item in runner_calls]
+        assert "agent.alpha" in observed
+        assert "agent.beta" in observed
+        assert "agent.default" in observed
 
 
 @pytest.mark.asyncio

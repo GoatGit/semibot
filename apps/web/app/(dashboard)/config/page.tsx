@@ -876,6 +876,16 @@ export default function ConfigPage() {
           })
           .filter(Boolean)
           .join('\n')
+      : cfg.chatBindings && typeof cfg.chatBindings === 'object'
+      ? Object.entries(cfg.chatBindings as Record<string, unknown>)
+          .map(([chatId, agentId]) => {
+            const normalizedChatId = String(chatId || '').trim()
+            const normalizedAgentId = String(agentId || '').trim()
+            if (!normalizedChatId || !normalizedAgentId) return ''
+            return `${normalizedChatId}=${normalizedAgentId}`
+          })
+          .filter(Boolean)
+          .join('\n')
       : ''
     const addressingPolicyRaw =
       gateway.addressingPolicy && typeof gateway.addressingPolicy === 'object'
@@ -2209,7 +2219,7 @@ export default function ConfigPage() {
               <textarea
                 className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-sm text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
                 rows={4}
-                placeholder={t('config.modals.gateway.telegram.chatBindingsPlaceholder')}
+                placeholder={t('config.modals.gateway.chatBindingsPlaceholder')}
                 value={gatewayForm.chatBindingsText}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, chatBindingsText: e.target.value }))}
               />
@@ -2239,6 +2249,13 @@ export default function ConfigPage() {
                 placeholder={t('config.modals.gateway.feishu.webhookUrlPlaceholder')}
                 value={gatewayForm.webhookUrl}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
+              />
+              <textarea
+                className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-sm text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                rows={4}
+                placeholder={t('config.modals.gateway.chatBindingsPlaceholder')}
+                value={gatewayForm.chatBindingsText}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, chatBindingsText: e.target.value }))}
               />
             </>
           )}

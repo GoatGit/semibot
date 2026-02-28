@@ -117,14 +117,13 @@ class GatewayManager:
     ) -> str:
         cfg = instance.get("config") if isinstance(instance, dict) else self.provider_config(provider)
         cfg_map = cfg if isinstance(cfg, dict) else {}
-        if provider == "telegram":
-            chat_id = str((event_payload or {}).get("chat_id") or "").strip()
-            if chat_id:
-                bindings = self._parse_chat_bindings(cfg_map.get("chatBindings"))
-                if chat_id in bindings:
-                    return bindings[chat_id]
-                if "*" in bindings:
-                    return bindings["*"]
+        chat_id = str((event_payload or {}).get("chat_id") or (event_payload or {}).get("subject") or "").strip()
+        if chat_id:
+            bindings = self._parse_chat_bindings(cfg_map.get("chatBindings"))
+            if chat_id in bindings:
+                return bindings[chat_id]
+            if "*" in bindings:
+                return bindings["*"]
         resolved = (
             self._normalized_agent_id(cfg_map.get("agentId"))
             or self._normalized_agent_id(cfg_map.get("defaultAgentId"))
@@ -839,7 +838,7 @@ class GatewayManager:
                 source=event.source,
                 subject=str(event.subject) if isinstance(event.subject, str) else None,
                 text=text,
-                agent_id=self._gateway_agent_id("feishu", target_instance),
+                agent_id=self._gateway_agent_id("feishu", target_instance, event_payload=event.payload),
                 force_execute=False,
                 on_result=_feishu_result_sender,
             )

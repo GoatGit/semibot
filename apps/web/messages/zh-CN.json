@@ -329,6 +329,7 @@
         "instanceKeyPlaceholder": "instanceKey（可选，建议唯一）",
         "displayNamePlaceholder": "显示名称",
         "agentIdPlaceholder": "Agent ID（默认 semibot）",
+        "chatBindingsPlaceholder": "chatBindings（可选，每行一条：chatId=agentId）",
         "setDefault": "设为默认实例",
         "enabled": "启用此 Gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",
@@ -367,8 +368,7 @@
           "webhookSecretPlaceholder": "Telegram Webhook Secret（可选）",
           "clearWebhookSecret": "清空已有 Webhook Secret",
           "defaultChatIdPlaceholder": "默认 Chat ID（可选）",
-          "allowedChatIdsPlaceholder": "allowedChatIds（可选，逗号分隔）",
-          "chatBindingsPlaceholder": "chatBindings（可选，每行一条：chatId=agentId）"
+          "allowedChatIdsPlaceholder": "allowedChatIds（可选，逗号分隔）"
         }
       },
       "apiKey": {
