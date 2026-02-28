@@ -175,6 +175,11 @@ interface GatewayBatchResult {
   failed: Array<{ instanceId: string; error: string }>
 }
 
+type GatewayChatBinding = {
+  chatId: string
+  agentId: string
+}
+
 type GatewayForm = {
   id?: string
   instanceKey: string
@@ -192,7 +197,7 @@ type GatewayForm = {
   clearWebhookSecret: boolean
   defaultChatId: string
   allowedChatIds: string
-  chatBindingsText: string
+  chatBindings: GatewayChatBinding[]
   notifyEventTypes: string
   addressingMode: GatewayAddressingMode
   allowReplyToBot: boolean
@@ -255,6 +260,32 @@ function getErrorMessage(error: unknown, fallback: string): string {
     if (payload.message) return payload.message
   }
   return fallback
+}
+
+function parseGatewayChatBindings(raw: unknown): GatewayChatBinding[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null
+        const row = item as Record<string, unknown>
+        const chatId = String(row.chatId || row.chat_id || '').trim()
+        const agentId = String(row.agentId || row.agent_id || '').trim()
+        if (!chatId || !agentId) return null
+        return { chatId, agentId }
+      })
+      .filter((row): row is GatewayChatBinding => Boolean(row))
+  }
+  if (raw && typeof raw === 'object') {
+    return Object.entries(raw as Record<string, unknown>)
+      .map(([chatId, agentId]) => {
+        const normalizedChatId = String(chatId || '').trim()
+        const normalizedAgentId = String(agentId || '').trim()
+        if (!normalizedChatId || !normalizedAgentId) return null
+        return { chatId: normalizedChatId, agentId: normalizedAgentId }
+      })
+      .filter((row): row is GatewayChatBinding => Boolean(row))
+  }
+  return []
 }
 
 function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
@@ -371,7 +402,7 @@ export default function ConfigPage() {
     clearWebhookSecret: false,
     defaultChatId: '',
     allowedChatIds: '',
-    chatBindingsText: '',
+    chatBindings: [],
     notifyEventTypes: '',
     addressingMode: 'mention_only',
     allowReplyToBot: true,
@@ -864,29 +895,7 @@ export default function ConfigPage() {
     const notifyEventTypes = Array.isArray(cfg.notifyEventTypes)
       ? (cfg.notifyEventTypes as unknown[]).map((item) => String(item)).join(',')
       : ''
-    const chatBindingsText = Array.isArray(cfg.chatBindings)
-      ? (cfg.chatBindings as unknown[])
-          .map((item) => {
-            if (!item || typeof item !== 'object') return ''
-            const row = item as Record<string, unknown>
-            const chatId = String(row.chatId || row.chat_id || '').trim()
-            const agentId = String(row.agentId || row.agent_id || '').trim()
-            if (!chatId || !agentId) return ''
-            return `${chatId}=${agentId}`
-          })
-          .filter(Boolean)
-          .join('\n')
-      : cfg.chatBindings && typeof cfg.chatBindings === 'object'
-      ? Object.entries(cfg.chatBindings as Record<string, unknown>)
-          .map(([chatId, agentId]) => {
-            const normalizedChatId = String(chatId || '').trim()
-            const normalizedAgentId = String(agentId || '').trim()
-            if (!normalizedChatId || !normalizedAgentId) return ''
-            return `${normalizedChatId}=${normalizedAgentId}`
-          })
-          .filter(Boolean)
-          .join('\n')
-      : ''
+    const chatBindings = parseGatewayChatBindings(cfg.chatBindings)
     const addressingPolicyRaw =
       gateway.addressingPolicy && typeof gateway.addressingPolicy === 'object'
         ? gateway.addressingPolicy
@@ -937,7 +946,7 @@ export default function ConfigPage() {
       clearWebhookSecret: false,
       defaultChatId: String(cfg.defaultChatId || ''),
       allowedChatIds,
-      chatBindingsText,
+      chatBindings,
       notifyEventTypes,
       addressingMode,
       allowReplyToBot: addressingPolicyRaw?.allowReplyToBot ?? true,
@@ -973,7 +982,7 @@ export default function ConfigPage() {
       clearWebhookSecret: false,
       defaultChatId: '',
       allowedChatIds: '',
-      chatBindingsText: '',
+      chatBindings: [],
       notifyEventTypes: '',
       addressingMode: defaultAddressingMode,
       allowReplyToBot: true,
@@ -995,19 +1004,6 @@ export default function ConfigPage() {
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean)
-    const parseChatBindings = (value: string): Array<{ chatId: string; agentId: string }> =>
-      value
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-          const [chatIdRaw, agentIdRaw] = line.split('=')
-          const chatId = String(chatIdRaw || '').trim()
-          const agentId = String(agentIdRaw || '').trim()
-          if (!chatId || !agentId) return null
-          return { chatId, agentId }
-        })
-        .filter((row): row is { chatId: string; agentId: string } => Boolean(row))
     const parsePositiveInt = (value: string, fallback: number): number => {
       const parsed = Number.parseInt(value.trim(), 10)
       return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
@@ -1031,7 +1027,12 @@ export default function ConfigPage() {
                 : {}),
               ...(gatewayForm.defaultChatId.trim() ? { defaultChatId: gatewayForm.defaultChatId.trim() } : {}),
               allowedChatIds: parseCommaList(gatewayForm.allowedChatIds),
-              chatBindings: parseChatBindings(gatewayForm.chatBindingsText),
+              chatBindings: gatewayForm.chatBindings
+                .map((row) => ({
+                  chatId: row.chatId.trim(),
+                  agentId: row.agentId.trim(),
+                }))
+                .filter((row) => row.chatId && row.agentId),
               notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
             }
           : {
@@ -1039,6 +1040,12 @@ export default function ConfigPage() {
                 ? { verifyToken: gatewayForm.verifyToken.trim() }
                 : {}),
               ...(gatewayForm.webhookUrl.trim() ? { webhookUrl: gatewayForm.webhookUrl.trim() } : {}),
+              chatBindings: gatewayForm.chatBindings
+                .map((row) => ({
+                  chatId: row.chatId.trim(),
+                  agentId: row.agentId.trim(),
+                }))
+                .filter((row) => row.chatId && row.agentId),
               notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
             }),
       },
@@ -1090,6 +1097,27 @@ export default function ConfigPage() {
       setSavingGateway(false)
     }
   }
+
+  const addGatewayChatBinding = useCallback(() => {
+    setGatewayForm((prev) => ({
+      ...prev,
+      chatBindings: [...prev.chatBindings, { chatId: '', agentId: prev.agentId.trim() || 'semibot' }],
+    }))
+  }, [])
+
+  const updateGatewayChatBinding = useCallback((index: number, key: 'chatId' | 'agentId', value: string) => {
+    setGatewayForm((prev) => ({
+      ...prev,
+      chatBindings: prev.chatBindings.map((row, idx) => (idx === index ? { ...row, [key]: value } : row)),
+    }))
+  }, [])
+
+  const removeGatewayChatBinding = useCallback((index: number) => {
+    setGatewayForm((prev) => ({
+      ...prev,
+      chatBindings: prev.chatBindings.filter((_, idx) => idx !== index),
+    }))
+  }, [])
 
   const testGateway = async (gateway: GatewayItem) => {
     try {
@@ -2216,13 +2244,6 @@ export default function ConfigPage() {
                 value={gatewayForm.allowedChatIds}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
               />
-              <textarea
-                className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-sm text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
-                rows={4}
-                placeholder={t('config.modals.gateway.chatBindingsPlaceholder')}
-                value={gatewayForm.chatBindingsText}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, chatBindingsText: e.target.value }))}
-              />
             </>
           ) : (
             <>
@@ -2250,15 +2271,53 @@ export default function ConfigPage() {
                 value={gatewayForm.webhookUrl}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
               />
-              <textarea
-                className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-sm text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
-                rows={4}
-                placeholder={t('config.modals.gateway.chatBindingsPlaceholder')}
-                value={gatewayForm.chatBindingsText}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, chatBindingsText: e.target.value }))}
-              />
             </>
           )}
+          <div className="space-y-2 rounded-md border border-border-default p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.chatBindingsTitle')}</p>
+              <Button
+                type="button"
+                size="xs"
+                variant="tertiary"
+                data-testid="gateway-chat-binding-add"
+                onClick={() => addGatewayChatBinding()}
+              >
+                {t('config.modals.gateway.addChatBinding')}
+              </Button>
+            </div>
+            {gatewayForm.chatBindings.length === 0 ? (
+              <p className="text-xs text-text-secondary">{t('config.modals.gateway.chatBindingsEmpty')}</p>
+            ) : (
+              <div className="space-y-2">
+                {gatewayForm.chatBindings.map((row, index) => (
+                  <div key={`chat-binding-${index}`} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+                    <Input
+                      data-testid={`gateway-chat-binding-chat-${index}`}
+                      placeholder={t('config.modals.gateway.chatIdPlaceholder')}
+                      value={row.chatId}
+                      onChange={(e) => updateGatewayChatBinding(index, 'chatId', e.target.value)}
+                    />
+                    <Input
+                      data-testid={`gateway-chat-binding-agent-${index}`}
+                      placeholder={t('config.modals.gateway.chatBindingAgentPlaceholder')}
+                      value={row.agentId}
+                      onChange={(e) => updateGatewayChatBinding(index, 'agentId', e.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="tertiary"
+                      data-testid={`gateway-chat-binding-remove-${index}`}
+                      onClick={() => removeGatewayChatBinding(index)}
+                    >
+                      {t('config.modals.gateway.removeChatBinding')}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <Input
             placeholder={t('config.modals.gateway.notifyEventTypesPlaceholder')}
             value={gatewayForm.notifyEventTypes}
