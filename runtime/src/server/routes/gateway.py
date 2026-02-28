@@ -8,20 +8,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from pydantic import BaseModel
 
 from src.gateway.manager import GatewayManager, GatewayManagerError
-
-
-class FeishuOutboundTestRequest(BaseModel):
-    title: str = "Semibot 测试消息"
-    content: str = "这是一条来自 Semibot 的测试通知。"
-    channel: str = "default"
-
-
-class TelegramOutboundTestRequest(BaseModel):
-    text: str = "Semibot Telegram 测试消息"
-    chat_id: str | None = None
+from src.server.routes.gateway_schemas import GatewayConfigPatchRequest, GatewayProviderTestRequest
 
 
 def register_gateway_routes(app: FastAPI, gateway_manager: GatewayManager) -> None:
@@ -37,18 +26,16 @@ def register_gateway_routes(app: FastAPI, gateway_manager: GatewayManager) -> No
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.put("/v1/config/gateways/{provider}")
-    async def upsert_config_gateway(provider: str, request: Request) -> dict[str, Any]:
-        payload = await request.json()
+    async def upsert_config_gateway(provider: str, req: GatewayConfigPatchRequest) -> dict[str, Any]:
         try:
-            return gateway_manager.upsert_gateway_config(provider, payload)
+            return gateway_manager.upsert_gateway_config(provider, req.to_manager_payload())
         except GatewayManagerError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/config/gateways/{provider}/test")
-    async def test_config_gateway(provider: str, request: Request) -> dict[str, Any]:
-        payload = await request.json()
+    async def test_config_gateway(provider: str, req: GatewayProviderTestRequest) -> dict[str, Any]:
         try:
-            return await gateway_manager.test_gateway(provider, payload)
+            return await gateway_manager.test_gateway(provider, req.to_manager_payload())
         except GatewayManagerError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
@@ -96,12 +83,12 @@ def register_gateway_routes(app: FastAPI, gateway_manager: GatewayManager) -> No
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/integrations/feishu/outbound/test")
-    async def send_feishu_test(req: FeishuOutboundTestRequest) -> dict[str, Any]:
+    async def send_feishu_test(req: GatewayProviderTestRequest) -> dict[str, Any]:
         try:
             return await gateway_manager.send_feishu_test(
-                title=req.title,
-                content=req.content,
-                channel=req.channel,
+                title=req.title or "Semibot 测试消息",
+                content=req.content or "这是一条来自 Semibot 的测试通知。",
+                channel=req.channel or "default",
             )
         except GatewayManagerError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -121,8 +108,11 @@ def register_gateway_routes(app: FastAPI, gateway_manager: GatewayManager) -> No
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/integrations/telegram/outbound/test")
-    async def send_telegram_test(req: TelegramOutboundTestRequest) -> dict[str, Any]:
+    async def send_telegram_test(req: GatewayProviderTestRequest) -> dict[str, Any]:
         try:
-            return await gateway_manager.send_telegram_test(text=req.text, chat_id=req.chat_id)
+            return await gateway_manager.send_telegram_test(
+                text=req.text or "Semibot Telegram 测试消息",
+                chat_id=req.chat_id,
+            )
         except GatewayManagerError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

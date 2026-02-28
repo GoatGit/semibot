@@ -39,6 +39,7 @@ semibot/
     api.py                    # 仅 HTTP 路由与请求/响应编解码
     routes/
       gateway.py              # Gateway 相关路由注册（薄路由）
+      gateway_schemas.py      # Gateway 路由请求模型（兼容 camel/snake）
 ```
 
 职责说明：
@@ -60,6 +61,7 @@ semibot/
 - `gateway/parsers/approval_text.py`：跨 Gateway 文本审批解析（同意/拒绝/approve/reject）  
 - `gateway/store/gateway_store.py`：Gateway 相关 SQLite 读写  
 - `server/routes/gateway.py`：Gateway 路由（HTTP 层）  
+- `server/routes/gateway_schemas.py`：Gateway 路由请求模型与 payload 归一化  
 - `server/api.py`：应用装配与非 Gateway 路由  
 
 当前状态（2026-02-28）：
