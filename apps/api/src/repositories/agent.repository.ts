@@ -6,7 +6,7 @@
  */
 
 import { sql } from '../lib/db'
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants/config'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SYSTEM_DEFAULT_AGENT_ID } from '../constants/config'
 import { logPaginationLimit } from '../lib/logger'
 import { BaseRepository } from './base.repository'
 import type { PaginatedResult } from './base.repository'
@@ -163,6 +163,48 @@ export async function findSystemDefault(): Promise<AgentRow | null> {
     SELECT * FROM agents WHERE is_system = true AND deleted_at IS NULL LIMIT 1
   `
   if (result.length === 0) return null
+  return result[0] as unknown as AgentRow
+}
+
+/**
+ * 确保系统默认 Agent 存在（缺失时创建，已存在则恢复关键字段）
+ */
+export async function ensureSystemDefault(): Promise<AgentRow> {
+  const result = await sql`
+    INSERT INTO agents (
+      id, org_id, name, description, system_prompt, config,
+      skills, sub_agents, is_system, is_active, is_public, runtime_type
+    )
+    VALUES (
+      ${SYSTEM_DEFAULT_AGENT_ID},
+      NULL,
+      '系统助手',
+      '系统默认 AI 助手，可使用所有系统预装能力',
+      'You are a helpful AI assistant with access to system tools and capabilities.',
+      ${sql.json({
+        model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
+        temperature: 0.7,
+        maxTokens: 4096,
+        timeoutSeconds: 120,
+      } as Parameters<typeof sql.json>[0])},
+      ${[]},
+      ${[]},
+      true,
+      true,
+      true,
+      'semigraph'
+    )
+    ON CONFLICT (id)
+    DO UPDATE SET
+      org_id = NULL,
+      is_system = true,
+      is_active = true,
+      is_public = true,
+      deleted_at = NULL,
+      updated_at = NOW()
+    RETURNING *
+  `
+
   return result[0] as unknown as AgentRow
 }
 

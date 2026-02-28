@@ -225,12 +225,10 @@ export async function getAgent(orgId: string, agentId: string): Promise<Agent> {
  * 获取系统默认 Agent
  */
 export async function getSystemDefaultAgent(): Promise<Agent> {
-  const row = await agentRepository.findSystemDefault()
-
+  let row = await agentRepository.findSystemDefault()
   if (!row) {
-    throw createError(AGENT_NOT_FOUND, '系统默认 Agent 未配置')
+    row = await agentRepository.ensureSystemDefault()
   }
-
   return rowToAgent(row)
 }
 
@@ -258,13 +256,26 @@ export async function listAgents(
   orgId: string,
   options: ListAgentsOptions = {}
 ): Promise<PaginatedResult<Agent>> {
-  const result = await agentRepository.findByOrg({
+  let result = await agentRepository.findByOrg({
     orgId,
     page: options.page,
     limit: options.limit,
     isActive: options.isActive,
     search: options.search,
   })
+
+  // 启动兜底：当系统默认 Agent 丢失时自动补齐，避免新环境空列表。
+  const hasFilter = Boolean(options.search) || options.isActive === false
+  if (result.data.length === 0 && !hasFilter) {
+    await agentRepository.ensureSystemDefault()
+    result = await agentRepository.findByOrg({
+      orgId,
+      page: options.page,
+      limit: options.limit,
+      isActive: options.isActive,
+      search: options.search,
+    })
+  }
 
   return {
     data: result.data.map(rowToAgent),

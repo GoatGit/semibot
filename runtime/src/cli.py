@@ -2839,6 +2839,43 @@ def _pm2_available() -> bool:
     return shutil.which("pm2") is not None
 
 
+def _extract_json_array_fragment(raw: str) -> str | None:
+    # pm2 output may contain log prefixes like "[PM2] ...", so we only accept
+    # a JSON array start token (`[` followed by `{` or `]`) and then find its
+    # matching closing bracket.
+    for idx, ch in enumerate(raw):
+        if ch != "[":
+            continue
+        tail = raw[idx + 1 :].lstrip()
+        if not tail or tail[0] not in "{]":
+            continue
+
+        in_string = False
+        escaped = False
+        depth = 0
+        for j in range(idx, len(raw)):
+            current = raw[j]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif current == "\\":
+                    escaped = True
+                elif current == '"':
+                    in_string = False
+                continue
+            if current == '"':
+                in_string = True
+                continue
+            if current == "[":
+                depth += 1
+                continue
+            if current == "]":
+                depth -= 1
+                if depth == 0:
+                    return raw[idx : j + 1]
+    return None
+
+
 def _pm2_list() -> list[dict[str, Any]]:
     result = _run_pm2_command(["pm2", "jlist"])
     if result.returncode != 0:
@@ -2849,12 +2886,11 @@ def _pm2_list() -> list[dict[str, Any]]:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        start = raw.find("[")
-        end = raw.rfind("]")
-        if start == -1 or end == -1 or end <= start:
+        fragment = _extract_json_array_fragment(raw)
+        if not fragment:
             raise RuntimeError(f"failed to parse pm2 jlist output: {exc}") from exc
         try:
-            parsed = json.loads(raw[start : end + 1])
+            parsed = json.loads(fragment)
         except json.JSONDecodeError as inner_exc:
             raise RuntimeError(f"failed to parse pm2 jlist output: {inner_exc}") from inner_exc
     if isinstance(parsed, list):
