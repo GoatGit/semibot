@@ -117,6 +117,20 @@ A：优先排查四项：
 3. `allowedChatIds` 未包含当前群 `chat_id`。  
 4. runtime 是旧版本：早期仅接收 Telegram 事件，不会自动回执对话。已在 V2 补齐“入站消息 -> 执行任务 -> 回发 Telegram”链路。更新后重启 runtime 生效。  
 
+**Q：如何快速体检 Gateway 配置是否有明显错误？**  
+A：使用本地配置体检命令：
+```bash
+semibot gateway doctor
+```
+只检查某个 provider：
+```bash
+semibot gateway doctor --provider telegram
+```
+把 warning 也视为失败（用于 CI）：
+```bash
+semibot gateway doctor --strict-warnings
+```
+
 **Q：Gateway 会话和 runtime session 的关系是什么？**  
 A：采用“统一 Gateway Context Service”方案。`chat_id + bot_id`（或飞书等价键）映射一个固定主会话；每次新任务创建独立 runtime session 执行；任务结束只把最小结果（摘要/产物链接/审批结论）回写主会话，不做全量 merge。这样 runtime 仍保持单层 session，Gateway 侧保留完整对话上下文与审计链路。
 

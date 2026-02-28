@@ -368,3 +368,12 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 - Telegram 中可通过“同意/拒绝/approve/reject”完成审批
 - Feishu 现有回调与通知能力不回归
 - 审批展示支持聚合与批量处理，且可审计回放
+
+## 11. 运行诊断命令（已实现）
+
+- 迁移旧环境变量到 SQLite：
+  - `semibot gateway migrate-env`
+- Gateway 配置健康体检：
+  - `semibot gateway doctor`
+  - `semibot gateway doctor --provider telegram`
+  - `semibot gateway doctor --strict-warnings`

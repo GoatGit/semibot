@@ -1293,6 +1293,163 @@ def _gateway_exit_code_from_error(error: Exception) -> int:
     return EXIT_EXTERNAL_ERROR
 
 
+def _list_from_value(raw: Any) -> list[str]:
+    values: list[str] = []
+    items: list[Any] = []
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, str):
+        items = raw.split(",")
+    for item in items:
+        text = str(item or "").strip()
+        if text:
+            values.append(text)
+    return values
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def _normalize_chat_bindings_for_health(raw: Any) -> tuple[list[dict[str, str]], int, list[str]]:
+    normalized: list[dict[str, str]] = []
+    partial_count = 0
+    duplicate_chat_ids: list[str] = []
+    by_chat: dict[str, str] = {}
+
+    if isinstance(raw, dict):
+        for key, agent in raw.items():
+            chat_id = str(key or "").strip()
+            agent_id = str(agent or "").strip()
+            if not chat_id or not agent_id:
+                partial_count += 1
+                continue
+            if chat_id in by_chat and chat_id not in duplicate_chat_ids:
+                duplicate_chat_ids.append(chat_id)
+            by_chat[chat_id] = agent_id
+    elif isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                partial_count += 1
+                continue
+            enabled = _coerce_bool(item.get("enabled"), True)
+            if not enabled:
+                continue
+            chat_id = str(item.get("chatId") or item.get("chat_id") or "").strip()
+            agent_id = str(item.get("agentId") or item.get("agent_id") or "").strip()
+            if not chat_id and not agent_id:
+                continue
+            if not chat_id or not agent_id:
+                partial_count += 1
+                continue
+            if chat_id in by_chat and chat_id not in duplicate_chat_ids:
+                duplicate_chat_ids.append(chat_id)
+            by_chat[chat_id] = agent_id
+
+    for chat_id, agent_id in by_chat.items():
+        normalized.append({"chatId": chat_id, "agentId": agent_id})
+    return normalized, partial_count, duplicate_chat_ids
+
+
+def _gateway_instance_health_report(instance: dict[str, Any]) -> dict[str, Any]:
+    provider = str(instance.get("provider") or "").strip().lower()
+    instance_id = str(instance.get("id") or "")
+    instance_key = str(instance.get("instance_key") or instance.get("instanceKey") or "")
+    is_active = bool(instance.get("is_active", instance.get("isActive", False)))
+    mode = str(instance.get("mode") or "webhook").strip().lower()
+    risk_level = str(instance.get("risk_level", instance.get("riskLevel", "high"))).strip().lower()
+    config = instance.get("config")
+    config_map = config if isinstance(config, dict) else {}
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    checks: dict[str, Any] = {
+        "provider": provider,
+        "isActive": is_active,
+        "mode": mode,
+        "riskLevel": risk_level,
+    }
+
+    if mode and mode not in {"webhook", "polling"}:
+        warnings.append("unsupported_mode")
+    if risk_level and risk_level not in {"low", "medium", "high", "critical"}:
+        warnings.append("unsupported_risk_level")
+
+    chat_bindings, partial_bindings, duplicate_binding_ids = _normalize_chat_bindings_for_health(
+        config_map.get("chatBindings")
+    )
+    checks["chatBindingCount"] = len(chat_bindings)
+    if partial_bindings > 0:
+        errors.append(f"chat_bindings_partial:{partial_bindings}")
+    if duplicate_binding_ids:
+        warnings.append(f"chat_bindings_duplicate:{len(duplicate_binding_ids)}")
+
+    if provider == "telegram":
+        token = str(config_map.get("botToken") or "").strip()
+        default_chat_id = str(config_map.get("defaultChatId") or "").strip()
+        allowed_chat_ids = _list_from_value(config_map.get("allowedChatIds"))
+        checks["botTokenConfigured"] = bool(token)
+        checks["defaultChatIdConfigured"] = bool(default_chat_id)
+        checks["allowedChatIdsCount"] = len(set(allowed_chat_ids))
+        if is_active and not token:
+            errors.append("telegram_active_missing_bot_token")
+        if token and ":" not in token:
+            warnings.append("telegram_bot_token_format_unusual")
+        if is_active and not default_chat_id and not allowed_chat_ids:
+            warnings.append("telegram_no_default_or_allowed_chat_ids")
+        allowed_set = set(allowed_chat_ids)
+        if allowed_set:
+            outside_allowed = [item for item in chat_bindings if item["chatId"] not in allowed_set]
+            if outside_allowed:
+                warnings.append(f"chat_bindings_outside_allowed:{len(outside_allowed)}")
+    elif provider == "feishu":
+        webhook_url = str(config_map.get("webhookUrl") or "").strip()
+        webhook_channels = config_map.get("webhookChannels")
+        channels_count = 0
+        if isinstance(webhook_channels, dict):
+            channels_count = len(
+                [
+                    key
+                    for key, value in webhook_channels.items()
+                    if str(key or "").strip() and isinstance(value, str) and str(value).strip()
+                ]
+            )
+        verify_token = str(config_map.get("verifyToken") or "").strip()
+        checks["webhookUrlConfigured"] = bool(webhook_url)
+        checks["webhookChannelsCount"] = channels_count
+        checks["verifyTokenConfigured"] = bool(verify_token)
+        if is_active and not webhook_url and channels_count == 0:
+            errors.append("feishu_active_missing_webhook_target")
+        if is_active and not verify_token:
+            warnings.append("feishu_active_missing_verify_token")
+
+    status = "healthy"
+    if errors:
+        status = "broken"
+    elif warnings:
+        status = "degraded"
+
+    return {
+        "id": instance_id,
+        "instanceKey": instance_key,
+        "provider": provider,
+        "status": status,
+        "errors": errors,
+        "warnings": warnings,
+        "checks": checks,
+    }
+
+
 def _mask_secret_for_output(value: str, *, keep_prefix: int = 3, keep_suffix: int = 3) -> str:
     raw = value.strip()
     if not raw:
@@ -1731,6 +1888,60 @@ def cmd_gateway_migrate_env(args: argparse.Namespace) -> int:
             "skipped": skipped,
             "results": results,
             "ok": ok,
+        }
+    )
+    return EXIT_SUCCESS if ok else EXIT_CONFIG_ERROR
+
+
+def cmd_gateway_doctor(args: argparse.Namespace) -> int:
+    provider = str(getattr(args, "provider", "all") or "all").strip().lower()
+    db_path = str(getattr(args, "db_path", _default_db_path()))
+    strict_warnings = bool(getattr(args, "strict_warnings", False))
+
+    store = RuntimeConfigStore(db_path=db_path)
+    try:
+        items = (
+            store.list_gateway_instances(provider=provider)
+            if provider in {"feishu", "telegram"}
+            else store.list_gateway_instances()
+        )
+    except ValueError:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="doctor",
+                code="UNSUPPORTED_PROVIDER",
+                message=f"unsupported provider: {provider}",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    reports = [_gateway_instance_health_report(item) for item in items]
+    broken = [item for item in reports if item["status"] == "broken"]
+    degraded = [item for item in reports if item["status"] == "degraded"]
+    healthy = [item for item in reports if item["status"] == "healthy"]
+
+    ok = not broken and (not strict_warnings or not degraded)
+    summary = {
+        "total": len(reports),
+        "healthy": len(healthy),
+        "degraded": len(degraded),
+        "broken": len(broken),
+        "strictWarnings": strict_warnings,
+    }
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "doctor",
+            "provider": provider,
+            "db_path": db_path,
+            "summary": summary,
+            "instances": reports,
+            "ok": ok,
+            "hint": None
+            if ok
+            else "Fix broken gateway config first. Use `semibot gateway show <id>` and `semibot gateway update <id> --patch ...`.",
         }
     )
     return EXIT_SUCCESS if ok else EXIT_CONFIG_ERROR
@@ -5024,6 +5235,21 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_migrate_env_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
     gateway_migrate_env_parser.add_argument("--dry-run", action="store_true", help="Preview without writing DB")
     gateway_migrate_env_parser.set_defaults(func=cmd_gateway_migrate_env)
+
+    gateway_doctor_parser = gateway_subparsers.add_parser("doctor", help="Validate gateway configs in local sqlite")
+    gateway_doctor_parser.add_argument(
+        "--provider",
+        choices=["all", "feishu", "telegram"],
+        default="all",
+        help="Optional provider scope",
+    )
+    gateway_doctor_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
+    gateway_doctor_parser.add_argument(
+        "--strict-warnings",
+        action="store_true",
+        help="Treat degraded status (warnings) as failure",
+    )
+    gateway_doctor_parser.set_defaults(func=cmd_gateway_doctor)
 
     gateway_list_parser = gateway_subparsers.add_parser("list", help="List gateway instances")
     gateway_list_parser.add_argument("--provider", default=None, help="Optional provider filter")

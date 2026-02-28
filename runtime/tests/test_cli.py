@@ -935,6 +935,88 @@ def test_gateway_migrate_env_writes_sqlite(monkeypatch, tmp_path: Path, capsys) 
     assert cfg["webhookChannels"] == {"ops": "https://open.feishu.cn/hook/ops"}
 
 
+def test_gateway_doctor_detects_broken_instance(tmp_path: Path, capsys) -> None:
+    from src.server.config_store import RuntimeConfigStore
+
+    db_path = tmp_path / "semibot.db"
+    store = RuntimeConfigStore(db_path=str(db_path))
+    created = store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instance_key": "tg-broken",
+            "is_active": True,
+            "config": {},
+        }
+    )
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "doctor",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "doctor"
+    assert payload["summary"]["broken"] >= 1
+    target = next(item for item in payload["instances"] if item["id"] == created["id"])
+    assert "telegram_active_missing_bot_token" in target["errors"]
+
+
+def test_gateway_doctor_strict_warnings_mode(tmp_path: Path, capsys) -> None:
+    from src.server.config_store import RuntimeConfigStore
+
+    db_path = tmp_path / "semibot.db"
+    store = RuntimeConfigStore(db_path=str(db_path))
+    created = store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instance_key": "tg-degraded",
+            "is_active": True,
+            "config": {"botToken": "123456:token_only"},
+        }
+    )
+
+    parser = build_parser()
+    args_normal = parser.parse_args(
+        [
+            "gateway",
+            "doctor",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+    exit_normal = args_normal.func(args_normal)
+    payload_normal = json.loads(capsys.readouterr().out)
+    assert exit_normal == 0
+    target = next(item for item in payload_normal["instances"] if item["id"] == created["id"])
+    assert "telegram_no_default_or_allowed_chat_ids" in target["warnings"]
+
+    args_strict = parser.parse_args(
+        [
+            "gateway",
+            "doctor",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(db_path),
+            "--strict-warnings",
+        ]
+    )
+    exit_strict = args_strict.func(args_strict)
+    payload_strict = json.loads(capsys.readouterr().out)
+    assert exit_strict == 3
+    assert payload_strict["summary"]["degraded"] >= 1
+
+
 def test_gateway_create_update_and_test_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
 
