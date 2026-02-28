@@ -37,6 +37,8 @@ semibot/
       gateway_store.py
   server/
     api.py                    # 仅 HTTP 路由与请求/响应编解码
+    routes/
+      gateway.py              # Gateway 相关路由注册（薄路由）
 ```
 
 职责说明：
@@ -57,12 +59,13 @@ semibot/
 - `gateway/notifiers/*`：provider-specific 出站发送  
 - `gateway/parsers/approval_text.py`：跨 Gateway 文本审批解析（同意/拒绝/approve/reject）  
 - `gateway/store/gateway_store.py`：Gateway 相关 SQLite 读写  
-- `server/api.py`：只保留路由转发到 `gateway/*` 服务层  
+- `server/routes/gateway.py`：Gateway 路由（HTTP 层）  
+- `server/api.py`：应用装配与非 Gateway 路由  
 
 当前状态（2026-02-28）：
 
 - 已完成 `gateway/manager.py` 的第一轮收口：Gateway 配置读写、Feishu/Telegram webhook 入站、审批文本命令解析、出站通知测试、GCS 查询入口均在 manager 层。
-- `server/api.py` 已改为薄路由，主要负责 HTTP 入参解析与 `GatewayManagerError -> HTTPException` 映射。
+- 已新增 `server/routes/gateway.py`，把 Gateway 路由从 `server/api.py` 分离，`api.py` 仅做装配与注册。
 
 ## 2. 核心接口（签名）
 

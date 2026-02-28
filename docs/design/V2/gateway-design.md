@@ -66,7 +66,7 @@ Gateway Notifier（provider-specific outbound）
 实现进度（2026-02-28）：
 
 - `runtime/src/gateway/manager.py` 已承接 Gateway 配置、webhook 入站、审批文本解析、出站通知与 GCS 查询聚合。
-- `runtime/src/server/api.py` 已收敛为薄路由层（请求解析/HTTP 状态码映射），核心 Gateway 业务逻辑不再放在 API 文件内。
+- `runtime/src/server/routes/gateway.py` 已承接 Gateway 路由定义；`runtime/src/server/api.py` 仅做应用装配与路由注册。
 
 ### 2.2 与 Event Engine 的关系
 

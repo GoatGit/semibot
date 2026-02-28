@@ -25,12 +25,13 @@ from src.events.models import Event
 from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.events.runtime_action_executor import RuntimeActionExecutor
 from src.gateway.context_service import GatewayContextService
-from src.gateway.manager import GatewayManager, GatewayManagerError
+from src.gateway.manager import GatewayManager
 from src.gateway.notifiers.feishu_notifier import SendFn
 from src.gateway.notifiers.telegram_notifier import SendFn as TelegramSendFn
 from src.gateway.parsers.approval_text import extract_message_text
 from src.runtime_service import run_task_once
 from src.server.config_store import RuntimeConfigStore
+from src.server.routes.gateway import register_gateway_routes
 from src.skills.bootstrap import create_default_registry
 
 TaskRunner = Callable[..., Awaitable[dict[str, Any]]]
@@ -53,17 +54,6 @@ class HeartbeatRequest(BaseModel):
     source: str = "system.api"
     subject: str | None = "system"
     payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class FeishuOutboundTestRequest(BaseModel):
-    title: str = "Semibot 测试消息"
-    content: str = "这是一条来自 Semibot 的测试通知。"
-    channel: str = "default"
-
-
-class TelegramOutboundTestRequest(BaseModel):
-    text: str = "Semibot Telegram 测试消息"
-    chat_id: str | None = None
 
 
 class RunTaskRequest(BaseModel):
@@ -319,6 +309,8 @@ def create_app(
             agents.add("semibot")
         return sessions, agents
 
+    register_gateway_routes(app, gateway_manager)
+
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {"ok": True, "version": "2.0.0"}
@@ -546,54 +538,6 @@ def create_app(
         if not deleted:
             raise HTTPException(status_code=404, detail="mcp_server_not_found")
         return {"deleted": True}
-
-    @app.get("/v1/config/gateways")
-    async def list_config_gateways() -> dict[str, Any]:
-        return {"data": gateway_manager.list_gateway_configs()}
-
-    @app.get("/v1/config/gateways/{provider}")
-    async def get_config_gateway(provider: str) -> dict[str, Any]:
-        try:
-            return gateway_manager.get_gateway_config(provider)
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    @app.put("/v1/config/gateways/{provider}")
-    async def upsert_config_gateway(provider: str, request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        try:
-            return gateway_manager.upsert_gateway_config(provider, payload)
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    @app.post("/v1/config/gateways/{provider}/test")
-    async def test_config_gateway(provider: str, request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        try:
-            return await gateway_manager.test_gateway(provider, payload)
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    @app.get("/v1/gateway/conversations")
-    async def list_gateway_conversations(
-        provider: str | None = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=500),
-    ) -> dict[str, Any]:
-        return gateway_manager.list_gateway_conversations(provider=provider, limit=limit)
-
-    @app.get("/v1/gateway/conversations/{conversation_id}/runs")
-    async def list_gateway_conversation_runs(
-        conversation_id: str,
-        limit: int = Query(default=100, ge=1, le=500),
-    ) -> dict[str, Any]:
-        return gateway_manager.list_gateway_conversation_runs(conversation_id, limit=limit)
-
-    @app.get("/v1/gateway/conversations/{conversation_id}/context")
-    async def get_gateway_conversation_context(
-        conversation_id: str,
-        limit: int = Query(default=200, ge=1, le=1000),
-    ) -> dict[str, Any]:
-        return gateway_manager.get_gateway_conversation_context(conversation_id, limit=limit)
 
     @app.get("/v1/sessions")
     async def list_sessions(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
@@ -850,62 +794,6 @@ def create_app(
         )
         outcomes = await engine.emit(event)
         return {"event_id": event.event_id, "matched_rules": len(outcomes)}
-
-    @app.post("/v1/integrations/feishu/events")
-    async def ingest_feishu_events(request: Request) -> dict[str, Any]:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        try:
-            return await gateway_manager.ingest_feishu_events(
-                payload if isinstance(payload, dict) else {},
-            )
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    @app.post("/v1/integrations/feishu/card-actions")
-    async def ingest_feishu_card_actions(request: Request) -> dict[str, Any]:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        try:
-            return await gateway_manager.ingest_feishu_card_actions(payload if isinstance(payload, dict) else {})
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    @app.post("/v1/integrations/feishu/outbound/test")
-    async def send_feishu_test(req: FeishuOutboundTestRequest) -> dict[str, Any]:
-        try:
-            return await gateway_manager.send_feishu_test(
-                title=req.title,
-                content=req.content,
-                channel=req.channel,
-            )
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    @app.post("/v1/integrations/telegram/webhook")
-    async def ingest_telegram_webhook(request: Request) -> dict[str, Any]:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        try:
-            return await gateway_manager.ingest_telegram_webhook(
-                payload if isinstance(payload, dict) else {},
-                headers=request.headers,
-            )
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    @app.post("/v1/integrations/telegram/outbound/test")
-    async def send_telegram_test(req: TelegramOutboundTestRequest) -> dict[str, Any]:
-        try:
-            return await gateway_manager.send_telegram_test(text=req.text, chat_id=req.chat_id)
-        except GatewayManagerError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/events/replay")
     async def replay_event(req: ReplayEventRequest) -> dict[str, Any]:
