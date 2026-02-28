@@ -309,6 +309,30 @@
         "displayNamePlaceholder": "Display name",
         "enabled": "Enable this gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",
+        "addressing": {
+          "title": "Addressing policy",
+          "modeLabel": "Message trigger mode",
+          "modeMentionOnly": "Trigger only on @mention / reply / commands",
+          "modeAllMessages": "All group messages mode",
+          "allowReplyToBot": "Treat replies to bot messages as addressed",
+          "executeOnUnaddressed": "Execute even when unaddressed (use carefully)",
+          "commandPrefixesPlaceholder": "commandPrefixes (optional, comma-separated, e.g. /ask,/run,/approve,/reject)",
+          "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec (positive integer seconds)"
+        },
+        "proactive": {
+          "title": "Proactive notification policy",
+          "modeLabel": "Notification mode",
+          "modeSilent": "Silent (default)",
+          "modeRiskBased": "Risk-based",
+          "modeAlways": "Always",
+          "minRiskToNotifyLabel": "Minimum risk level to notify"
+        },
+        "context": {
+          "title": "Context retention policy",
+          "ttlDaysPlaceholder": "ttlDays (retention days)",
+          "maxRecentMessagesPlaceholder": "maxRecentMessages (max recent messages)",
+          "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages (summarize every N messages)"
+        },
         "feishu": {
           "verifyTokenPlaceholder": "Feishu verify token (leave empty to clear)",
           "webhookUrlPlaceholder": "Feishu webhook URL (optional)",

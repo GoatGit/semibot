@@ -122,6 +122,28 @@ type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks'
 type ProviderKey = keyof LlmConfigData['providers']
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram'
+type GatewayAddressingMode = 'mention_only' | 'all_messages'
+type GatewayProactiveMode = 'silent' | 'risk_based' | 'always'
+type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
+
+interface GatewayAddressingPolicy {
+  mode?: GatewayAddressingMode
+  allowReplyToBot?: boolean
+  executeOnUnaddressed?: boolean
+  commandPrefixes?: string[]
+  sessionContinuationWindowSec?: number
+}
+
+interface GatewayProactivePolicy {
+  mode?: GatewayProactiveMode
+  minRiskToNotify?: RiskLevel
+}
+
+interface GatewayContextPolicy {
+  ttlDays?: number
+  maxRecentMessages?: number
+  summarizeEveryNMessages?: number
+}
 
 interface GatewayItem {
   id: string
@@ -129,10 +151,13 @@ interface GatewayItem {
   displayName: string
   isActive: boolean
   mode: string
-  riskLevel: 'low' | 'medium' | 'high' | 'critical'
+  riskLevel: RiskLevel
   requiresApproval: boolean
   status: 'ready' | 'disabled' | 'not_configured'
   config: Record<string, unknown>
+  addressingPolicy?: GatewayAddressingPolicy
+  proactivePolicy?: GatewayProactivePolicy
+  contextPolicy?: GatewayContextPolicy
   updatedAt: string
 }
 
@@ -150,6 +175,16 @@ type GatewayForm = {
   defaultChatId: string
   allowedChatIds: string
   notifyEventTypes: string
+  addressingMode: GatewayAddressingMode
+  allowReplyToBot: boolean
+  executeOnUnaddressed: boolean
+  commandPrefixes: string
+  sessionContinuationWindowSec: string
+  proactiveMode: GatewayProactiveMode
+  minRiskToNotify: RiskLevel
+  contextTtlDays: string
+  contextMaxRecentMessages: string
+  contextSummarizeEveryNMessages: string
 }
 
 type ToolForm = {
@@ -311,6 +346,16 @@ export default function ConfigPage() {
     defaultChatId: '',
     allowedChatIds: '',
     notifyEventTypes: '',
+    addressingMode: 'mention_only',
+    allowReplyToBot: true,
+    executeOnUnaddressed: false,
+    commandPrefixes: '/ask,/run,/approve,/reject',
+    sessionContinuationWindowSec: '300',
+    proactiveMode: 'silent',
+    minRiskToNotify: 'high',
+    contextTtlDays: '30',
+    contextMaxRecentMessages: '200',
+    contextSummarizeEveryNMessages: '50',
   })
 
   const [showCreateKey, setShowCreateKey] = useState(false)
@@ -792,6 +837,39 @@ export default function ConfigPage() {
     const notifyEventTypes = Array.isArray(cfg.notifyEventTypes)
       ? (cfg.notifyEventTypes as unknown[]).map((item) => String(item)).join(',')
       : ''
+    const addressingPolicyRaw =
+      gateway.addressingPolicy && typeof gateway.addressingPolicy === 'object'
+        ? gateway.addressingPolicy
+        : (cfg.addressingPolicy as GatewayAddressingPolicy | undefined)
+    const proactivePolicyRaw =
+      gateway.proactivePolicy && typeof gateway.proactivePolicy === 'object'
+        ? gateway.proactivePolicy
+        : (cfg.proactivePolicy as GatewayProactivePolicy | undefined)
+    const contextPolicyRaw =
+      gateway.contextPolicy && typeof gateway.contextPolicy === 'object'
+        ? gateway.contextPolicy
+        : (cfg.contextPolicy as GatewayContextPolicy | undefined)
+    const defaultAddressingMode: GatewayAddressingMode = gateway.provider === 'telegram' ? 'all_messages' : 'mention_only'
+    const addressingMode =
+      addressingPolicyRaw?.mode === 'all_messages' || addressingPolicyRaw?.mode === 'mention_only'
+        ? addressingPolicyRaw.mode
+        : defaultAddressingMode
+    const proactiveMode =
+      proactivePolicyRaw?.mode === 'silent' ||
+      proactivePolicyRaw?.mode === 'risk_based' ||
+      proactivePolicyRaw?.mode === 'always'
+        ? proactivePolicyRaw.mode
+        : 'silent'
+    const minRiskToNotify: RiskLevel =
+      proactivePolicyRaw?.minRiskToNotify === 'low' ||
+      proactivePolicyRaw?.minRiskToNotify === 'medium' ||
+      proactivePolicyRaw?.minRiskToNotify === 'high' ||
+      proactivePolicyRaw?.minRiskToNotify === 'critical'
+        ? proactivePolicyRaw.minRiskToNotify
+        : 'high'
+    const commandPrefixes = Array.isArray(addressingPolicyRaw?.commandPrefixes)
+      ? (addressingPolicyRaw?.commandPrefixes || []).map((item) => String(item)).join(',')
+      : '/ask,/run,/approve,/reject'
     setGatewayForm({
       provider: gateway.provider,
       displayName: gateway.displayName || gateway.provider,
@@ -806,6 +884,16 @@ export default function ConfigPage() {
       defaultChatId: String(cfg.defaultChatId || ''),
       allowedChatIds,
       notifyEventTypes,
+      addressingMode,
+      allowReplyToBot: addressingPolicyRaw?.allowReplyToBot ?? true,
+      executeOnUnaddressed: addressingPolicyRaw?.executeOnUnaddressed ?? false,
+      commandPrefixes,
+      sessionContinuationWindowSec: String(addressingPolicyRaw?.sessionContinuationWindowSec ?? 300),
+      proactiveMode,
+      minRiskToNotify,
+      contextTtlDays: String(contextPolicyRaw?.ttlDays ?? 30),
+      contextMaxRecentMessages: String(contextPolicyRaw?.maxRecentMessages ?? 200),
+      contextSummarizeEveryNMessages: String(contextPolicyRaw?.summarizeEveryNMessages ?? 50),
     })
     setShowGatewayModal(true)
   }
@@ -816,6 +904,10 @@ export default function ConfigPage() {
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean)
+    const parsePositiveInt = (value: string, fallback: number): number => {
+      const parsed = Number.parseInt(value.trim(), 10)
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+    }
 
     const isTelegram = gatewayForm.provider === 'telegram'
     const payload: Record<string, unknown> = {
@@ -841,6 +933,22 @@ export default function ConfigPage() {
               ...(gatewayForm.webhookUrl.trim() ? { webhookUrl: gatewayForm.webhookUrl.trim() } : {}),
               notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
             }),
+      },
+      addressingPolicy: {
+        mode: gatewayForm.addressingMode,
+        allowReplyToBot: gatewayForm.allowReplyToBot,
+        executeOnUnaddressed: gatewayForm.executeOnUnaddressed,
+        commandPrefixes: parseCommaList(gatewayForm.commandPrefixes),
+        sessionContinuationWindowSec: parsePositiveInt(gatewayForm.sessionContinuationWindowSec, 300),
+      },
+      proactivePolicy: {
+        mode: gatewayForm.proactiveMode,
+        minRiskToNotify: gatewayForm.minRiskToNotify,
+      },
+      contextPolicy: {
+        ttlDays: parsePositiveInt(gatewayForm.contextTtlDays, 30),
+        maxRecentMessages: parsePositiveInt(gatewayForm.contextMaxRecentMessages, 200),
+        summarizeEveryNMessages: parsePositiveInt(gatewayForm.contextSummarizeEveryNMessages, 50),
       },
     }
     const clearFields: string[] = []
@@ -1727,6 +1835,135 @@ export default function ConfigPage() {
             value={gatewayForm.notifyEventTypes}
             onChange={(e) => setGatewayForm((prev) => ({ ...prev, notifyEventTypes: e.target.value }))}
           />
+
+          <div className="space-y-2 rounded-md border border-border-default p-3">
+            <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.addressing.title')}</p>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{t('config.modals.gateway.addressing.modeLabel')}</p>
+              <select
+                className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                value={gatewayForm.addressingMode}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    addressingMode: e.target.value as GatewayAddressingMode,
+                  }))
+                }
+              >
+                <option value="mention_only">{t('config.modals.gateway.addressing.modeMentionOnly')}</option>
+                <option value="all_messages">{t('config.modals.gateway.addressing.modeAllMessages')}</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-text-secondary">
+              <input
+                type="checkbox"
+                checked={gatewayForm.allowReplyToBot}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    allowReplyToBot: e.target.checked,
+                  }))
+                }
+              />
+              {t('config.modals.gateway.addressing.allowReplyToBot')}
+            </label>
+            <label className="flex items-center gap-2 text-sm text-text-secondary">
+              <input
+                type="checkbox"
+                checked={gatewayForm.executeOnUnaddressed}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    executeOnUnaddressed: e.target.checked,
+                  }))
+                }
+              />
+              {t('config.modals.gateway.addressing.executeOnUnaddressed')}
+            </label>
+            <Input
+              placeholder={t('config.modals.gateway.addressing.commandPrefixesPlaceholder')}
+              value={gatewayForm.commandPrefixes}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, commandPrefixes: e.target.value }))}
+            />
+            <Input
+              placeholder={t('config.modals.gateway.addressing.sessionContinuationWindowSecPlaceholder')}
+              value={gatewayForm.sessionContinuationWindowSec}
+              onChange={(e) =>
+                setGatewayForm((prev) => ({
+                  ...prev,
+                  sessionContinuationWindowSec: e.target.value,
+                }))
+              }
+            />
+          </div>
+
+          <div className="space-y-2 rounded-md border border-border-default p-3">
+            <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.proactive.title')}</p>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{t('config.modals.gateway.proactive.modeLabel')}</p>
+              <select
+                className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                value={gatewayForm.proactiveMode}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    proactiveMode: e.target.value as GatewayProactiveMode,
+                  }))
+                }
+              >
+                <option value="silent">{t('config.modals.gateway.proactive.modeSilent')}</option>
+                <option value="risk_based">{t('config.modals.gateway.proactive.modeRiskBased')}</option>
+                <option value="always">{t('config.modals.gateway.proactive.modeAlways')}</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{t('config.modals.gateway.proactive.minRiskToNotifyLabel')}</p>
+              <select
+                className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                value={gatewayForm.minRiskToNotify}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    minRiskToNotify: e.target.value as RiskLevel,
+                  }))
+                }
+              >
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="critical">critical</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-md border border-border-default p-3">
+            <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.context.title')}</p>
+            <Input
+              placeholder={t('config.modals.gateway.context.ttlDaysPlaceholder')}
+              value={gatewayForm.contextTtlDays}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, contextTtlDays: e.target.value }))}
+            />
+            <Input
+              placeholder={t('config.modals.gateway.context.maxRecentMessagesPlaceholder')}
+              value={gatewayForm.contextMaxRecentMessages}
+              onChange={(e) =>
+                setGatewayForm((prev) => ({
+                  ...prev,
+                  contextMaxRecentMessages: e.target.value,
+                }))
+              }
+            />
+            <Input
+              placeholder={t('config.modals.gateway.context.summarizeEveryNMessagesPlaceholder')}
+              value={gatewayForm.contextSummarizeEveryNMessages}
+              onChange={(e) =>
+                setGatewayForm((prev) => ({
+                  ...prev,
+                  contextSummarizeEveryNMessages: e.target.value,
+                }))
+              }
+            />
+          </div>
         </div>
       </Modal>
 

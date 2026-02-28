@@ -20,6 +20,9 @@ const updateGatewaySchema = z.object({
   riskLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
   requiresApproval: z.boolean().optional(),
   config: z.record(z.unknown()).optional(),
+  addressingPolicy: z.record(z.unknown()).optional(),
+  proactivePolicy: z.record(z.unknown()).optional(),
+  contextPolicy: z.record(z.unknown()).optional(),
   clearFields: z.array(z.string().min(1).max(64)).max(50).optional(),
 })
 

@@ -16,6 +16,9 @@ export interface UpdateGatewayInput {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   requiresApproval?: boolean
   config?: Record<string, unknown>
+  addressingPolicy?: Record<string, unknown>
+  proactivePolicy?: Record<string, unknown>
+  contextPolicy?: Record<string, unknown>
   clearFields?: string[]
 }
 

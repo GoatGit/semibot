@@ -309,6 +309,30 @@
         "displayNamePlaceholder": "显示名称",
         "enabled": "启用此 Gateway",
         "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",
+        "addressing": {
+          "title": "Addressing 策略",
+          "modeLabel": "消息触发模式",
+          "modeMentionOnly": "仅 @ / 回复 / 命令触发",
+          "modeAllMessages": "群聊全量消息模式",
+          "allowReplyToBot": "将“回复 Bot 消息”视为命中",
+          "executeOnUnaddressed": "未命中时仍执行（谨慎开启）",
+          "commandPrefixesPlaceholder": "commandPrefixes（可选，逗号分隔，如 /ask,/run,/approve,/reject）",
+          "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec（正整数秒）"
+        },
+        "proactive": {
+          "title": "主动通知策略",
+          "modeLabel": "通知模式",
+          "modeSilent": "静默（默认）",
+          "modeRiskBased": "按风险通知",
+          "modeAlways": "总是通知",
+          "minRiskToNotifyLabel": "最小通知风险等级"
+        },
+        "context": {
+          "title": "上下文保留策略",
+          "ttlDaysPlaceholder": "ttlDays（上下文保留天数）",
+          "maxRecentMessagesPlaceholder": "maxRecentMessages（最近消息条数上限）",
+          "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages（每 N 条触发摘要）"
+        },
         "feishu": {
           "verifyTokenPlaceholder": "Feishu Verify Token（留空可清空）",
           "webhookUrlPlaceholder": "Feishu Webhook URL（可选）",

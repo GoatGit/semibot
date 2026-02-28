@@ -20,6 +20,9 @@ export interface GatewayRow {
   requiresApproval: boolean
   status: 'ready' | 'disabled' | 'not_configured'
   config: Record<string, unknown>
+  addressingPolicy?: Record<string, unknown>
+  proactivePolicy?: Record<string, unknown>
+  contextPolicy?: Record<string, unknown>
   updatedAt: string
 }
 
@@ -30,6 +33,9 @@ export interface UpdateGatewayData {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   requiresApproval?: boolean
   config?: Record<string, unknown>
+  addressingPolicy?: Record<string, unknown>
+  proactivePolicy?: Record<string, unknown>
+  contextPolicy?: Record<string, unknown>
   clearFields?: string[]
 }
 
@@ -43,6 +49,9 @@ type RuntimeGatewayRow = {
   requiresApproval?: boolean
   status?: 'ready' | 'disabled' | 'not_configured'
   config?: Record<string, unknown>
+  addressingPolicy?: Record<string, unknown>
+  proactivePolicy?: Record<string, unknown>
+  contextPolicy?: Record<string, unknown>
   updatedAt?: string
 }
 
@@ -62,6 +71,11 @@ function toGatewayRow(item: RuntimeGatewayRow): GatewayRow {
     requiresApproval: item.requiresApproval === true,
     status: item.status || 'not_configured',
     config: item.config || {},
+    addressingPolicy:
+      item.addressingPolicy && typeof item.addressingPolicy === 'object' ? item.addressingPolicy : undefined,
+    proactivePolicy:
+      item.proactivePolicy && typeof item.proactivePolicy === 'object' ? item.proactivePolicy : undefined,
+    contextPolicy: item.contextPolicy && typeof item.contextPolicy === 'object' ? item.contextPolicy : undefined,
     updatedAt: item.updatedAt || nowIso(),
   }
 }
@@ -100,6 +114,9 @@ export async function updateByProvider(
         riskLevel: data.riskLevel,
         requiresApproval: data.requiresApproval,
         config: data.config,
+        addressingPolicy: data.addressingPolicy,
+        proactivePolicy: data.proactivePolicy,
+        contextPolicy: data.contextPolicy,
         clearFields: data.clearFields,
       },
       timeoutMs: 3000,
