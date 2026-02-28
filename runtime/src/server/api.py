@@ -24,27 +24,16 @@ from src.events.event_store import EventStore
 from src.events.models import Event
 from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.events.runtime_action_executor import RuntimeActionExecutor
-from src.runtime_service import run_task_once
-from src.gateway.adapters.feishu_adapter import (
-    maybe_url_verification,
-    normalize_message_event,
-    parse_card_action,
-    verify_callback_token,
-)
-from src.gateway.adapters.telegram_adapter import normalize_update as normalize_telegram_update
-from src.gateway.adapters.telegram_adapter import parse_callback_action as parse_telegram_callback_action
-from src.gateway.adapters.telegram_adapter import verify_webhook_secret as verify_telegram_webhook_secret
 from src.gateway.context_service import GatewayContextService
-from src.gateway.notifiers.feishu_notifier import FeishuNotifier, SendFn
-from src.gateway.notifiers.telegram_notifier import (
-    SendFn as TelegramSendFn,
-)
-from src.gateway.notifiers.telegram_notifier import TelegramNotifier
-from src.gateway.parsers.approval_text import extract_message_text, parse_approval_text_command
+from src.gateway.manager import GatewayManager, GatewayManagerError
+from src.gateway.notifiers.feishu_notifier import SendFn
+from src.gateway.notifiers.telegram_notifier import SendFn as TelegramSendFn
+from src.gateway.parsers.approval_text import extract_message_text
+from src.runtime_service import run_task_once
 from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
 
-type TaskRunner = Callable[..., Awaitable[dict[str, Any]]]
+TaskRunner = Callable[..., Awaitable[dict[str, Any]]]
 
 
 class EmitEventRequest(BaseModel):
@@ -148,99 +137,14 @@ def create_app(
                 return False
         return bool(value)
 
-    def _get_gateway(provider: str) -> dict[str, Any] | None:
-        try:
-            return config_store.get_gateway_config(provider)
-        except ValueError:
-            return None
-
-    def _provider_config(provider: str) -> dict[str, Any]:
-        item = _get_gateway(provider) or {}
-        config = item.get("config")
-        return config if isinstance(config, dict) else {}
-
-    def _provider_active(provider: str) -> bool:
-        item = _get_gateway(provider)
-        if item and item.get("is_active"):
-            return True
-        if provider == "feishu":
-            return bool(feishu_verify_token or feishu_webhook_url or feishu_webhook_urls)
-        if provider == "telegram":
-            return bool(telegram_bot_token)
-        return False
-
-    def _telegram_bot_id(token: str | None) -> str | None:
-        value = str(token or "").strip()
-        if ":" not in value:
-            return None
-        prefix = value.split(":", 1)[0].strip()
-        return prefix or None
-
-    def _build_feishu_notifier() -> FeishuNotifier | None:
-        cfg = _provider_config("feishu")
-        webhook_url = str(cfg.get("webhookUrl") or "").strip() or feishu_webhook_url
-        webhook_channels = cfg.get("webhookChannels")
-        webhook_urls = (
-            {str(k): str(v) for k, v in webhook_channels.items() if isinstance(v, str) and v}
-            if isinstance(webhook_channels, dict)
-            else (feishu_webhook_urls or {})
-        )
-
-        raw_event_types = cfg.get("notifyEventTypes")
-        subscribed = feishu_notify_event_types
-        if isinstance(raw_event_types, list):
-            parsed = {str(item).strip() for item in raw_event_types if str(item).strip()}
-            subscribed = parsed or None
-
-        templates_cfg = cfg.get("templates")
-        templates = templates_cfg if isinstance(templates_cfg, dict) else feishu_templates
-
-        if not webhook_url and not webhook_urls:
-            return None
-        return FeishuNotifier(
-            webhook_url=webhook_url,
-            webhook_urls=webhook_urls,
-            subscribed_event_types=subscribed,
-            templates=templates if isinstance(templates, dict) else None,
-            send_fn=feishu_send_fn,
-        )
-
-    def _build_telegram_notifier() -> TelegramNotifier | None:
-        cfg = _provider_config("telegram")
-        token = str(cfg.get("botToken") or "").strip() or telegram_bot_token
-        default_chat_id = str(cfg.get("defaultChatId") or "").strip() or telegram_default_chat_id
-        if not token:
-            return None
-        raw_event_types = cfg.get("notifyEventTypes")
-        subscribed = telegram_notify_event_types
-        if isinstance(raw_event_types, list):
-            parsed = {str(item).strip() for item in raw_event_types if str(item).strip()}
-            subscribed = parsed or None
-        parse_mode_raw = cfg.get("parseMode")
-        parse_mode = str(parse_mode_raw).strip() if isinstance(parse_mode_raw, str) else ""
-        if parse_mode.lower() in {"none", "off", "disabled", "plain"}:
-            parse_mode = ""
-        disable_link_preview = _to_bool(cfg.get("disableLinkPreview"), False)
-        return TelegramNotifier(
-            bot_token=token,
-            default_chat_id=default_chat_id or None,
-            subscribed_event_types=subscribed,
-            parse_mode=parse_mode or None,
-            disable_link_preview=disable_link_preview,
-            send_fn=telegram_send_fn,
-        )
+    gateway_manager: GatewayManager | None = None
 
     async def _runtime_event_sink(runtime_event: dict[str, Any]) -> None:
         event_name = str(runtime_event.get("event") or "")
         data = runtime_event.get("data")
         payload = data if isinstance(data, dict) else {}
-        if event_name == "rule.notify":
-            feishu_notifier = _build_feishu_notifier()
-            if feishu_notifier and _provider_active("feishu"):
-                await feishu_notifier.send_notify_payload(payload)
-            telegram_notifier = _build_telegram_notifier()
-            if telegram_notifier and _provider_active("telegram"):
-                await telegram_notifier.send_notify_payload(payload)
+        if event_name == "rule.notify" and gateway_manager:
+            await gateway_manager.handle_runtime_notify_payload(payload)
 
     action_executor = RuntimeActionExecutor(runtime_event_sink=_runtime_event_sink)
     engine = EventEngine(
@@ -249,13 +153,26 @@ def create_app(
         rules_path=rules,
     )
 
+    gateway_manager = GatewayManager(
+        config_store=config_store,
+        gateway_context=gateway_context,
+        engine=engine,
+        feishu_verify_token=feishu_verify_token,
+        feishu_webhook_url=feishu_webhook_url,
+        feishu_webhook_urls=feishu_webhook_urls,
+        feishu_notify_event_types=feishu_notify_event_types,
+        feishu_templates=feishu_templates,
+        feishu_send_fn=feishu_send_fn,
+        telegram_bot_token=telegram_bot_token,
+        telegram_default_chat_id=telegram_default_chat_id,
+        telegram_webhook_secret=telegram_webhook_secret,
+        telegram_notify_event_types=telegram_notify_event_types,
+        telegram_send_fn=telegram_send_fn,
+    )
+
     async def _gateway_event_sink(event: Event) -> None:
-        feishu_notifier = _build_feishu_notifier()
-        if feishu_notifier and _provider_active("feishu"):
-            await feishu_notifier.handle_event(event)
-        telegram_notifier = _build_telegram_notifier()
-        if telegram_notifier and _provider_active("telegram"):
-            await telegram_notifier.handle_event(event)
+        if gateway_manager:
+            await gateway_manager.handle_engine_event(event)
 
     engine.bus.subscribe(_gateway_event_sink)
 
@@ -312,103 +229,6 @@ def create_app(
             "action": context.get("action"),
             "target": context.get("target"),
             "summary": context.get("summary"),
-        }
-
-    def _approval_matches_subject(item: Any, subject: str | None) -> bool:
-        if not subject:
-            return False
-        context = item.context if isinstance(getattr(item, "context", None), dict) else {}
-        candidates = {
-            str(subject),
-            str(context.get("session_id") or ""),
-            str(context.get("subject") or ""),
-            str(context.get("chat_id") or ""),
-            str(context.get("thread_id") or ""),
-        }
-        return str(subject) in candidates
-
-    async def _handle_text_approval_command(
-        *,
-        text: str,
-        source: str,
-        subject: str | None,
-        trace_payload: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        parsed = parse_approval_text_command(text)
-        kind = str(parsed.get("kind") or "none")
-        if kind == "none":
-            return None
-
-        pending = engine.list_approvals(status="pending", limit=500)
-        scoped_pending = [item for item in pending if _approval_matches_subject(item, subject)]
-        candidate_pool = scoped_pending or pending
-
-        if kind == "list":
-            return {
-                "command": kind,
-                "recognized": True,
-                "resolved": False,
-                "resolved_count": 0,
-                "pending_count": len(candidate_pool),
-                "scope": "subject" if scoped_pending else "global",
-            }
-
-        decision = "approved" if kind in {"approve", "approve_all"} else "rejected"
-        target_ids: list[str] = []
-        requested_id = parsed.get("approval_id")
-        if isinstance(requested_id, str) and requested_id:
-            target_ids = [requested_id]
-        elif kind in {"approve_all", "reject_all"}:
-            target_ids = [item.approval_id for item in candidate_pool]
-        elif candidate_pool:
-            # pick latest pending approval in scope when id is omitted.
-            target_ids = [candidate_pool[-1].approval_id]
-
-        if not target_ids:
-            return {
-                "command": kind,
-                "recognized": True,
-                "resolved": False,
-                "resolved_count": 0,
-                "pending_count": len(candidate_pool),
-                "scope": "subject" if scoped_pending else "global",
-                "reason": "no_pending_approval_found",
-            }
-
-        resolved_items: list[Any] = []
-        for approval_id in target_ids:
-            resolved = await engine.resolve_approval(approval_id, decision)
-            if resolved:
-                resolved_items.append(resolved)
-
-        approval_action_event = Event(
-            event_id=f"evt_approval_action_{uuid4().hex}",
-            event_type="approval.action",
-            source=source,
-            subject=subject or (target_ids[0] if target_ids else None),
-            payload={
-                "command": kind,
-                "decision": decision,
-                "approval_ids": target_ids,
-                "resolved_count": len(resolved_items),
-                "scope": "subject" if scoped_pending else "global",
-                "text": text,
-                "raw": trace_payload or {},
-            },
-            risk_hint="low",
-            timestamp=datetime.now(UTC),
-        )
-        await engine.emit(approval_action_event)
-
-        return {
-            "command": kind,
-            "recognized": True,
-            "resolved": len(resolved_items) > 0,
-            "resolved_count": len(resolved_items),
-            "approval_ids": [item.approval_id for item in resolved_items],
-            "status": decision,
-            "scope": "subject" if scoped_pending else "global",
-            "event_id": approval_action_event.event_id,
         }
 
     def _encode_cursor(created_at: str, event_id: str) -> str:
@@ -498,70 +318,6 @@ def create_app(
         if not agents:
             agents.add("semibot")
         return sessions, agents
-
-    def _mask_gateway_config(provider: str, config: dict[str, Any]) -> dict[str, Any]:
-        masked = dict(config)
-        sensitive_fields = {
-            "feishu": {"verifyToken", "encryptKey", "appSecret"},
-            "telegram": {"botToken", "webhookSecret"},
-        }
-        for key in sensitive_fields.get(provider, set()):
-            value = masked.get(key)
-            if isinstance(value, str) and value:
-                masked[key] = "***"
-        return masked
-
-    def _gateway_status(provider: str, is_active: bool, config: dict[str, Any]) -> str:
-        if not is_active:
-            return "disabled"
-        if provider == "telegram":
-            token = str(config.get("botToken") or "").strip() or str(telegram_bot_token or "").strip()
-            return "ready" if token else "not_configured"
-        if provider == "feishu":
-            verify_token = str(config.get("verifyToken") or "").strip() or str(feishu_verify_token or "").strip()
-            webhook_url = str(config.get("webhookUrl") or "").strip() or str(feishu_webhook_url or "").strip()
-            webhook_channels = config.get("webhookChannels")
-            has_channel = isinstance(webhook_channels, dict) and any(
-                isinstance(v, str) and v.strip() for v in webhook_channels.values()
-            )
-            return "ready" if (verify_token or webhook_url or has_channel) else "not_configured"
-        return "ready"
-
-    def _serialize_gateway_item(item: dict[str, Any]) -> dict[str, Any]:
-        provider = str(item.get("provider") or "")
-        config = item.get("config")
-        config_map = config if isinstance(config, dict) else {}
-        addressing_policy = (
-            config_map.get("addressingPolicy")
-            if isinstance(config_map.get("addressingPolicy"), dict)
-            else None
-        )
-        proactive_policy = (
-            config_map.get("proactivePolicy")
-            if isinstance(config_map.get("proactivePolicy"), dict)
-            else None
-        )
-        context_policy = (
-            config_map.get("contextPolicy")
-            if isinstance(config_map.get("contextPolicy"), dict)
-            else None
-        )
-        is_active = bool(item.get("is_active"))
-        return {
-            "id": item.get("id"),
-            "provider": provider,
-            "displayName": item.get("display_name") or provider,
-            "isActive": is_active,
-            "mode": item.get("mode") or "webhook",
-            "riskLevel": item.get("risk_level") or "high",
-            "requiresApproval": bool(item.get("requires_approval")),
-            "status": _gateway_status(provider, is_active, config_map),
-            "config": _mask_gateway_config(provider, config_map),
-            "addressingPolicy": addressing_policy,
-            "proactivePolicy": proactive_policy,
-            "contextPolicy": context_policy,
-            "updatedAt": item.get("updated_at"),
-        }
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -793,139 +549,51 @@ def create_app(
 
     @app.get("/v1/config/gateways")
     async def list_config_gateways() -> dict[str, Any]:
-        items = config_store.list_gateway_configs()
-        return {"data": [_serialize_gateway_item(item) for item in items]}
+        return {"data": gateway_manager.list_gateway_configs()}
 
     @app.get("/v1/config/gateways/{provider}")
     async def get_config_gateway(provider: str) -> dict[str, Any]:
-        item = config_store.get_gateway_config(provider)
-        if not item:
-            raise HTTPException(status_code=404, detail="gateway_not_found")
-        return _serialize_gateway_item(item)
+        try:
+            return gateway_manager.get_gateway_config(provider)
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.put("/v1/config/gateways/{provider}")
     async def upsert_config_gateway(provider: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
-        patch: dict[str, Any] = {}
-        if "displayName" in payload:
-            patch["display_name"] = payload.get("displayName")
-        if "display_name" in payload:
-            patch["display_name"] = payload.get("display_name")
-        if "isActive" in payload or "is_active" in payload:
-            patch["is_active"] = _to_bool(payload.get("isActive", payload.get("is_active")), False)
-        if "mode" in payload:
-            patch["mode"] = payload.get("mode")
-        if "riskLevel" in payload or "risk_level" in payload:
-            patch["risk_level"] = payload.get("riskLevel", payload.get("risk_level"))
-        if "requiresApproval" in payload or "requires_approval" in payload:
-            patch["requires_approval"] = _to_bool(
-                payload.get("requiresApproval", payload.get("requires_approval")),
-                False,
-            )
-        merged_config: dict[str, Any] = {}
-        config_payload = payload.get("config")
-        if isinstance(config_payload, dict):
-            merged_config.update(config_payload)
-        for key in ("addressingPolicy", "proactivePolicy", "contextPolicy"):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                merged_config[key] = value
-        if merged_config:
-            patch["config"] = merged_config
-        clear_fields = payload.get("clearFields", payload.get("clear_fields"))
-        if isinstance(clear_fields, list):
-            patch["clear_fields"] = [str(item) for item in clear_fields if isinstance(item, str)]
         try:
-            item = config_store.upsert_gateway_config(provider, patch)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="unsupported_gateway_provider") from None
-        return _serialize_gateway_item(item)
+            return gateway_manager.upsert_gateway_config(provider, payload)
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/config/gateways/{provider}/test")
     async def test_config_gateway(provider: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
-        if provider == "feishu":
-            notifier = _build_feishu_notifier()
-            if not notifier:
-                raise HTTPException(status_code=400, detail="feishu_not_configured")
-            sent = await notifier.send_markdown(
-                title=str(payload.get("title") or "Semibot Gateway Test"),
-                content=str(payload.get("content") or "Gateway connectivity test"),
-                channel=str(payload.get("channel") or "default"),
-            )
-            return {"sent": sent}
-        if provider == "telegram":
-            notifier = _build_telegram_notifier()
-            if not notifier:
-                raise HTTPException(status_code=400, detail="telegram_not_configured")
-            sent = await notifier.send_message(
-                text=str(payload.get("text") or "Semibot Gateway Test"),
-                chat_id=str(payload.get("chat_id") or payload.get("chatId") or "").strip() or None,
-            )
-            return {"sent": sent}
-        raise HTTPException(status_code=400, detail="unsupported_gateway_provider")
+        try:
+            return await gateway_manager.test_gateway(provider, payload)
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.get("/v1/gateway/conversations")
     async def list_gateway_conversations(
         provider: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
-        items = gateway_context.list_conversations(provider=provider, limit=limit)
-        return {
-            "data": [
-                {
-                    "conversation_id": item["id"],
-                    "provider": item["provider"],
-                    "gateway_key": item["gateway_key"],
-                    "main_context_id": item["main_context_id"],
-                    "latest_context_version": item["latest_context_version"],
-                    "status": item["status"],
-                    "updated_at": item["updated_at"],
-                }
-                for item in items
-            ]
-        }
+        return gateway_manager.list_gateway_conversations(provider=provider, limit=limit)
 
     @app.get("/v1/gateway/conversations/{conversation_id}/runs")
     async def list_gateway_conversation_runs(
         conversation_id: str,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
-        rows = gateway_context.list_task_runs(conversation_id, limit=limit)
-        return {
-            "data": [
-                {
-                    "run_id": row["id"],
-                    "runtime_session_id": row["runtime_session_id"],
-                    "snapshot_version": row["snapshot_version"],
-                    "status": row["status"],
-                    "result_summary": row["result_summary"],
-                    "updated_at": row["updated_at"],
-                }
-                for row in rows
-            ]
-        }
+        return gateway_manager.list_gateway_conversation_runs(conversation_id, limit=limit)
 
     @app.get("/v1/gateway/conversations/{conversation_id}/context")
     async def get_gateway_conversation_context(
         conversation_id: str,
         limit: int = Query(default=200, ge=1, le=1000),
     ) -> dict[str, Any]:
-        messages = gateway_context.list_context(conversation_id, limit=limit)
-        return {
-            "conversation_id": conversation_id,
-            "messages": [
-                {
-                    "id": item["id"],
-                    "version": item["context_version"],
-                    "role": item["role"],
-                    "content": item["content"],
-                    "metadata": item["metadata"],
-                    "created_at": item["created_at"],
-                }
-                for item in messages
-            ],
-        }
+        return gateway_manager.get_gateway_conversation_context(conversation_id, limit=limit)
 
     @app.get("/v1/sessions")
     async def list_sessions(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
@@ -1156,7 +824,7 @@ def create_app(
         if event_type == "chat.message.received":
             text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
             if text:
-                approval_command = await _handle_text_approval_command(
+                approval_command = await gateway_manager.handle_text_approval_command(
                     text=text,
                     source=str(event.source or "webhook"),
                     subject=str(event.subject) if isinstance(event.subject, str) else None,
@@ -1189,88 +857,12 @@ def create_app(
             payload = await request.json()
         except Exception:
             payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        feishu_cfg = _provider_config("feishu")
-        feishu_enabled = _provider_active("feishu")
-        verify_token = str(feishu_cfg.get("verifyToken") or "").strip() or feishu_verify_token
-        if not feishu_enabled and not verify_token and not feishu_webhook_url and not feishu_webhook_urls:
-            return {"accepted": False, "reason": "gateway_disabled"}
-
-        challenge = maybe_url_verification(payload)
-        if challenge:
-            if not verify_callback_token(payload, verify_token):
-                raise HTTPException(status_code=401, detail="invalid_feishu_token")
-            return {"challenge": challenge}
-
-        if not verify_callback_token(payload, verify_token):
-            raise HTTPException(status_code=401, detail="invalid_feishu_token")
-
-        normalized = normalize_message_event(payload)
-        if not normalized:
-            return {"accepted": False, "reason": "unsupported_feishu_event"}
-
-        event = Event(
-            event_id=f"evt_feishu_{uuid4().hex}",
-            event_type=normalized["event_type"],
-            source=normalized["source"],
-            subject=normalized["subject"],
-            payload=normalized["payload"],
-            idempotency_key=normalized["idempotency_key"],
-            risk_hint="low",
-            timestamp=datetime.now(UTC),
-        )
-        outcomes = await engine.emit(event)
-        approval_command = None
-        text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
-        if text:
-            approval_command = await _handle_text_approval_command(
-                text=text,
-                source="feishu.gateway",
-                subject=str(event.subject) if isinstance(event.subject, str) else None,
-                trace_payload=payload,
+        try:
+            return await gateway_manager.ingest_feishu_events(
+                payload if isinstance(payload, dict) else {},
             )
-        gateway_result = None
-        if (
-            event.event_type == "chat.message.received"
-            and text
-            and not approval_command
-            and isinstance(event.payload, dict)
-        ):
-            async def _feishu_result_sender(reply_text: str, _context: dict[str, Any]) -> bool:
-                notifier = _build_feishu_notifier()
-                if not notifier or not _provider_active("feishu"):
-                    return False
-                return await notifier.send_markdown(
-                    title="Semibot",
-                    content=reply_text,
-                    channel="default",
-                )
-
-            gateway_result = await gateway_context.ingest_message(
-                provider="feishu",
-                event_payload=event.payload,
-                source=event.source,
-                subject=str(event.subject) if isinstance(event.subject, str) else None,
-                text=text,
-                agent_id="semibot",
-                force_execute=False,
-                on_result=_feishu_result_sender,
-            )
-        return {
-            "accepted": True,
-            "event_id": event.event_id,
-            "event_type": event.event_type,
-            "matched_rules": len(outcomes),
-            "approval_command": approval_command,
-            "addressed": gateway_result.get("addressed") if gateway_result else None,
-            "should_execute": gateway_result.get("should_execute") if gateway_result else None,
-            "address_reason": gateway_result.get("address_reason") if gateway_result else None,
-            "conversation_id": gateway_result.get("conversation_id") if gateway_result else None,
-            "main_context_id": gateway_result.get("main_context_id") if gateway_result else None,
-            "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
-            "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
-        }
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/integrations/feishu/card-actions")
     async def ingest_feishu_card_actions(request: Request) -> dict[str, Any]:
@@ -1278,77 +870,21 @@ def create_app(
             payload = await request.json()
         except Exception:
             payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        feishu_cfg = _provider_config("feishu")
-        verify_token = str(feishu_cfg.get("verifyToken") or "").strip() or feishu_verify_token
-        if not verify_callback_token(payload, verify_token):
-            raise HTTPException(status_code=401, detail="invalid_feishu_token")
-
-        parsed = parse_card_action(payload)
-        approval = None
-        if parsed["approval_id"] and parsed["decision"] in {"approved", "rejected"}:
-            approval = await engine.resolve_approval(parsed["approval_id"], parsed["decision"])
-
-        approval_action_event_id: str | None = None
-        if parsed["approval_id"] and parsed["decision"] in {"approved", "rejected"}:
-            approval_action_event = Event(
-                event_id=f"evt_approval_action_{uuid4().hex}",
-                event_type="approval.action",
-                source="feishu.gateway",
-                subject=parsed["approval_id"],
-                payload={
-                    "approval_id": parsed["approval_id"],
-                    "decision": parsed["decision"],
-                    "trace_id": parsed["trace_id"],
-                    "resolved": approval is not None,
-                    "raw": payload,
-                },
-                risk_hint="low",
-                timestamp=datetime.now(UTC),
-            )
-            await engine.emit(approval_action_event)
-            approval_action_event_id = approval_action_event.event_id
-
-        event = Event(
-            event_id=f"evt_feishu_action_{uuid4().hex}",
-            event_type="chat.card.action",
-            source="feishu.gateway",
-            subject=parsed["approval_id"],
-            payload={
-                "approval_id": parsed["approval_id"],
-                "decision": parsed["decision"] or parsed["raw_decision"],
-                "trace_id": parsed["trace_id"],
-                "resolved": approval is not None,
-                "raw": payload,
-            },
-            risk_hint="low",
-            timestamp=datetime.now(UTC),
-        )
-        outcomes = await engine.emit(event)
-
-        return {
-            "accepted": True,
-            "approval_id": parsed["approval_id"],
-            "decision": parsed["decision"] or parsed["raw_decision"],
-            "resolved": approval is not None,
-            "status": approval.status if approval else None,
-            "approval_action_event_id": approval_action_event_id,
-            "event_id": event.event_id,
-            "matched_rules": len(outcomes),
-        }
+        try:
+            return await gateway_manager.ingest_feishu_card_actions(payload if isinstance(payload, dict) else {})
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/integrations/feishu/outbound/test")
     async def send_feishu_test(req: FeishuOutboundTestRequest) -> dict[str, Any]:
-        feishu_notifier = _build_feishu_notifier()
-        if not feishu_notifier:
-            raise HTTPException(status_code=400, detail="feishu_webhook_not_configured")
-        sent = await feishu_notifier.send_markdown(
-            title=req.title,
-            content=req.content,
-            channel=req.channel,
-        )
-        return {"sent": sent}
+        try:
+            return await gateway_manager.send_feishu_test(
+                title=req.title,
+                content=req.content,
+                channel=req.channel,
+            )
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/integrations/telegram/webhook")
     async def ingest_telegram_webhook(request: Request) -> dict[str, Any]:
@@ -1356,126 +892,20 @@ def create_app(
             payload = await request.json()
         except Exception:
             payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-
-        tg_cfg = _provider_config("telegram")
-        tg_enabled = _provider_active("telegram")
-        token = str(tg_cfg.get("botToken") or "").strip() or str(telegram_bot_token or "").strip()
-        if not tg_enabled and not token:
-            return {"accepted": False, "reason": "gateway_disabled"}
-        if tg_enabled and not token:
-            return {"accepted": False, "reason": "gateway_not_configured"}
-
-        webhook_secret = str(tg_cfg.get("webhookSecret") or "").strip() or telegram_webhook_secret
-        if not verify_telegram_webhook_secret(request.headers, webhook_secret):
-            raise HTTPException(status_code=401, detail="invalid_telegram_secret")
-
-        normalized = normalize_telegram_update(
-            payload,
-            bot_id=_telegram_bot_id(token),
-        )
-        if not normalized:
-            return {"accepted": False, "reason": "unsupported_telegram_event"}
-        allowed_chat_ids_raw = tg_cfg.get("allowedChatIds")
-        if isinstance(allowed_chat_ids_raw, list) and allowed_chat_ids_raw:
-            allowed_chat_ids = {str(item) for item in allowed_chat_ids_raw if str(item).strip()}
-            chat_id = normalized["payload"].get("chat_id")
-            if chat_id is not None and str(chat_id) not in allowed_chat_ids:
-                return {"accepted": False, "reason": "chat_not_allowed"}
-
-        event = Event(
-            event_id=f"evt_tg_{uuid4().hex}",
-            event_type=normalized["event_type"],
-            source=normalized["source"],
-            subject=normalized["subject"],
-            payload=normalized["payload"],
-            idempotency_key=normalized["idempotency_key"],
-            risk_hint="low",
-            timestamp=datetime.now(UTC),
-        )
-        outcomes = await engine.emit(event)
-
-        approval_command = None
-        if event.event_type == "chat.card.action":
-            parsed = parse_telegram_callback_action(payload)
-            if parsed["approval_id"] and parsed["decision"] in {"approved", "rejected"}:
-                approval = await engine.resolve_approval(str(parsed["approval_id"]), str(parsed["decision"]))
-                approval_action_event = Event(
-                    event_id=f"evt_approval_action_{uuid4().hex}",
-                    event_type="approval.action",
-                    source="telegram.gateway",
-                    subject=str(parsed["approval_id"]),
-                    payload={
-                        "approval_id": parsed["approval_id"],
-                        "decision": parsed["decision"],
-                        "trace_id": parsed["trace_id"],
-                        "resolved": approval is not None,
-                        "raw": payload,
-                    },
-                    risk_hint="low",
-                    timestamp=datetime.now(UTC),
-                )
-                await engine.emit(approval_action_event)
-                approval_command = {
-                    "recognized": True,
-                    "resolved": approval is not None,
-                    "resolved_count": 1 if approval else 0,
-                    "approval_ids": [parsed["approval_id"]],
-                    "status": parsed["decision"],
-                    "event_id": approval_action_event.event_id,
-                }
-
-        text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
-        gateway_result = None
-        if text and not approval_command:
-            approval_command = await _handle_text_approval_command(
-                text=text,
-                source="telegram.gateway",
-                subject=str(event.subject) if isinstance(event.subject, str) else None,
-                trace_payload=payload,
+        try:
+            return await gateway_manager.ingest_telegram_webhook(
+                payload if isinstance(payload, dict) else {},
+                headers=request.headers,
             )
-            if not approval_command and event.event_type == "chat.message.received" and isinstance(event.payload, dict):
-                async def _telegram_result_sender(reply_text: str, ctx: dict[str, Any]) -> bool:
-                    notifier = _build_telegram_notifier()
-                    if not notifier or not _provider_active("telegram"):
-                        return False
-                    target_chat_id = str(ctx.get("chat_id") or "").strip() or None
-                    return await notifier.send_message(text=reply_text, chat_id=target_chat_id)
-
-                gateway_result = await gateway_context.ingest_message(
-                    provider="telegram",
-                    event_payload=event.payload,
-                    source=event.source,
-                    subject=str(event.subject) if isinstance(event.subject, str) else None,
-                    text=text,
-                    agent_id="semibot",
-                    force_execute=False,
-                    on_result=_telegram_result_sender,
-                )
-
-        return {
-            "accepted": True,
-            "event_id": event.event_id,
-            "event_type": event.event_type,
-            "matched_rules": len(outcomes),
-            "approval_command": approval_command,
-            "addressed": gateway_result.get("addressed") if gateway_result else None,
-            "should_execute": gateway_result.get("should_execute") if gateway_result else None,
-            "address_reason": gateway_result.get("address_reason") if gateway_result else None,
-            "conversation_id": gateway_result.get("conversation_id") if gateway_result else None,
-            "main_context_id": gateway_result.get("main_context_id") if gateway_result else None,
-            "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
-            "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
-        }
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/integrations/telegram/outbound/test")
     async def send_telegram_test(req: TelegramOutboundTestRequest) -> dict[str, Any]:
-        notifier = _build_telegram_notifier()
-        if not notifier:
-            raise HTTPException(status_code=400, detail="telegram_not_configured")
-        sent = await notifier.send_message(text=req.text, chat_id=req.chat_id)
-        return {"sent": sent}
+        try:
+            return await gateway_manager.send_telegram_test(text=req.text, chat_id=req.chat_id)
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.post("/v1/events/replay")
     async def replay_event(req: ReplayEventRequest) -> dict[str, Any]:
