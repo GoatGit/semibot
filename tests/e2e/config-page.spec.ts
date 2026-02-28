@@ -211,6 +211,9 @@ async function setupConfigPageMocks(page: Page, onLlmConfigPut?: (payload: any) 
         ...(payload.displayName ? { displayName: payload.displayName } : {}),
         ...(payload.isActive !== undefined ? { isActive: payload.isActive } : {}),
         ...(payload.config ? { config: { ...existing.config, ...payload.config } } : {}),
+        ...(payload.addressingPolicy ? { addressingPolicy: payload.addressingPolicy } : {}),
+        ...(payload.proactivePolicy ? { proactivePolicy: payload.proactivePolicy } : {}),
+        ...(payload.contextPolicy ? { contextPolicy: payload.contextPolicy } : {}),
       }
       await json(route, { success: true, data: gatewayState[provider] })
       return
@@ -339,34 +342,44 @@ test.describe('Config Page', () => {
   })
 
   test('should edit and test telegram gateway config', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1800 })
     const gatewayPutPayloads: any[] = []
     const gatewayTestCalls: string[] = []
+    let telegramState: any = {
+      id: 'gw-telegram',
+      provider: 'telegram',
+      displayName: 'Telegram',
+      isActive: false,
+      mode: 'webhook',
+      riskLevel: 'high',
+      requiresApproval: false,
+      status: 'not_configured',
+      config: {
+        botToken: null,
+        defaultChatId: null,
+        allowedChatIds: [],
+        notifyEventTypes: [],
+      },
+      updatedAt: '2026-02-27T10:00:00.000Z',
+    }
 
     await setupConfigPageMocks(page)
     await page.route('**/api/v1/gateways/telegram', async (route, request) => {
       if (request.method() === 'PUT') {
-        gatewayPutPayloads.push(request.postDataJSON())
-      }
-      await json(route, {
-        success: true,
-        data: {
-          id: 'gw-telegram',
-          provider: 'telegram',
-          displayName: 'Telegram Ops',
-          isActive: true,
-          mode: 'webhook',
-          riskLevel: 'high',
-          requiresApproval: false,
+        const payload = request.postDataJSON()
+        gatewayPutPayloads.push(payload)
+        telegramState = {
+          ...telegramState,
+          ...(payload?.displayName ? { displayName: payload.displayName } : {}),
+          ...(payload?.isActive !== undefined ? { isActive: payload.isActive } : {}),
+          ...(payload?.config ? { config: { ...telegramState.config, ...payload.config } } : {}),
+          ...(payload?.addressingPolicy ? { addressingPolicy: payload.addressingPolicy } : {}),
+          ...(payload?.proactivePolicy ? { proactivePolicy: payload.proactivePolicy } : {}),
+          ...(payload?.contextPolicy ? { contextPolicy: payload.contextPolicy } : {}),
           status: 'ready',
-          config: {
-            botToken: '***',
-            defaultChatId: '-10012345',
-            allowedChatIds: ['-10012345'],
-            notifyEventTypes: ['approval.requested', 'task.completed'],
-          },
-          updatedAt: '2026-02-27T10:00:00.000Z',
-        },
-      })
+        }
+      }
+      await json(route, { success: true, data: telegramState })
     })
     await page.route('**/api/v1/gateways/telegram/test', async (route) => {
       gatewayTestCalls.push(route.request().url())
@@ -385,7 +398,22 @@ test.describe('Config Page', () => {
     await page.getByPlaceholder('默认 Chat ID（可选）').fill('-10012345')
     await page.getByPlaceholder('allowedChatIds（可选，逗号分隔）').fill('-10012345,-100999')
     await page.getByPlaceholder('notifyEventTypes（可选，逗号分隔）').fill('approval.requested,task.completed')
-    await page.getByRole('dialog', { name: 'Gateway 配置' }).getByRole('button', { name: '保存' }).click()
+    const gatewayDialog = page.getByRole('dialog', { name: 'Gateway 配置' })
+    await gatewayDialog.locator('select').nth(0).selectOption('all_messages')
+    await gatewayDialog.getByLabel('将“回复 Bot 消息”视为命中').uncheck()
+    await gatewayDialog.getByLabel('未命中时仍执行（谨慎开启）').check()
+    await page
+      .getByPlaceholder('commandPrefixes（可选，逗号分隔，如 /ask,/run,/approve,/reject）')
+      .fill('/ask,/run')
+    await page.getByPlaceholder('sessionContinuationWindowSec（正整数秒）').fill('600')
+    await gatewayDialog.locator('select').nth(1).selectOption('risk_based')
+    await gatewayDialog.locator('select').nth(2).selectOption('high')
+    await page.getByPlaceholder('ttlDays（上下文保留天数）').fill('14')
+    await page.getByPlaceholder('maxRecentMessages（最近消息条数上限）').fill('120')
+    await page.getByPlaceholder('summarizeEveryNMessages（每 N 条触发摘要）').fill('30')
+    const gatewaySaveBtn = page.getByRole('dialog', { name: 'Gateway 配置' }).getByRole('button', { name: '保存' })
+    await gatewaySaveBtn.scrollIntoViewIfNeeded()
+    await gatewaySaveBtn.click({ force: true })
 
     await expect.poll(() => gatewayPutPayloads.length).toBeGreaterThan(0)
     expect(gatewayPutPayloads[0]).toMatchObject({
@@ -395,6 +423,22 @@ test.describe('Config Page', () => {
         defaultChatId: '-10012345',
         allowedChatIds: ['-10012345', '-100999'],
         notifyEventTypes: ['approval.requested', 'task.completed'],
+      },
+      addressingPolicy: {
+        mode: 'all_messages',
+        allowReplyToBot: false,
+        executeOnUnaddressed: true,
+        commandPrefixes: ['/ask', '/run'],
+        sessionContinuationWindowSec: 600,
+      },
+      proactivePolicy: {
+        mode: 'risk_based',
+        minRiskToNotify: 'high',
+      },
+      contextPolicy: {
+        ttlDays: 14,
+        maxRecentMessages: 120,
+        summarizeEveryNMessages: 30,
       },
     })
 
