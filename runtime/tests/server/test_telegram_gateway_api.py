@@ -88,6 +88,47 @@ async def test_gateway_config_endpoints_and_telegram_outbound_test(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_gateway_config_patch_accepts_snake_case_and_chatid_alias(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        update = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "display_name": "Telegram",
+                "is_active": True,
+                "risk_level": "high",
+                "requires_approval": False,
+                "config": {"botToken": "token_abc", "defaultChatId": "-100001"},
+            },
+        )
+        assert update.status_code == 200
+        assert update.json()["displayName"] == "Telegram"
+        assert update.json()["isActive"] is True
+        assert update.json()["status"] == "ready"
+
+        test_resp = await client.post(
+            "/v1/config/gateways/telegram/test",
+            json={"text": "hello with chatId", "chatId": "-100002"},
+        )
+        assert test_resp.status_code == 200
+        assert test_resp.json()["sent"] is True
+        assert sent[-1]["payload"]["chat_id"] == "-100002"
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_ingestion_and_text_approval(tmp_path: Path):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"
