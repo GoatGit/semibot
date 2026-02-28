@@ -4,10 +4,16 @@ import os
 
 from src.skills.browser_automation import BrowserAutomationTool
 from src.skills.code_executor import CodeExecutorTool
+from src.skills.csv_xlsx import CsvXlsxTool
 from src.skills.file_generators import PdfGeneratorTool, XlsxGeneratorTool
 from src.skills.file_io import FileIOTool
+from src.skills.http_client import HttpClientTool
+from src.skills.json_transform import JsonTransformTool
+from src.skills.pdf_report import PdfReportTool
 from src.skills.registry import SkillRegistry
 from src.skills.search import SearchTool
+from src.skills.sql_query_readonly import SqlQueryReadonlyTool
+from src.skills.web_fetch import WebFetchTool
 from src.skills.web_search import WebSearchTool
 from src.utils.logging import get_logger
 
@@ -27,9 +33,27 @@ def create_default_registry() -> SkillRegistry:
     registry.register_tool(SearchTool())
     registry.register_tool(FileIOTool())
     registry.register_tool(BrowserAutomationTool())
+    registry.register_tool(HttpClientTool())
+    registry.register_tool(WebFetchTool())
+    registry.register_tool(JsonTransformTool())
+    registry.register_tool(CsvXlsxTool())
+    registry.register_tool(PdfReportTool())
+    registry.register_tool(SqlQueryReadonlyTool())
     logger.info(
         "Registered core builtin tools",
-        extra={"tools": ["search", "file_io", "browser_automation"]},
+        extra={
+            "tools": [
+                "search",
+                "file_io",
+                "browser_automation",
+                "http_client",
+                "web_fetch",
+                "json_transform",
+                "csv_xlsx",
+                "pdf_report",
+                "sql_query_readonly",
+            ]
+        },
     )
     registry.register_tool(XlsxGeneratorTool())
     registry.register_tool(PdfGeneratorTool())

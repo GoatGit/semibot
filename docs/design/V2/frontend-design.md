@@ -127,7 +127,8 @@ app/
   - 配置变更后应有“已同步到 runtime”反馈
   - 不再展示组织配置（V2 单用户模式）
   - Tools 固定为内建能力：前端不提供新增/删除入口，只允许配置与启停（如权限、限流、超时、必要时的 endpoint/key）
-  - `code_executor`、`file_io`、`browser_automation` 不展示 endpoint/key 配置项
+  - 当前内建 Tools：`search`、`code_executor`、`file_io`、`browser_automation`、`http_client`、`web_fetch`、`json_transform`、`csv_xlsx`、`pdf_report`、`sql_query_readonly`
+  - `code_executor`、`file_io`、`browser_automation`、`json_transform`、`csv_xlsx`、`pdf_report` 不展示 endpoint/key 配置项
   - `xlsx` / `pdf` 归类为 Skills，不在 Tools 配置页展示为可配置 Tool
   - Tools 风控配置以风险等级与 HITL 审批为主；`browser_automation` 额外支持 `allowLocalhost`、域名白/黑名单、`headless`、`browserType`
   - Gateway Tab 统一管理飞书与 Telegram，不把聊天网关混在 Webhook Tab

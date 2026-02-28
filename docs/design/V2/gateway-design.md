@@ -380,3 +380,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(pr
 - Telegram Webhook 连通自检：
   - `semibot gateway webhook-check --provider telegram`
   - `semibot gateway webhook-check --provider telegram --public-base-url https://xxxx.ngrok-free.app`
+- Telegram Webhook 注册（调用 Telegram API `setWebhook`）：
+  - `semibot gateway webhook-set --provider telegram --public-base-url https://xxxx.ngrok-free.app`
+- Telegram 一键联调脚本：
+  - `python3 runtime/scripts/telegram_gateway_smoke.py --public-base-url https://xxxx.ngrok-free.app`

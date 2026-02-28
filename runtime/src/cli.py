@@ -1964,6 +1964,60 @@ def _telegram_get_webhook_info(bot_token: str) -> dict[str, Any]:
     return result if isinstance(result, dict) else {}
 
 
+def _telegram_set_webhook(
+    bot_token: str,
+    *,
+    webhook_url: str,
+    secret_token: str | None = None,
+    drop_pending_updates: bool = False,
+) -> dict[str, Any]:
+    token = str(bot_token or "").strip()
+    if not token:
+        raise RuntimeError("empty bot token")
+    endpoint = f"https://api.telegram.org/bot{token}/setWebhook"
+    payload: dict[str, Any] = {"url": webhook_url}
+    if secret_token:
+        payload["secret_token"] = secret_token
+    if drop_pending_updates:
+        payload["drop_pending_updates"] = True
+    try:
+        result = _http_json_request(method="POST", url=endpoint, payload=payload, timeout=12.0)
+    except Exception as exc:
+        message = str(exc).replace(token, "<redacted>")
+        raise RuntimeError(message) from exc
+    if result.get("ok") is not True:
+        description = str(result.get("description") or "telegram api error")
+        raise RuntimeError(description)
+    return result
+
+
+def _select_telegram_instance_for_write(
+    store: RuntimeConfigStore,
+    *,
+    instance_id: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    items = store.list_gateway_instances(provider="telegram")
+    if instance_id:
+        for item in items:
+            if str(item.get("id") or "") == instance_id:
+                return item, None
+        return None, "not_found"
+
+    token_ready = [
+        item
+        for item in items
+        if isinstance(item.get("config"), dict) and str(item["config"].get("botToken") or "").strip()
+    ]
+    if not token_ready:
+        return None, "no_configured_token"
+    defaults = [item for item in token_ready if bool(item.get("is_default"))]
+    if len(defaults) == 1:
+        return defaults[0], None
+    if len(token_ready) == 1:
+        return token_ready[0], None
+    return None, "ambiguous"
+
+
 def cmd_gateway_webhook_check(args: argparse.Namespace) -> int:
     provider = str(getattr(args, "provider", "telegram") or "telegram").strip().lower()
     db_path = str(getattr(args, "db_path", _default_db_path()))
@@ -2066,6 +2120,147 @@ def cmd_gateway_webhook_check(args: argparse.Namespace) -> int:
                 "strictWarnings": strict_warnings,
             },
             "instances": reports,
+            "ok": ok,
+        }
+    )
+    return EXIT_SUCCESS if ok else EXIT_CONFIG_ERROR
+
+
+def cmd_gateway_webhook_set(args: argparse.Namespace) -> int:
+    provider = str(getattr(args, "provider", "telegram") or "telegram").strip().lower()
+    if provider != "telegram":
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="webhook-set",
+                code="UNSUPPORTED_PROVIDER",
+                message="webhook-set currently supports telegram only",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    explicit_url = str(getattr(args, "url", "") or "").strip()
+    public_base_url = str(getattr(args, "public_base_url", "") or "").strip().rstrip("/")
+    webhook_url = explicit_url
+    if not webhook_url and public_base_url:
+        webhook_url = f"{public_base_url}/v1/integrations/telegram/webhook"
+    if not webhook_url:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="webhook-set",
+                code="WEBHOOK_URL_REQUIRED",
+                message="provide --url or --public-base-url",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    db_path = str(getattr(args, "db_path", _default_db_path()))
+    instance_id = str(getattr(args, "instance_id", "") or "").strip() or None
+    store = RuntimeConfigStore(db_path=db_path)
+
+    target, select_error = _select_telegram_instance_for_write(store, instance_id=instance_id)
+    if not target:
+        if select_error == "not_found":
+            _print_json(
+                _error_payload(
+                    resource="gateway",
+                    action="webhook-set",
+                    code="GATEWAY_INSTANCE_NOT_FOUND",
+                    message=f"gateway instance not found: {instance_id}",
+                )
+            )
+            return EXIT_NOT_FOUND
+        if select_error == "no_configured_token":
+            _print_json(
+                _error_payload(
+                    resource="gateway",
+                    action="webhook-set",
+                    code="TELEGRAM_TOKEN_NOT_CONFIGURED",
+                    message="no telegram instance has botToken configured",
+                )
+            )
+            return EXIT_CONFIG_ERROR
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="webhook-set",
+                code="AMBIGUOUS_TELEGRAM_INSTANCE",
+                message="multiple telegram instances have botToken configured; specify --instance-id",
+            )
+        )
+        return EXIT_ARGS_ERROR
+
+    cfg = target.get("config")
+    cfg_map = cfg if isinstance(cfg, dict) else {}
+    token = str(cfg_map.get("botToken") or "").strip()
+    if not token:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="webhook-set",
+                code="TELEGRAM_TOKEN_NOT_CONFIGURED",
+                message="target telegram instance has empty botToken",
+            )
+        )
+        return EXIT_CONFIG_ERROR
+
+    use_config_secret = not bool(getattr(args, "no_use_config_secret", False))
+    explicit_secret = str(getattr(args, "secret_token", "") or "").strip()
+    secret_token = explicit_secret
+    if not secret_token and use_config_secret:
+        secret_token = str(cfg_map.get("webhookSecret") or "").strip()
+    drop_pending_updates = bool(getattr(args, "drop_pending_updates", False))
+
+    try:
+        set_result = _telegram_set_webhook(
+            token,
+            webhook_url=webhook_url,
+            secret_token=secret_token or None,
+            drop_pending_updates=drop_pending_updates,
+        )
+        info = _telegram_get_webhook_info(token)
+    except Exception as exc:
+        _print_json(
+            _error_payload(
+                resource="gateway",
+                action="webhook-set",
+                code="TELEGRAM_WEBHOOK_SET_FAILED",
+                message=str(exc),
+            )
+        )
+        return EXIT_EXTERNAL_ERROR
+
+    current_url = str(info.get("url") or "").strip()
+    warnings: list[str] = []
+    if current_url.rstrip("/") != webhook_url.rstrip("/"):
+        warnings.append("telegram_webhook_url_mismatch_after_set")
+    pending = info.get("pending_update_count")
+    if isinstance(pending, int) and pending > 0:
+        warnings.append(f"telegram_pending_updates:{pending}")
+
+    ok = not warnings
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "gateway",
+            "action": "webhook-set",
+            "provider": "telegram",
+            "db_path": db_path,
+            "instance": {
+                "id": target.get("id"),
+                "instanceKey": target.get("instance_key"),
+                "displayName": target.get("display_name"),
+                "isActive": bool(target.get("is_active")),
+            },
+            "request": {
+                "url": webhook_url,
+                "secretFrom": "arg" if explicit_secret else ("config" if (secret_token and use_config_secret) else None),
+                "dropPendingUpdates": drop_pending_updates,
+            },
+            "setResult": {"ok": bool(set_result.get("ok")), "description": set_result.get("description")},
+            "webhookInfo": info,
+            "warnings": warnings,
             "ok": ok,
         }
     )
@@ -5400,6 +5595,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Treat degraded status (warnings) as failure",
     )
     gateway_webhook_check_parser.set_defaults(func=cmd_gateway_webhook_check)
+
+    gateway_webhook_set_parser = gateway_subparsers.add_parser(
+        "webhook-set",
+        help="Register telegram webhook URL via Telegram Bot API",
+    )
+    gateway_webhook_set_parser.add_argument(
+        "--provider",
+        choices=["telegram", "feishu"],
+        default="telegram",
+        help="Provider (currently telegram only)",
+    )
+    gateway_webhook_set_parser.add_argument("--instance-id", default=None, help="Optional gateway instance ID")
+    gateway_webhook_set_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
+    gateway_webhook_set_parser.add_argument("--url", default=None, help="Full webhook URL")
+    gateway_webhook_set_parser.add_argument(
+        "--public-base-url",
+        default=None,
+        help="Public base URL used to derive /v1/integrations/telegram/webhook",
+    )
+    gateway_webhook_set_parser.add_argument(
+        "--secret-token",
+        default=None,
+        help="Optional webhook secret token override",
+    )
+    gateway_webhook_set_parser.add_argument(
+        "--no-use-config-secret",
+        action="store_true",
+        help="Do not read webhookSecret from gateway config when --secret-token is empty",
+    )
+    gateway_webhook_set_parser.add_argument(
+        "--drop-pending-updates",
+        action="store_true",
+        help="Drop pending updates when setting webhook",
+    )
+    gateway_webhook_set_parser.set_defaults(func=cmd_gateway_webhook_set)
 
     gateway_list_parser = gateway_subparsers.add_parser("list", help="List gateway instances")
     gateway_list_parser.add_argument("--provider", default=None, help="Optional provider filter")

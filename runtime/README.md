@@ -169,6 +169,16 @@ curl http://127.0.0.1:8765/v1/skills
 curl http://127.0.0.1:8765/v1/sessions
 curl http://127.0.0.1:8765/v1/agents
 curl "http://127.0.0.1:8765/v1/memories/search?query=plan"
+
+# Gateway diagnostics (Telegram)
+semibot gateway doctor --provider telegram
+semibot gateway webhook-check --provider telegram --public-base-url https://xxxx.ngrok-free.app
+semibot gateway webhook-set --provider telegram --public-base-url https://xxxx.ngrok-free.app
+
+# One-command Telegram smoke flow (doctor -> webhook-set -> webhook-check -> gateway test)
+python3 runtime/scripts/telegram_gateway_smoke.py \
+  --public-base-url https://xxxx.ngrok-free.app \
+  --runtime-url http://127.0.0.1:8765
 ```
 
 ## Configuration

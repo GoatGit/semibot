@@ -82,6 +82,90 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       maxTextLength: 20000,
     },
   },
+  http_client: {
+    description: '内建 HTTP 客户端工具（REST 调用/鉴权/重试）',
+    type: 'builtin',
+    config: {
+      timeout: 15000,
+      retryAttempts: 2,
+      rateLimit: 120,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['method', 'url'],
+      allowLocalhost: false,
+      allowedDomains: [],
+      blockedDomains: ['localhost', '127.0.0.1', '::1'],
+      maxResponseChars: 20000,
+    },
+  },
+  web_fetch: {
+    description: '内建网页抓取与正文抽取工具（可选 readability）',
+    type: 'builtin',
+    config: {
+      timeout: 12000,
+      retryAttempts: 1,
+      rateLimit: 120,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+      allowLocalhost: false,
+      allowedDomains: [],
+      blockedDomains: ['localhost', '127.0.0.1', '::1'],
+      maxResponseChars: 20000,
+    },
+  },
+  json_transform: {
+    description: '内建 JSON 转换工具（JSONPath/JMESPath/模板映射）',
+    type: 'builtin',
+    config: {
+      timeout: 10000,
+      rateLimit: 240,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  csv_xlsx: {
+    description: '内建 CSV/Excel 读写与分析工具',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 120,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['action', 'path', 'output_path'],
+      maxReturnRows: 500,
+    },
+  },
+  pdf_report: {
+    description: '内建 PDF 报告生成工具（模板化表格/图表/结论）',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 60,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  sql_query_readonly: {
+    description: '内建只读 SQL 查询工具（白名单/超时/行数限制）',
+    type: 'builtin',
+    config: {
+      timeout: 15000,
+      rateLimit: 120,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['database', 'query'],
+      maxRows: 200,
+    },
+  },
 }
 
 function getBuiltinTemplate(toolName: string): { description: string; type: string; config: ToolConfig } {
@@ -101,7 +185,14 @@ function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig |
   if (!config) return undefined
   const sanitized: ToolConfig = { ...config }
   delete sanitized.permissions
-  if (toolName === 'code_executor' || toolName === 'file_io' || toolName === 'browser_automation') {
+  if (
+    toolName === 'code_executor' ||
+    toolName === 'file_io' ||
+    toolName === 'browser_automation' ||
+    toolName === 'json_transform' ||
+    toolName === 'csv_xlsx' ||
+    toolName === 'pdf_report'
+  ) {
     delete sanitized.apiEndpoint
     delete sanitized.apiKey
   }

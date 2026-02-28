@@ -460,12 +460,29 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
         raw_risk_level = cfg.get("riskLevel")
         if isinstance(raw_risk_level, str) and raw_risk_level.strip():
             risk_level = raw_risk_level.strip().lower()
-        elif tool.name in {"code_executor", "file_io", "browser_automation"}:
+        elif tool.name in {
+            "code_executor",
+            "file_io",
+            "browser_automation",
+            "http_client",
+            "csv_xlsx",
+            "sql_query_readonly",
+        }:
             risk_level = "high"
         else:
             risk_level = "low"
         requires_approval = bool(
-            cfg.get("requiresApproval", tool.name in {"code_executor", "file_io", "browser_automation"})
+            cfg.get(
+                "requiresApproval",
+                tool.name in {
+                    "code_executor",
+                    "file_io",
+                    "browser_automation",
+                    "http_client",
+                    "csv_xlsx",
+                    "sql_query_readonly",
+                },
+            )
         )
         raw_approval_scope = str(cfg.get("approvalScope") or "").strip().lower()
         approval_scope = (

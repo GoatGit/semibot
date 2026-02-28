@@ -37,7 +37,12 @@ const updateToolSchema = z.object({
       allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
       blockedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
       maxTextLength: z.number().int().min(100).max(500_000).optional(),
+      maxResponseChars: z.number().int().min(100).max(500_000).optional(),
+      maxRows: z.number().int().min(1).max(5_000).optional(),
+      defaultDatabase: z.string().max(200).optional(),
+      allowedDatabases: z.array(z.string().min(1).max(200)).max(100).optional(),
     })
+    .passthrough()
     .optional(),
   isActive: z.boolean().optional(),
 })

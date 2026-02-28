@@ -31,7 +31,18 @@ interface RuntimeSkillsData {
   source: string
   error?: string
 }
-const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io', 'browser_automation']
+const MIN_BUILTIN_TOOLS = [
+  'search',
+  'code_executor',
+  'file_io',
+  'browser_automation',
+  'http_client',
+  'web_fetch',
+  'json_transform',
+  'csv_xlsx',
+  'pdf_report',
+  'sql_query_readonly',
+]
 const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
 function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {

@@ -624,7 +624,18 @@ URL 验证响应：
 
 ```json
 {
-  "tools": ["search", "file_io", "code_executor", "browser_automation"],
+  "tools": [
+    "search",
+    "file_io",
+    "code_executor",
+    "browser_automation",
+    "http_client",
+    "web_fetch",
+    "json_transform",
+    "csv_xlsx",
+    "pdf_report",
+    "sql_query_readonly"
+  ],
   "skills": ["xlsx", "pdf"]
 }
 ```

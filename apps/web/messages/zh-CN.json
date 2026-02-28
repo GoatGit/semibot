@@ -203,6 +203,8 @@
       "apiEndpointInvalid": "apiEndpoint 必须是合法 URL",
       "maxReadBytesInvalid": "maxReadBytes 必须是正整数",
       "maxTextLengthInvalid": "maxTextLength 必须在 100 到 500000 之间",
+      "maxResponseCharsInvalid": "maxResponseChars 必须在 100 到 500000 之间",
+      "maxRowsInvalid": "maxRows 必须在 1 到 5000 之间",
       "missingToolId": "缺少工具 ID，无法保存",
       "updateToolConfig": "更新工具配置失败",
       "updateToolStatus": "更新工具状态失败",
@@ -326,6 +328,17 @@
         "noApiNeeded": "{tool} 无需配置 API Endpoint / API Key。",
         "rootPathPlaceholder": "根目录（可选，如 /Users/xxx）",
         "maxReadBytesPlaceholder": "maxReadBytes（可选，正整数）",
+        "http": {
+          "allowLocalhost": "允许访问 localhost / 内网地址",
+          "allowedDomainsPlaceholder": "allowedDomains（可选，逗号分隔，如 api.example.com）",
+          "blockedDomainsPlaceholder": "blockedDomains（可选，逗号分隔）",
+          "maxResponseCharsPlaceholder": "maxResponseChars（可选，100-500000）"
+        },
+        "sql": {
+          "maxRowsPlaceholder": "maxRows（可选，1-5000）",
+          "defaultDatabasePlaceholder": "defaultDatabase（可选，默认数据库别名）",
+          "allowedDatabasesPlaceholder": "allowedDatabases（可选，逗号分隔）"
+        },
         "browser": {
           "headless": "使用无头模式运行浏览器",
           "allowLocalhost": "允许访问 localhost / 内网地址",
@@ -484,7 +497,13 @@
       "search": "内建搜索工具",
       "code_executor": "内建代码执行工具",
       "file_io": "内建本地文件读写工具",
-      "browser_automation": "内建浏览器自动化工具（Playwright）"
+      "browser_automation": "内建浏览器自动化工具（Playwright）",
+      "http_client": "内建 HTTP 客户端工具（REST 调用/鉴权/重试）",
+      "web_fetch": "内建网页抓取与正文抽取工具（可选 Readability 模式）",
+      "json_transform": "内建 JSON 转换工具（JSONPath/JMESPath/模板映射）",
+      "csv_xlsx": "内建 CSV/Excel 读写、筛选、聚合与透视工具",
+      "pdf_report": "内建 PDF 报告生成工具（模板化表格/图表/结论）",
+      "sql_query_readonly": "内建只读 SQL 查询工具（白名单+超时+行数限制）"
     }
   },
   "rules": {

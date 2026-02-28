@@ -203,6 +203,8 @@
       "apiEndpointInvalid": "apiEndpoint must be a valid URL",
       "maxReadBytesInvalid": "maxReadBytes must be a positive integer",
       "maxTextLengthInvalid": "maxTextLength must be between 100 and 500000",
+      "maxResponseCharsInvalid": "maxResponseChars must be between 100 and 500000",
+      "maxRowsInvalid": "maxRows must be between 1 and 5000",
       "missingToolId": "Missing tool ID, unable to save",
       "updateToolConfig": "Failed to update tool config",
       "updateToolStatus": "Failed to update tool status",
@@ -326,6 +328,17 @@
         "noApiNeeded": "{tool} does not require API endpoint / API key.",
         "rootPathPlaceholder": "Root path (optional, e.g. /Users/xxx)",
         "maxReadBytesPlaceholder": "maxReadBytes (optional, positive integer)",
+        "http": {
+          "allowLocalhost": "Allow localhost / internal network access",
+          "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. api.example.com)",
+          "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxResponseCharsPlaceholder": "maxResponseChars (optional, 100-500000)"
+        },
+        "sql": {
+          "maxRowsPlaceholder": "maxRows (optional, 1-5000)",
+          "defaultDatabasePlaceholder": "defaultDatabase (optional, default DB alias)",
+          "allowedDatabasesPlaceholder": "allowedDatabases (optional, comma-separated)"
+        },
         "browser": {
           "headless": "Run browser in headless mode",
           "allowLocalhost": "Allow localhost / internal network access",
@@ -484,7 +497,13 @@
       "search": "Built-in web search tool",
       "code_executor": "Built-in code execution tool",
       "file_io": "Built-in local file read/write tool",
-      "browser_automation": "Built-in browser automation tool (Playwright)"
+      "browser_automation": "Built-in browser automation tool (Playwright)",
+      "http_client": "Built-in HTTP client (REST calls/auth/retries)",
+      "web_fetch": "Built-in web fetch and content extraction tool (optional readability mode)",
+      "json_transform": "Built-in JSON transform tool (JSONPath/JMESPath/mapping templates)",
+      "csv_xlsx": "Built-in CSV/Excel read, filter, aggregate, and pivot tool",
+      "pdf_report": "Built-in PDF report generation tool (templated tables/charts/conclusions)",
+      "sql_query_readonly": "Built-in read-only SQL query tool (allowlist/timeout/row limit)"
     }
   },
   "rules": {

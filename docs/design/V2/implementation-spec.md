@@ -222,6 +222,43 @@ async def should_execute(self, provider, normalized):
 - 文本审批解析复用 `gateway/parsers/approval_text.py`，在飞书/Telegram/Webhook 三条入口行为一致  
 - Telegram 与飞书都走同一 GatewayContextService，不在 provider adapter 内实现 fork/merge  
 
+## 6.2 新增内建工具契约（2026-02-28）
+
+本轮新增 6 个内建工具，统一通过 `skills/bootstrap.py` 注册，并通过 `RuntimeConfigStore` 的 `tool_configs.config_json` 读取配置：
+
+1. `http_client`
+- 能力：通用 REST 调用（GET/POST/PUT/PATCH/DELETE/HEAD）、Bearer/Basic/API Key 鉴权、失败重试。
+- 关键参数：`method`、`url/path`、`headers/query/body/json_body`、`auth_*`、`timeout_ms`、`retry_attempts`。
+- 默认风控：高风险 + HITL 审批；默认阻断 `localhost/127.0.0.1/::1`，支持域名白/黑名单。
+
+2. `web_fetch`
+- 能力：网页抓取与正文抽取；支持 `raw` 与 `readability` 模式，支持提取链接。
+- 关键参数：`url`、`mode`、`include_links`、`include_html`、`max_chars`。
+- 默认风控：低风险；默认阻断本地回环地址。
+
+3. `json_transform`
+- 能力：JSONPath/JMESPath 子集选择器 + mapping 模板 +文本模板渲染。
+- 关键参数：`data`、`expression`、`mapping`、`template`、`default_value`。
+- 默认风控：低风险。
+
+4. `csv_xlsx`
+- 能力：CSV/Excel 读写、过滤、聚合、透视。
+- 关键参数：`action`、`path/output_path`、`data`、`filters`、`group_by`、`metrics`、`pivot`。
+- 默认风控：高风险 + HITL 审批（涉及本地文件读写）。
+- 产物：写入类操作通过 `FileManager` 回传 `generated_files` 元数据。
+
+5. `pdf_report`
+- 能力：模板化 PDF 报告生成，支持段落、列表、表格、柱状图、结论段。
+- 关键参数：`filename`、`title`、`summary`、`sections`、`conclusion`、`context_data`。
+- 默认风控：低风险。
+- 产物：生成文件通过 `FileManager` 回传 `generated_files` 元数据。
+
+6. `sql_query_readonly`
+- 能力：只读 SQL 查询（仅允许 SELECT/CTE），支持 PostgreSQL/SQLite。
+- 关键参数：`query`、`database`、`params`、`timeout_ms`、`max_rows`。
+- 默认风控：高风险 + HITL 审批。
+- 安全策略：禁止 DML/DDL 关键字；单语句限制；白名单数据库别名；默认行数与超时上限。
+
 ## 6.1 现有代码迁移映射（建议）
 
 - `server/feishu.py` -> `gateway/adapters/feishu_adapter.py`

@@ -1121,6 +1121,113 @@ def test_gateway_webhook_check_detects_url_mismatch_in_strict_mode(
     assert any(item.startswith("telegram_pending_updates:") for item in warnings)
 
 
+def test_gateway_webhook_set_uses_config_secret(monkeypatch, tmp_path: Path, capsys) -> None:
+    from src.server.config_store import RuntimeConfigStore
+
+    db_path = tmp_path / "semibot.db"
+    store = RuntimeConfigStore(db_path=str(db_path))
+    created = store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instance_key": "tg-webhook-set",
+            "is_default": True,
+            "is_active": True,
+            "config": {
+                "botToken": "123456:token_set",
+                "webhookSecret": "sec-123",
+            },
+        }
+    )
+
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def _fake_http_json_request(*, method: str, url: str, payload=None, timeout: float = 5.0):
+        del timeout
+        calls.append((method, url, payload))
+        if "setWebhook" in url:
+            assert method == "POST"
+            assert payload is not None
+            assert payload["url"] == "https://example.ngrok-free.app/v1/integrations/telegram/webhook"
+            assert payload["secret_token"] == "sec-123"
+            return {"ok": True, "description": "Webhook was set"}
+        if "getWebhookInfo" in url:
+            assert method == "GET"
+            return {
+                "ok": True,
+                "result": {
+                    "url": "https://example.ngrok-free.app/v1/integrations/telegram/webhook",
+                    "pending_update_count": 0,
+                },
+            }
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr("src.cli._http_json_request", _fake_http_json_request)
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "webhook-set",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(db_path),
+            "--instance-id",
+            str(created["id"]),
+            "--public-base-url",
+            "https://example.ngrok-free.app",
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "webhook-set"
+    assert payload["ok"] is True
+    assert payload["request"]["secretFrom"] == "config"
+    assert len(calls) == 2
+
+
+def test_gateway_webhook_set_requires_disambiguation(tmp_path: Path, capsys) -> None:
+    from src.server.config_store import RuntimeConfigStore
+
+    db_path = tmp_path / "semibot.db"
+    store = RuntimeConfigStore(db_path=str(db_path))
+    store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instance_key": "tg-webhook-a",
+            "is_active": True,
+            "config": {"botToken": "111111:token_a"},
+        }
+    )
+    store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "instance_key": "tg-webhook-b",
+            "is_active": True,
+            "config": {"botToken": "222222:token_b"},
+        }
+    )
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "gateway",
+            "webhook-set",
+            "--provider",
+            "telegram",
+            "--db-path",
+            str(db_path),
+            "--url",
+            "https://example.ngrok-free.app/v1/integrations/telegram/webhook",
+        ]
+    )
+    exit_code = args.func(args)
+    assert exit_code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "AMBIGUOUS_TELEGRAM_INSTANCE"
+
+
 def test_gateway_create_update_and_test_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr("src.cli._require_runtime_server", lambda _url: None)
 

@@ -158,14 +158,20 @@ START → PLAN → ACT/DELEGATE → OBSERVE → REFLECT → RESPOND → END
 
 稳定、低成本、可直接调用的基础能力集，不依赖 LLM 解释。
 
-**P0 必备工具（V2 实现对齐）：**
+**P0 必备工具（V2 当前实现）：**
 - `search` — 搜索（支持 provider/key 配置）
 - `browser_automation` — 浏览器自动化（导航、点击、提取文本、截图）
 - `file_io` — 本地文件读/写/列目录
 - `code_executor` — 代码执行
+- `http_client` — 通用 REST 调用（GET/POST/鉴权/重试）
+- `web_fetch` — 轻量网页抓取与正文抽取（可选 readability）
+- `json_transform` — JSONPath/JMESPath 子集查询与映射模板转换
+- `csv_xlsx` — CSV/Excel 读写、筛选、聚合、透视
+- `pdf_report` — 模板化报告生成（表格/图表/结论）
+- `sql_query_readonly` — 只读 SQL（白名单数据源 + 超时 + 行数限制）
 
-**P1 增强工具：**
-- `pdf_read` / `sheet_edit` — PDF/表格处理
+**P1 增强工具（规划）：**
+- `pdf_read` / `sheet_edit` — PDF/表格深度处理
 - `image_annotate` — 图片处理
 - `time_now` / `schedule_once` — 时间与日程
 

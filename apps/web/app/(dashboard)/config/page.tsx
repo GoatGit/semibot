@@ -104,6 +104,10 @@ interface ToolItem {
     allowedDomains?: string[]
     blockedDomains?: string[]
     maxTextLength?: number
+    maxResponseChars?: number
+    maxRows?: number
+    defaultDatabase?: string
+    allowedDatabases?: string[]
   }
   isBuiltin: boolean
   isActive: boolean
@@ -230,11 +234,43 @@ type ToolForm = {
   allowedDomains: string
   blockedDomains: string
   maxTextLength: string
+  maxResponseChars: string
+  sqlMaxRows: string
+  sqlDefaultDatabase: string
+  sqlAllowedDatabases: string
 }
 
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
 const MIN_WEBHOOK_SECRET_LENGTH = 16
-const MIN_BUILTIN_TOOLS = ['search', 'code_executor', 'file_io', 'browser_automation']
+const MIN_BUILTIN_TOOLS = [
+  'search',
+  'code_executor',
+  'file_io',
+  'browser_automation',
+  'http_client',
+  'web_fetch',
+  'json_transform',
+  'csv_xlsx',
+  'pdf_report',
+  'sql_query_readonly',
+]
+const HIGH_RISK_DEFAULT_TOOLS = [
+  'code_executor',
+  'file_io',
+  'browser_automation',
+  'http_client',
+  'csv_xlsx',
+  'sql_query_readonly',
+]
+const TOOLS_WITHOUT_API_CREDENTIALS = [
+  'code_executor',
+  'file_io',
+  'browser_automation',
+  'web_fetch',
+  'json_transform',
+  'csv_xlsx',
+  'pdf_report',
+]
 const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
 function formatDate(dateString: string | undefined, locale: string, t: (key: string, params?: Record<string, string | number>) => string): string {
@@ -447,6 +483,10 @@ export default function ConfigPage() {
     allowedDomains: '',
     blockedDomains: '',
     maxTextLength: '',
+    maxResponseChars: '',
+    sqlMaxRows: '',
+    sqlDefaultDatabase: '',
+    sqlAllowedDatabases: '',
   })
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
@@ -724,7 +764,7 @@ export default function ConfigPage() {
       type: tool.type || 'custom',
       timeoutMs: tool.config?.timeout ? String(tool.config.timeout) : '',
       requiresApproval: Boolean(tool.config?.requiresApproval),
-      riskLevel: (tool.config?.riskLevel || (tool.name === 'code_executor' || tool.name === 'file_io' ? 'high' : 'low')) as
+      riskLevel: (tool.config?.riskLevel || (HIGH_RISK_DEFAULT_TOOLS.includes(tool.name) ? 'high' : 'low')) as
         | 'low'
         | 'medium'
         | 'high'
@@ -749,14 +789,27 @@ export default function ConfigPage() {
         typeof tool.config?.maxTextLength === 'number'
           ? String(tool.config.maxTextLength)
           : '',
+      maxResponseChars:
+        typeof tool.config?.maxResponseChars === 'number'
+          ? String(tool.config.maxResponseChars)
+          : '',
+      sqlMaxRows:
+        typeof tool.config?.maxRows === 'number'
+          ? String(tool.config.maxRows)
+          : '',
+      sqlDefaultDatabase: tool.config?.defaultDatabase || '',
+      sqlAllowedDatabases: Array.isArray(tool.config?.allowedDatabases)
+        ? tool.config.allowedDatabases.join(',')
+        : '',
     })
     setShowEditTool(true)
   }
 
   const saveToolConfig = async () => {
-    const supportsApiCredentials =
-      toolForm.name !== 'code_executor' && toolForm.name !== 'file_io' && toolForm.name !== 'browser_automation'
+    const supportsApiCredentials = !TOOLS_WITHOUT_API_CREDENTIALS.includes(toolForm.name)
     const isBrowserTool = toolForm.name === 'browser_automation'
+    const isHttpFetchTool = toolForm.name === 'http_client' || toolForm.name === 'web_fetch'
+    const isSqlReadonlyTool = toolForm.name === 'sql_query_readonly'
     const timeout = toolForm.timeoutMs.trim()
     if (timeout && (!/^\d+$/.test(timeout) || Number(timeout) < 1000)) {
       setError(t('config.errors.timeoutInvalid'))
@@ -790,6 +843,26 @@ export default function ConfigPage() {
       return
     }
 
+    const maxResponseChars = toolForm.maxResponseChars.trim()
+    if (
+      isHttpFetchTool &&
+      maxResponseChars &&
+      (!/^\d+$/.test(maxResponseChars) || Number(maxResponseChars) < 100 || Number(maxResponseChars) > 500000)
+    ) {
+      setError(t('config.errors.maxResponseCharsInvalid'))
+      return
+    }
+
+    const sqlMaxRows = toolForm.sqlMaxRows.trim()
+    if (
+      isSqlReadonlyTool &&
+      sqlMaxRows &&
+      (!/^\d+$/.test(sqlMaxRows) || Number(sqlMaxRows) < 1 || Number(sqlMaxRows) > 5000)
+    ) {
+      setError(t('config.errors.maxRowsInvalid'))
+      return
+    }
+
     const parseCommaList = (value: string): string[] =>
       value
         .split(',')
@@ -820,6 +893,15 @@ export default function ConfigPage() {
         ...(isBrowserTool ? { allowedDomains: parseCommaList(toolForm.allowedDomains) } : {}),
         ...(isBrowserTool ? { blockedDomains: parseCommaList(toolForm.blockedDomains) } : {}),
         ...(isBrowserTool && maxTextLength ? { maxTextLength: Number(maxTextLength) } : {}),
+        ...(isHttpFetchTool ? { allowLocalhost: toolForm.allowLocalhost } : {}),
+        ...(isHttpFetchTool ? { allowedDomains: parseCommaList(toolForm.allowedDomains) } : {}),
+        ...(isHttpFetchTool ? { blockedDomains: parseCommaList(toolForm.blockedDomains) } : {}),
+        ...(isHttpFetchTool && maxResponseChars ? { maxResponseChars: Number(maxResponseChars) } : {}),
+        ...(isSqlReadonlyTool && sqlMaxRows ? { maxRows: Number(sqlMaxRows) } : {}),
+        ...(isSqlReadonlyTool && toolForm.sqlDefaultDatabase.trim()
+          ? { defaultDatabase: toolForm.sqlDefaultDatabase.trim() }
+          : {}),
+        ...(isSqlReadonlyTool ? { allowedDatabases: parseCommaList(toolForm.sqlAllowedDatabases) } : {}),
       },
     }
 
@@ -2395,9 +2477,7 @@ export default function ConfigPage() {
             value={toolForm.approvalDedupeKeys}
             onChange={(e) => setToolForm((prev) => ({ ...prev, approvalDedupeKeys: e.target.value }))}
           />
-          {toolForm.name !== 'code_executor' &&
-          toolForm.name !== 'file_io' &&
-          toolForm.name !== 'browser_automation' ? (
+          {!TOOLS_WITHOUT_API_CREDENTIALS.includes(toolForm.name) ? (
             <>
               <Input
                 placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
@@ -2470,6 +2550,57 @@ export default function ConfigPage() {
                 placeholder={t('config.modals.tool.browser.maxTextLengthPlaceholder')}
                 value={toolForm.maxTextLength}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, maxTextLength: e.target.value }))}
+              />
+            </div>
+          ) : null}
+          {toolForm.name === 'http_client' || toolForm.name === 'web_fetch' ? (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={toolForm.allowLocalhost}
+                  onChange={(e) =>
+                    setToolForm((prev) => ({
+                      ...prev,
+                      allowLocalhost: e.target.checked,
+                    }))
+                  }
+                />
+                {t('config.modals.tool.http.allowLocalhost')}
+              </label>
+              <Input
+                placeholder={t('config.modals.tool.http.allowedDomainsPlaceholder')}
+                value={toolForm.allowedDomains}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, allowedDomains: e.target.value }))}
+              />
+              <Input
+                placeholder={t('config.modals.tool.http.blockedDomainsPlaceholder')}
+                value={toolForm.blockedDomains}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, blockedDomains: e.target.value }))}
+              />
+              <Input
+                placeholder={t('config.modals.tool.http.maxResponseCharsPlaceholder')}
+                value={toolForm.maxResponseChars}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, maxResponseChars: e.target.value }))}
+              />
+            </div>
+          ) : null}
+          {toolForm.name === 'sql_query_readonly' ? (
+            <div className="space-y-2">
+              <Input
+                placeholder={t('config.modals.tool.sql.maxRowsPlaceholder')}
+                value={toolForm.sqlMaxRows}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, sqlMaxRows: e.target.value }))}
+              />
+              <Input
+                placeholder={t('config.modals.tool.sql.defaultDatabasePlaceholder')}
+                value={toolForm.sqlDefaultDatabase}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, sqlDefaultDatabase: e.target.value }))}
+              />
+              <Input
+                placeholder={t('config.modals.tool.sql.allowedDatabasesPlaceholder')}
+                value={toolForm.sqlAllowedDatabases}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, sqlAllowedDatabases: e.target.value }))}
               />
             </div>
           ) : null}

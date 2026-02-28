@@ -74,7 +74,7 @@ A：当前阶段建议复用原有 `Next.js + React + Tailwind`。这是最低�
 A：表示控制平面已下发启动，但执行平面进程尚未成功连回 `/ws/vm`。重构后已修复一个关键兼容问题：`python -m src.main` 在带 `VM_USER_ID/VM_TOKEN` 环境变量且无子命令时，会自动进入执行平面模式（而不是报 CLI 参数错误）。若仍出现该报错，先检查 `/tmp/semibot-runtime-<user_id>.log`、`GET /api/v1/vm/status`，必要时调用 `POST /api/v1/vm/rebootstrap`。
 
 **Q：Semibot 的 Tools 可以新增/删除吗？**  
-A：不可以。V2 中 Tools 统一按“内建能力”管理，前端与 API 都不提供新增/删除。可配置项包括：启停、风险等级、是否需要 HITL 审批、限流、超时，以及“需要外部服务”的工具的 endpoint/key。`code_executor`、`file_io`、`browser_automation` 不需要 endpoint/key。建议最小内建集至少覆盖 `search`、`code_executor`、`file_io`、`browser_automation`。`xlsx` / `pdf` 归类为 Skills，不计入 Tools。
+A：不可以。V2 中 Tools 统一按“内建能力”管理，前端与 API 都不提供新增/删除。可配置项包括：启停、风险等级、是否需要 HITL 审批、限流、超时，以及“需要外部服务”的工具的 endpoint/key。当前最小内建集为：`search`、`code_executor`、`file_io`、`browser_automation`、`http_client`、`web_fetch`、`json_transform`、`csv_xlsx`、`pdf_report`、`sql_query_readonly`。`xlsx` / `pdf` 归类为 Skills，不计入 Tools。
 
 **Q：前端里 Tools 要区分“Runtime 内置工具”和“其他工具”吗？**  
 A：不区分。配置中心只展示一个统一工具列表，用户只关心“这个工具能不能用、怎么配”，而不是工具来源。
@@ -139,6 +139,10 @@ semibot gateway webhook-check --provider telegram
 若你使用 ngrok，可带期望地址比对：
 ```bash
 semibot gateway webhook-check --provider telegram --public-base-url https://xxxx.ngrok-free.app
+```
+也可直接跑一键联调脚本（doctor + webhook-set + webhook-check + runtime test）：
+```bash
+python3 runtime/scripts/telegram_gateway_smoke.py --public-base-url https://xxxx.ngrok-free.app
 ```
 
 **Q：Gateway 会话和 runtime session 的关系是什么？**  
