@@ -441,21 +441,64 @@
   "events": {
     "title": "Event Center",
     "subtitle": "Inspect triggered events, matching results, and replay single events.",
+    "positioning": "Observe system behavior, quickly locate issues, and create automation rules from events.",
+    "newRule": "New Rule",
     "filterPlaceholder": "Filter by event type (e.g. task.completed)",
     "apiUnavailable": "Event APIs are not connected yet. Please implement `/v1/events` and `/v1/events/replay`.",
     "riskLabel": "Risk",
     "unknown": "unknown",
+    "unknownEventType": "Unknown event type",
+    "createRule": "Create Rule",
+    "copyType": "Copy Type",
+    "copyTypeSuccess": "Event type copied",
+    "filterSameType": "Filter same type",
     "details": "Details",
     "replay": "Replay",
     "empty": "No events found",
     "detailsTitle": "Event Details",
     "error": {
-      "replay": "Replay failed"
+      "replay": "Replay failed",
+      "copy": "Copy failed"
     },
     "source": "source",
     "time": "time",
     "subject": "subject",
-    "truncated": " ..."
+    "truncated": " ...",
+    "categories": {
+      "system": "System",
+      "task": "Task",
+      "tool": "Tool",
+      "rule": "Rule",
+      "approval": "Approval",
+      "chat": "Chat",
+      "gateway": "Gateway",
+      "memory": "Memory",
+      "scheduler": "Scheduler",
+      "replay": "Replay",
+      "unknown": "Unknown"
+    },
+    "actions": {
+      "boot.completed": "Boot Completed",
+      "message.received": "Message Received",
+      "message.completed": "Message Completed",
+      "exec.started": "Execution Started",
+      "exec.completed": "Execution Completed",
+      "exec.failed": "Execution Failed",
+      "lifecycle.pre_execute": "Pre Execute",
+      "lifecycle.post_execute": "Post Execute",
+      "queue.telemetry": "Queue Telemetry",
+      "action": "Action",
+      "unknown": "Unknown Action"
+    },
+    "summary": {
+      "message": "Summary",
+      "tool": "Tool",
+      "action": "Action",
+      "target": "Target",
+      "status": "Status",
+      "replayId": "Replay ID",
+      "originalEventId": "Original Event ID"
+    }
   },
   "approvals": {
     "title": "Approval Center",

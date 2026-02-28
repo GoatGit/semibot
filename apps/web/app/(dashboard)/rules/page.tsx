@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Workflow, RefreshCw, Plus, AlertCircle, Pencil, Power } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -32,6 +33,7 @@ function mapRiskVariant(risk: RiskLevel): 'success' | 'warning' | 'error' {
 }
 
 export default function RulesPage() {
+  const searchParams = useSearchParams()
   const { t } = useLocale()
   const actionTypeOptions = ACTION_TYPE_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))
   const riskOptions = RISK_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))
@@ -58,6 +60,7 @@ export default function RulesPage() {
     cooldownSeconds: 600,
     attentionBudgetPerDay: 10,
   })
+  const prefillAppliedRef = useRef(false)
 
   const {
     rules,
@@ -99,6 +102,24 @@ export default function RulesPage() {
     resetForm()
     setShowEditor(true)
   }
+
+  useEffect(() => {
+    if (prefillAppliedRef.current) return
+    const create = (searchParams.get('create') || '').trim()
+    const eventType = (searchParams.get('eventType') || '').trim()
+    if (!create && !eventType) return
+
+    prefillAppliedRef.current = true
+    setEditorMode('create')
+    setEditingRuleId(null)
+    setForm((prev) => ({
+      ...prev,
+      name: eventType ? `rule_for_${eventType}` : prev.name,
+      eventType: eventType || prev.eventType,
+    }))
+    setFormError(null)
+    setShowEditor(create === '1' || Boolean(eventType))
+  }, [searchParams])
 
   const openEditEditor = (ruleId: string) => {
     const found = rules.find((item) => item.id === ruleId)

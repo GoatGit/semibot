@@ -441,21 +441,64 @@
   "events": {
     "title": "事件中心",
     "subtitle": "查看系统触发事件、匹配结果，并支持单事件回放。",
+    "positioning": "用于观察系统行为、快速定位异常，并从事件直接创建自动化规则。",
+    "newRule": "新建规则",
     "filterPlaceholder": "按事件类型过滤（例如 task.completed）",
     "apiUnavailable": "事件 API 尚未接入，请先实现 `/v1/events` 与 `/v1/events/replay`。",
     "riskLabel": "风险",
     "unknown": "unknown",
+    "unknownEventType": "未知事件类型",
+    "createRule": "创建规则",
+    "copyType": "复制类型",
+    "copyTypeSuccess": "已复制事件类型",
+    "filterSameType": "同类筛选",
     "details": "详情",
     "replay": "回放",
     "empty": "暂无事件数据",
     "detailsTitle": "事件详情",
     "error": {
-      "replay": "回放失败"
+      "replay": "回放失败",
+      "copy": "复制失败"
     },
     "source": "来源",
     "time": "时间",
     "subject": "主题",
-    "truncated": " ..."
+    "truncated": " ...",
+    "categories": {
+      "system": "系统",
+      "task": "任务",
+      "tool": "工具",
+      "rule": "规则",
+      "approval": "审批",
+      "chat": "会话",
+      "gateway": "网关",
+      "memory": "记忆",
+      "scheduler": "调度",
+      "replay": "回放",
+      "unknown": "未知"
+    },
+    "actions": {
+      "boot.completed": "启动完成",
+      "message.received": "消息接收",
+      "message.completed": "消息完成",
+      "exec.started": "执行开始",
+      "exec.completed": "执行完成",
+      "exec.failed": "执行失败",
+      "lifecycle.pre_execute": "执行前",
+      "lifecycle.post_execute": "执行后",
+      "queue.telemetry": "队列指标",
+      "action": "动作",
+      "unknown": "未知动作"
+    },
+    "summary": {
+      "message": "摘要",
+      "tool": "工具",
+      "action": "动作",
+      "target": "目标",
+      "status": "状态",
+      "replayId": "回放ID",
+      "originalEventId": "原始事件ID"
+    }
   },
   "approvals": {
     "title": "审批中心",
