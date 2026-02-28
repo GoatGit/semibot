@@ -59,6 +59,11 @@ semibot/
 - `gateway/store/gateway_store.py`：Gateway 相关 SQLite 读写  
 - `server/api.py`：只保留路由转发到 `gateway/*` 服务层  
 
+当前状态（2026-02-28）：
+
+- 已完成 `gateway/manager.py` 的第一轮收口：Gateway 配置读写、Feishu/Telegram webhook 入站、审批文本命令解析、出站通知测试、GCS 查询入口均在 manager 层。
+- `server/api.py` 已改为薄路由，主要负责 HTTP 入参解析与 `GatewayManagerError -> HTTPException` 映射。
+
 ## 2. 核心接口（签名）
 
 ```python

@@ -51,7 +51,7 @@ Gateway Notifier（provider-specific outbound）
 ### 2.1 模块拆分（runtime）
 
 - `server/gateway_manager.py`
-  - 负责读取网关配置、构建适配器、管理启停状态
+  - （已迁移到 `gateway/manager.py`）负责读取网关配置、构建适配器、管理启停状态
 - `server/gateways/base.py`
   - 统一接口：`verify` / `normalize_inbound` / `send_outbound`
 - `server/gateway_context_service.py`（新增）
@@ -62,6 +62,11 @@ Gateway Notifier（provider-specific outbound）
   - 处理 Telegram webhook、消息解析、出站发送
 - `server/approval_text.py`（已存在，继续复用）
   - 解析“同意/拒绝/approve/reject”等文本审批命令
+
+实现进度（2026-02-28）：
+
+- `runtime/src/gateway/manager.py` 已承接 Gateway 配置、webhook 入站、审批文本解析、出站通知与 GCS 查询聚合。
+- `runtime/src/server/api.py` 已收敛为薄路由层（请求解析/HTTP 状态码映射），核心 Gateway 业务逻辑不再放在 API 文件内。
 
 ### 2.2 与 Event Engine 的关系
 
