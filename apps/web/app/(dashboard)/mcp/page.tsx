@@ -581,116 +581,118 @@ export default function McpPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
-      <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-text-primary">{t('mcp.title')}</h1>
-            <p className="text-sm text-text-secondary mt-1">
-              {t('mcp.subtitle')}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={loadServers}>
-              {t('common.refresh')}
-            </Button>
-            <Button
-              leftIcon={<Plus size={16} />}
-              onClick={() => {
-                setFormState(EMPTY_FORM)
-                setShowCreate(true)
-              }}
-            >
-              {t('mcp.addServer')}
-            </Button>
-          </div>
-        </div>
-        <div className="mt-4 flex items-center gap-4">
-          <div className="max-w-md flex-1">
-            <Input
-              placeholder={t('mcp.searchPlaceholder')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search size={16} />}
-            />
-          </div>
-          {filteredServers.length > 0 && (
-            <label className="flex items-center gap-2 text-sm text-text-secondary">
-              <input
-                data-testid="mcp-select-all"
-                type="checkbox"
-                className="rounded border-border-default"
-                checked={allFilteredSelected}
-                onChange={toggleSelectAllFiltered}
-                disabled={saving}
-              />
-              {t('mcp.batch.selectAllVisible')}
-            </label>
-          )}
-        </div>
-
-        {selectedCount > 0 && (
-          <div className="mt-3 rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
-            <span className="text-sm text-text-primary">
-              {t('mcp.batch.selectedCount', { count: selectedCount })}
-            </span>
-            <Button
-              data-testid="mcp-batch-test-sync"
-              variant="secondary"
-              size="sm"
-              disabled={saving}
-              onClick={handleBatchTestConnection}
-            >
-              {t('mcp.batch.testAndSync')}
-            </Button>
-            <Button
-              data-testid="mcp-batch-delete"
-              variant="secondary"
-              size="sm"
-              disabled={saving}
-              onClick={handleBatchDelete}
-            >
-              {t('mcp.batch.delete')}
-            </Button>
-          </div>
-        )}
-      </header>
-
-      <div className="flex-1 overflow-y-auto p-6">
-        {error && (
-          <div className="mb-4 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500 flex items-center justify-between">
-            <span>{error}</span>
-            <button onClick={() => setError(null)} className="text-error-500/60 hover:text-error-500 text-xs">
-              {t('common.close')}
-            </button>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
-          </div>
-        ) : filteredServers.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full py-12">
-            <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-4">
-              <Plug size={32} className="text-text-tertiary" />
+      <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col">
+        <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-text-primary">{t('mcp.title')}</h1>
+              <p className="text-sm text-text-secondary mt-1">
+                {t('mcp.subtitle')}
+              </p>
             </div>
-            {searchQuery ? (
-              <>
-                <h3 className="text-lg font-medium text-text-primary">{t('mcp.empty.filteredTitle')}</h3>
-                <p className="text-sm text-text-secondary mt-1 mb-4">{t('mcp.empty.filteredDescription')}</p>
-                <Button variant="secondary" onClick={() => setSearchQuery('')}>{t('mcp.empty.clearSearch')}</Button>
-              </>
-            ) : (
-              <>
-                <h3 className="text-lg font-medium text-text-primary">{t('mcp.empty.defaultTitle')}</h3>
-                <p className="text-sm text-text-secondary mt-1 mb-4">{t('mcp.empty.defaultDescription')}</p>
-                <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>{t('mcp.addServer')}</Button>
-              </>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={loadServers}>
+                {t('common.refresh')}
+              </Button>
+              <Button
+                leftIcon={<Plus size={16} />}
+                onClick={() => {
+                  setFormState(EMPTY_FORM)
+                  setShowCreate(true)
+                }}
+              >
+                {t('mcp.addServer')}
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center gap-4">
+            <div className="max-w-md flex-1">
+              <Input
+                placeholder={t('mcp.searchPlaceholder')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search size={16} />}
+              />
+            </div>
+            {filteredServers.length > 0 && (
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  data-testid="mcp-select-all"
+                  type="checkbox"
+                  className="rounded border-border-default"
+                  checked={allFilteredSelected}
+                  onChange={toggleSelectAllFiltered}
+                  disabled={saving}
+                />
+                {t('mcp.batch.selectAllVisible')}
+              </label>
             )}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredServers.map((server) => {
+
+          {selectedCount > 0 && (
+            <div className="mt-3 rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-text-primary">
+                {t('mcp.batch.selectedCount', { count: selectedCount })}
+              </span>
+              <Button
+                data-testid="mcp-batch-test-sync"
+                variant="secondary"
+                size="sm"
+                disabled={saving}
+                onClick={handleBatchTestConnection}
+              >
+                {t('mcp.batch.testAndSync')}
+              </Button>
+              <Button
+                data-testid="mcp-batch-delete"
+                variant="secondary"
+                size="sm"
+                disabled={saving}
+                onClick={handleBatchDelete}
+              >
+                {t('mcp.batch.delete')}
+              </Button>
+            </div>
+          )}
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {error && (
+            <div className="mb-4 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500 flex items-center justify-between">
+              <span>{error}</span>
+              <button onClick={() => setError(null)} className="text-error-500/60 hover:text-error-500 text-xs">
+                {t('common.close')}
+              </button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+            </div>
+          ) : filteredServers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full py-12">
+              <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-4">
+                <Plug size={32} className="text-text-tertiary" />
+              </div>
+              {searchQuery ? (
+                <>
+                  <h3 className="text-lg font-medium text-text-primary">{t('mcp.empty.filteredTitle')}</h3>
+                  <p className="text-sm text-text-secondary mt-1 mb-4">{t('mcp.empty.filteredDescription')}</p>
+                  <Button variant="secondary" onClick={() => setSearchQuery('')}>{t('mcp.empty.clearSearch')}</Button>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-lg font-medium text-text-primary">{t('mcp.empty.defaultTitle')}</h3>
+                  <p className="text-sm text-text-secondary mt-1 mb-4">{t('mcp.empty.defaultDescription')}</p>
+                  <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>{t('mcp.addServer')}</Button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredServers.map((server) => {
               const transportOpt = getTransportOptions(t).find((o) => o.value === server.transport)
               const statusMap = getStatusMap(t)
               const statusInfo = statusMap[server.status] || statusMap.disconnected
@@ -772,10 +774,11 @@ export default function McpPage() {
                     </div>
                   </CardContent>
                 </Card>
-              )
-            })}
-          </div>
-        )}
+                )
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {showCreate && (

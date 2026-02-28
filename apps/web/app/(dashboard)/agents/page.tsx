@@ -181,121 +181,122 @@ export default function AgentsPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
-      {/* 头部 */}
-      <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-text-primary">Agents</h1>
-            <p className="text-sm text-text-secondary mt-1">
-              {t('agents.header.prefix')} {agents.length} {t('agents.header.suffix')}
-            </p>
-          </div>
-          <Button
-            leftIcon={<Plus size={16} />}
-            data-testid="create-agent-btn"
-            onClick={openCreateForm}
-          >
-            {t('agents.new')}
-          </Button>
-        </div>
-
-
-        {/* 搜索和筛选 */}
-        <div className="flex items-center gap-4 mt-4">
-          <div className="flex-1 max-w-md">
-            <Input
-              placeholder={t('agents.searchPlaceholder')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search size={16} />}
-              data-testid="agent-search"
-            />
+      <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col">
+        {/* 头部 */}
+        <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-text-primary">Agents</h1>
+              <p className="text-sm text-text-secondary mt-1">
+                {t('agents.header.prefix')} {agents.length} {t('agents.header.suffix')}
+              </p>
+            </div>
+            <Button
+              leftIcon={<Plus size={16} />}
+              data-testid="create-agent-btn"
+              onClick={openCreateForm}
+            >
+              {t('agents.new')}
+            </Button>
           </div>
 
-          <div className="flex items-center gap-2">
-            {(['all', 'active', 'inactive'] as const).map((status) => (
-              <button
-                key={status}
-                onClick={() => setStatusFilter(status)}
-                className={clsx(
-                  'px-3 py-1.5 rounded-md text-sm font-medium',
-                  'transition-colors duration-fast',
-                  statusFilter === status
-                    ? 'bg-primary-500/20 text-primary-400'
-                    : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
-                )}
-              >
-                {status === 'all' && (t('agents.filter.all'))}
-                {status === 'active' && (t('agents.filter.active'))}
-                {status === 'inactive' && (t('agents.filter.inactive'))}
-                <span className="ml-1 text-xs text-text-tertiary">
-                  ({status === 'all' ? statusCounts.all : status === 'active' ? statusCounts.active : statusCounts.inactive})
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </header>
-
-      {/* Agent 卡片网格 */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
-          </div>
-        ) : filteredAgents.length === 0 ? (
-          <EmptyState
-            hasSearch={searchQuery.length > 0 || statusFilter !== 'all'}
-            onClear={() => {
-              setSearchQuery('')
-              setStatusFilter('all')
-            }}
-            onCreate={openCreateForm}
-          />
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pagedAgents.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                locale={locale}
-                onEdit={() => openEditForm(agent)}
-                onDelete={() => handleDelete(agent)}
-                onToggleActive={() => handleToggleActive(agent)}
-                isToggling={isToggling}
+          {/* 搜索和筛选 */}
+          <div className="flex items-center gap-4 mt-4">
+            <div className="flex-1 max-w-md">
+              <Input
+                placeholder={t('agents.searchPlaceholder')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search size={16} />}
+                data-testid="agent-search"
               />
-            ))}
-          </div>
-        )}
+            </div>
 
-        {!isLoading && filteredAgents.length > 0 && totalPages > 1 && (
-          <div
-            data-testid="pagination"
-            className="flex items-center justify-center gap-3 mt-6"
-            role="navigation"
-            aria-label={t('agents.pagination.label')}
-          >
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setPageIndex((prev) => Math.max(1, prev - 1))}
-              disabled={pageIndex <= 1}
-            >
-              {t('agents.pagination.prev')}
-            </Button>
-            <span className="text-sm text-text-secondary">
-              {safePageIndex} / {totalPages}
-            </span>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setPageIndex((prev) => Math.min(totalPages, prev + 1))}
-              disabled={pageIndex >= totalPages}
-            >
-              {t('agents.pagination.next')}
-            </Button>
+            <div className="flex items-center gap-2">
+              {(['all', 'active', 'inactive'] as const).map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                  className={clsx(
+                    'px-3 py-1.5 rounded-md text-sm font-medium',
+                    'transition-colors duration-fast',
+                    statusFilter === status
+                      ? 'bg-primary-500/20 text-primary-400'
+                      : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
+                  )}
+                >
+                  {status === 'all' && (t('agents.filter.all'))}
+                  {status === 'active' && (t('agents.filter.active'))}
+                  {status === 'inactive' && (t('agents.filter.inactive'))}
+                  <span className="ml-1 text-xs text-text-tertiary">
+                    ({status === 'all' ? statusCounts.all : status === 'active' ? statusCounts.active : statusCounts.inactive})
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
-        )}
+        </header>
+
+        {/* Agent 卡片网格 */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {isLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+            </div>
+          ) : filteredAgents.length === 0 ? (
+            <EmptyState
+              hasSearch={searchQuery.length > 0 || statusFilter !== 'all'}
+              onClear={() => {
+                setSearchQuery('')
+                setStatusFilter('all')
+              }}
+              onCreate={openCreateForm}
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {pagedAgents.map((agent) => (
+                <AgentCard
+                  key={agent.id}
+                  agent={agent}
+                  locale={locale}
+                  onEdit={() => openEditForm(agent)}
+                  onDelete={() => handleDelete(agent)}
+                  onToggleActive={() => handleToggleActive(agent)}
+                  isToggling={isToggling}
+                />
+              ))}
+            </div>
+          )}
+
+          {!isLoading && filteredAgents.length > 0 && totalPages > 1 && (
+            <div
+              data-testid="pagination"
+              className="flex items-center justify-center gap-3 mt-6"
+              role="navigation"
+              aria-label={t('agents.pagination.label')}
+            >
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPageIndex((prev) => Math.max(1, prev - 1))}
+                disabled={pageIndex <= 1}
+              >
+                {t('agents.pagination.prev')}
+              </Button>
+              <span className="text-sm text-text-secondary">
+                {safePageIndex} / {totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPageIndex((prev) => Math.min(totalPages, prev + 1))}
+                disabled={pageIndex >= totalPages}
+              >
+                {t('agents.pagination.next')}
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {showForm && (

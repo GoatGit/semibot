@@ -209,6 +209,8 @@
       "updateGateway": "更新 Gateway 配置失败",
       "deleteGateway": "删除 Gateway 实例失败",
       "testGateway": "Gateway 连通性测试失败",
+      "gatewayBindingsImportInvalid": "导入失败：有 {count} 行格式无效。",
+      "gatewayBindingsPartial": "会话绑定中有 {count} 行未填写完整。",
       "createApiKey": "创建 API Key 失败",
       "deleteApiKey": "删除 API Key 失败",
       "webhookUrlInvalid": "Webhook URL 必须是 http(s) 地址",
@@ -223,7 +225,9 @@
       "deleteApiKey": "确认删除这个 API Key 吗？删除后无法恢复。",
       "deleteWebhook": "确认删除这个 Webhook 吗？删除后无法恢复。",
       "deleteGateway": "确认删除这个 Gateway 实例吗？删除后无法恢复。",
-      "deleteGateways": "确认删除选中的 {count} 个 Gateway 实例吗？删除后无法恢复。"
+      "deleteGateways": "确认删除选中的 {count} 个 Gateway 实例吗？删除后无法恢复。",
+      "gatewayBindingsDuplicate": "发现 {count} 个重复 chatId。将仅保留每个 chatId 的最后一条绑定，是否继续？",
+      "gatewayBindingsOutsideAllowed": "有 {count} 条绑定不在 allowedChatIds 中，可能不会生效，是否继续？"
     },
     "llm": {
       "routingDefaults": "模型路由默认值",
@@ -272,6 +276,8 @@
       "chatBindingsMore": "另有 {count} 项",
       "quickEditBindings": "快速编辑",
       "quickSaveBindings": "保存绑定",
+      "importBindingsPlaceholder": "粘贴多行：chatId=agentId（也支持只填 chatId，自动用默认 Agent）",
+      "applyImportedBindings": "应用导入",
       "agent": "绑定 Agent",
       "updatedAt": "更新时间",
       "test": "测试"
@@ -338,6 +344,8 @@
         "chatBindingsEmpty": "暂未设置 chat 绑定。可添加后把不同群/会话路由到不同 Agent。",
         "addChatBinding": "新增绑定",
         "removeChatBinding": "删除",
+        "importBindingsPlaceholder": "粘贴多行：chatId=agentId（也支持只填 chatId，自动用默认 Agent）",
+        "applyImportedBindings": "应用导入",
         "chatIdPlaceholder": "Chat ID",
         "chatBindingAgentPlaceholder": "Agent ID",
         "setDefault": "设为默认实例",

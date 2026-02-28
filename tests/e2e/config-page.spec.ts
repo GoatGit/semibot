@@ -657,4 +657,40 @@ test.describe('Config Page', () => {
       },
     })
   })
+
+  test('should import and normalize gateway chat bindings in quick edit', async ({ page }) => {
+    const putCalls: Array<{ payload: any }> = []
+    const dialogMessages: string[] = []
+    page.on('request', (request) => {
+      if (request.method() !== 'PUT') return
+      if (!request.url().includes('/api/v1/gateways/instances/gw-telegram')) return
+      putCalls.push({ payload: request.postDataJSON() })
+    })
+    page.on('dialog', async (dialog) => {
+      dialogMessages.push(dialog.message())
+      await dialog.accept()
+    })
+
+    await setupConfigPageMocks(page)
+    await page.goto('/config')
+    await page.getByRole('button', { name: 'Gateways' }).click()
+
+    await page.getByTestId('gateway-quick-edit-gw-telegram').click()
+    await page
+      .getByTestId('gateway-quick-import-gw-telegram')
+      .fill('-1001=agent-a\n-1001=agent-b\n-1002')
+    await page.getByTestId('gateway-quick-import-apply-gw-telegram').click()
+    await page.getByTestId('gateway-quick-save-gw-telegram').click()
+
+    await expect.poll(() => putCalls.length).toBeGreaterThanOrEqual(1)
+    expect(dialogMessages.some((msg) => msg.includes('重复') || msg.includes('duplicate'))).toBeTruthy()
+    expect(putCalls[0].payload).toMatchObject({
+      config: {
+        chatBindings: [
+          { chatId: '-1001', agentId: 'agent-b' },
+          { chatId: '-1002', agentId: 'semibot' },
+        ],
+      },
+    })
+  })
 })

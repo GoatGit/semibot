@@ -209,6 +209,8 @@
       "updateGateway": "Failed to update gateway config",
       "deleteGateway": "Failed to delete gateway instance",
       "testGateway": "Failed to test gateway connectivity",
+      "gatewayBindingsImportInvalid": "Import failed: {count} lines have invalid format.",
+      "gatewayBindingsPartial": "Chat bindings contain {count} incomplete rows.",
       "createApiKey": "Failed to create API key",
       "deleteApiKey": "Failed to delete API key",
       "webhookUrlInvalid": "Webhook URL must be an http(s) address",
@@ -223,7 +225,9 @@
       "deleteApiKey": "Delete this API key? This action cannot be undone.",
       "deleteWebhook": "Delete this webhook? This action cannot be undone.",
       "deleteGateway": "Delete this gateway instance? This action cannot be undone.",
-      "deleteGateways": "Delete the selected {count} gateway instances? This action cannot be undone."
+      "deleteGateways": "Delete the selected {count} gateway instances? This action cannot be undone.",
+      "gatewayBindingsDuplicate": "{count} duplicate chat IDs found. Keep only the last one for each chat ID and continue?",
+      "gatewayBindingsOutsideAllowed": "{count} bindings are outside allowedChatIds and may not take effect. Continue?"
     },
     "llm": {
       "routingDefaults": "Model routing defaults",
@@ -272,6 +276,8 @@
       "chatBindingsMore": "+{count} more",
       "quickEditBindings": "Quick edit",
       "quickSaveBindings": "Save bindings",
+      "importBindingsPlaceholder": "Paste lines: chatId=agentId (or only chatId to use default agent)",
+      "applyImportedBindings": "Apply import",
       "agent": "Agent",
       "updatedAt": "Updated at",
       "test": "Test"
@@ -338,6 +344,8 @@
         "chatBindingsEmpty": "No chat bindings. Add one to route different chats to different agents.",
         "addChatBinding": "Add binding",
         "removeChatBinding": "Remove",
+        "importBindingsPlaceholder": "Paste lines: chatId=agentId (or only chatId to use default agent)",
+        "applyImportedBindings": "Apply import",
         "chatIdPlaceholder": "Chat ID",
         "chatBindingAgentPlaceholder": "Agent ID",
         "setDefault": "Set as default instance",

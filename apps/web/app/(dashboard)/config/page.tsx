@@ -288,6 +288,78 @@ function parseGatewayChatBindings(raw: unknown): GatewayChatBinding[] {
   return []
 }
 
+function parseGatewayAllowedChatIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((item) => String(item || '').trim()).filter(Boolean)
+}
+
+function parseGatewayChatBindingImportText(
+  text: string,
+  defaultAgentId: string
+): { rows: GatewayChatBinding[]; invalidLines: string[] } {
+  const rows: GatewayChatBinding[] = []
+  const invalidLines: string[] = []
+  const fallbackAgent = defaultAgentId.trim() || 'semibot'
+  const lines = text.split('\n').map((line) => line.trim())
+
+  for (const line of lines) {
+    if (!line) continue
+    const separators = ['=', '->', '\t', ',']
+    let chatId = ''
+    let agentId = ''
+
+    for (const sep of separators) {
+      if (!line.includes(sep)) continue
+      const [left, right] = line.split(sep, 2)
+      chatId = String(left || '').trim()
+      agentId = String(right || '').trim()
+      break
+    }
+
+    if (!chatId) {
+      chatId = line
+      agentId = fallbackAgent
+    } else if (!agentId) {
+      agentId = fallbackAgent
+    }
+
+    if (!chatId || !agentId) {
+      invalidLines.push(line)
+      continue
+    }
+    rows.push({ chatId, agentId })
+  }
+
+  return { rows, invalidLines }
+}
+
+function normalizeGatewayChatBindings(rows: GatewayChatBinding[]): {
+  normalized: GatewayChatBinding[]
+  duplicateChatIds: string[]
+  partialCount: number
+} {
+  const byChatId = new Map<string, string>()
+  const duplicateChatIds: string[] = []
+  let partialCount = 0
+
+  for (const row of rows) {
+    const chatId = String(row.chatId || '').trim()
+    const agentId = String(row.agentId || '').trim()
+    if (!chatId && !agentId) continue
+    if (!chatId || !agentId) {
+      partialCount += 1
+      continue
+    }
+    if (byChatId.has(chatId) && !duplicateChatIds.includes(chatId)) {
+      duplicateChatIds.push(chatId)
+    }
+    byChatId.set(chatId, agentId)
+  }
+
+  const normalized = Array.from(byChatId.entries()).map(([chatId, agentId]) => ({ chatId, agentId }))
+  return { normalized, duplicateChatIds, partialCount }
+}
+
 function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
   const runtimeFiltered = runtimeTools.filter((name) => !NON_TOOL_SKILLS.includes(name))
   const dbFiltered = dbTools.filter((item) => !NON_TOOL_SKILLS.includes(item.name))
@@ -385,8 +457,10 @@ export default function ConfigPage() {
   const [showGatewayModal, setShowGatewayModal] = useState(false)
   const [savingGateway, setSavingGateway] = useState(false)
   const [testingGateway, setTestingGateway] = useState<string | null>(null)
+  const [gatewayBindingsImportText, setGatewayBindingsImportText] = useState('')
   const [quickBindingsEditingId, setQuickBindingsEditingId] = useState<string | null>(null)
   const [quickBindingsDraft, setQuickBindingsDraft] = useState<GatewayChatBinding[]>([])
+  const [quickBindingsImportText, setQuickBindingsImportText] = useState('')
   const [quickBindingsSavingId, setQuickBindingsSavingId] = useState<string | null>(null)
   const [gatewayForm, setGatewayForm] = useState<GatewayForm>({
     id: undefined,
@@ -962,6 +1036,7 @@ export default function ConfigPage() {
       contextMaxRecentMessages: String(contextPolicyRaw?.maxRecentMessages ?? 200),
       contextSummarizeEveryNMessages: String(contextPolicyRaw?.summarizeEveryNMessages ?? 50),
     })
+    setGatewayBindingsImportText('')
     setShowGatewayModal(true)
   }
 
@@ -998,6 +1073,7 @@ export default function ConfigPage() {
       contextMaxRecentMessages: '200',
       contextSummarizeEveryNMessages: '50',
     })
+    setGatewayBindingsImportText('')
     setShowGatewayModal(true)
   }
 
@@ -1014,6 +1090,41 @@ export default function ConfigPage() {
 
     const isTelegram = gatewayForm.provider === 'telegram'
     const normalizedAgentId = gatewayForm.agentId.trim()
+    const chatBindingInput = gatewayForm.chatBindings.map((row) => ({
+      chatId: row.chatId.trim(),
+      agentId: row.agentId.trim(),
+    }))
+    const normalizedBindingsResult = normalizeGatewayChatBindings(chatBindingInput)
+    if (normalizedBindingsResult.partialCount > 0) {
+      setError(t('config.errors.gatewayBindingsPartial', { count: normalizedBindingsResult.partialCount }))
+      return
+    }
+    if (
+      normalizedBindingsResult.duplicateChatIds.length > 0 &&
+      !window.confirm(
+        t('config.confirm.gatewayBindingsDuplicate', {
+          count: normalizedBindingsResult.duplicateChatIds.length,
+        })
+      )
+    ) {
+      return
+    }
+    if (isTelegram) {
+      const allowedSet = new Set(parseCommaList(gatewayForm.allowedChatIds))
+      if (allowedSet.size > 0) {
+        const outsideAllowed = normalizedBindingsResult.normalized.filter((row) => !allowedSet.has(row.chatId))
+        if (
+          outsideAllowed.length > 0 &&
+          !window.confirm(
+            t('config.confirm.gatewayBindingsOutsideAllowed', {
+              count: outsideAllowed.length,
+            })
+          )
+        ) {
+          return
+        }
+      }
+    }
     const payload: Record<string, unknown> = {
       displayName: gatewayForm.displayName.trim() || gatewayForm.provider,
       isDefault: gatewayForm.isDefault,
@@ -1030,12 +1141,7 @@ export default function ConfigPage() {
                 : {}),
               ...(gatewayForm.defaultChatId.trim() ? { defaultChatId: gatewayForm.defaultChatId.trim() } : {}),
               allowedChatIds: parseCommaList(gatewayForm.allowedChatIds),
-              chatBindings: gatewayForm.chatBindings
-                .map((row) => ({
-                  chatId: row.chatId.trim(),
-                  agentId: row.agentId.trim(),
-                }))
-                .filter((row) => row.chatId && row.agentId),
+              chatBindings: normalizedBindingsResult.normalized,
               notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
             }
           : {
@@ -1043,12 +1149,7 @@ export default function ConfigPage() {
                 ? { verifyToken: gatewayForm.verifyToken.trim() }
                 : {}),
               ...(gatewayForm.webhookUrl.trim() ? { webhookUrl: gatewayForm.webhookUrl.trim() } : {}),
-              chatBindings: gatewayForm.chatBindings
-                .map((row) => ({
-                  chatId: row.chatId.trim(),
-                  agentId: row.agentId.trim(),
-                }))
-                .filter((row) => row.chatId && row.agentId),
+              chatBindings: normalizedBindingsResult.normalized,
               notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
             }),
       },
@@ -1122,6 +1223,23 @@ export default function ConfigPage() {
     }))
   }, [])
 
+  const applyGatewayBindingsImport = useCallback(() => {
+    const parsed = parseGatewayChatBindingImportText(
+      gatewayBindingsImportText,
+      gatewayForm.agentId.trim() || 'semibot'
+    )
+    if (parsed.invalidLines.length > 0) {
+      setError(t('config.errors.gatewayBindingsImportInvalid', { count: parsed.invalidLines.length }))
+      return
+    }
+    if (parsed.rows.length === 0) return
+    setGatewayForm((prev) => ({
+      ...prev,
+      chatBindings: [...prev.chatBindings, ...parsed.rows],
+    }))
+    setGatewayBindingsImportText('')
+  }, [gatewayBindingsImportText, gatewayForm.agentId, t])
+
   const testGateway = async (gateway: GatewayItem) => {
     try {
       setTestingGateway(gateway.id)
@@ -1153,11 +1271,13 @@ export default function ConfigPage() {
     const bindings = parseGatewayChatBindings(gateway.config?.chatBindings)
     setQuickBindingsEditingId(gateway.id)
     setQuickBindingsDraft(bindings)
+    setQuickBindingsImportText('')
   }, [])
 
   const cancelQuickBindingsEdit = useCallback(() => {
     setQuickBindingsEditingId(null)
     setQuickBindingsDraft([])
+    setQuickBindingsImportText('')
   }, [])
 
   const addQuickBindingsRow = useCallback((defaultAgentId: string) => {
@@ -1172,32 +1292,81 @@ export default function ConfigPage() {
     setQuickBindingsDraft((prev) => prev.filter((_, idx) => idx !== index))
   }, [])
 
+  const applyQuickBindingsImport = useCallback(
+    (defaultAgentId: string) => {
+      const parsed = parseGatewayChatBindingImportText(
+        quickBindingsImportText,
+        defaultAgentId.trim() || 'semibot'
+      )
+      if (parsed.invalidLines.length > 0) {
+        setError(t('config.errors.gatewayBindingsImportInvalid', { count: parsed.invalidLines.length }))
+        return
+      }
+      if (parsed.rows.length === 0) return
+      setQuickBindingsDraft((prev) => [...prev, ...parsed.rows])
+      setQuickBindingsImportText('')
+    },
+    [quickBindingsImportText, t]
+  )
+
   const saveQuickBindings = useCallback(
     async (gatewayId: string) => {
       try {
         setQuickBindingsSavingId(gatewayId)
         setError(null)
-        const chatBindings = quickBindingsDraft
-          .map((row) => ({
+        const gateway = gateways.find((item) => item.id === gatewayId)
+        const normalized = normalizeGatewayChatBindings(
+          quickBindingsDraft.map((row) => ({
             chatId: row.chatId.trim(),
             agentId: row.agentId.trim(),
           }))
-          .filter((row) => row.chatId && row.agentId)
+        )
+        if (normalized.partialCount > 0) {
+          setError(t('config.errors.gatewayBindingsPartial', { count: normalized.partialCount }))
+          return
+        }
+        if (
+          normalized.duplicateChatIds.length > 0 &&
+          !window.confirm(
+            t('config.confirm.gatewayBindingsDuplicate', {
+              count: normalized.duplicateChatIds.length,
+            })
+          )
+        ) {
+          return
+        }
+        if (gateway?.provider === 'telegram') {
+          const allowed = new Set(parseGatewayAllowedChatIds(gateway.config?.allowedChatIds))
+          if (allowed.size > 0) {
+            const outsideAllowed = normalized.normalized.filter((row) => !allowed.has(row.chatId))
+            if (
+              outsideAllowed.length > 0 &&
+              !window.confirm(
+                t('config.confirm.gatewayBindingsOutsideAllowed', {
+                  count: outsideAllowed.length,
+                })
+              )
+            ) {
+              return
+            }
+          }
+        }
         await apiClient.put(`/gateways/instances/${gatewayId}`, {
           config: {
-            chatBindings,
+            chatBindings: normalized.normalized,
           },
         })
         await loadGateways()
         setQuickBindingsEditingId(null)
         setQuickBindingsDraft([])
+        setQuickBindingsImportText('')
       } catch (err) {
         setError(getErrorMessage(err, t('config.errors.updateGateway')))
       } finally {
         setQuickBindingsSavingId(null)
       }
     },
-    [loadGateways, quickBindingsDraft, t]
+    [gateways, loadGateways, quickBindingsDraft, t]
   )
 
   const toggleGatewaySelected = useCallback((id: string) => {
@@ -1327,6 +1496,7 @@ export default function ConfigPage() {
     if (!exists) {
       setQuickBindingsEditingId(null)
       setQuickBindingsDraft([])
+      setQuickBindingsImportText('')
     }
   }, [gateways, quickBindingsEditingId])
 
@@ -1865,6 +2035,25 @@ export default function ConfigPage() {
                                 </p>
                               ) : (
                                 <div className="mt-2 space-y-2">
+                                  <div className="space-y-2">
+                                    <textarea
+                                      data-testid={`gateway-quick-import-${item.id}`}
+                                      className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                                      rows={3}
+                                      placeholder={t('config.gateways.importBindingsPlaceholder')}
+                                      value={quickBindingsImportText}
+                                      onChange={(e) => setQuickBindingsImportText(e.target.value)}
+                                    />
+                                    <Button
+                                      data-testid={`gateway-quick-import-apply-${item.id}`}
+                                      size="xs"
+                                      variant="tertiary"
+                                      onClick={() => applyQuickBindingsImport(defaultAgentId)}
+                                      disabled={quickBindingsSavingId === item.id}
+                                    >
+                                      {t('config.gateways.applyImportedBindings')}
+                                    </Button>
+                                  </div>
                                   {quickBindingsDraft.map((row, index) => (
                                     <div key={`quick-binding-${item.id}-${index}`} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
                                       <Input
@@ -2441,6 +2630,23 @@ export default function ConfigPage() {
                 onClick={() => addGatewayChatBinding()}
               >
                 {t('config.modals.gateway.addChatBinding')}
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <textarea
+                className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                rows={3}
+                placeholder={t('config.modals.gateway.importBindingsPlaceholder')}
+                value={gatewayBindingsImportText}
+                onChange={(e) => setGatewayBindingsImportText(e.target.value)}
+              />
+              <Button
+                type="button"
+                size="xs"
+                variant="tertiary"
+                onClick={() => applyGatewayBindingsImport()}
+              >
+                {t('config.modals.gateway.applyImportedBindings')}
               </Button>
             </div>
             {gatewayForm.chatBindings.length === 0 ? (

@@ -199,30 +199,31 @@ export default function AgentDetailPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
-      <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/agents"
-              className={clsx(
-                'p-2 rounded-md',
-                'text-text-secondary hover:text-text-primary hover:bg-interactive-hover'
-              )}
-            >
-              <ArrowLeft size={18} />
-            </Link>
-            <h1 className="text-lg font-semibold text-text-primary">
-              {isNew ? t('agentsDetail.createTitle') : t('agentsDetail.editTitle')}
-            </h1>
+      <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col">
+        <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Link
+                href="/agents"
+                className={clsx(
+                  'p-2 rounded-md',
+                  'text-text-secondary hover:text-text-primary hover:bg-interactive-hover'
+                )}
+              >
+                <ArrowLeft size={18} />
+              </Link>
+              <h1 className="text-lg font-semibold text-text-primary">
+                {isNew ? t('agentsDetail.createTitle') : t('agentsDetail.editTitle')}
+              </h1>
+            </div>
+            <Button onClick={handleSave} loading={isSaving} leftIcon={<Save size={16} />}>
+              {isNew ? t('common.create') : t('common.save')}
+            </Button>
           </div>
-          <Button onClick={handleSave} loading={isSaving} leftIcon={<Save size={16} />}>
-            {isNew ? t('common.create') : t('common.save')}
-          </Button>
-        </div>
-      </header>
+        </header>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        <Card className="max-w-3xl">
+        <div className="flex-1 overflow-y-auto p-6">
+          <Card className="max-w-3xl">
           <CardHeader>
             <div className="text-lg font-semibold text-text-primary">{t('agentsDetail.basicConfig')}</div>
             <CardDescription>{t('agentsDetail.basicConfigDescription')}</CardDescription>
@@ -320,7 +321,7 @@ export default function AgentDetailPage() {
           </CardContent>
         </Card>
 
-        <Card className="max-w-3xl mt-6">
+          <Card className="max-w-3xl mt-6">
           <CardHeader>
             <div className="text-lg font-semibold text-text-primary">{t('agentsDetail.skillsTitle')}</div>
             <CardDescription>{t('agentsDetail.skillsDescription')}</CardDescription>
@@ -377,7 +378,7 @@ export default function AgentDetailPage() {
           </CardContent>
         </Card>
 
-        <Card className="max-w-3xl mt-6">
+          <Card className="max-w-3xl mt-6">
           <CardHeader>
             <div className="text-lg font-semibold text-text-primary">{t('agentsDetail.mcpTitle')}</div>
             <CardDescription>{t('agentsDetail.mcpDescription')}</CardDescription>
@@ -442,7 +443,8 @@ export default function AgentDetailPage() {
               </div>
             )}
           </CardContent>
-        </Card>
+          </Card>
+        </div>
       </div>
     </div>
   )

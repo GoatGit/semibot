@@ -211,108 +211,109 @@ export default function SkillDefinitionsPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-bg-base">
-      {/* 头部 */}
-      <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-text-primary">{t('skillsPage.title')}</h1>
-            <p className="text-sm text-text-secondary mt-1">
-              {t('skillsPage.subtitlePrefix')} {definitions.length} {t('skillsPage.subtitleSuffix')}
-            </p>
-          </div>
-          <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreateDialog(true)}>
-            {t('skillsPage.create')}
-          </Button>
-        </div>
-
-        {/* 错误提示 */}
-        {error && (
-          <div className="mt-3 rounded-md px-3 py-2 border bg-error-500/10 border-error-500/20">
-            <div className="flex items-start">
-              <AlertCircle className="w-4 h-4 text-error-500 mr-2 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-error-500">{error}</p>
+      <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col">
+        {/* 头部 */}
+        <header className="flex-shrink-0 border-b border-border-subtle px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-text-primary">{t('skillsPage.title')}</h1>
+              <p className="text-sm text-text-secondary mt-1">
+                {t('skillsPage.subtitlePrefix')} {definitions.length} {t('skillsPage.subtitleSuffix')}
+              </p>
             </div>
+            <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreateDialog(true)}>
+              {t('skillsPage.create')}
+            </Button>
           </div>
-        )}
 
-        {/* 搜索栏 */}
-        <div className="flex items-center gap-4 mt-4">
-          <div className="flex-1 max-w-md">
-            <Input
-              placeholder={t('skillsPage.searchPlaceholder')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search size={16} />}
-            />
-          </div>
-          <Button variant="secondary" onClick={loadDefinitions}>
-            <RefreshCw className="w-4 h-4 mr-2" />
-            {t('common.refresh')}
-          </Button>
-          {filteredDefinitions.length > 0 && (
-            <label className="flex items-center gap-2 text-sm text-text-secondary">
-              <input
-                data-testid="skills-select-all"
-                type="checkbox"
-                className="rounded border-border-default"
-                checked={allFilteredSelected}
-                onChange={toggleSelectAllFiltered}
-                disabled={actionLoading}
-              />
-              {t('skillsPage.batch.selectAllVisible')}
-            </label>
+          {/* 错误提示 */}
+          {error && (
+            <div className="mt-3 rounded-md px-3 py-2 border bg-error-500/10 border-error-500/20">
+              <div className="flex items-start">
+                <AlertCircle className="w-4 h-4 text-error-500 mr-2 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-error-500">{error}</p>
+              </div>
+            </div>
           )}
-        </div>
 
-        {selectedCount > 0 && (
-          <div className="mt-3 rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
-            <span className="text-sm text-text-primary">
-              {t('skillsPage.batch.selectedCount', { count: selectedCount })}
-            </span>
-            <Button
-              data-testid="skills-batch-enable"
-              variant="secondary"
-              size="sm"
-              disabled={actionLoading}
-              onClick={() => handleBatchSetActive(true)}
-            >
-              {t('skillsPage.batch.enable')}
-            </Button>
-            <Button
-              data-testid="skills-batch-disable"
-              variant="secondary"
-              size="sm"
-              disabled={actionLoading}
-              onClick={() => handleBatchSetActive(false)}
-            >
-              {t('skillsPage.batch.disable')}
-            </Button>
-            <Button
-              data-testid="skills-batch-delete"
-              variant="secondary"
-              size="sm"
-              disabled={actionLoading}
-              onClick={handleBatchDelete}
-            >
-              {t('skillsPage.batch.delete')}
-            </Button>
-          </div>
-        )}
-      </header>
-
-      {/* 技能列表 */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {filteredDefinitions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12">
-            <div className="w-16 h-16 rounded-2xl bg-bg-elevated flex items-center justify-center mb-4">
-              <Package size={32} className="text-text-tertiary" />
+          {/* 搜索栏 */}
+          <div className="flex items-center gap-4 mt-4">
+            <div className="flex-1 max-w-md">
+              <Input
+                placeholder={t('skillsPage.searchPlaceholder')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search size={16} />}
+              />
             </div>
-            <h3 className="text-lg font-medium text-text-primary">{t('skillsPage.emptyTitle')}</h3>
-            <p className="text-sm text-text-secondary mt-1">{t('skillsPage.emptyDescription')}</p>
+            <Button variant="secondary" onClick={loadDefinitions}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              {t('common.refresh')}
+            </Button>
+            {filteredDefinitions.length > 0 && (
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  data-testid="skills-select-all"
+                  type="checkbox"
+                  className="rounded border-border-default"
+                  checked={allFilteredSelected}
+                  onChange={toggleSelectAllFiltered}
+                  disabled={actionLoading}
+                />
+                {t('skillsPage.batch.selectAllVisible')}
+              </label>
+            )}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredDefinitions.map((definition) => (
+
+          {selectedCount > 0 && (
+            <div className="mt-3 rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-text-primary">
+                {t('skillsPage.batch.selectedCount', { count: selectedCount })}
+              </span>
+              <Button
+                data-testid="skills-batch-enable"
+                variant="secondary"
+                size="sm"
+                disabled={actionLoading}
+                onClick={() => handleBatchSetActive(true)}
+              >
+                {t('skillsPage.batch.enable')}
+              </Button>
+              <Button
+                data-testid="skills-batch-disable"
+                variant="secondary"
+                size="sm"
+                disabled={actionLoading}
+                onClick={() => handleBatchSetActive(false)}
+              >
+                {t('skillsPage.batch.disable')}
+              </Button>
+              <Button
+                data-testid="skills-batch-delete"
+                variant="secondary"
+                size="sm"
+                disabled={actionLoading}
+                onClick={handleBatchDelete}
+              >
+                {t('skillsPage.batch.delete')}
+              </Button>
+            </div>
+          )}
+        </header>
+
+        {/* 技能列表 */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {filteredDefinitions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <div className="w-16 h-16 rounded-2xl bg-bg-elevated flex items-center justify-center mb-4">
+                <Package size={32} className="text-text-tertiary" />
+              </div>
+              <h3 className="text-lg font-medium text-text-primary">{t('skillsPage.emptyTitle')}</h3>
+              <p className="text-sm text-text-secondary mt-1">{t('skillsPage.emptyDescription')}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredDefinitions.map((definition) => (
                 <Card key={definition.id}>
                   <CardContent>
                     <div className="flex items-start justify-between">
@@ -376,11 +377,12 @@ export default function SkillDefinitionsPage() {
                       {definition.isActive ? t('skillsPage.disable') : t('skillsPage.enable')}
                     </Button>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 创建技能对话框 */}
