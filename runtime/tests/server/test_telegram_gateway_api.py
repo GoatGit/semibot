@@ -119,7 +119,17 @@ async def test_telegram_webhook_ingestion_and_text_approval(tmp_path: Path):
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         enable = await client.put(
             "/v1/config/gateways/telegram",
-            json={"isActive": True, "config": {"botToken": "token_abc", "defaultChatId": "-100001"}},
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "token_abc",
+                    "defaultChatId": "-100001",
+                    "addressingPolicy": {
+                        "mode": "all_messages",
+                        "executeOnUnaddressed": True,
+                    },
+                },
+            },
         )
         assert enable.status_code == 200
 
@@ -352,3 +362,49 @@ async def test_gateway_context_endpoints_and_mention_only_policy(tmp_path: Path)
         ctx_resp = await client.get(f"/v1/gateway/conversations/{conv_id}/context")
         assert ctx_resp.status_code == 200
         assert len(ctx_resp.json()["messages"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_gateway_policy_top_level_patch_and_readback(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        update = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "token_abc",
+                    "defaultChatId": "-100001",
+                },
+                "addressingPolicy": {
+                    "mode": "all_messages",
+                    "allowReplyToBot": True,
+                    "executeOnUnaddressed": False,
+                    "commandPrefixes": ["/ask", "/run"],
+                    "sessionContinuationWindowSec": 60,
+                },
+                "proactivePolicy": {
+                    "mode": "risk_based",
+                    "minRiskToNotify": "high",
+                },
+                "contextPolicy": {
+                    "ttlDays": 14,
+                    "maxRecentMessages": 120,
+                    "summarizeEveryNMessages": 40,
+                },
+            },
+        )
+        assert update.status_code == 200
+
+        got = await client.get("/v1/config/gateways/telegram")
+        assert got.status_code == 200
+        payload = got.json()
+        assert payload["addressingPolicy"]["mode"] == "all_messages"
+        assert payload["addressingPolicy"]["executeOnUnaddressed"] is False
+        assert payload["proactivePolicy"]["mode"] == "risk_based"
+        assert payload["contextPolicy"]["ttlDays"] == 14

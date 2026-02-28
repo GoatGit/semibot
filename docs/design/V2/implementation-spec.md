@@ -111,6 +111,7 @@ class GatewayContextService:
 class AddressingPolicy(TypedDict):
     mode: Literal["mention_only", "all_messages"]
     allowReplyToBot: bool
+    executeOnUnaddressed: bool
     commandPrefixes: list[str]
     sessionContinuationWindowSec: int
 

@@ -52,5 +52,8 @@ def decide_addressing(
     if continuation_hit:
         return AddressingDecision(addressed=True, should_execute=True, reason="continuation_window")
 
-    # Compatibility default: in all_messages mode we execute unless explicitly constrained.
-    return AddressingDecision(addressed=True, should_execute=True, reason="all_messages")
+    execute_on_unaddressed = bool(policy.get("executeOnUnaddressed", False))
+    if execute_on_unaddressed:
+        return AddressingDecision(addressed=True, should_execute=True, reason="all_messages_unaddressed_allowed")
+
+    return AddressingDecision(addressed=False, should_execute=False, reason="not_addressed")

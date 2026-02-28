@@ -50,6 +50,7 @@ class GatewayContextService:
         return {
             "mode": default_mode,
             "allowReplyToBot": True,
+            "executeOnUnaddressed": False,
             "commandPrefixes": ["/ask", "/run", "/approve", "/reject"],
             "sessionContinuationWindowSec": 300,
         }

@@ -336,6 +336,7 @@ URL 验证响应：
   "addressingPolicy": {
     "mode": "all_messages",
     "allowReplyToBot": true,
+    "executeOnUnaddressed": false,
     "commandPrefixes": ["/ask", "/run", "/approve", "/reject"],
     "sessionContinuationWindowSec": 300
   },

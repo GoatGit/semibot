@@ -115,6 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_gateway_configs_active ON gateway_configs(is_acti
 
 - `addressingPolicy.mode`: `mention_only` | `all_messages`
 - `addressingPolicy.allowReplyToBot`: 是否把“回复 bot 消息”视为命中
+- `addressingPolicy.executeOnUnaddressed`: 在 `all_messages` 模式下，未命中是否仍执行（默认 `false`）
 - `addressingPolicy.commandPrefixes`: 命令前缀（如 `/ask`, `/run`）
 - `addressingPolicy.sessionContinuationWindowSec`: 会话延续窗口（秒）
 - `proactivePolicy.mode`: `silent` | `risk_based` | `always`
