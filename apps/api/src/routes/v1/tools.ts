@@ -15,7 +15,7 @@ const router: Router = Router()
 // Schema 定义
 // ═══════════════════════════════════════════════════════════════
 
-const updateToolSchema = z.object({
+export const updateToolSchema = z.object({
   config: z
     .object({
       timeout: z.number().min(1000).max(300000).optional(),
@@ -29,6 +29,8 @@ const updateToolSchema = z.object({
       rateLimit: z.number().min(1).max(1000).optional(),
       apiEndpoint: z.string().url().optional(),
       apiKey: z.string().max(500).optional(),
+      authType: z.enum(['none', 'bearer', 'basic', 'api_key']).optional(),
+      authHeader: z.string().max(100).optional(),
       rootPath: z.string().max(1000).optional(),
       maxReadBytes: z.number().int().min(1).max(10_000_000).optional(),
       headless: z.boolean().optional(),
@@ -41,13 +43,14 @@ const updateToolSchema = z.object({
       maxRows: z.number().int().min(1).max(5_000).optional(),
       defaultDatabase: z.string().max(200).optional(),
       allowedDatabases: z.array(z.string().min(1).max(200)).max(100).optional(),
+      connections: z.record(z.string().max(200), z.string().max(4000)).optional(),
     })
     .passthrough()
     .optional(),
   isActive: z.boolean().optional(),
 })
 
-const listToolsQuerySchema = z.object({
+export const listToolsQuerySchema = z.object({
   page: z.coerce.number().min(1).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   search: z.string().max(100).optional(),

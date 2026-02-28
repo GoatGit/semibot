@@ -89,6 +89,8 @@ interface ToolItem {
   config?: {
     timeout?: number
     retryAttempts?: number
+    authType?: 'none' | 'bearer' | 'basic' | 'api_key'
+    authHeader?: string
     requiresApproval?: boolean
     riskLevel?: 'low' | 'medium' | 'high' | 'critical'
     approvalScope?: ApprovalScope
@@ -108,6 +110,7 @@ interface ToolItem {
     maxRows?: number
     defaultDatabase?: string
     allowedDatabases?: string[]
+    connections?: Record<string, string>
   }
   isBuiltin: boolean
   isActive: boolean
@@ -184,6 +187,11 @@ type GatewayChatBinding = {
   agentId: string
 }
 
+type SqlConnectionRow = {
+  alias: string
+  dsn: string
+}
+
 type GatewayForm = {
   id?: string
   instanceKey: string
@@ -220,6 +228,7 @@ type ToolForm = {
   name: string
   type: string
   timeoutMs: string
+  retryAttempts: string
   requiresApproval: boolean
   riskLevel: 'low' | 'medium' | 'high' | 'critical'
   approvalScope: ApprovalScope
@@ -235,9 +244,12 @@ type ToolForm = {
   blockedDomains: string
   maxTextLength: string
   maxResponseChars: string
+  httpAuthType: 'none' | 'bearer' | 'basic' | 'api_key'
+  httpAuthHeader: string
   sqlMaxRows: string
   sqlDefaultDatabase: string
   sqlAllowedDatabases: string
+  sqlConnectionsRows: SqlConnectionRow[]
 }
 
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
@@ -469,6 +481,7 @@ export default function ConfigPage() {
     name: '',
     type: 'custom',
     timeoutMs: '',
+    retryAttempts: '',
     requiresApproval: false,
     riskLevel: 'low',
     approvalScope: 'session',
@@ -484,9 +497,12 @@ export default function ConfigPage() {
     blockedDomains: '',
     maxTextLength: '',
     maxResponseChars: '',
+    httpAuthType: 'none',
+    httpAuthHeader: 'X-API-Key',
     sqlMaxRows: '',
     sqlDefaultDatabase: '',
     sqlAllowedDatabases: '',
+    sqlConnectionsRows: [],
   })
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
@@ -763,6 +779,10 @@ export default function ConfigPage() {
       name: tool.name,
       type: tool.type || 'custom',
       timeoutMs: tool.config?.timeout ? String(tool.config.timeout) : '',
+      retryAttempts:
+        typeof tool.config?.retryAttempts === 'number'
+          ? String(tool.config.retryAttempts)
+          : '',
       requiresApproval: Boolean(tool.config?.requiresApproval),
       riskLevel: (tool.config?.riskLevel || (HIGH_RISK_DEFAULT_TOOLS.includes(tool.name) ? 'high' : 'low')) as
         | 'low'
@@ -793,6 +813,8 @@ export default function ConfigPage() {
         typeof tool.config?.maxResponseChars === 'number'
           ? String(tool.config.maxResponseChars)
           : '',
+      httpAuthType: (tool.config?.authType || 'none') as 'none' | 'bearer' | 'basic' | 'api_key',
+      httpAuthHeader: tool.config?.authHeader || 'X-API-Key',
       sqlMaxRows:
         typeof tool.config?.maxRows === 'number'
           ? String(tool.config.maxRows)
@@ -801,18 +823,32 @@ export default function ConfigPage() {
       sqlAllowedDatabases: Array.isArray(tool.config?.allowedDatabases)
         ? tool.config.allowedDatabases.join(',')
         : '',
+      sqlConnectionsRows:
+        tool.config?.connections && typeof tool.config.connections === 'object'
+          ? Object.entries(tool.config.connections).map(([alias, dsn]) => ({
+              alias: String(alias || ''),
+              dsn: String(dsn || ''),
+            }))
+          : [],
     })
     setShowEditTool(true)
   }
 
   const saveToolConfig = async () => {
     const supportsApiCredentials = !TOOLS_WITHOUT_API_CREDENTIALS.includes(toolForm.name)
+    const showApiKeyInput = supportsApiCredentials && toolForm.name !== 'sql_query_readonly'
     const isBrowserTool = toolForm.name === 'browser_automation'
     const isHttpFetchTool = toolForm.name === 'http_client' || toolForm.name === 'web_fetch'
+    const isHttpClientTool = toolForm.name === 'http_client'
     const isSqlReadonlyTool = toolForm.name === 'sql_query_readonly'
     const timeout = toolForm.timeoutMs.trim()
     if (timeout && (!/^\d+$/.test(timeout) || Number(timeout) < 1000)) {
       setError(t('config.errors.timeoutInvalid'))
+      return
+    }
+    const retryAttempts = toolForm.retryAttempts.trim()
+    if (retryAttempts && (!/^\d+$/.test(retryAttempts) || Number(retryAttempts) < 0 || Number(retryAttempts) > 5)) {
+      setError(t('config.errors.retryAttemptsInvalid'))
       return
     }
 
@@ -852,6 +888,11 @@ export default function ConfigPage() {
       setError(t('config.errors.maxResponseCharsInvalid'))
       return
     }
+    const httpAuthHeader = toolForm.httpAuthHeader.trim()
+    if (isHttpClientTool && toolForm.httpAuthType === 'api_key' && !httpAuthHeader) {
+      setError(t('config.errors.httpAuthHeaderRequired'))
+      return
+    }
 
     const sqlMaxRows = toolForm.sqlMaxRows.trim()
     if (
@@ -861,6 +902,39 @@ export default function ConfigPage() {
     ) {
       setError(t('config.errors.maxRowsInvalid'))
       return
+    }
+    let sqlConnectionsPayload: Record<string, string> | undefined
+    if (isSqlReadonlyTool) {
+      const normalized: Record<string, string> = {}
+      const duplicateAliases = new Set<string>()
+      let invalidRowCount = 0
+      for (const row of toolForm.sqlConnectionsRows) {
+        const alias = row.alias.trim()
+        const dsn = row.dsn.trim()
+        if (!alias && !dsn) continue
+        if (!alias || !dsn) {
+          invalidRowCount += 1
+          continue
+        }
+        if (Object.prototype.hasOwnProperty.call(normalized, alias)) {
+          duplicateAliases.add(alias)
+          continue
+        }
+        normalized[alias] = dsn
+      }
+      if (invalidRowCount > 0) {
+        setError(t('config.errors.sqlConnectionsRowInvalid', { count: invalidRowCount }))
+        return
+      }
+      if (duplicateAliases.size > 0) {
+        setError(
+          t('config.errors.sqlConnectionsDuplicateAlias', {
+            count: duplicateAliases.size,
+          })
+        )
+        return
+      }
+      sqlConnectionsPayload = normalized
     }
 
     const parseCommaList = (value: string): string[] =>
@@ -873,12 +947,13 @@ export default function ConfigPage() {
     const payload = {
       config: {
         ...(timeout ? { timeout: Number(timeout) } : {}),
+        ...(retryAttempts ? { retryAttempts: Number(retryAttempts) } : {}),
         requiresApproval: toolForm.requiresApproval,
         riskLevel: toolForm.riskLevel,
         approvalScope: toolForm.approvalScope,
         approvalDedupeKeys,
         ...(endpoint ? { apiEndpoint: endpoint } : {}),
-        ...(supportsApiCredentials && toolForm.apiKey.trim()
+        ...(showApiKeyInput && toolForm.apiKey.trim()
           ? { apiKey: toolForm.apiKey.trim() }
           : {}),
         ...(toolForm.name === 'file_io' && toolForm.rootPath.trim()
@@ -897,11 +972,16 @@ export default function ConfigPage() {
         ...(isHttpFetchTool ? { allowedDomains: parseCommaList(toolForm.allowedDomains) } : {}),
         ...(isHttpFetchTool ? { blockedDomains: parseCommaList(toolForm.blockedDomains) } : {}),
         ...(isHttpFetchTool && maxResponseChars ? { maxResponseChars: Number(maxResponseChars) } : {}),
+        ...(isHttpClientTool ? { authType: toolForm.httpAuthType } : {}),
+        ...(isHttpClientTool && toolForm.httpAuthType === 'api_key' && httpAuthHeader
+          ? { authHeader: httpAuthHeader }
+          : {}),
         ...(isSqlReadonlyTool && sqlMaxRows ? { maxRows: Number(sqlMaxRows) } : {}),
         ...(isSqlReadonlyTool && toolForm.sqlDefaultDatabase.trim()
           ? { defaultDatabase: toolForm.sqlDefaultDatabase.trim() }
           : {}),
         ...(isSqlReadonlyTool ? { allowedDatabases: parseCommaList(toolForm.sqlAllowedDatabases) } : {}),
+        ...(isSqlReadonlyTool && sqlConnectionsPayload ? { connections: sqlConnectionsPayload } : {}),
       },
     }
 
@@ -1302,6 +1382,27 @@ export default function ConfigPage() {
     setGatewayForm((prev) => ({
       ...prev,
       chatBindings: prev.chatBindings.filter((_, idx) => idx !== index),
+    }))
+  }, [])
+
+  const addSqlConnectionRow = useCallback(() => {
+    setToolForm((prev) => ({
+      ...prev,
+      sqlConnectionsRows: [...prev.sqlConnectionsRows, { alias: '', dsn: '' }],
+    }))
+  }, [])
+
+  const updateSqlConnectionRow = useCallback((index: number, key: 'alias' | 'dsn', value: string) => {
+    setToolForm((prev) => ({
+      ...prev,
+      sqlConnectionsRows: prev.sqlConnectionsRows.map((row, idx) => (idx === index ? { ...row, [key]: value } : row)),
+    }))
+  }, [])
+
+  const removeSqlConnectionRow = useCallback((index: number) => {
+    setToolForm((prev) => ({
+      ...prev,
+      sqlConnectionsRows: prev.sqlConnectionsRows.filter((_, idx) => idx !== index),
     }))
   }, [])
 
@@ -2425,6 +2526,11 @@ export default function ConfigPage() {
             value={toolForm.timeoutMs}
             onChange={(e) => setToolForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
           />
+          <Input
+            placeholder={t('config.modals.tool.retryAttemptsPlaceholder')}
+            value={toolForm.retryAttempts}
+            onChange={(e) => setToolForm((prev) => ({ ...prev, retryAttempts: e.target.value }))}
+          />
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"
@@ -2484,12 +2590,14 @@ export default function ConfigPage() {
                 value={toolForm.apiEndpoint}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, apiEndpoint: e.target.value }))}
               />
-              <Input
-                type="password"
-                placeholder={t('config.modals.tool.apiKeyPlaceholder')}
-                value={toolForm.apiKey}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, apiKey: e.target.value }))}
-              />
+              {toolForm.name !== 'sql_query_readonly' ? (
+                <Input
+                  type="password"
+                  placeholder={t('config.modals.tool.apiKeyPlaceholder')}
+                  value={toolForm.apiKey}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+                />
+              ) : null}
             </>
           ) : (
             <p className="text-xs text-text-tertiary">
@@ -2583,6 +2691,35 @@ export default function ConfigPage() {
                 value={toolForm.maxResponseChars}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, maxResponseChars: e.target.value }))}
               />
+              {toolForm.name === 'http_client' ? (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs text-text-tertiary">{t('config.modals.tool.http.authType')}</p>
+                    <select
+                      className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                      value={toolForm.httpAuthType}
+                      onChange={(e) =>
+                        setToolForm((prev) => ({
+                          ...prev,
+                          httpAuthType: e.target.value as 'none' | 'bearer' | 'basic' | 'api_key',
+                        }))
+                      }
+                    >
+                      <option value="none">{t('config.modals.tool.http.authTypes.none')}</option>
+                      <option value="bearer">{t('config.modals.tool.http.authTypes.bearer')}</option>
+                      <option value="basic">{t('config.modals.tool.http.authTypes.basic')}</option>
+                      <option value="api_key">{t('config.modals.tool.http.authTypes.apiKey')}</option>
+                    </select>
+                  </div>
+                  {toolForm.httpAuthType === 'api_key' ? (
+                    <Input
+                      placeholder={t('config.modals.tool.http.authHeaderPlaceholder')}
+                      value={toolForm.httpAuthHeader}
+                      onChange={(e) => setToolForm((prev) => ({ ...prev, httpAuthHeader: e.target.value }))}
+                    />
+                  ) : null}
+                </>
+              ) : null}
             </div>
           ) : null}
           {toolForm.name === 'sql_query_readonly' ? (
@@ -2602,6 +2739,37 @@ export default function ConfigPage() {
                 value={toolForm.sqlAllowedDatabases}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, sqlAllowedDatabases: e.target.value }))}
               />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{t('config.modals.tool.sql.connectionsLabel')}</p>
+                <div className="space-y-2">
+                  {toolForm.sqlConnectionsRows.map((row, index) => (
+                    <div key={index} className="grid grid-cols-1 gap-2 md:grid-cols-[180px_1fr_auto]">
+                      <Input
+                        placeholder={t('config.modals.tool.sql.connectionAliasPlaceholder')}
+                        value={row.alias}
+                        onChange={(e) => updateSqlConnectionRow(index, 'alias', e.target.value)}
+                      />
+                      <Input
+                        placeholder={t('config.modals.tool.sql.connectionDsnPlaceholder')}
+                        value={row.dsn}
+                        onChange={(e) => updateSqlConnectionRow(index, 'dsn', e.target.value)}
+                      />
+                      <Button
+                        variant="secondary"
+                        onClick={() => removeSqlConnectionRow(index)}
+                        className="md:w-auto w-full"
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="secondary" onClick={addSqlConnectionRow} className="w-full">
+                    <Plus size={14} className="mr-1" />
+                    {t('config.modals.tool.sql.addConnection')}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-text-tertiary">{t('config.modals.tool.sql.connectionsHint')}</p>
+              </div>
             </div>
           ) : null}
           {toolForm.name === 'file_io' ? (

@@ -73,6 +73,8 @@ class HttpClientTool(BaseTool):
             self.blocked_domains = sorted(_LOCAL_BLOCKLIST)
         self.default_base_url = str(os.getenv("SEMIBOT_HTTP_CLIENT_BASE_URL", "")).strip()
         self.default_api_key = str(os.getenv("SEMIBOT_HTTP_CLIENT_API_KEY", "")).strip()
+        self.default_auth_type = str(os.getenv("SEMIBOT_HTTP_CLIENT_AUTH_TYPE", "none")).strip().lower()
+        self.default_auth_header = str(os.getenv("SEMIBOT_HTTP_CLIENT_AUTH_HEADER", "X-API-Key")).strip() or "X-API-Key"
         self._load_runtime_config()
 
     @property
@@ -162,6 +164,14 @@ class HttpClientTool(BaseTool):
             api_key = config.get("apiKey")
             if isinstance(api_key, str) and api_key.strip():
                 self.default_api_key = api_key.strip()
+
+            auth_type = str(config.get("authType") or "").strip().lower()
+            if auth_type in {"none", "bearer", "basic", "api_key"}:
+                self.default_auth_type = auth_type
+
+            auth_header = str(config.get("authHeader") or "").strip()
+            if auth_header:
+                self.default_auth_header = auth_header
         except Exception:
             return
 
@@ -215,11 +225,11 @@ class HttpClientTool(BaseTool):
         query: dict[str, Any] | None = None,
         body: Any = None,
         json_body: Any = None,
-        auth_type: str = "none",
+        auth_type: str | None = None,
         auth_token: str | None = None,
         auth_username: str | None = None,
         auth_password: str | None = None,
-        auth_header: str = "X-API-Key",
+        auth_header: str | None = None,
         timeout_ms: int | None = None,
         retry_attempts: int | None = None,
         max_response_chars: int | None = None,
@@ -249,12 +259,12 @@ class HttpClientTool(BaseTool):
         )
 
         request_headers = _as_string_map(headers or {})
-        auth_mode = str(auth_type or "none").strip().lower()
+        auth_mode = str(auth_type if auth_type is not None else self.default_auth_type or "none").strip().lower()
         token = (auth_token or "").strip() or self.default_api_key
         if auth_mode == "bearer" and token:
             request_headers["Authorization"] = f"Bearer {token}"
         elif auth_mode == "api_key" and token:
-            header_name = (auth_header or "X-API-Key").strip() or "X-API-Key"
+            header_name = (auth_header or self.default_auth_header or "X-API-Key").strip() or "X-API-Key"
             request_headers[header_name] = token
 
         auth_tuple: tuple[str, str] | None = None

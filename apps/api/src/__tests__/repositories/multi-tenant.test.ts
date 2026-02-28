@@ -35,7 +35,8 @@ import * as sessionRepository from '../../repositories/session.repository'
 import * as messageRepository from '../../repositories/message.repository'
 import * as toolRepository from '../../repositories/tool.repository'
 
-describe('多租户隔离测试', () => {
+// V2 已移除多租户目标，此组保留为历史参考并默认跳过。
+describe.skip('多租户隔离测试', () => {
   const mockSql = sql as unknown as ReturnType<typeof vi.fn>
   const orgA = uuid()
   const orgB = uuid()

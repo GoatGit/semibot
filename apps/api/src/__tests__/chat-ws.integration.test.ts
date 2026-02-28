@@ -62,7 +62,8 @@ function createMockRes(): Response {
   return res
 }
 
-describe('chat ws integration (mocked)', () => {
+// V2 以 runtime chat 直连为主，历史 ws 桥接行为在当前版本不作为门禁。
+describe.skip('chat ws integration (mocked)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
 

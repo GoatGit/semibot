@@ -200,11 +200,15 @@
       "saveDefaultModel": "Failed to save default model config",
       "saveProvider": "Failed to save provider config",
       "timeoutInvalid": "timeout must be an integer >= 1000 (ms)",
+      "retryAttemptsInvalid": "retryAttempts must be between 0 and 5",
       "apiEndpointInvalid": "apiEndpoint must be a valid URL",
+      "httpAuthHeaderRequired": "authHeader is required when authType=api_key",
       "maxReadBytesInvalid": "maxReadBytes must be a positive integer",
       "maxTextLengthInvalid": "maxTextLength must be between 100 and 500000",
       "maxResponseCharsInvalid": "maxResponseChars must be between 100 and 500000",
       "maxRowsInvalid": "maxRows must be between 1 and 5000",
+      "sqlConnectionsRowInvalid": "{count} connection rows are incomplete (alias or dsn is empty)",
+      "sqlConnectionsDuplicateAlias": "{count} duplicate connection aliases found; please fix and retry",
       "missingToolId": "Missing tool ID, unable to save",
       "updateToolConfig": "Failed to update tool config",
       "updateToolStatus": "Failed to update tool status",
@@ -310,6 +314,7 @@
         "namePlaceholder": "Tool name",
         "typePlaceholder": "Tool type",
         "timeoutPlaceholder": "timeout ms (optional, >=1000)",
+        "retryAttemptsPlaceholder": "retryAttempts (optional, 0-5)",
         "hitl": "Require HITL approval for high-risk actions",
         "riskLevel": "Risk level",
         "approvalScope": "Approval grouping scope",
@@ -332,12 +337,25 @@
           "allowLocalhost": "Allow localhost / internal network access",
           "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. api.example.com)",
           "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
-          "maxResponseCharsPlaceholder": "maxResponseChars (optional, 100-500000)"
+          "maxResponseCharsPlaceholder": "maxResponseChars (optional, 100-500000)",
+          "authType": "Default auth type",
+          "authHeaderPlaceholder": "authHeader (e.g. X-API-Key)",
+          "authTypes": {
+            "none": "No auth",
+            "bearer": "Bearer Token",
+            "basic": "Basic Auth (provide username/password per call)",
+            "apiKey": "API Key Header"
+          }
         },
         "sql": {
           "maxRowsPlaceholder": "maxRows (optional, 1-5000)",
           "defaultDatabasePlaceholder": "defaultDatabase (optional, default DB alias)",
-          "allowedDatabasesPlaceholder": "allowedDatabases (optional, comma-separated)"
+          "allowedDatabasesPlaceholder": "allowedDatabases (optional, comma-separated)",
+          "connectionsLabel": "connections (database alias map)",
+          "addConnection": "Add connection",
+          "connectionAliasPlaceholder": "Alias (e.g. main)",
+          "connectionDsnPlaceholder": "DSN (e.g. postgresql://... or sqlite:///...)",
+          "connectionsHint": "One row per database connection: alias is the DB key, dsn is the connection string."
         },
         "browser": {
           "headless": "Run browser in headless mode",

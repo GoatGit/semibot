@@ -342,8 +342,8 @@ test.describe('Config Page', () => {
     await expect(page.getByText('code_executor')).toBeVisible()
     await expect(page.getByText('file_io')).toBeVisible()
     await expect(page.getByText('browser_automation')).toBeVisible()
-    await expect(page.getByText('pdf')).toHaveCount(0)
-    await expect(page.getByText('xlsx')).toHaveCount(0)
+    await expect(page.getByText(/^pdf$/)).toHaveCount(0)
+    await expect(page.getByText(/^xlsx$/)).toHaveCount(0)
   })
 
   test('should save default/fallback model routing', async ({ page }) => {

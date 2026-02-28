@@ -93,6 +93,8 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       riskLevel: 'high',
       approvalScope: 'session',
       approvalDedupeKeys: ['method', 'url'],
+      authType: 'none',
+      authHeader: 'X-API-Key',
       allowLocalhost: false,
       allowedDomains: [],
       blockedDomains: ['localhost', '127.0.0.1', '::1'],
@@ -194,6 +196,9 @@ function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig |
     toolName === 'pdf_report'
   ) {
     delete sanitized.apiEndpoint
+    delete sanitized.apiKey
+  }
+  if (toolName === 'web_fetch' || toolName === 'sql_query_readonly') {
     delete sanitized.apiKey
   }
   return sanitized
