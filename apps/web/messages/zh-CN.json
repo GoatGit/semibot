@@ -267,6 +267,11 @@
       "defaultTag": "默认",
       "loading": "正在加载 Gateway...",
       "empty": "暂无 Gateway 配置",
+      "chatBindingsSummary": "会话绑定：{count}",
+      "chatBindingsNone": "暂无会话绑定",
+      "chatBindingsMore": "另有 {count} 项",
+      "quickEditBindings": "快速编辑",
+      "quickSaveBindings": "保存绑定",
       "agent": "绑定 Agent",
       "updatedAt": "更新时间",
       "test": "测试"

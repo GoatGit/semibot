@@ -489,7 +489,7 @@ test.describe('Config Page', () => {
     await expect(page.getByRole('heading', { name: 'Gateways' })).toBeVisible()
 
     const tgCard = page.locator('div').filter({ hasText: /^Telegram/ }).first()
-    await tgCard.getByRole('button', { name: '编辑' }).click()
+    await tgCard.getByRole('button', { name: /^编辑$/ }).click()
     await expect(page.getByRole('dialog', { name: 'Gateway 配置' })).toBeVisible()
     await page.getByPlaceholder('显示名称').fill('Telegram Ops')
     await page.getByPlaceholder('Agent ID（默认 semibot）').fill('fund-analyst')
@@ -629,6 +629,32 @@ test.describe('Config Page', () => {
     expect(batchCalls[0].payload).toMatchObject({
       action: 'disable',
       instanceIds: ['gw-telegram'],
+    })
+  })
+
+  test('should quick edit gateway chat bindings from list card', async ({ page }) => {
+    const putCalls: Array<{ url: string; payload: any }> = []
+    page.on('request', (request) => {
+      if (request.method() !== 'PUT') return
+      if (!request.url().includes('/api/v1/gateways/instances/gw-telegram')) return
+      putCalls.push({ url: request.url(), payload: request.postDataJSON() })
+    })
+
+    await setupConfigPageMocks(page)
+    await page.goto('/config')
+    await page.getByRole('button', { name: 'Gateways' }).click()
+
+    await page.getByTestId('gateway-quick-edit-gw-telegram').click()
+    await page.getByTestId('gateway-quick-add-gw-telegram').click()
+    await page.getByTestId('gateway-quick-chat-gw-telegram-0').fill('-100777')
+    await page.getByTestId('gateway-quick-agent-gw-telegram-0').fill('ops-agent')
+    await page.getByTestId('gateway-quick-save-gw-telegram').click()
+
+    await expect.poll(() => putCalls.length).toBeGreaterThanOrEqual(1)
+    expect(putCalls[0].payload).toMatchObject({
+      config: {
+        chatBindings: [{ chatId: '-100777', agentId: 'ops-agent' }],
+      },
     })
   })
 })

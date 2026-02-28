@@ -267,6 +267,11 @@
       "defaultTag": "Default",
       "loading": "Loading gateways...",
       "empty": "No gateways",
+      "chatBindingsSummary": "Chat bindings: {count}",
+      "chatBindingsNone": "No chat bindings",
+      "chatBindingsMore": "+{count} more",
+      "quickEditBindings": "Quick edit",
+      "quickSaveBindings": "Save bindings",
       "agent": "Agent",
       "updatedAt": "Updated at",
       "test": "Test"

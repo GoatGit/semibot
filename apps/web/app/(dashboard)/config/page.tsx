@@ -385,6 +385,9 @@ export default function ConfigPage() {
   const [showGatewayModal, setShowGatewayModal] = useState(false)
   const [savingGateway, setSavingGateway] = useState(false)
   const [testingGateway, setTestingGateway] = useState<string | null>(null)
+  const [quickBindingsEditingId, setQuickBindingsEditingId] = useState<string | null>(null)
+  const [quickBindingsDraft, setQuickBindingsDraft] = useState<GatewayChatBinding[]>([])
+  const [quickBindingsSavingId, setQuickBindingsSavingId] = useState<string | null>(null)
   const [gatewayForm, setGatewayForm] = useState<GatewayForm>({
     id: undefined,
     instanceKey: '',
@@ -1146,6 +1149,57 @@ export default function ConfigPage() {
     }
   }
 
+  const startQuickBindingsEdit = useCallback((gateway: GatewayItem) => {
+    const bindings = parseGatewayChatBindings(gateway.config?.chatBindings)
+    setQuickBindingsEditingId(gateway.id)
+    setQuickBindingsDraft(bindings)
+  }, [])
+
+  const cancelQuickBindingsEdit = useCallback(() => {
+    setQuickBindingsEditingId(null)
+    setQuickBindingsDraft([])
+  }, [])
+
+  const addQuickBindingsRow = useCallback((defaultAgentId: string) => {
+    setQuickBindingsDraft((prev) => [...prev, { chatId: '', agentId: defaultAgentId || 'semibot' }])
+  }, [])
+
+  const updateQuickBindingsRow = useCallback((index: number, key: 'chatId' | 'agentId', value: string) => {
+    setQuickBindingsDraft((prev) => prev.map((row, idx) => (idx === index ? { ...row, [key]: value } : row)))
+  }, [])
+
+  const removeQuickBindingsRow = useCallback((index: number) => {
+    setQuickBindingsDraft((prev) => prev.filter((_, idx) => idx !== index))
+  }, [])
+
+  const saveQuickBindings = useCallback(
+    async (gatewayId: string) => {
+      try {
+        setQuickBindingsSavingId(gatewayId)
+        setError(null)
+        const chatBindings = quickBindingsDraft
+          .map((row) => ({
+            chatId: row.chatId.trim(),
+            agentId: row.agentId.trim(),
+          }))
+          .filter((row) => row.chatId && row.agentId)
+        await apiClient.put(`/gateways/instances/${gatewayId}`, {
+          config: {
+            chatBindings,
+          },
+        })
+        await loadGateways()
+        setQuickBindingsEditingId(null)
+        setQuickBindingsDraft([])
+      } catch (err) {
+        setError(getErrorMessage(err, t('config.errors.updateGateway')))
+      } finally {
+        setQuickBindingsSavingId(null)
+      }
+    },
+    [loadGateways, quickBindingsDraft, t]
+  )
+
   const toggleGatewaySelected = useCallback((id: string) => {
     setSelectedGatewayIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
   }, [])
@@ -1266,6 +1320,15 @@ export default function ConfigPage() {
   useEffect(() => {
     setSelectedGatewayIds((prev) => prev.filter((id) => gateways.some((item) => item.id === id)))
   }, [gateways])
+
+  useEffect(() => {
+    if (!quickBindingsEditingId) return
+    const exists = gateways.some((item) => item.id === quickBindingsEditingId)
+    if (!exists) {
+      setQuickBindingsEditingId(null)
+      setQuickBindingsDraft([])
+    }
+  }, [gateways, quickBindingsEditingId])
 
   const llmStatusMap = useMemo(() => {
     const map = new Map<string, LlmProviderStatus>()
@@ -1707,66 +1770,160 @@ export default function ConfigPage() {
                         {t('config.gateways.empty')}
                       </p>
                     ) : (
-                      filteredGateways.map((item) => (
-                        <div key={item.id} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0 flex items-start gap-3">
-                              <input
-                                data-testid={`gateway-select-${item.id}`}
-                                type="checkbox"
-                                className="mt-1 rounded border-border-default"
-                                checked={selectedGatewayIds.includes(item.id)}
-                                onChange={() => toggleGatewaySelected(item.id)}
-                                disabled={gatewayBatchLoading}
-                              />
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-medium text-text-primary">{item.displayName}</p>
-                                <p className="mt-1 text-xs text-text-tertiary">
-                                  {item.provider}
-                                  {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
-                                  {t('config.gateways.agent')}: {String(item.config?.agentId || item.config?.defaultAgentId || 'semibot')} ·{' '}
-                                  {t('config.gateways.updatedAt')}:{' '}
-                                  {formatDate(item.updatedAt, locale, t)}
-                                </p>
+                      filteredGateways.map((item) => {
+                        const itemBindings = parseGatewayChatBindings(item.config?.chatBindings)
+                        const isQuickEditing = quickBindingsEditingId === item.id
+                        const defaultAgentId = String(item.config?.agentId || item.config?.defaultAgentId || 'semibot')
+                        const previewBindings = itemBindings.slice(0, 3)
+                        const previewText = previewBindings.map((row) => `${row.chatId}→${row.agentId}`).join(' · ')
+                        const hasMorePreview = itemBindings.length > previewBindings.length
+                        return (
+                          <div key={item.id} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0 flex items-start gap-3">
+                                <input
+                                  data-testid={`gateway-select-${item.id}`}
+                                  type="checkbox"
+                                  className="mt-1 rounded border-border-default"
+                                  checked={selectedGatewayIds.includes(item.id)}
+                                  onChange={() => toggleGatewaySelected(item.id)}
+                                  disabled={gatewayBatchLoading}
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium text-text-primary">{item.displayName}</p>
+                                  <p className="mt-1 text-xs text-text-tertiary">
+                                    {item.provider}
+                                    {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
+                                    {t('config.gateways.agent')}: {defaultAgentId} · {t('config.gateways.updatedAt')}:{' '}
+                                    {formatDate(item.updatedAt, locale, t)}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {item.isDefault && <Badge variant="outline">{t('config.gateways.defaultTag')}</Badge>}
-                              <Badge variant={item.isActive ? 'success' : 'outline'}>
-                                {item.isActive ? t('config.status.enabled') : t('config.status.disabled')}
-                              </Badge>
-                              <Button
-                                size="xs"
-                                variant="tertiary"
-                                leftIcon={<Pencil size={12} />}
-                                onClick={() => openGatewayDialog(item)}
-                                disabled={gatewayBatchLoading}
-                              >
-                                {t('common.edit')}
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="tertiary"
-                                onClick={() => testGateway(item)}
-                                disabled={testingGateway === item.id || gatewayBatchLoading}
-                              >
-                                {t('config.gateways.test')}
-                              </Button>
-                              {!item.isDefault && (
+                              <div className="flex items-center gap-2">
+                                {item.isDefault && <Badge variant="outline">{t('config.gateways.defaultTag')}</Badge>}
+                                <Badge variant={item.isActive ? 'success' : 'outline'}>
+                                  {item.isActive ? t('config.status.enabled') : t('config.status.disabled')}
+                                </Badge>
                                 <Button
                                   size="xs"
                                   variant="tertiary"
-                                  leftIcon={<Trash2 size={12} />}
-                                  onClick={() => removeGateway(item)}
-                                  disabled={gatewayBatchLoading}
+                                  leftIcon={<Pencil size={12} />}
+                                  onClick={() => openGatewayDialog(item)}
+                                  disabled={gatewayBatchLoading || quickBindingsSavingId === item.id}
                                 >
-                                  {t('common.delete')}
+                                  {t('common.edit')}
                                 </Button>
+                                <Button
+                                  size="xs"
+                                  variant="tertiary"
+                                  onClick={() => testGateway(item)}
+                                  disabled={testingGateway === item.id || gatewayBatchLoading || quickBindingsSavingId === item.id}
+                                >
+                                  {t('config.gateways.test')}
+                                </Button>
+                                {!item.isDefault && (
+                                  <Button
+                                    size="xs"
+                                    variant="tertiary"
+                                    leftIcon={<Trash2 size={12} />}
+                                    onClick={() => removeGateway(item)}
+                                    disabled={gatewayBatchLoading || quickBindingsSavingId === item.id}
+                                  >
+                                    {t('common.delete')}
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="mt-3 rounded-md border border-border-subtle px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs text-text-secondary">
+                                  {t('config.gateways.chatBindingsSummary', { count: itemBindings.length })}
+                                </p>
+                                {!isQuickEditing ? (
+                                  <Button
+                                    data-testid={`gateway-quick-edit-${item.id}`}
+                                    size="xs"
+                                    variant="tertiary"
+                                    onClick={() => startQuickBindingsEdit(item)}
+                                    disabled={gatewayBatchLoading || quickBindingsSavingId === item.id}
+                                  >
+                                    {t('config.gateways.quickEditBindings')}
+                                  </Button>
+                                ) : null}
+                              </div>
+                              {!isQuickEditing ? (
+                                <p className="mt-1 text-xs text-text-tertiary">
+                                  {itemBindings.length > 0 ? (
+                                    <>
+                                      {previewText}
+                                      {hasMorePreview ? ` · ${t('config.gateways.chatBindingsMore', { count: itemBindings.length - previewBindings.length })}` : ''}
+                                    </>
+                                  ) : (
+                                    t('config.gateways.chatBindingsNone')
+                                  )}
+                                </p>
+                              ) : (
+                                <div className="mt-2 space-y-2">
+                                  {quickBindingsDraft.map((row, index) => (
+                                    <div key={`quick-binding-${item.id}-${index}`} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+                                      <Input
+                                        data-testid={`gateway-quick-chat-${item.id}-${index}`}
+                                        placeholder={t('config.modals.gateway.chatIdPlaceholder')}
+                                        value={row.chatId}
+                                        onChange={(e) => updateQuickBindingsRow(index, 'chatId', e.target.value)}
+                                      />
+                                      <Input
+                                        data-testid={`gateway-quick-agent-${item.id}-${index}`}
+                                        placeholder={t('config.modals.gateway.chatBindingAgentPlaceholder')}
+                                        value={row.agentId}
+                                        onChange={(e) => updateQuickBindingsRow(index, 'agentId', e.target.value)}
+                                      />
+                                      <Button
+                                        data-testid={`gateway-quick-remove-${item.id}-${index}`}
+                                        size="xs"
+                                        variant="tertiary"
+                                        onClick={() => removeQuickBindingsRow(index)}
+                                        disabled={quickBindingsSavingId === item.id}
+                                      >
+                                        {t('config.modals.gateway.removeChatBinding')}
+                                      </Button>
+                                    </div>
+                                  ))}
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      data-testid={`gateway-quick-add-${item.id}`}
+                                      size="xs"
+                                      variant="tertiary"
+                                      onClick={() => addQuickBindingsRow(defaultAgentId)}
+                                      disabled={quickBindingsSavingId === item.id}
+                                    >
+                                      {t('config.modals.gateway.addChatBinding')}
+                                    </Button>
+                                    <Button
+                                      data-testid={`gateway-quick-save-${item.id}`}
+                                      size="xs"
+                                      variant="tertiary"
+                                      onClick={() => void saveQuickBindings(item.id)}
+                                      disabled={quickBindingsSavingId === item.id}
+                                    >
+                                      {t('config.gateways.quickSaveBindings')}
+                                    </Button>
+                                    <Button
+                                      size="xs"
+                                      variant="tertiary"
+                                      onClick={() => cancelQuickBindingsEdit()}
+                                      disabled={quickBindingsSavingId === item.id}
+                                    >
+                                      {t('common.cancel')}
+                                    </Button>
+                                  </div>
+                                </div>
                               )}
                             </div>
                           </div>
-                        </div>
-                      ))
+                        )
+                      })
                     )}
                   </div>
                 </CardContent>
