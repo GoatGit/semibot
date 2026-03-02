@@ -12,7 +12,7 @@ export interface ModalProps {
   description?: string
   children: React.ReactNode
   footer?: React.ReactNode
-  maxWidth?: 'sm' | 'md' | 'lg'
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl'
   closeOnBackdrop?: boolean
   closeOnEsc?: boolean
   showCloseButton?: boolean
@@ -56,6 +56,19 @@ export function Modal({
     }
   }, [open, handleKeyDown])
 
+  useEffect(() => {
+    if (!open || !closeOnBackdrop) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (contentRef.current && !contentRef.current.contains(target)) {
+        onClose()
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open, closeOnBackdrop, onClose])
+
   // 焦点陷阱：打开时聚焦到内容区
   useEffect(() => {
     if (open && contentRef.current) {
@@ -66,17 +79,18 @@ export function Modal({
   if (!open) return null
 
   const widthClass = {
-    sm: 'max-w-sm',
-    md: 'max-w-lg',
-    lg: 'max-w-2xl',
+    sm: 'sm:max-w-md',
+    md: 'sm:max-w-xl',
+    lg: 'sm:max-w-2xl',
+    xl: 'sm:max-w-4xl',
   }[maxWidth]
 
   return (
     <div
       ref={overlayRef}
       className={clsx(
-        'fixed inset-0 z-50 flex items-center justify-center p-4',
-        'bg-black/40',
+        'fixed inset-0 z-50 flex items-stretch justify-end',
+        'pointer-events-none',
         'animate-fade-in'
       )}
       onClick={(e) => {
@@ -92,48 +106,53 @@ export function Modal({
         ref={contentRef}
         tabIndex={-1}
         className={clsx(
-          'w-full rounded-lg',
+          'h-full w-full',
+          'rounded-none sm:rounded-l-xl',
           'bg-bg-surface border border-border-default',
           'shadow-xl',
           'animate-scale-in',
           'focus:outline-none',
+          'overflow-hidden',
+          'pointer-events-auto',
           widthClass
         )}
       >
-        {/* Header */}
-        <div className="flex items-start justify-between p-6 pb-0">
-          <div>
-            <h3 id="modal-title" className="text-lg font-semibold text-text-primary">
-              {title}
-            </h3>
-            {description && (
-              <p className="text-sm text-text-secondary mt-1">{description}</p>
+        <div className="flex h-full min-h-0 flex-col">
+          {/* Header */}
+          <div className="flex items-start justify-between border-b border-border-subtle p-6">
+            <div>
+              <h3 id="modal-title" className="text-lg font-semibold text-text-primary">
+                {title}
+              </h3>
+              {description && (
+                <p className="text-sm text-text-secondary mt-1">{description}</p>
+              )}
+            </div>
+            {showCloseButton && (
+              <button
+                onClick={onClose}
+                className={clsx(
+                  'p-1.5 rounded-md -mt-1 -mr-1',
+                  'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
+                  'transition-colors duration-fast'
+                )}
+                aria-label={t('common.close')}
+              >
+                <X size={16} />
+              </button>
             )}
           </div>
-          {showCloseButton && (
-            <button
-              onClick={onClose}
-              className={clsx(
-                'p-1.5 rounded-md -mt-1 -mr-1',
-                'text-text-tertiary hover:text-text-primary hover:bg-interactive-hover',
-                'transition-colors duration-fast'
-              )}
-              aria-label={t('common.close')}
-            >
-              <X size={16} />
-            </button>
+
+          {/* Body */}
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">{children}</div>
+
+          {/* Footer */}
+          {footer && (
+            <div className="flex justify-end gap-2 border-t border-border-subtle px-6 py-4">
+              {footer}
+            </div>
           )}
         </div>
-
-        {/* Body */}
-        <div className="p-6">{children}</div>
-
-        {/* Footer */}
-        {footer && (
-          <div className="flex justify-end gap-2 px-6 pb-6">
-            {footer}
-          </div>
-        )}
       </div>
     </div>
   )

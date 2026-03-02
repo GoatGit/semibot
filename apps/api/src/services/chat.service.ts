@@ -672,12 +672,15 @@ async function handleChatViaExecutionPlane(
 }
 
 function getRuntimeBaseUrls(): string[] {
-  const fallbackUrls = ['http://127.0.0.1:8765', 'http://127.0.0.1:8901', 'http://127.0.0.1:8801']
   const configured = (process.env.RUNTIME_URL || '')
     .split(',')
     .map((value) => value.trim().replace(/\/+$/, ''))
     .filter(Boolean)
-  return Array.from(new Set([...configured, ...fallbackUrls]))
+  if (configured.length > 0) {
+    return Array.from(new Set(configured))
+  }
+  const defaultPort = String(process.env.RUNTIME_PORT || '8765').trim() || '8765'
+  return [`http://127.0.0.1:${defaultPort}`]
 }
 
 function buildEnhancedMessage(input: ChatInput): { text: string } {

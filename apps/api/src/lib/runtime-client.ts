@@ -13,13 +13,16 @@ function normalizeBaseUrl(raw: string): string {
 }
 
 function getRuntimeBaseUrls(): string[] {
-  const fallbackUrls = ['http://localhost:8765', 'http://localhost:8901', 'http://localhost:8801']
   const configured = (process.env.RUNTIME_URL || '')
     .split(',')
     .map((value) => normalizeBaseUrl(value))
     .filter(Boolean)
 
-  return Array.from(new Set([...configured, ...fallbackUrls]))
+  if (configured.length > 0) {
+    return Array.from(new Set(configured))
+  }
+  const defaultPort = String(process.env.RUNTIME_PORT || '8765').trim() || '8765'
+  return [`http://127.0.0.1:${defaultPort}`]
 }
 
 function buildUrl(baseUrl: string, path: string, query?: Record<string, string | number | boolean | undefined>): string {

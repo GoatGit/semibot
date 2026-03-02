@@ -17,6 +17,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   loading?: boolean
   leftIcon?: React.ReactNode
   rightIcon?: React.ReactNode
+  helpText?: string
   children: React.ReactNode
 }
 
@@ -29,18 +30,23 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       disabled = false,
       leftIcon,
       rightIcon,
+      helpText,
       children,
       className,
+      title,
       ...props
     },
     ref
   ) => {
     const isDisabled = disabled || loading
+    const inferredTitle = typeof children === 'string' ? children : undefined
+    const resolvedTitle = helpText || title || inferredTitle
 
     return (
       <button
         ref={ref}
         disabled={isDisabled}
+        title={resolvedTitle}
         className={clsx(
           // Base styles
           'inline-flex items-center justify-center gap-2',

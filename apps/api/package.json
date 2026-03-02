@@ -34,6 +34,7 @@
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.11.0",
     "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^3.4.120",
     "pg": "^8.11.3",
     "pino": "^8.17.2",
     "pino-pretty": "^10.3.1",

@@ -266,7 +266,7 @@ export interface EventRecord {
   createdAt: string
 }
 
-export type RuleActionType = 'notify' | 'run_agent' | 'execute_plan' | 'write_memory'
+export type RuleActionType = 'notify' | 'run_agent' | 'execute_plan' | 'call_webhook' | 'log_only'
 export type RuleActionMode = 'ask' | 'suggest' | 'auto' | 'skip'
 
 export interface RuleAction {
@@ -278,7 +278,9 @@ export interface EventRule {
   id: string
   name: string
   eventType: string
+  conditions?: Record<string, unknown>
   actionMode: RuleActionMode
+  actions?: RuleAction[]
   riskLevel: RiskLevel
   priority: number
   isActive: boolean

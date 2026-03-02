@@ -11,6 +11,7 @@ from src.skills.http_client import HttpClientTool
 from src.skills.json_transform import JsonTransformTool
 from src.skills.pdf_report import PdfReportTool
 from src.skills.registry import SkillRegistry
+from src.skills.rule_authoring import RuleAuthoringTool
 from src.skills.search import SearchTool
 from src.skills.sql_query_readonly import SqlQueryReadonlyTool
 from src.skills.web_fetch import WebFetchTool
@@ -39,6 +40,7 @@ def create_default_registry() -> SkillRegistry:
     registry.register_tool(CsvXlsxTool())
     registry.register_tool(PdfReportTool())
     registry.register_tool(SqlQueryReadonlyTool())
+    registry.register_tool(RuleAuthoringTool())
     logger.info(
         "Registered core builtin tools",
         extra={
@@ -52,6 +54,7 @@ def create_default_registry() -> SkillRegistry:
                 "csv_xlsx",
                 "pdf_report",
                 "sql_query_readonly",
+                "rule_authoring",
             ]
         },
     )

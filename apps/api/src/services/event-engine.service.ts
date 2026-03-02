@@ -12,6 +12,12 @@ type RiskLevel = 'low' | 'medium' | 'high'
 type RuleActionMode = 'ask' | 'suggest' | 'auto' | 'skip'
 type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired'
 
+export interface EventPresentationDictionary {
+  eventTypeLabels: Record<string, string>
+  categoryLabels: Record<string, string>
+  actionLabels: Record<string, string>
+}
+
 export interface EventRecord {
   id: string
   eventType: string
@@ -244,6 +250,72 @@ function mapApprovalRow(row: Record<string, unknown>): ApprovalRecord {
     createdAt: String(row.created_at),
     resolvedAt: row.resolved_at ? String(row.resolved_at) : undefined,
   }
+}
+
+function readStringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object') return {}
+  const output: Record<string, string> = {}
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    const safeKey = String(key || '').trim()
+    const safeValue = typeof item === 'string' ? item.trim() : ''
+    if (!safeKey || !safeValue) continue
+    output[safeKey] = safeValue
+  }
+  return output
+}
+
+function normalizeDictionary(value: unknown): EventPresentationDictionary {
+  const raw = (value && typeof value === 'object') ? (value as Record<string, unknown>) : {}
+  return {
+    eventTypeLabels: readStringMap(raw.eventTypeLabels ?? raw.event_types),
+    categoryLabels: readStringMap(raw.categoryLabels ?? raw.categories),
+    actionLabels: readStringMap(raw.actionLabels ?? raw.actions),
+  }
+}
+
+export async function getEventPresentationDictionary(orgId: string): Promise<EventPresentationDictionary> {
+  const rows = await sql<Array<{ settings: Record<string, unknown> | null }>>`
+    SELECT settings
+    FROM organizations
+    WHERE id = ${orgId}
+    LIMIT 1
+  `
+  const settings = rows[0]?.settings ?? {}
+  const rawDictionary = (settings as Record<string, unknown>).eventPresentation
+  return normalizeDictionary(rawDictionary)
+}
+
+export async function updateEventPresentationDictionary(
+  orgId: string,
+  input: Partial<EventPresentationDictionary>
+): Promise<EventPresentationDictionary> {
+  const current = await getEventPresentationDictionary(orgId)
+  const next: EventPresentationDictionary = {
+    eventTypeLabels: {
+      ...current.eventTypeLabels,
+      ...readStringMap(input.eventTypeLabels),
+    },
+    categoryLabels: {
+      ...current.categoryLabels,
+      ...readStringMap(input.categoryLabels),
+    },
+    actionLabels: {
+      ...current.actionLabels,
+      ...readStringMap(input.actionLabels),
+    },
+  }
+
+  await sql`
+    UPDATE organizations
+    SET settings = COALESCE(settings, '{}'::jsonb) || jsonb_build_object(
+      'eventPresentation',
+      ${sql.json(next as unknown as Parameters<typeof sql.json>[0])}
+    ),
+    updated_at = NOW()
+    WHERE id = ${orgId}
+  `
+
+  return next
 }
 
 export async function listEvents(input: {

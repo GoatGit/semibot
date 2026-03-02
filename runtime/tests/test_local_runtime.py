@@ -10,6 +10,7 @@ from src.llm.base import LLMConfig
 from src.local_runtime import (
     _build_approval_policy,
     _create_llm_provider,
+    _guard_rule_authoring_success_claim,
     _maybe_bootstrap_llm_from_control_plane,
     _maybe_load_local_env_files,
 )
@@ -163,3 +164,24 @@ def test_build_approval_policy_supports_generic_custom_dedupe_keys() -> None:
 
     assert scope_key == "any_tool|risk:medium|custom:resource_id=abc-1"
     assert context["action"] == "sync"
+
+
+def test_guard_rule_authoring_success_claim_rewrites_false_success() -> None:
+    response = "规则已创建成功，并已设置每天早上9点执行。"
+    tool_results = [
+        {
+            "tool_name": "rule_authoring",
+            "success": False,
+            "error": "INVALID_EVENT_TYPE: event_type is required",
+        }
+    ]
+    guarded = _guard_rule_authoring_success_claim(response, tool_results)
+    assert "未成功落地" in guarded
+    assert "INVALID_EVENT_TYPE" in guarded
+    assert "创建成功" not in guarded
+
+
+def test_guard_rule_authoring_success_claim_noop_when_successful() -> None:
+    response = "规则已创建成功。"
+    tool_results = [{"tool_name": "rule_authoring", "success": True}]
+    assert _guard_rule_authoring_success_claim(response, tool_results) == response

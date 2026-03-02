@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react'
 import { apiClient } from '@/lib/api'
 import type { EventRecord } from '@/types'
+import type { EventPresentationDictionary } from '@/types/events'
 
 interface EventsQuery {
   type?: string
@@ -20,13 +21,13 @@ function readString(value: unknown, fallback = ''): string {
 function normalizeEvent(raw: unknown): EventRecord | null {
   if (!isObject(raw)) return null
 
-  const id = readString(raw.id)
+  const id = readString(raw.id) || readString(raw.event_id)
   if (!id) return null
 
   const eventType = readString(raw.eventType) || readString(raw.event_type)
   const source = readString(raw.source)
   const subject = readString(raw.subject)
-  const createdAt = readString(raw.createdAt) || readString(raw.created_at)
+  const createdAt = readString(raw.createdAt) || readString(raw.created_at) || readString(raw.timestamp)
   const riskHint = readString(raw.riskHint) || readString(raw.risk_hint)
   const payload = isObject(raw.payload) ? raw.payload : undefined
 
@@ -65,6 +66,35 @@ function normalizeEventsResponse(raw: unknown): EventRecord[] {
   return events.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
+function readStringMap(input: unknown): Record<string, string> {
+  if (!isObject(input)) return {}
+  const output: Record<string, string> = {}
+  for (const [key, value] of Object.entries(input)) {
+    const safeKey = key.trim()
+    const safeValue = typeof value === 'string' ? value.trim() : ''
+    if (!safeKey || !safeValue) continue
+    output[safeKey] = safeValue
+  }
+  return output
+}
+
+function normalizePresentation(raw: unknown): EventPresentationDictionary {
+  if (!isObject(raw)) {
+    return {
+      eventTypeLabels: {},
+      categoryLabels: {},
+      actionLabels: {},
+    }
+  }
+
+  const source = isObject(raw.data) ? raw.data : raw
+  return {
+    eventTypeLabels: readStringMap(source.eventTypeLabels),
+    categoryLabels: readStringMap(source.categoryLabels),
+    actionLabels: readStringMap(source.actionLabels),
+  }
+}
+
 function getHttpStatus(error: unknown): number | undefined {
   if (!isObject(error)) return undefined
   const response = error.response
@@ -81,6 +111,11 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 export function useEvents() {
   const [events, setEvents] = useState<EventRecord[]>([])
+  const [presentation, setPresentation] = useState<EventPresentationDictionary>({
+    eventTypeLabels: {},
+    categoryLabels: {},
+    actionLabels: {},
+  })
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [apiAvailable, setApiAvailable] = useState(true)
@@ -115,12 +150,27 @@ export function useEvents() {
     await apiClient.post('/events/replay', { event_id: eventId })
   }, [])
 
+  const loadPresentation = useCallback(async (): Promise<void> => {
+    try {
+      const response = await apiClient.get<unknown>('/events/presentation')
+      setPresentation(normalizePresentation(response))
+    } catch {
+      setPresentation({
+        eventTypeLabels: {},
+        categoryLabels: {},
+        actionLabels: {},
+      })
+    }
+  }, [])
+
   return {
     events,
+    presentation,
     isLoading,
     error,
     apiAvailable,
     loadEvents,
+    loadPresentation,
     replayEvent,
   }
 }

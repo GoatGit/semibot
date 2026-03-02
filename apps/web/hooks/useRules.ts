@@ -7,26 +7,50 @@ import type { EventRule, RuleActionMode, RuleActionType, RiskLevel } from '@/typ
 interface CreateRuleInput {
   name: string
   eventType: string
+  conditions?: Record<string, unknown>
   actionMode: RuleActionMode
+  actions?: Array<{ actionType: RuleActionType; params?: Record<string, unknown> }>
   actionType: RuleActionType
+  actionParams?: Record<string, unknown>
   riskLevel: RiskLevel
   priority: number
   dedupeWindowSeconds?: number
   cooldownSeconds?: number
   attentionBudgetPerDay?: number
+  cron?: {
+    upsert?: boolean
+    name?: string
+    schedule?: string
+    eventType?: string
+    source?: string
+    subject?: string
+    payload?: Record<string, unknown>
+  }
 }
 
 interface UpdateRuleInput {
   name?: string
   eventType?: string
+  conditions?: Record<string, unknown>
   actionMode?: RuleActionMode
+  actions?: Array<{ actionType: RuleActionType; params?: Record<string, unknown> }>
   actionType?: RuleActionType
+  actionParams?: Record<string, unknown>
   riskLevel?: RiskLevel
   priority?: number
   dedupeWindowSeconds?: number
   cooldownSeconds?: number
   attentionBudgetPerDay?: number
   isActive?: boolean
+  cron?: {
+    upsert?: boolean
+    name?: string
+    schedule?: string
+    eventType?: string
+    source?: string
+    subject?: string
+    payload?: Record<string, unknown>
+  }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -55,7 +79,21 @@ function normalizeRule(raw: unknown): EventRule | null {
     id,
     name: readString(raw.name, '未命名规则'),
     eventType: readString(raw.eventType) || readString(raw.event_type, 'unknown'),
+    conditions: isObject(raw.conditions) ? (raw.conditions as Record<string, unknown>) : undefined,
     actionMode: (readString(raw.actionMode) || readString(raw.action_mode) || 'suggest') as EventRule['actionMode'],
+    actions: Array.isArray(raw.actions)
+      ? raw.actions
+        .map((item) => {
+          if (!isObject(item)) return null
+          const actionType = readString(item.actionType) || readString(item.action_type)
+          if (!actionType) return null
+          return {
+            actionType: actionType as RuleActionType,
+            params: isObject(item.params) ? (item.params as Record<string, unknown>) : {},
+          }
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null)
+      : undefined,
     riskLevel: (readString(raw.riskLevel) || readString(raw.risk_level) || 'low') as EventRule['riskLevel'],
     priority: readNumber(raw.priority, 50),
     isActive: readBoolean(raw.isActive, readBoolean(raw.is_active, true)),
@@ -123,23 +161,40 @@ export function useRules() {
   }, [])
 
   const createRule = useCallback(async (input: CreateRuleInput) => {
+    const normalizedActions = Array.isArray(input.actions) && input.actions.length > 0
+      ? input.actions.map((item) => ({
+        action_type: item.actionType,
+        params: item.params ?? {},
+      }))
+      : [
+        {
+          action_type: input.actionType,
+          params: input.actionParams ?? { channel: 'chat' },
+        },
+      ]
     await apiClient.post('/rules', {
       name: input.name,
       event_type: input.eventType,
-      conditions: { all: [] },
+      conditions: input.conditions ?? { all: [] },
       action_mode: input.actionMode,
-      actions: [
-        {
-          action_type: input.actionType,
-          params: { channel: 'chat' },
-        },
-      ],
+      actions: normalizedActions,
       risk_level: input.riskLevel,
       priority: input.priority,
       dedupe_window_seconds: input.dedupeWindowSeconds ?? 300,
       cooldown_seconds: input.cooldownSeconds ?? 600,
       attention_budget_per_day: input.attentionBudgetPerDay ?? 10,
       is_active: true,
+      cron: input.cron
+        ? {
+          upsert: Boolean(input.cron.upsert),
+          name: input.cron.name,
+          schedule: input.cron.schedule,
+          event_type: input.cron.eventType,
+          source: input.cron.source,
+          subject: input.cron.subject,
+          payload: input.cron.payload ?? {},
+        }
+        : undefined,
     })
   }, [])
 
@@ -148,6 +203,7 @@ export function useRules() {
 
     if (input.name !== undefined) payload.name = input.name
     if (input.eventType !== undefined) payload.event_type = input.eventType
+    if (input.conditions !== undefined) payload.conditions = input.conditions
     if (input.actionMode !== undefined) payload.action_mode = input.actionMode
     if (input.riskLevel !== undefined) payload.risk_level = input.riskLevel
     if (input.priority !== undefined) payload.priority = input.priority
@@ -155,13 +211,27 @@ export function useRules() {
     if (input.cooldownSeconds !== undefined) payload.cooldown_seconds = input.cooldownSeconds
     if (input.attentionBudgetPerDay !== undefined) payload.attention_budget_per_day = input.attentionBudgetPerDay
     if (input.isActive !== undefined) payload.is_active = input.isActive
-    if (input.actionType !== undefined) {
-      payload.actions = [
-        {
-          action_type: input.actionType,
-          params: { channel: 'chat' },
-        },
-      ]
+    if (input.cron !== undefined) {
+      payload.cron = {
+        upsert: Boolean(input.cron.upsert),
+        name: input.cron.name,
+        schedule: input.cron.schedule,
+        event_type: input.cron.eventType,
+        source: input.cron.source,
+        subject: input.cron.subject,
+        payload: input.cron.payload ?? {},
+      }
+    }
+    if (Array.isArray(input.actions) && input.actions.length > 0) {
+      payload.actions = input.actions.map((item) => ({
+        action_type: item.actionType,
+        params: item.params ?? {},
+      }))
+    } else if (input.actionType !== undefined) {
+      payload.actions = [{
+        action_type: input.actionType,
+        params: input.actionParams ?? { channel: 'chat' },
+      }]
     }
 
     await apiClient.put(`/rules/${ruleId}`, payload)

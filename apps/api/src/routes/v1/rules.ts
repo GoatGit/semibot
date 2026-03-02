@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
-import * as eventEngineService from '../../services/event-engine.service'
+import { runtimeRequest } from '../../lib/runtime-client'
 
 const router: Router = Router()
 
@@ -28,6 +28,15 @@ const createRuleSchema = z.object({
   cooldown_seconds: z.number().int().min(0).max(86400).default(600),
   attention_budget_per_day: z.number().int().min(0).max(10000).default(10),
   is_active: z.boolean().default(true),
+  cron: z.object({
+    upsert: z.boolean().optional(),
+    name: z.string().min(1).max(120).optional(),
+    schedule: z.string().min(1).max(120).optional(),
+    event_type: z.string().min(1).max(160).optional(),
+    source: z.string().min(1).max(160).optional(),
+    subject: z.string().max(160).optional(),
+    payload: z.record(z.unknown()).optional(),
+  }).optional(),
 })
 
 const updateRuleSchema = z.object({
@@ -47,6 +56,15 @@ const updateRuleSchema = z.object({
   cooldown_seconds: z.number().int().min(0).max(86400).optional(),
   attention_budget_per_day: z.number().int().min(0).max(10000).optional(),
   is_active: z.boolean().optional(),
+  cron: z.object({
+    upsert: z.boolean().optional(),
+    name: z.string().min(1).max(120).optional(),
+    schedule: z.string().min(1).max(120).optional(),
+    event_type: z.string().min(1).max(160).optional(),
+    source: z.string().min(1).max(160).optional(),
+    subject: z.string().max(160).optional(),
+    payload: z.record(z.unknown()).optional(),
+  }).optional(),
 })
 
 router.get(
@@ -55,7 +73,12 @@ router.get(
   combinedRateLimit,
   requirePermission('rules:read'),
   asyncHandler(async (_req: AuthRequest, res: Response) => {
-    const items = await eventEngineService.listRules()
+    const payload = await runtimeRequest<{ items?: unknown[]; data?: unknown[] }>('/v1/rules')
+    const items = Array.isArray(payload.items)
+      ? payload.items
+      : Array.isArray(payload.data)
+        ? payload.data
+        : []
     res.json({
       success: true,
       items,
@@ -71,26 +94,28 @@ router.post(
   validate(createRuleSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const body = req.body as z.infer<typeof createRuleSchema>
-    const created = await eventEngineService.createRule({
-      name: body.name,
-      eventType: body.event_type,
-      conditions: body.conditions,
-      actionMode: body.action_mode,
-      actions: body.actions.map((item) => ({
-        actionType: item.action_type,
-        params: item.params,
-      })),
-      riskLevel: body.risk_level,
-      priority: body.priority,
-      dedupeWindowSeconds: body.dedupe_window_seconds,
-      cooldownSeconds: body.cooldown_seconds,
-      attentionBudgetPerDay: body.attention_budget_per_day,
-      isActive: body.is_active,
+    const created = await runtimeRequest<Record<string, unknown>>('/v1/rules', {
+      method: 'POST',
+      body: {
+        name: body.name,
+        event_type: body.event_type,
+        conditions: body.conditions,
+        action_mode: body.action_mode,
+        actions: body.actions,
+        risk_level: body.risk_level,
+        priority: body.priority,
+        dedupe_window_seconds: body.dedupe_window_seconds,
+        cooldown_seconds: body.cooldown_seconds,
+        attention_budget_per_day: body.attention_budget_per_day,
+        is_active: body.is_active,
+        cron: body.cron,
+      },
     })
     res.status(201).json({
       success: true,
-      id: created.id,
+      id: String(created.id || ''),
       created: true,
+      data: created,
     })
   })
 )
@@ -103,37 +128,44 @@ router.put(
   validate(updateRuleSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const body = req.body as z.infer<typeof updateRuleSchema>
-    const updated = await eventEngineService.updateRule(req.params.id, {
-      name: body.name,
-      eventType: body.event_type,
-      conditions: body.conditions,
-      actionMode: body.action_mode,
-      actions: body.actions?.map((item) => ({
-        actionType: item.action_type,
-        params: item.params,
-      })),
-      riskLevel: body.risk_level,
-      priority: body.priority,
-      dedupeWindowSeconds: body.dedupe_window_seconds,
-      cooldownSeconds: body.cooldown_seconds,
-      attentionBudgetPerDay: body.attention_budget_per_day,
-      isActive: body.is_active,
+    const updated = await runtimeRequest<Record<string, unknown>>(`/v1/rules/${encodeURIComponent(req.params.id)}`, {
+      method: 'PUT',
+      body: {
+        name: body.name,
+        event_type: body.event_type,
+        conditions: body.conditions,
+        action_mode: body.action_mode,
+        actions: body.actions,
+        risk_level: body.risk_level,
+        priority: body.priority,
+        dedupe_window_seconds: body.dedupe_window_seconds,
+        cooldown_seconds: body.cooldown_seconds,
+        attention_budget_per_day: body.attention_budget_per_day,
+        is_active: body.is_active,
+        cron: body.cron,
+      },
     })
-
-    if (!updated) {
-      res.status(404).json({
-        success: false,
-        error: {
-          code: 'RULE_NOT_FOUND',
-          message: '规则不存在',
-        },
-      })
-      return
-    }
 
     res.json({
       success: true,
       data: updated,
+    })
+  })
+)
+
+router.delete(
+  '/:id',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('rules:write'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const result = await runtimeRequest<Record<string, unknown>>(`/v1/rules/${encodeURIComponent(req.params.id)}`, {
+      method: 'DELETE',
+    })
+    res.json({
+      success: true,
+      removed: Boolean(result.removed ?? true),
+      data: result,
     })
   })
 )

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 from src.events.event_engine import EventEngine
 from src.events.event_router import EventRouter, NoopActionExecutor
 from src.events.event_store import EventStore
-from src.events.models import Event
+from src.events.models import ApprovalRequest, Event
 from src.gateway.context_service import GatewayContextService
 from src.gateway.manager import GatewayManager, GatewayManagerError
 from src.server.config_store import RuntimeConfigStore
@@ -229,6 +231,92 @@ async def test_gateway_manager_text_approval_command(tmp_path: Path):
     approved = manager.engine.list_approvals(status="approved", limit=10)
     assert len(approved) == 1
     assert approved[0].approval_id == approval_id
+
+
+@pytest.mark.asyncio
+async def test_gateway_manager_text_approval_command_approves_all_in_subject_scope(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    manager = _build_manager(db_path=db_path, rules_path=rules_path)
+
+    for idx in range(2):
+        manager.engine.store.insert_approval(
+            ApprovalRequest(
+                approval_id=f"appr_{uuid4().hex[:12]}",
+                rule_id="rule_high",
+                event_id=f"evt_fund_scope_{idx}",
+                risk_level="high",
+                context={"chat_id": "chat_scope_1", "tool_name": "file_io", "action": "read"},
+                status="pending",
+                created_at=datetime.now(UTC),
+            )
+        )
+
+    pending = manager.engine.list_approvals(status="pending", limit=10)
+    assert len(pending) == 2
+
+    result = await manager.handle_text_approval_command(
+        text="同意",
+        source="telegram.gateway",
+        subject="chat_scope_1",
+        trace_payload={"from": "test"},
+    )
+    assert result is not None
+    assert result["resolved"] is True
+    assert result["resolved_count"] == 2
+    assert len(result["approval_ids"]) == 2
+
+    approved = manager.engine.list_approvals(status="approved", limit=10)
+    assert len(approved) == 2
+
+
+@pytest.mark.asyncio
+async def test_gateway_manager_text_approval_command_uses_approval_scope_hint(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    manager = _build_manager(db_path=db_path, rules_path=rules_path)
+
+    scope_id = "gmsg_scope_1"
+    other_scope_id = "gmsg_scope_2"
+    for item_scope in (scope_id, scope_id, other_scope_id):
+        manager.engine.store.insert_approval(
+            ApprovalRequest(
+                approval_id=f"appr_{uuid4().hex[:12]}",
+                rule_id="tool.file_io",
+                event_id=f"{item_scope}:{uuid4().hex[:8]}",
+                risk_level="high",
+                context={
+                    "tool_name": "file_io",
+                    "action": "read",
+                    "approval_scope_id": item_scope,
+                },
+                status="pending",
+                created_at=datetime.now(UTC),
+            )
+        )
+
+    pending = manager.engine.list_approvals(status="pending", limit=20)
+    assert len(pending) == 3
+
+    result = await manager.handle_text_approval_command(
+        text="同意",
+        source="telegram.gateway",
+        subject="-100001",
+        trace_payload={"approval_scope_ids": [scope_id]},
+    )
+    assert result is not None
+    assert result["resolved"] is True
+    assert result["resolved_count"] == 2
+
+    approved = manager.engine.list_approvals(status="approved", limit=20)
+    assert len(approved) == 2
+    assert all((item.context or {}).get("approval_scope_id") == scope_id for item in approved)
+
+    pending_after = manager.engine.list_approvals(status="pending", limit=20)
+    assert len(pending_after) == 1
+    assert (pending_after[0].context or {}).get("approval_scope_id") == other_scope_id
 
 
 @pytest.mark.asyncio

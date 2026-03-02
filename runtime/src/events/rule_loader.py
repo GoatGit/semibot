@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,8 @@ def list_rule_files(path: str | Path | None = None) -> list[Path]:
 
 
 def _normalize_rule(raw: dict[str, Any]) -> EventRule | None:
+    if raw.get("deleted_at"):
+        return None
     rule_id = str(raw.get("id") or raw.get("name") or "").strip()
     event_type = str(raw.get("event_type") or "").strip()
     name = str(raw.get("name") or rule_id).strip()
@@ -149,6 +152,47 @@ def _iter_rule_files_for_mutation(path: Path) -> list[Path]:
     return sorted(path.glob("*.json"))
 
 
+def _read_json_file(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json_file(path: Path, data: Any) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def _rule_to_raw(rule: EventRule) -> dict[str, Any]:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "event_type": rule.event_type,
+        "conditions": rule.conditions,
+        "action_mode": rule.action_mode,
+        "actions": [asdict(action) for action in rule.actions],
+        "risk_level": rule.risk_level,
+        "priority": rule.priority,
+        "dedupe_window_seconds": rule.dedupe_window_seconds,
+        "cooldown_seconds": rule.cooldown_seconds,
+        "attention_budget_per_day": rule.attention_budget_per_day,
+        "is_active": rule.is_active,
+    }
+
+
+def _default_mutation_file(path: Path) -> Path:
+    if path.suffix == ".json":
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _write_json_file(path, [])
+        return path
+    path.mkdir(parents=True, exist_ok=True)
+    target = path / "custom.json"
+    if not target.exists():
+        _write_json_file(target, [])
+    return target
+
+
 def set_rule_active(path: str | Path, rule_id: str, *, active: bool) -> bool:
     """Set `is_active` for the target rule; returns True if updated."""
     target = Path(path).expanduser()
@@ -179,6 +223,111 @@ def set_rule_active(path: str | Path, rule_id: str, *, active: bool) -> bool:
             with file.open("w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
                 f.write("\n")
+            return True
+    return False
+
+
+def create_rule(path: str | Path, payload: dict[str, Any]) -> EventRule:
+    """Create a rule in mutable rule file and return normalized model."""
+    target = Path(path).expanduser()
+    ensure_default_rules(target)
+    rule = _normalize_rule(payload)
+    if rule is None:
+        raise ValueError("invalid_rule_payload")
+
+    existing = load_rules(target)
+    for item in existing:
+        if item.id == rule.id or item.name == rule.name:
+            raise ValueError("rule_conflict")
+
+    mutation_file = _default_mutation_file(target)
+    raw = _read_json_file(mutation_file)
+    if isinstance(raw, list):
+        raw.append(_rule_to_raw(rule))
+        _write_json_file(mutation_file, raw)
+        return rule
+    if isinstance(raw, dict):
+        # Single-object file fallback: convert to list for safer future mutation.
+        _write_json_file(mutation_file, [raw, _rule_to_raw(rule)])
+        return rule
+    _write_json_file(mutation_file, [_rule_to_raw(rule)])
+    return rule
+
+
+def update_rule(path: str | Path, rule_id: str, patch: dict[str, Any]) -> EventRule | None:
+    """Patch a rule by id/name and return normalized model."""
+    target = Path(path).expanduser()
+    files = _iter_rule_files_for_mutation(target)
+    for file in files:
+        try:
+            data = _read_json_file(file)
+        except Exception:
+            continue
+
+        def _apply(item: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+            item_id = str(item.get("id") or item.get("name") or "").strip()
+            if item_id != rule_id:
+                return False, item
+            merged = dict(item)
+            for key, value in patch.items():
+                merged[key] = value
+            normalized = _normalize_rule(merged)
+            if normalized is None:
+                raise ValueError("invalid_rule_patch")
+            return True, _rule_to_raw(normalized)
+
+        changed = False
+        if isinstance(data, list):
+            next_items: list[Any] = []
+            for item in data:
+                if not isinstance(item, dict):
+                    next_items.append(item)
+                    continue
+                applied, result_item = _apply(item)
+                changed = changed or applied
+                next_items.append(result_item)
+            if changed:
+                _write_json_file(file, next_items)
+                loaded = _normalize_rule(next(i for i in next_items if isinstance(i, dict) and str(i.get("id") or i.get("name") or "").strip() == rule_id))
+                return loaded
+        elif isinstance(data, dict):
+            applied, result_item = _apply(data)
+            if applied:
+                _write_json_file(file, result_item)
+                return _normalize_rule(result_item)
+
+    return None
+
+
+def delete_rule(path: str | Path, rule_id: str) -> bool:
+    """Soft-delete a rule (is_active=false + deleted_at)."""
+    target = Path(path).expanduser()
+    deleted_at = datetime.now(UTC).isoformat()
+    files = _iter_rule_files_for_mutation(target)
+    for file in files:
+        try:
+            data = _read_json_file(file)
+        except Exception:
+            continue
+        changed = False
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("id") or item.get("name") or "").strip()
+                if item_id != rule_id:
+                    continue
+                item["is_active"] = False
+                item["deleted_at"] = deleted_at
+                changed = True
+        elif isinstance(data, dict):
+            item_id = str(data.get("id") or data.get("name") or "").strip()
+            if item_id == rule_id:
+                data["is_active"] = False
+                data["deleted_at"] = deleted_at
+                changed = True
+        if changed:
+            _write_json_file(file, data)
             return True
     return False
 

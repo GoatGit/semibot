@@ -227,6 +227,7 @@ cd runtime
 |------|------|
 | [Gateway 统一设计（飞书+Telegram）](./gateway-design.md) | 配置模型、API、事件映射、审批与迁移 |
 | [Gateway Context Service 详细方案](./gateway-context-service.md) | 主会话固定、任务隔离、单写者与最小回写 |
+| [Help Center 设计（Web）](./help-center-design.md) | 帮助中心入口、Hover 说明规范、Gateway 教程与 FAQ |
 | [飞书群聊接入](./feishu-gateway.md) | 群聊协作前台、卡片模板 |
 | [进化流水线](./evolution-pipeline.md) | 事件驱动技能进化 |
 

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import mimetypes
+import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+import httpx
 
 from src.events.event_engine import EventEngine
 from src.events.models import Event
@@ -210,6 +216,136 @@ class GatewayManager:
             return None
         prefix = value.split(":", 1)[0].strip()
         return prefix or None
+
+    @staticmethod
+    def _sanitize_path_component(value: str) -> str:
+        cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
+        return cleaned.strip("._") or "unknown"
+
+    @staticmethod
+    def _safe_filename(name: str, *, fallback: str) -> str:
+        raw = str(name or "").strip()
+        candidate = raw.split("/")[-1].split("\\")[-1]
+        candidate = re.sub(r"[^a-zA-Z0-9._-]+", "_", candidate)
+        candidate = candidate.strip("._")
+        return candidate or fallback
+
+    @staticmethod
+    def _guess_extension(mime_type: str | None, *, fallback: str = ".bin") -> str:
+        mime = str(mime_type or "").strip().lower()
+        if not mime:
+            return fallback
+        guessed = mimetypes.guess_extension(mime)
+        if isinstance(guessed, str) and guessed:
+            return guessed
+        return fallback
+
+    @staticmethod
+    def _telegram_inbound_max_bytes() -> int:
+        raw = str(os.getenv("SEMIBOT_TELEGRAM_INBOUND_MAX_FILE_BYTES", "")).strip()
+        if raw.isdigit():
+            return max(1, int(raw))
+        return 20 * 1024 * 1024
+
+    @staticmethod
+    def _telegram_inbound_root_dir() -> Path:
+        base = str(os.getenv("SEMIBOT_TELEGRAM_INBOUND_DIR", "~/.semibot/inbound/telegram")).strip()
+        return Path(base).expanduser()
+
+    async def _telegram_get_file_path(self, *, token: str, file_id: str) -> str:
+        endpoint = f"https://api.telegram.org/bot{token}/getFile"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(endpoint, params={"file_id": file_id})
+            resp.raise_for_status()
+            payload = resp.json()
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            raise RuntimeError("telegram_get_file_failed")
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("telegram_get_file_invalid_result")
+        file_path = str(result.get("file_path") or "").strip()
+        if not file_path:
+            raise RuntimeError("telegram_file_path_missing")
+        return file_path
+
+    async def _telegram_download_content(self, *, token: str, file_path: str) -> bytes:
+        url = f"https://api.telegram.org/file/bot{token}/{file_path.lstrip('/')}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return bytes(resp.content)
+
+    async def _download_telegram_attachments(
+        self,
+        *,
+        token: str,
+        chat_id: str,
+        message_id: Any,
+        attachments: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not attachments:
+            return []
+        max_bytes = self._telegram_inbound_max_bytes()
+        date_path = datetime.now(UTC).strftime("%Y%m%d")
+        root = self._telegram_inbound_root_dir() / self._sanitize_path_component(chat_id) / date_path
+        root.mkdir(parents=True, exist_ok=True)
+
+        results: list[dict[str, Any]] = []
+        for idx, item in enumerate(attachments):
+            file_id = str(item.get("file_id") or "").strip()
+            if not file_id:
+                continue
+            expected_size = item.get("file_size")
+            if isinstance(expected_size, int) and expected_size > max_bytes:
+                results.append(
+                    {
+                        **item,
+                        "status": "skipped",
+                        "reason": f"file_too_large:{expected_size}>{max_bytes}",
+                    }
+                )
+                continue
+            try:
+                file_path = await self._telegram_get_file_path(token=token, file_id=file_id)
+                guessed_name = Path(file_path).name
+                fallback_ext = self._guess_extension(str(item.get("mime_type") or ""), fallback=".bin")
+                fallback_name = f"telegram_{message_id}_{idx + 1}{fallback_ext}"
+                safe_name = self._safe_filename(
+                    str(item.get("file_name") or guessed_name),
+                    fallback=fallback_name,
+                )
+                content = await self._telegram_download_content(token=token, file_path=file_path)
+                if len(content) > max_bytes:
+                    results.append(
+                        {
+                            **item,
+                            "status": "skipped",
+                            "reason": f"downloaded_file_too_large:{len(content)}>{max_bytes}",
+                            "telegram_file_path": file_path,
+                        }
+                    )
+                    continue
+                ts = datetime.now(UTC).strftime("%H%M%S")
+                dest = root / f"{ts}_{idx + 1}_{safe_name}"
+                dest.write_bytes(content)
+                results.append(
+                    {
+                        **item,
+                        "status": "downloaded",
+                        "telegram_file_path": file_path,
+                        "local_path": str(dest.resolve()),
+                        "stored_size": len(content),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                results.append(
+                    {
+                        **item,
+                        "status": "error",
+                        "reason": str(exc),
+                    }
+                )
+        return results
 
     def build_feishu_notifier(self, instance: dict[str, Any] | None = None) -> FeishuNotifier | None:
         cfg = instance.get("config") if isinstance(instance, dict) else self.provider_config("feishu")
@@ -634,18 +770,68 @@ class GatewayManager:
         }
 
     @staticmethod
-    def _approval_matches_subject(item: Any, subject: str | None) -> bool:
+    def _approval_matches_subject(
+        item: Any,
+        subject: str | None,
+        *,
+        scope_ids: set[str] | None = None,
+    ) -> bool:
+        scope_ids = scope_ids or set()
         if not subject:
-            return False
+            if not scope_ids:
+                return False
         context = item.context if isinstance(getattr(item, "context", None), dict) else {}
+        approval_scope_id = str(context.get("approval_scope_id") or "").strip()
+        if approval_scope_id and approval_scope_id in scope_ids:
+            return True
         candidates = {
-            str(subject),
             str(context.get("session_id") or ""),
             str(context.get("subject") or ""),
             str(context.get("chat_id") or ""),
             str(context.get("thread_id") or ""),
         }
-        return str(subject) in candidates
+        if subject is not None and str(subject) in candidates:
+            return True
+        return False
+
+    def _approval_scope_ids_from_trace_payload(self, trace_payload: dict[str, Any] | None) -> set[str]:
+        if not isinstance(trace_payload, dict):
+            return set()
+        raw = trace_payload.get("approval_scope_ids")
+        values = raw if isinstance(raw, list) else [raw] if isinstance(raw, str) else []
+        return {str(item).strip() for item in values if str(item).strip()}
+
+    def _latest_gateway_user_scope_id(
+        self,
+        *,
+        provider: str,
+        bot_id: str,
+        chat_id: str,
+    ) -> str | None:
+        gateway_key = self.gateway_context._gateway_key(provider=provider, bot_id=bot_id, chat_id=chat_id)  # noqa: SLF001
+        conversation = self.gateway_context.store.get_or_create_conversation(
+            provider=provider,
+            gateway_key=gateway_key,
+            bot_id=bot_id,
+            chat_id=chat_id,
+        )
+        messages = self.gateway_context.store.list_context_messages(conversation["id"], limit=500)
+        latest_user = next(
+            (
+                item
+                for item in reversed(messages)
+                if str(item.get("role") or "") == "user"
+                and str(((item.get("metadata") if isinstance(item.get("metadata"), dict) else {}) or {}).get("source") or "")
+                != f"{provider}.gateway.resume"
+            ),
+            None,
+        )
+        if latest_user is None:
+            latest_user = next((item for item in reversed(messages) if str(item.get("role") or "") == "user"), None)
+        if not latest_user:
+            return None
+        value = str(latest_user.get("id") or "").strip()
+        return value or None
 
     async def handle_text_approval_command(
         self,
@@ -661,7 +847,12 @@ class GatewayManager:
             return None
 
         pending = self.engine.list_approvals(status="pending", limit=500)
-        scoped_pending = [item for item in pending if self._approval_matches_subject(item, subject)]
+        scope_ids = self._approval_scope_ids_from_trace_payload(trace_payload)
+        scoped_pending = [
+            item
+            for item in pending
+            if self._approval_matches_subject(item, subject, scope_ids=scope_ids)
+        ]
         candidate_pool = scoped_pending or pending
 
         if kind == "list":
@@ -681,6 +872,10 @@ class GatewayManager:
             target_ids = [requested_id]
         elif kind in {"approve_all", "reject_all"}:
             target_ids = [item.approval_id for item in candidate_pool]
+        elif kind in {"approve", "reject"} and scoped_pending:
+            # Gateway conversational ergonomics:
+            # in same subject scope, plain "同意/拒绝" approves/rejects all pending items once.
+            target_ids = [item.approval_id for item in scoped_pending]
         elif candidate_pool:
             target_ids = [candidate_pool[-1].approval_id]
 
@@ -730,6 +925,128 @@ class GatewayManager:
             "scope": "subject" if scoped_pending else "global",
             "event_id": approval_action_event.event_id,
         }
+
+    async def _resume_telegram_after_approval(
+        self,
+        *,
+        target_instance: dict[str, Any] | None,
+        token: str,
+        event_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        chat_id = str(event_payload.get("chat_id") or "").strip()
+        bot_id = str(event_payload.get("bot_id") or "").strip() or str(self._telegram_bot_id(token) or "").strip()
+        if not chat_id or not bot_id:
+            return {"resumed": False, "reason": "missing_chat_or_bot_id"}
+
+        gateway_key = self.gateway_context._gateway_key(provider="telegram", bot_id=bot_id, chat_id=chat_id)  # noqa: SLF001
+        conversation = self.gateway_context.store.get_or_create_conversation(
+            provider="telegram",
+            gateway_key=gateway_key,
+            bot_id=bot_id,
+            chat_id=chat_id,
+        )
+        messages = self.gateway_context.store.list_context_messages(conversation["id"], limit=500)
+        latest_user = next(
+            (
+                item
+                for item in reversed(messages)
+                if str(item.get("role") or "") == "user"
+                and str(((item.get("metadata") if isinstance(item.get("metadata"), dict) else {}) or {}).get("source") or "")
+                != "telegram.gateway.resume"
+            ),
+            None,
+        )
+        if latest_user is None:
+            latest_user = next((item for item in reversed(messages) if str(item.get("role") or "") == "user"), None)
+        if not latest_user:
+            return {
+                "resumed": False,
+                "reason": "no_user_message",
+                "conversation_id": conversation["id"],
+            }
+
+        content = str(latest_user.get("content") or "").strip()
+        if not content:
+            return {
+                "resumed": False,
+                "reason": "latest_user_message_empty",
+                "conversation_id": conversation["id"],
+            }
+
+        metadata = latest_user.get("metadata")
+        meta = metadata if isinstance(metadata, dict) else {}
+        attachments = meta.get("attachments")
+        resume_payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "bot_id": bot_id,
+            "sender_id": meta.get("sender_id"),
+            "is_mention": True,
+            "is_reply_to_bot": True,
+            "attachments": attachments if isinstance(attachments, list) else [],
+            "approval_scope_id": str(latest_user.get("id") or "").strip() or None,
+        }
+
+        async def _telegram_result_sender(reply_text: str, ctx: dict[str, Any]) -> bool:
+            notifier = self.build_telegram_notifier(target_instance)
+            if not notifier:
+                return False
+            target_chat_id = str(ctx.get("chat_id") or "").strip() or chat_id
+            return await notifier.send_message(text=reply_text, chat_id=target_chat_id)
+
+        result = await self.gateway_context.ingest_message(
+            provider="telegram",
+            event_payload=resume_payload,
+            source="telegram.gateway.resume",
+            subject=chat_id,
+            text=content,
+            agent_id=self._gateway_agent_id("telegram", target_instance, event_payload=resume_payload),
+            force_execute=True,
+            on_result=_telegram_result_sender,
+        )
+        return {
+            "resumed": True,
+            "conversation_id": result.get("conversation_id"),
+            "task_run_id": result.get("task_run_id"),
+            "runtime_session_id": result.get("runtime_session_id"),
+            "agent_id": result.get("agent_id"),
+        }
+
+    async def _handle_telegram_approval_followup(
+        self,
+        *,
+        target_instance: dict[str, Any] | None,
+        token: str,
+        event_payload: dict[str, Any],
+        approval_command: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        chat_id_for_notice = str(event_payload.get("chat_id") or "").strip() or None
+        if chat_id_for_notice:
+            notifier = self.build_telegram_notifier(target_instance)
+            if notifier:
+                try:
+                    resolved_count = int(approval_command.get("resolved_count") or 0)
+                    status = str(approval_command.get("status") or "")
+                    if resolved_count > 0 and status:
+                        notice = (
+                            f"已{('通过' if status == 'approved' else '拒绝')} {resolved_count} 个审批项。"
+                        )
+                        if status == "approved":
+                            notice += " 正在继续执行任务。"
+                        await notifier.send_message(text=notice, chat_id=chat_id_for_notice)
+                except Exception:
+                    pass
+
+        if (
+            approval_command.get("resolved")
+            and str(approval_command.get("status") or "") == "approved"
+            and int(approval_command.get("resolved_count") or 0) > 0
+        ):
+            return await self._resume_telegram_after_approval(
+                target_instance=target_instance,
+                token=token,
+                event_payload=event_payload,
+            )
+        return None
 
     @staticmethod
     def _query_value(
@@ -1030,6 +1347,25 @@ class GatewayManager:
         )
         if not normalized:
             return {"accepted": False, "reason": "unsupported_telegram_event"}
+
+        payload_obj = normalized.get("payload")
+        payload = payload_obj if isinstance(payload_obj, dict) else {}
+        if normalized.get("event_type") == "chat.message.received":
+            raw_attachments = payload.get("attachments")
+            attachments = [item for item in raw_attachments if isinstance(item, dict)] if isinstance(raw_attachments, list) else []
+            if attachments:
+                downloaded = await self._download_telegram_attachments(
+                    token=token,
+                    chat_id=str(payload.get("chat_id") or ""),
+                    message_id=payload.get("message_id"),
+                    attachments=attachments,
+                )
+                payload["attachments"] = downloaded
+                content = payload.get("content")
+                if isinstance(content, dict):
+                    content["attachments"] = downloaded
+                normalized["payload"] = payload
+
         allowed_chat_ids_raw = tg_cfg.get("allowedChatIds")
         if isinstance(allowed_chat_ids_raw, list) and allowed_chat_ids_raw:
             allowed_chat_ids = {str(item) for item in allowed_chat_ids_raw if str(item).strip()}
@@ -1079,14 +1415,38 @@ class GatewayManager:
                     "event_id": approval_action_event.event_id,
                 }
 
-        text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        text = extract_message_text(payload)
+        attachments_raw = payload.get("attachments")
+        downloaded_attachments = [
+            item for item in attachments_raw if isinstance(item, dict) and str(item.get("local_path") or "").strip()
+        ] if isinstance(attachments_raw, list) else []
+        if not text and downloaded_attachments:
+            text = f"用户上传了 {len(downloaded_attachments)} 个文件，请先读取附件并完成用户请求。"
         gateway_result = None
-        if text and not approval_command:
+        resume_result = None
+        if (text or downloaded_attachments) and not approval_command:
+            approval_scope_ids: list[str] = []
+            if event.event_type == "chat.message.received":
+                chat_id = str(payload.get("chat_id") or "").strip()
+                bot_id = str(payload.get("bot_id") or "").strip() or str(self._telegram_bot_id(token) or "").strip()
+                if chat_id and bot_id:
+                    scope_id = self._latest_gateway_user_scope_id(
+                        provider="telegram",
+                        bot_id=bot_id,
+                        chat_id=chat_id,
+                    )
+                    if scope_id:
+                        approval_scope_ids.append(scope_id)
+
+            trace_payload: dict[str, Any] = dict(data)
+            if approval_scope_ids:
+                trace_payload["approval_scope_ids"] = approval_scope_ids
             approval_command = await self.handle_text_approval_command(
                 text=text,
                 source="telegram.gateway",
                 subject=str(event.subject) if isinstance(event.subject, str) else None,
-                trace_payload=data,
+                trace_payload=trace_payload,
             )
             if not approval_command and event.event_type == "chat.message.received" and isinstance(event.payload, dict):
 
@@ -1107,6 +1467,13 @@ class GatewayManager:
                     force_execute=False,
                     on_result=_telegram_result_sender,
                 )
+        if approval_command and event.event_type in {"chat.message.received", "chat.card.action"}:
+            resume_result = await self._handle_telegram_approval_followup(
+                target_instance=target_instance,
+                token=token,
+                event_payload=payload,
+                approval_command=approval_command,
+            )
 
         return {
             "accepted": True,
@@ -1122,6 +1489,7 @@ class GatewayManager:
             "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
             "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
             "agent_id": gateway_result.get("agent_id") if gateway_result else None,
+            "resume": resume_result,
         }
 
     async def send_telegram_test(self, *, text: str, chat_id: str | None) -> dict[str, Any]:

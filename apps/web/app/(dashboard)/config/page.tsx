@@ -2452,6 +2452,7 @@ export default function ConfigPage() {
         onClose={() => setShowProviderConfigModal(false)}
         title={t('config.modals.provider.title')}
         description={providerConfigForm.provider}
+        maxWidth="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowProviderConfigModal(false)}>
@@ -2496,6 +2497,7 @@ export default function ConfigPage() {
         onClose={() => setShowEditTool(false)}
         title={t('config.modals.tool.title')}
         description={toolForm.id || ''}
+        maxWidth="xl"
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowEditTool(false)} disabled={savingTool}>
@@ -2794,6 +2796,7 @@ export default function ConfigPage() {
         onClose={() => setShowGatewayModal(false)}
         title={t('config.modals.gateway.title')}
         description={gatewayForm.provider}
+        maxWidth="xl"
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowGatewayModal(false)} disabled={savingGateway}>

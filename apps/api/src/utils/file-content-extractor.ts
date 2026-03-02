@@ -109,12 +109,31 @@ async function extractText(filePath: string, mimeType: string): Promise<Extracte
 }
 
 async function extractPdf(filePath: string, mimeType: string): Promise<ExtractedContent> {
-  const { PDFParse } = await import('pdf-parse')
   const buffer = await fs.readFile(filePath)
-  const pdf = new PDFParse({ data: new Uint8Array(buffer) })
-  const textResult = await pdf.getText()
-  await pdf.destroy()
-  let text = textResult.text ?? ''
+  let text = ''
+  try {
+    const { PDFParse } = await import('pdf-parse')
+    const pdf = new PDFParse({ data: new Uint8Array(buffer) })
+    const textResult = await pdf.getText()
+    await pdf.destroy()
+    text = textResult.text ?? ''
+  } catch (error) {
+    extractorLogger.warn('pdf-parse 解析失败，尝试备用方案', {
+      filePath,
+      error: (error as Error).message,
+    })
+  }
+
+  if (!text.trim()) {
+    try {
+      text = await extractPdfWithPdfJs(buffer)
+    } catch (error) {
+      extractorLogger.warn('备用 PDF 提取失败', {
+        filePath,
+        error: (error as Error).message,
+      })
+    }
+  }
   if (text.length > CHAT_UPLOAD_TEXT_TRUNCATE_LENGTH) {
     extractorLogger.warn('PDF 文本超出限制，已截断', {
       originalLength: text.length,
@@ -163,4 +182,29 @@ async function extractImage(filePath: string, mimeType: string): Promise<Extract
   const buffer = await fs.readFile(filePath)
   const base64 = buffer.toString('base64')
   return { text: null, base64, mimeType, isImage: true }
+}
+
+async function extractPdfWithPdfJs(buffer: Buffer): Promise<string> {
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js')
+  const loadingTask = pdfjsLib.getDocument({ data: buffer })
+  const pdfDocument = await loadingTask.promise
+  const parts: string[] = []
+
+  for (let pageIndex = 1; pageIndex <= pdfDocument.numPages; pageIndex += 1) {
+    const page = await pdfDocument.getPage(pageIndex)
+    const content = await page.getTextContent()
+    const items = content.items
+      .map((item) => {
+        if (typeof item === 'string') return item
+        return 'str' in item ? item.str : ''
+      })
+      .filter(Boolean)
+      .join(' ')
+    if (items) {
+      parts.push(`--- Page ${pageIndex} ---\n${items}`)
+    }
+  }
+
+  await pdfDocument.destroy()
+  return parts.join('\n\n')
 }

@@ -36,7 +36,13 @@
     "memory": "Memory",
     "evolution": "Evolution",
     "language": "Language",
-    "switchLanguage": "Switch language"
+    "switchLanguage": "Switch language",
+    "languageOptions": {
+      "zh-CN": "Simplified Chinese",
+      "en-US": "English",
+      "ja-JP": "日本語"
+    },
+    "helpCenter": "Help Center"
   },
   "auth": {
     "login": "Login",
@@ -442,6 +448,7 @@
     "title": "Event Center",
     "subtitle": "Inspect triggered events, matching results, and replay single events.",
     "positioning": "Observe system behavior, quickly locate issues, and create automation rules from events.",
+    "capabilities": "Available actions: filter same type, replay events, and create rules from events.",
     "newRule": "New Rule",
     "filterPlaceholder": "Filter by event type (e.g. task.completed)",
     "apiUnavailable": "Event APIs are not connected yet. Please implement `/v1/events` and `/v1/events/replay`.",
@@ -460,10 +467,17 @@
       "replay": "Replay failed",
       "copy": "Copy failed"
     },
-    "source": "source",
-    "time": "time",
-    "subject": "subject",
+    "source": "Source",
+    "time": "Time",
+    "type": "Type",
+    "subject": "Subject",
     "truncated": " ...",
+    "riskLevel": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "unknown": "Unknown"
+    },
     "categories": {
       "system": "System",
       "task": "Task",
@@ -539,6 +553,13 @@
       "action": "Action {action}",
       "target": "Target {target}"
     },
+    "scopeGroups": {
+      "title": "Grouped by task scope",
+      "scopeLabel": "Scope: {id}",
+      "pendingCount": "{count} pending approvals",
+      "approveScope": "Approve scope",
+      "rejectScope": "Reject scope"
+    },
     "riskLevel": {
       "low": "Low",
       "medium": "Medium",
@@ -598,16 +619,53 @@
     },
     "error": {
       "requiredFields": "Please fill rule name and event type",
+      "invalidConditionsJson": "Invalid conditions JSON",
+      "invalidActionParamsJson": "Invalid action params JSON",
+      "cronRequired": "Please provide both cron job name and schedule",
+      "cronCreateFailed": "Failed to create cron scheduler",
       "save": "Failed to save rule",
       "updateStatus": "Failed to update rule status"
     },
     "form": {
       "ruleName": "Rule name",
       "eventType": "Event type (e.g. tool.exec.failed)",
+      "advancedMode": "Advanced mode (JSON)",
+      "conditionPreset": "Condition preset",
+      "advancedHint": "Use presets by default; switch to advanced mode only for complex rules.",
+      "conditionsJson": "Conditions (JSON)",
+      "actionParamsJson": "Action params (JSON)",
+      "actions": "Actions",
+      "addAction": "Add action",
+      "cronCreateScheduler": "Create/update cron scheduler with this rule",
+      "cronJobName": "Cron job name (trigger_name)",
+      "cronSchedule": "Cron schedule (5-field recommended)",
+      "conditionPresets": {
+        "all": "Match all (no extra condition)",
+        "subjectExists": "Trigger when subject exists",
+        "hasAttachments": "Trigger when message has attachments",
+        "highRisk": "Trigger on high-risk events",
+        "cronAny": "Any cron trigger",
+        "cronNamed": "Cron with trigger name",
+        "cronSchedule": "Cron with schedule"
+      },
+      "eventTypeGroups": {
+        "chat": "Chat",
+        "tool": "Tool",
+        "approval": "Approval",
+        "gateway": "Gateway",
+        "system": "System"
+      },
       "priority": "priority",
       "dedupe": "dedupe(s)",
       "cooldown": "cooldown(s)",
       "budgetPerDay": "budget/day"
+    },
+    "formHelp": {
+      "priority": "priority: higher value means higher execution precedence.",
+      "dedupe": "dedupeWindowSeconds: within this window, same rule + same subject runs only once.",
+      "cooldown": "cooldownSeconds: after one run, this rule will not trigger again during cooldown.",
+      "budgetPerDay": "attentionBudgetPerDay: max trigger count per day (keyed by rule_id:subject).",
+      "cronSchedule": "Prefer 5-field cron (e.g. 0 9 * * 1-5, */5 * * * *); @every:seconds is still supported for compatibility."
     },
     "status": {
       "active": "active",
@@ -617,7 +675,8 @@
       "notify": "notify",
       "runAgent": "run_agent",
       "executePlan": "execute_plan",
-      "writeMemory": "write_memory"
+      "callWebhook": "call_webhook",
+      "logOnly": "log_only"
     },
     "risk": {
       "low": "low",
@@ -787,7 +846,13 @@
     "reject": "Reject",
     "approveAll": "Approve all",
     "rejectAll": "Reject all",
+    "approveScope": "Approve scope",
+    "rejectScope": "Reject scope",
+    "scopeGroups": "Grouped approvals by task scope",
+    "scopeLabel": "Scope: {id}",
+    "scopeCount": "{count} pending",
     "bulkDone": "Bulk {action} completed for {count} approvals.",
+    "scopeDone": "Scope bulk {action} completed for {count} approvals.",
     "moreApprovalsHint": "{count} more approvals hidden. Use approve-all/reject-all.",
     "approvalHint": "After approval, blocked tasks will resume automatically.",
     "sendFailed": "Send failed",
@@ -834,7 +899,13 @@
     "recentSessions": {
       "title": "Recent Sessions",
       "viewAll": "View all",
-      "empty": "No sessions yet. Create your first chat task."
+      "empty": "No sessions yet. Create your first chat task.",
+      "sources": {
+        "web": "Web",
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "gateway": "Gateway"
+      }
     },
     "quickLinks": {
       "title": "Quick Links",
@@ -878,6 +949,31 @@
       "title": "Recent Events",
       "open": "Open Event Center",
       "empty": "No events yet"
+    },
+    "gatewayList": {
+      "title": "Gateway Conversations",
+      "subtitle": "Browse all gateway sessions grouped by source and Chat ID with recent runs.",
+      "searchPlaceholder": "Search Chat ID, conversation ID, run summary, or Run ID",
+      "filterAll": "All sources",
+      "conversations": "{count} conversations",
+      "runs": "{count} runs",
+      "latest": "Last update {time}",
+      "openLatest": "Open latest details",
+      "showingRuns": "Showing latest {shown} of {total} runs",
+      "runFallbackTitle": "Gateway conversation run",
+      "unknownChat": "Unknown chat",
+      "empty": "No matching gateway conversations"
+    },
+    "gatewayDetail": {
+      "title": "Gateway Conversation",
+      "subtitle": "Inspect Telegram/Feishu conversation runs and context messages.",
+      "back": "Back to Dashboard",
+      "conversationId": "Conversation ID",
+      "chatId": "Chat ID",
+      "runs": "Runs",
+      "context": "Context Messages",
+      "emptyRuns": "No runs found",
+      "emptyContext": "No context messages"
     },
     "error": {
       "coreData": "Failed to load dashboard core data. Please check API service.",
@@ -1154,5 +1250,147 @@
   },
   "errorBoundary": {
     "title": "Component failed to load"
+  },
+  "help": {
+    "languageSwitch": "Switch UI language. Labels update immediately for the current page.",
+    "actions": {
+      "refreshDashboard": "Reload dashboard metrics, recent sessions, and recent events."
+    },
+    "nav": {
+      "dashboard": "View overall system health, key metrics, and latest activity.",
+      "sessions": "Create and manage conversations, with context and execution traces.",
+      "events": "Search system events, inspect details, and replay selected events.",
+      "rules": "Configure event matching rules, actions, and risk strategies.",
+      "approvals": "Review and decide high-risk action approvals in one place.",
+      "agents": "Manage agents, models, and runtime behavior.",
+      "skills": "Maintain skill templates and versions to extend agent capabilities.",
+      "mcpServers": "Configure MCP connections for external tools and resources.",
+      "tools": "Manage built-in tool status, risk levels, and runtime parameters.",
+      "config": "Central place for LLM, gateway, API key, and webhook settings.",
+      "helpCenter": "Read feature guides, setup tutorials, and troubleshooting tips."
+    }
+  },
+  "helpCenter": {
+    "title": "Help Center",
+    "subtitle": "Learn feature usage, hover hints, and critical Gateway setup in one place.",
+    "badges": {
+      "hover": "Hover Guidance",
+      "gateway": "Gateway Tutorial",
+      "quickStart": "Quick Start"
+    },
+    "featureGuide": {
+      "title": "Feature Navigation Guide",
+      "subtitle": "Hover each entry for detailed usage notes, or click directly to open the page."
+    },
+    "hoverTips": {
+      "title": "How Hover Help Works",
+      "subtitle": "Hover buttons, nav items, and quick entries to see purpose and impact.",
+      "items": {
+        "1": "Left navigation: hover to learn each module responsibility and scenario.",
+        "2": "Key action buttons: hover to see what data will refresh or change.",
+        "3": "Configuration entries: hover to learn suggested setup order and risks."
+      }
+    },
+    "gatewayTutorial": {
+      "title": "Gateway Setup Tutorial (Critical)",
+      "subtitle": "For Telegram / Feishu integrations, follow the steps in order.",
+      "openConfig": "Open Config Center",
+      "openConfigTip": "Go to Config > Gateway for create, test, and enable/disable operations.",
+      "securityTitle": "Security Recommendation",
+      "securityBody": "For production, enable approvals, restrict allowedChatIds, and rotate token/secret regularly.",
+      "steps": {
+        "prepare": {
+          "title": "Prepare integration parameters",
+          "description": "Collect bot token, webhook callback URL, default agent, and allowed chatId list."
+        },
+        "create": {
+          "title": "Create a Gateway instance",
+          "description": "Choose Telegram or Feishu in Config, fill base connectivity fields, then save."
+        },
+        "policy": {
+          "title": "Set addressing and proactive policies",
+          "description": "Configure addressingPolicy, proactivePolicy, and contextPolicy to avoid noisy triggers."
+        },
+        "test": {
+          "title": "Run connectivity test",
+          "description": "Use \"Test\" to verify outbound connectivity and confirm status becomes ready."
+        },
+        "platformWebhook": {
+          "title": "Configure platform callbacks",
+          "description": "Point Telegram/Feishu callback URLs to the corresponding Semibot Runtime endpoints."
+        },
+        "observe": {
+          "title": "Verify in Events and Sessions",
+          "description": "After sending a real message, confirm inbound events and execution results in gateway session details."
+        }
+      }
+    },
+    "gatewayFaq": {
+      "title": "Gateway FAQ",
+      "items": {
+        "noResponse": {
+          "q": "No bot response after sending message in group. What to check?",
+          "a": "Check webhook status, instance enabled state, bot privacy mode, and pending approvals."
+        },
+        "notInAllowedChatIds": {
+          "q": "Why are some group messages not triggering?",
+          "a": "Most likely the chatId is not in allowedChatIds, or no available agent is bound."
+        },
+        "tokenInvalid": {
+          "q": "Token/secret reported invalid. What should I do?",
+          "a": "Regenerate credentials, update gateway config, and run connectivity test again."
+        },
+        "approvalStuck": {
+          "q": "Why is a task stuck waiting for approval?",
+          "a": "Go to Approvals to decide it, or reduce risk/approval requirement in tool settings."
+        }
+      }
+    },
+    "gatewayProviders": {
+      "feishu": {
+        "title": "Feishu Gateway Detailed Setup",
+        "subtitle": "For Feishu bot event integration and card-action callbacks.",
+        "items": {
+          "credentials": {
+            "title": "Prepare Feishu app credentials",
+            "description": "Get App ID/App Secret from Feishu platform and fill verifyToken / webhookSecret / bot token in Gateway config."
+          },
+          "events": {
+            "title": "Configure event callback URL",
+            "description": "Set event subscription URL to /v1/integrations/feishu/events with public HTTPS access and complete platform verification."
+          },
+          "cardActions": {
+            "title": "Configure card-action callback URL",
+            "description": "Set card action callback URL to /v1/integrations/feishu/card-actions for approve/reject and other interactive actions."
+          },
+          "testAndObserve": {
+            "title": "Test and observe",
+            "description": "After saving, run Gateway test first, then send messages in Feishu group and verify inbound events plus execution traces."
+          }
+        }
+      },
+      "telegram": {
+        "title": "Telegram Gateway Detailed Setup",
+        "subtitle": "For Telegram bot webhook integration and group conversation routing.",
+        "items": {
+          "credentials": {
+            "title": "Prepare bot token and routing defaults",
+            "description": "Get token from BotFather, then configure defaultChatId, allowedChatIds, and chatId -> agentId bindings."
+          },
+          "setWebhook": {
+            "title": "Set Telegram webhook",
+            "description": "Point Telegram webhook to /v1/integrations/telegram/webhook and ensure the URL is public HTTPS reachable by Telegram."
+          },
+          "privacyAndChatId": {
+            "title": "Check privacy mode and chatId",
+            "description": "If bot does not reply in groups, verify bot privacy mode, allowed chat_id list, and gateway enabled state."
+          },
+          "testAndObserve": {
+            "title": "Integration test and verification",
+            "description": "Send test message, then verify chat.message.received in Events and tool execution / reply traces in gateway conversation detail."
+          }
+        }
+      }
+    }
   }
 }

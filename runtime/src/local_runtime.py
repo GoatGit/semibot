@@ -467,6 +467,7 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
             "http_client",
             "csv_xlsx",
             "sql_query_readonly",
+            "rule_authoring",
         }:
             risk_level = "high"
         else:
@@ -481,6 +482,7 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
                     "http_client",
                     "csv_xlsx",
                     "sql_query_readonly",
+                    "rule_authoring",
                 },
             )
         )
@@ -565,6 +567,38 @@ def _serialize_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
     return serialized
 
 
+def _guard_rule_authoring_success_claim(final_response: str, tool_results: list[dict[str, Any]]) -> str:
+    failed_rows = [
+        row
+        for row in tool_results
+        if str(row.get("tool_name") or "").strip() == "rule_authoring" and not bool(row.get("success"))
+    ]
+    if not failed_rows:
+        return final_response
+
+    first_error = str(failed_rows[0].get("error") or "").strip() or "unknown_error"
+    safe = final_response or ""
+    for phrase in (
+        "已创建",
+        "创建成功",
+        "设置成功",
+        "已设置",
+        "设置完成",
+        "任务已设置完成",
+    ):
+        safe = safe.replace(phrase, "尝试创建但未成功")
+
+    notice = (
+        f"注意：规则创建未成功落地（rule_authoring 执行失败：{first_error}）。"
+        "请修正参数后重试。"
+    )
+    if not safe.strip():
+        return notice
+    if notice in safe:
+        return safe
+    return f"{notice}\n\n{safe}"
+
+
 async def run_task_once(
     *,
     task: str,
@@ -572,12 +606,17 @@ async def run_task_once(
     rules_path: str,
     agent_id: str = "semibot",
     session_id: str | None = None,
+    approval_scope_id: str | None = None,
     model: str | None = None,
     system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Run one user task locally and return execution summary."""
     os.environ["SEMIBOT_EVENTS_DB_PATH"] = db_path
+    os.environ["SEMIBOT_RULES_PATH"] = rules_path
     resolved_session_id = session_id or f"local_{int(time.time() * 1000)}_{uuid4().hex[:8]}"
+    resolved_approval_scope_id = (
+        _short_text(approval_scope_id, max_len=80) if isinstance(approval_scope_id, str) else ""
+    ) or resolved_session_id
     runtime_events: list[dict[str, Any]] = []
 
     async def _runtime_event_sink(event: dict[str, Any]) -> None:
@@ -625,9 +664,9 @@ async def run_task_once(
         risk_level = str((metadata.additional or {}).get("risk_level") or "high")
         metadata_additional = metadata.additional if isinstance(metadata.additional, dict) else {}
         scope_session_id = _short_text(
-            params.get("session_id") or resolved_session_id,
+            params.get("session_id") or resolved_approval_scope_id,
             max_len=80,
-        ) or resolved_session_id
+        ) or resolved_approval_scope_id
         scope_key, approval_context = _build_approval_policy(
             tool_name,
             params,
@@ -635,9 +674,11 @@ async def run_task_once(
             scope_session_id,
             metadata_additional,
         )
+        approval_context["runtime_session_id"] = resolved_session_id
+        approval_context["approval_scope_id"] = resolved_approval_scope_id
 
         event_signature = hashlib.sha256(scope_key.encode()).hexdigest()[:16]
-        event_id = f"{resolved_session_id}:{event_signature}"
+        event_id = f"{scope_session_id}:{event_signature}"
 
         approved_history = event_engine.store.list_approvals(status="approved", limit=1000)
         for approved in approved_history:
@@ -748,6 +789,7 @@ async def run_task_once(
         status = "failed" if error else "completed"
         final_response = _extract_final_response(result)
         tool_results = _serialize_tool_results(result)
+        final_response = _guard_rule_authoring_success_claim(final_response, tool_results)
 
         await event_engine.emit(
             Event(

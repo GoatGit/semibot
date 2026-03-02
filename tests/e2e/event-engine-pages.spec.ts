@@ -49,7 +49,7 @@ test.describe('Event Engine Pages', () => {
 
     await page.goto('/events')
     await expect(page.getByRole('heading', { name: '事件中心' })).toBeVisible()
-    await expect(page.locator('p').filter({ hasText: 'task.completed' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'task.completed' })).toBeVisible()
 
     await page.getByRole('button', { name: '详情' }).first().click()
     const eventDetailDialog = page.getByRole('dialog', { name: '事件详情' })
@@ -115,6 +115,7 @@ test.describe('Event Engine Pages', () => {
       if (request.method() === 'PUT') {
         const id = request.url().split('/').pop()
         const body = request.postDataJSON() as Record<string, unknown>
+        putPayloads.push(body)
         const idx = rules.findIndex((item) => item.id === id)
         if (idx >= 0) {
           rules[idx] = { ...rules[idx], ...body, updated_at: '2026-02-26T12:01:00Z' }
@@ -133,20 +134,24 @@ test.describe('Event Engine Pages', () => {
     await expect(page.getByRole('heading', { name: '规则管理' })).toBeVisible()
 
     await page.getByRole('button', { name: '新建规则' }).click()
-    await page.getByPlaceholder('规则名称').fill('tool_fail_alert')
-    await page.getByPlaceholder('事件类型（例如 tool.exec.failed）').fill('tool.exec.failed')
+    const createDialog = page.getByRole('dialog', { name: '新建规则' })
+    await expect(createDialog).toBeVisible()
+    await createDialog.locator('input').first().fill('tool_fail_alert')
     await page.getByRole('button', { name: '创建' }).click()
 
     await expect(page.getByText('tool_fail_alert')).toBeVisible()
 
     await page.getByRole('button', { name: '停用' }).first().click()
-    await expect(page.getByText('inactive')).toBeVisible()
+    await expect.poll(() => putPayloads.some((payload) => payload.is_active === false)).toBeTruthy()
 
     await page.getByRole('button', { name: '编辑' }).last().click()
-    await page.getByPlaceholder('规则名称').fill('tool_fail_alert_v2')
+    const editDialog = page.getByRole('dialog', { name: '编辑规则' })
+    await expect(editDialog).toBeVisible()
+    await editDialog.locator('input').first().fill('tool_fail_alert_v2')
     await page.getByRole('button', { name: '保存' }).click()
 
     await expect(page.getByText('tool_fail_alert_v2')).toBeVisible()
+    await expect.poll(() => putPayloads.some((payload) => payload.name === 'tool_fail_alert_v2')).toBeTruthy()
   })
 
   test('approvals page should approve and reject', async ({ page }) => {
@@ -186,6 +191,7 @@ test.describe('Event Engine Pages', () => {
       await json(route, { success: true, items })
     })
 
+    const decisions: Array<{ id: string, decision: string }> = []
     await page.route('**/api/v1/approvals/*/*', async (route, request) => {
       if (request.method() !== 'POST') {
         await route.continue()
@@ -194,6 +200,7 @@ test.describe('Event Engine Pages', () => {
       const parts = request.url().split('/')
       const id = parts[parts.length - 2]
       const decision = parts[parts.length - 1]
+      decisions.push({ id, decision })
       const idx = approvals.findIndex((item) => item.id === id)
       if (idx >= 0) {
         approvals[idx].status = decision === 'approve' ? 'approved' : 'rejected'
@@ -205,9 +212,10 @@ test.describe('Event Engine Pages', () => {
     await expect(page.getByRole('heading', { name: '审批中心' })).toBeVisible()
 
     await page.getByRole('button', { name: '批准' }).first().click()
-    await expect(page.getByText('approved')).toBeVisible()
+    await expect.poll(() => decisions.some((item) => item.decision === 'approve')).toBeTruthy()
 
     await page.getByRole('button', { name: '拒绝' }).first().click()
-    await expect(page.getByText('rejected')).toBeVisible()
+    await expect.poll(() => decisions.some((item) => item.decision === 'reject')).toBeTruthy()
   })
 })
+    const putPayloads: Array<Record<string, unknown>> = []

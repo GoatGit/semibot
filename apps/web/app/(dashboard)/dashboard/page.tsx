@@ -31,6 +31,39 @@ interface ListResponse<T> {
   meta?: PageMeta
 }
 
+interface GatewayConversationSummary {
+  conversationId: string
+  provider: string
+  gatewayKey: string
+  status: string
+  updatedAt: string
+}
+
+interface RuntimeGatewayConversationsResponse {
+  success: boolean
+  data?: {
+    available?: boolean
+    conversations?: GatewayConversationSummary[]
+  }
+}
+
+interface GatewayConversationRunSummary {
+  runId: string
+  runtimeSessionId: string
+  snapshotVersion: number
+  status: string
+  resultSummary: string
+  updatedAt: string
+}
+
+interface RuntimeGatewayConversationRunsResponse {
+  success: boolean
+  data?: {
+    available?: boolean
+    runs?: GatewayConversationRunSummary[]
+  }
+}
+
 interface DashboardStats {
   agentsTotal: number
   sessionsTotal: number
@@ -40,6 +73,13 @@ interface DashboardStats {
   eventsTotal: number | null
   approvalsPending: number | null
   recentSessions: Session[]
+  recentConversations: Array<{
+    id: string
+    title: string
+    createdAt: string
+    href?: string
+    source: 'web' | 'telegram' | 'feishu' | 'gateway'
+  }>
   recentEvents: Array<{
     id: string
     eventType: string
@@ -63,6 +103,12 @@ function formatRelativeTime(dateString: string, locale: string): string {
   return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 }
 
+function parseGatewayChatId(gatewayKey: string): string {
+  const parts = String(gatewayKey || '').split(':')
+  if (parts.length < 3) return ''
+  return parts.slice(2).join(':')
+}
+
 export default function DashboardPage() {
   const { locale, t } = useLocale()
   const [stats, setStats] = useState<DashboardStats>({
@@ -74,6 +120,7 @@ export default function DashboardPage() {
     eventsTotal: null,
     approvalsPending: null,
     recentSessions: [],
+    recentConversations: [],
     recentEvents: [],
   })
   const [isLoading, setIsLoading] = useState(true)
@@ -84,13 +131,14 @@ export default function DashboardPage() {
       setIsLoading(true)
       setError(null)
 
-      const [agentsRes, sessionsRes, mcpRes, skillsRes, eventsRes, approvalsRes] = await Promise.allSettled([
+      const [agentsRes, sessionsRes, mcpRes, skillsRes, eventsRes, approvalsRes, gatewayConversationsRes] = await Promise.allSettled([
         apiClient.get<ListResponse<unknown>>('/agents', { params: { page: 1, limit: 100 } }),
         apiClient.get<ListResponse<Session>>('/sessions', { params: { page: 1, limit: 10 } }),
         apiClient.get<ListResponse<unknown>>('/mcp', { params: { page: 1, limit: 1 } }),
         apiClient.get<ListResponse<unknown>>('/skill-definitions', { params: { page: 1, limit: 1 } }),
         apiClient.get<{ items?: unknown[] }>('/events', { params: { limit: 5 } }),
         apiClient.get<{ items?: Array<{ status?: string }> }>('/approvals', { params: { status: 'pending', limit: 50 } }),
+        apiClient.get<RuntimeGatewayConversationsResponse>('/runtime/gateway/conversations', { params: { limit: 10 } }),
       ])
 
       const agents = agentsRes.status === 'fulfilled' ? agentsRes.value : null
@@ -105,6 +153,18 @@ export default function DashboardPage() {
         approvalsRes.status === 'fulfilled' && Array.isArray(approvalsRes.value.items)
           ? approvalsRes.value.items
           : []
+      const gatewayConversations =
+        gatewayConversationsRes.status === 'fulfilled' && Array.isArray(gatewayConversationsRes.value.data?.conversations)
+          ? gatewayConversationsRes.value.data!.conversations!
+          : []
+      const gatewayRunsRes = await Promise.allSettled(
+        gatewayConversations.slice(0, 10).map((item) => (
+          apiClient.get<RuntimeGatewayConversationRunsResponse>(
+            `/runtime/gateway/conversations/${encodeURIComponent(item.conversationId)}/runs`,
+            { params: { limit: 6 } }
+          )
+        ))
+      )
 
       if (!agents && !sessions) {
         throw new Error(t('dashboard.error.coreData'))
@@ -112,6 +172,71 @@ export default function DashboardPage() {
 
       const recentSessions = sessions?.data ?? []
       const sessionsActive = recentSessions.filter((s) => s.status === 'active').length
+      const webRecent = recentSessions.map((session) => ({
+        id: `web:${session.id}`,
+        title: session.title || t('chatLayout.untitled'),
+        createdAt: session.createdAt,
+        href: `/chat/${session.id}`,
+        source: 'web' as const,
+      }))
+      const gatewayRecent = gatewayConversations.flatMap((item, index) => {
+        const provider = String(item.provider || '').toLowerCase()
+        const source = (
+          provider === 'telegram'
+            ? 'telegram'
+            : provider === 'feishu'
+              ? 'feishu'
+              : 'gateway'
+        ) as 'telegram' | 'feishu' | 'gateway'
+        const chatId = parseGatewayChatId(item.gatewayKey)
+        const sourceLabel = t(`dashboard.recentSessions.sources.${source}`)
+        const runsPayload =
+          gatewayRunsRes[index]?.status === 'fulfilled' && Array.isArray(gatewayRunsRes[index].value.data?.runs)
+            ? gatewayRunsRes[index].value.data!.runs!
+            : []
+
+        if (runsPayload.length === 0) {
+          return [{
+            id: `gateway:${item.conversationId}`,
+            title: chatId ? `${sourceLabel} · ${chatId}` : `${sourceLabel} · ${item.conversationId.slice(0, 8)}`,
+            createdAt: item.updatedAt,
+            source,
+            href: `/gateway-conversations/${encodeURIComponent(item.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}`,
+          }]
+        }
+
+        return runsPayload.map((run) => {
+          const runHint = run.resultSummary?.trim()
+          const title = runHint
+            ? runHint
+            : `${sourceLabel} · ${chatId || item.conversationId.slice(0, 8)}`
+          return {
+            id: `gateway-run:${run.runId}`,
+            title,
+            createdAt: run.updatedAt,
+            source,
+            href: `/gateway-conversations/${encodeURIComponent(item.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}&runId=${encodeURIComponent(run.runId)}`,
+          }
+        })
+      })
+      const mergedRecent = [...webRecent, ...gatewayRecent]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      const maxRecentRows = 6
+      const minGatewayRows = 3
+      const baseRecent = mergedRecent.slice(0, maxRecentRows)
+      const baseGatewayCount = baseRecent.filter((item) => item.source !== 'web').length
+      const extraGatewayNeeded = Math.max(0, Math.min(minGatewayRows, gatewayRecent.length) - baseGatewayCount)
+      const extraGatewayItems =
+        extraGatewayNeeded > 0
+          ? mergedRecent
+              .filter((item) => item.source !== 'web' && !baseRecent.some((base) => base.id === item.id))
+              .slice(0, extraGatewayNeeded)
+          : []
+      const recentConversations = (
+        extraGatewayItems.length > 0
+          ? [...baseRecent.slice(0, Math.max(0, maxRecentRows - extraGatewayItems.length)), ...extraGatewayItems]
+          : baseRecent
+      ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
       setStats({
         agentsTotal: agents?.meta?.total ?? agents?.data?.length ?? 0,
@@ -120,6 +245,7 @@ export default function DashboardPage() {
         mcpTotal: mcp ? (mcp.meta?.total ?? mcp.data?.length ?? 0) : null,
         skillsTotal: skills ? (skills.meta?.total ?? skills.data?.length ?? 0) : null,
         recentSessions,
+        recentConversations,
         eventsTotal: events.length,
         approvalsPending: pendingApprovals.length,
         recentEvents: events
@@ -206,6 +332,7 @@ export default function DashboardPage() {
                   leftIcon={<RefreshCw size={16} />}
                   onClick={load}
                   disabled={isLoading}
+                  title={t('help.actions.refreshDashboard')}
                 >
                   {t('common.refresh')}
                 </Button>
@@ -242,7 +369,7 @@ export default function DashboardPage() {
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.recentSessions.title')}</h2>
-                <Link href="/chat" className="text-sm text-primary-400 hover:text-primary-300">
+                <Link href="/gateway-conversations" className="text-sm text-primary-400 hover:text-primary-300">
                   {t('dashboard.recentSessions.viewAll')}
                 </Link>
               </div>
@@ -254,30 +381,52 @@ export default function DashboardPage() {
                       className="h-14 animate-pulse rounded-lg border border-border-subtle bg-bg-elevated/60"
                     />
                   ))
-                ) : stats.recentSessions.length > 0 ? (
-                  stats.recentSessions.slice(0, 6).map((session) => (
-                    <Link
-                      key={session.id}
-                      href={`/chat/${session.id}`}
-                      className={clsx(
-                        'group flex items-center justify-between rounded-lg border px-3 py-3',
-                        'border-border-subtle bg-bg-surface hover:border-border-strong'
-                      )}
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-text-primary">
-                          {session.title || t('chatLayout.untitled')}
-                        </p>
-                        <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
-                          <Clock3 size={12} />
-                          {formatRelativeTime(session.createdAt, locale)}
+                ) : stats.recentConversations.length > 0 ? (
+                  stats.recentConversations.map((item) => (
+                    item.href ? (
+                      <Link
+                        key={item.id}
+                        href={item.href}
+                        className={clsx(
+                          'group flex items-center justify-between rounded-lg border px-3 py-3',
+                          'border-border-subtle bg-bg-surface hover:border-border-strong'
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-text-primary">
+                            {item.title}
+                          </p>
+                          <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
+                            <Clock3 size={12} />
+                            {formatRelativeTime(item.createdAt, locale)}
+                            <Badge variant="outline">{t(`dashboard.recentSessions.sources.${item.source}`)}</Badge>
+                          </div>
+                        </div>
+                        <ArrowRight
+                          size={14}
+                          className="text-text-tertiary transition-transform group-hover:translate-x-0.5"
+                        />
+                      </Link>
+                    ) : (
+                      <div
+                        key={item.id}
+                        className={clsx(
+                          'flex items-center justify-between rounded-lg border px-3 py-3',
+                          'border-border-subtle bg-bg-surface'
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-text-primary">
+                            {item.title}
+                          </p>
+                          <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
+                            <Clock3 size={12} />
+                            {formatRelativeTime(item.createdAt, locale)}
+                            <Badge variant="outline">{t(`dashboard.recentSessions.sources.${item.source}`)}</Badge>
+                          </div>
                         </div>
                       </div>
-                      <ArrowRight
-                        size={14}
-                        className="text-text-tertiary transition-transform group-hover:translate-x-0.5"
-                      />
-                    </Link>
+                    )
                   ))
                 ) : (
                   <p className="rounded-lg border border-border-subtle bg-bg-surface px-4 py-6 text-sm text-text-secondary">
@@ -300,6 +449,7 @@ export default function DashboardPage() {
                 <QuickLink href="/tools" title={t('dashboard.quickLinks.items.tools.title')} desc={t('dashboard.quickLinks.items.tools.desc')} />
                 <QuickLink href="/config" title={t('dashboard.quickLinks.items.config.title')} desc={t('dashboard.quickLinks.items.config.desc')} />
                 <QuickLink href="/mcp" title={t('dashboard.quickLinks.items.mcp.title')} desc={t('dashboard.quickLinks.items.mcp.desc')} />
+                <QuickLink href="/help" title={t('nav.helpCenter')} desc={t('help.nav.helpCenter')} />
               </div>
               <div className="mt-5 rounded-lg border border-border-subtle bg-bg-elevated/70 p-3 text-xs text-text-secondary">
                 <div className="flex items-center gap-2">
@@ -364,6 +514,7 @@ function QuickLink({ href, title, desc }: { href: string; title: string; desc: s
   return (
     <Link
       href={href}
+      title={desc}
       className={clsx(
         'group block rounded-lg border border-border-subtle px-3 py-3',
         'bg-bg-surface hover:border-border-strong'

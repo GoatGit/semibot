@@ -195,7 +195,7 @@ export const DEFAULT_THEME = 'dark' as const
 // ═══════════════════════════════════════════════════════════════
 
 /** 可用语言 */
-export const LANGUAGES = ['zh-CN', 'en-US'] as const
+export const LANGUAGES = ['zh-CN', 'en-US', 'ja-JP'] as const
 
 /** 默认语言 */
 export const DEFAULT_LANGUAGE = 'zh-CN' as const

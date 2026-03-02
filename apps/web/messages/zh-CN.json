@@ -36,7 +36,13 @@
     "memory": "记忆",
     "evolution": "进化",
     "language": "语言",
-    "switchLanguage": "切换语言"
+    "switchLanguage": "切换语言",
+    "languageOptions": {
+      "zh-CN": "简体中文",
+      "en-US": "English",
+      "ja-JP": "日本語"
+    },
+    "helpCenter": "帮助中心"
   },
   "auth": {
     "login": "登录",
@@ -442,6 +448,7 @@
     "title": "事件中心",
     "subtitle": "查看系统触发事件、匹配结果，并支持单事件回放。",
     "positioning": "用于观察系统行为、快速定位异常，并从事件直接创建自动化规则。",
+    "capabilities": "可直接执行：同类筛选、回放事件、从事件创建规则。",
     "newRule": "新建规则",
     "filterPlaceholder": "按事件类型过滤（例如 task.completed）",
     "apiUnavailable": "事件 API 尚未接入，请先实现 `/v1/events` 与 `/v1/events/replay`。",
@@ -462,8 +469,15 @@
     },
     "source": "来源",
     "time": "时间",
+    "type": "类型",
     "subject": "主题",
     "truncated": " ...",
+    "riskLevel": {
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "unknown": "未知"
+    },
     "categories": {
       "system": "系统",
       "task": "任务",
@@ -539,6 +553,13 @@
       "action": "执行动作 {action}",
       "target": "目标 {target}"
     },
+    "scopeGroups": {
+      "title": "按任务分组（去重）",
+      "scopeLabel": "Scope: {id}",
+      "pendingCount": "待审批 {count} 项",
+      "approveScope": "通过该组",
+      "rejectScope": "拒绝该组"
+    },
     "riskLevel": {
       "low": "低",
       "medium": "中",
@@ -598,16 +619,53 @@
     },
     "error": {
       "requiredFields": "请填写规则名称和事件类型",
+      "invalidConditionsJson": "conditions JSON 格式错误",
+      "invalidActionParamsJson": "action params JSON 格式错误",
+      "cronRequired": "请填写 Cron 任务名称和调度表达式",
+      "cronCreateFailed": "创建 Cron 调度失败",
       "save": "保存规则失败",
       "updateStatus": "更新规则状态失败"
     },
     "form": {
       "ruleName": "规则名称",
       "eventType": "事件类型（例如 tool.exec.failed）",
+      "advancedMode": "高级模式（JSON）",
+      "conditionPreset": "触发条件模板",
+      "advancedHint": "默认用模板即可；只有复杂规则再开启高级模式手写 JSON。",
+      "conditionsJson": "触发条件（JSON）",
+      "actionParamsJson": "动作参数（JSON）",
+      "actions": "动作列表",
+      "addAction": "新增动作",
+      "cronCreateScheduler": "联动创建/更新 Cron 调度器",
+      "cronJobName": "Cron 任务名（trigger_name）",
+      "cronSchedule": "Cron 调度表达式（推荐 5 段）",
+      "conditionPresets": {
+        "all": "全部命中（无额外条件）",
+        "subjectExists": "有 subject 时触发",
+        "hasAttachments": "有附件消息时触发",
+        "highRisk": "高风险事件触发",
+        "cronAny": "任意 Cron 触发",
+        "cronNamed": "按名称触发的 Cron",
+        "cronSchedule": "包含 schedule 的 Cron"
+      },
+      "eventTypeGroups": {
+        "chat": "Chat",
+        "tool": "Tool",
+        "approval": "Approval",
+        "gateway": "Gateway",
+        "system": "System"
+      },
       "priority": "priority",
       "dedupe": "dedupe(s)",
       "cooldown": "cooldown(s)",
       "budgetPerDay": "budget/day"
+    },
+    "formHelp": {
+      "priority": "priority：优先级（越大越先处理）。",
+      "dedupe": "dedupeWindowSeconds：去重窗口。窗口内同规则 + 同 subject 只执行一次。",
+      "cooldown": "cooldownSeconds：冷却时间。规则执行后，冷却期内不再触发。",
+      "budgetPerDay": "attentionBudgetPerDay：每天最多触发次数上限（按 rule_id:subject 计数）。",
+      "cronSchedule": "推荐 5 段 Cron（如 0 9 * * 1-5、*/5 * * * *）；@every:秒 仍兼容。"
     },
     "status": {
       "active": "启用",
@@ -617,7 +675,8 @@
       "notify": "notify",
       "runAgent": "run_agent",
       "executePlan": "execute_plan",
-      "writeMemory": "write_memory"
+      "callWebhook": "call_webhook",
+      "logOnly": "log_only"
     },
     "risk": {
       "low": "low",
@@ -787,7 +846,13 @@
     "reject": "拒绝",
     "approveAll": "全部通过",
     "rejectAll": "全部拒绝",
+    "approveScope": "通过该组",
+    "rejectScope": "拒绝该组",
+    "scopeGroups": "按任务分组审批",
+    "scopeLabel": "Scope: {id}",
+    "scopeCount": "{count} 项待审批",
     "bulkDone": "已批量{action} {count} 条审批。",
+    "scopeDone": "已按任务分组批量{action} {count} 条审批。",
     "moreApprovalsHint": "另有 {count} 条待审批，建议使用“全部通过/全部拒绝”。",
     "approvalHint": "通过后会自动继续执行被阻塞的任务。",
     "sendFailed": "发送失败",
@@ -834,7 +899,13 @@
     "recentSessions": {
       "title": "最近会话",
       "viewAll": "查看全部",
-      "empty": "暂无会话，去创建第一个对话任务。"
+      "empty": "暂无会话，去创建第一个对话任务。",
+      "sources": {
+        "web": "Web",
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "gateway": "Gateway"
+      }
     },
     "quickLinks": {
       "title": "快捷入口",
@@ -878,6 +949,31 @@
       "title": "最近事件",
       "open": "进入事件中心",
       "empty": "暂无事件数据"
+    },
+    "gatewayList": {
+      "title": "网关会话总览",
+      "subtitle": "按来源与 Chat ID 分组查看全部网关会话和最近执行记录。",
+      "searchPlaceholder": "搜索 Chat ID、会话ID、运行摘要或 Run ID",
+      "filterAll": "全部来源",
+      "conversations": "会话 {count}",
+      "runs": "运行 {count}",
+      "latest": "最近更新 {time}",
+      "openLatest": "查看最新详情",
+      "showingRuns": "展示最近 {shown} / 共 {total} 条运行",
+      "runFallbackTitle": "网关会话运行",
+      "unknownChat": "未知 Chat",
+      "empty": "暂无匹配的网关会话"
+    },
+    "gatewayDetail": {
+      "title": "网关会话详情",
+      "subtitle": "查看 Telegram/Feishu 网关会话的执行记录与上下文。",
+      "back": "返回仪表盘",
+      "conversationId": "会话ID",
+      "chatId": "Chat ID",
+      "runs": "执行记录",
+      "context": "上下文消息",
+      "emptyRuns": "暂无执行记录",
+      "emptyContext": "暂无上下文消息"
     },
     "error": {
       "coreData": "无法加载仪表盘核心数据，请检查 API 服务状态",
@@ -1154,5 +1250,147 @@
   },
   "errorBoundary": {
     "title": "组件加载失败"
+  },
+  "help": {
+    "languageSwitch": "切换界面语言。选择后会立即更新当前页面文案。",
+    "actions": {
+      "refreshDashboard": "重新拉取仪表盘统计、最近会话与事件信息。"
+    },
+    "nav": {
+      "dashboard": "查看系统总览、关键指标和最近活动。",
+      "sessions": "创建与管理对话，查看会话上下文和执行结果。",
+      "events": "检索系统事件，查看触发记录并支持事件回放。",
+      "rules": "配置事件匹配规则、执行动作与风险策略。",
+      "approvals": "集中处理高风险操作审批，保障自动执行可控。",
+      "agents": "管理智能体能力、模型与运行状态。",
+      "skills": "维护技能模板与技能版本，扩展智能体能力。",
+      "mcpServers": "配置 MCP 服务连接，为智能体接入外部工具与资源。",
+      "tools": "查看和管理内建工具开关、风险与参数配置。",
+      "config": "统一管理 LLM、Gateway、API Key 与 Webhook 配置。",
+      "helpCenter": "查看功能说明、配置教程与常见问题排障指南。"
+    }
+  },
+  "helpCenter": {
+    "title": "帮助中心",
+    "subtitle": "在一个页面里快速掌握系统功能、hover 提示规则，以及 Gateway 关键配置教程。",
+    "badges": {
+      "hover": "全站 Hover 说明",
+      "gateway": "Gateway 配置教程",
+      "quickStart": "快速上手"
+    },
+    "featureGuide": {
+      "title": "功能导航速览",
+      "subtitle": "每个入口都可悬停查看详细用途说明，也可直接点击进入对应页面。"
+    },
+    "hoverTips": {
+      "title": "Hover 使用方式",
+      "subtitle": "在按钮、导航项、快捷入口上悬停，可查看操作目的与影响范围。",
+      "items": {
+        "1": "左侧导航：悬停可查看该模块的职责与适用场景。",
+        "2": "关键按钮：悬停可查看该操作会刷新或变更哪些内容。",
+        "3": "配置项入口：悬停可查看推荐配置顺序与风险提示。"
+      }
+    },
+    "gatewayTutorial": {
+      "title": "Gateway 配置详细教程（重点）",
+      "subtitle": "适用于 Telegram / Feishu 网关接入，建议按顺序完成以下步骤。",
+      "openConfig": "打开配置中心",
+      "openConfigTip": "前往配置中心的 Gateway 区域进行新增、测试与启停。",
+      "securityTitle": "安全建议",
+      "securityBody": "生产环境建议启用审批策略、限制 allowedChatIds、并定期轮换 token/secret。",
+      "steps": {
+        "prepare": {
+          "title": "准备接入参数",
+          "description": "提前准备 bot token、webhook 回调地址、默认 agent 以及允许接入的 chatId 清单。"
+        },
+        "create": {
+          "title": "新建 Gateway 实例",
+          "description": "在配置中心选择 Telegram 或 Feishu，填写基础连接参数并保存实例。"
+        },
+        "policy": {
+          "title": "配置寻址与主动策略",
+          "description": "设置 addressingPolicy、proactivePolicy 与 contextPolicy，避免误触发和过度打扰。"
+        },
+        "test": {
+          "title": "执行连通性测试",
+          "description": "点击“测试”确认出站链路可达，并观察状态是否为 ready。"
+        },
+        "platformWebhook": {
+          "title": "配置第三方平台回调",
+          "description": "将 Telegram/Feishu 平台回调 URL 指向 Semibot Runtime 对应接口。"
+        },
+        "observe": {
+          "title": "在事件中心与会话页验证",
+          "description": "发送真实消息后，在事件中心确认已入站，在网关会话详情查看执行与回传结果。"
+        }
+      }
+    },
+    "gatewayFaq": {
+      "title": "Gateway 常见问题",
+      "items": {
+        "noResponse": {
+          "q": "群里发消息后机器人无响应怎么办？",
+          "a": "优先检查 webhook 是否生效、实例是否启用、Bot 隐私模式与审批是否阻塞。"
+        },
+        "notInAllowedChatIds": {
+          "q": "为什么某些群聊消息没有触发？",
+          "a": "通常是 chatId 不在 allowedChatIds 内，或该会话未绑定可用 agent。"
+        },
+        "tokenInvalid": {
+          "q": "提示 token/secret 无效怎么办？",
+          "a": "重新签发凭据后更新 Gateway 配置，并执行一次连通性测试。"
+        },
+        "approvalStuck": {
+          "q": "任务一直等待审批如何处理？",
+          "a": "前往审批中心通过/拒绝，或在工具配置中下调该工具风险级别与审批策略。"
+        }
+      }
+    },
+    "gatewayProviders": {
+      "feishu": {
+        "title": "Feishu 网关详细配置",
+        "subtitle": "适用于飞书机器人事件接入与卡片审批回调。",
+        "items": {
+          "credentials": {
+            "title": "准备飞书应用参数",
+            "description": "在飞书开放平台获取 App ID、App Secret，并在 Gateway 中填写 verifyToken / webhookSecret / bot token。"
+          },
+          "events": {
+            "title": "配置事件订阅回调地址",
+            "description": "将飞书事件订阅地址指向 /v1/integrations/feishu/events，确保公网 HTTPS 可访问并完成订阅校验。"
+          },
+          "cardActions": {
+            "title": "配置卡片动作回调地址",
+            "description": "将卡片回调地址指向 /v1/integrations/feishu/card-actions，用于审批同意/拒绝等交互动作。"
+          },
+          "testAndObserve": {
+            "title": "联调与观察",
+            "description": "保存后先做 Gateway 测试，再在飞书群发消息，确认事件中心出现入站事件并在会话详情看到执行记录。"
+          }
+        }
+      },
+      "telegram": {
+        "title": "Telegram 网关详细配置",
+        "subtitle": "适用于 Telegram Bot webhook 接入与群聊会话路由。",
+        "items": {
+          "credentials": {
+            "title": "准备 Bot Token 与默认路由",
+            "description": "在 BotFather 获取 token，配置 defaultChatId、allowedChatIds 以及 chatId -> agentId 绑定。"
+          },
+          "setWebhook": {
+            "title": "设置 Telegram Webhook",
+            "description": "将 Telegram webhook 指向 /v1/integrations/telegram/webhook，确保 URL 为公网 HTTPS 且可被 Telegram 访问。"
+          },
+          "privacyAndChatId": {
+            "title": "检查隐私模式与 chatId",
+            "description": "群内不响应时，先检查 Bot 隐私模式、群 chat_id 是否在允许列表，并确认网关实例已启用。"
+          },
+          "testAndObserve": {
+            "title": "联调与回归验证",
+            "description": "发送测试消息后，在事件中心确认 chat.message.received，在网关会话详情确认工具调用与回传结果。"
+          }
+        }
+      }
+    }
   }
 }

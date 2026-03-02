@@ -52,6 +52,7 @@ interface PendingApproval {
   id: string
   status: string
   eventId?: string
+  approvalScopeId?: string
   riskLevel: string
   summary?: string
   toolName?: string
@@ -59,6 +60,7 @@ interface PendingApproval {
   target?: string
   reason?: string
   createdAt: string
+  context?: Record<string, unknown>
 }
 
 function isAgent2UIMessage(value: unknown): value is Agent2UIMessage {
@@ -180,11 +182,21 @@ function normalizePendingApprovals(raw: unknown, sessionId: string): PendingAppr
       const target = typeof record.target === 'string' ? record.target : undefined
       const reason = typeof record.reason === 'string' ? record.reason : undefined
       const createdAt = typeof record.createdAt === 'string' ? record.createdAt : (typeof record.created_at === 'string' ? record.created_at : new Date().toISOString())
+      const context = record.context && typeof record.context === 'object'
+        ? (record.context as Record<string, unknown>)
+        : undefined
+      const approvalScopeId =
+        (typeof record.approval_scope_id === 'string' && record.approval_scope_id.trim())
+          ? record.approval_scope_id
+          : (typeof context?.approval_scope_id === 'string' && context.approval_scope_id.trim())
+            ? (context.approval_scope_id as string)
+            : undefined
 
       return {
         id,
         status,
         eventId,
+        approvalScopeId,
         riskLevel,
         summary,
         toolName,
@@ -192,6 +204,7 @@ function normalizePendingApprovals(raw: unknown, sessionId: string): PendingAppr
         target,
         reason,
         createdAt,
+        context,
       } as PendingApproval
     })
     .filter((item): item is PendingApproval => item !== null)
@@ -229,6 +242,7 @@ export default function ChatSessionPage() {
   const [approvalError, setApprovalError] = useState<string | null>(null)
   const [actingApprovalId, setActingApprovalId] = useState<string | null>(null)
   const [bulkApprovalAction, setBulkApprovalAction] = useState<'approve' | 'reject' | null>(null)
+  const [scopeApprovalAction, setScopeApprovalAction] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -383,6 +397,16 @@ export default function ChatSessionPage() {
     [pendingApprovals]
   )
   const hiddenApprovalCount = Math.max(0, pendingApprovals.length - visibleApprovals.length)
+  const groupedApprovals = useMemo(() => {
+    const groups = new Map<string, PendingApproval[]>()
+    pendingApprovals.forEach((approval) => {
+      const scopeId = approval.approvalScopeId || approval.eventId || approval.id
+      const arr = groups.get(scopeId)
+      if (arr) arr.push(approval)
+      else groups.set(scopeId, [approval])
+    })
+    return Array.from(groups.entries()).map(([scopeId, approvals]) => ({ scopeId, approvals }))
+  }, [pendingApprovals])
 
   // 加载会话数据
   useEffect(() => {
@@ -627,7 +651,7 @@ export default function ChatSessionPage() {
   }, [actingApprovalId, isSending, loadPendingApprovals, sendCommandMessage])
 
   const handleBulkApprovalDecision = useCallback(async (decision: 'approve' | 'reject') => {
-    if (isSending || actingApprovalId || bulkApprovalAction || pendingApprovals.length === 0) return
+    if (isSending || actingApprovalId || bulkApprovalAction || scopeApprovalAction || pendingApprovals.length === 0) return
     setBulkApprovalAction(decision)
     try {
       const endpoint = decision === 'approve' ? 'approve' : 'reject'
@@ -652,7 +676,33 @@ export default function ChatSessionPage() {
     } finally {
       setBulkApprovalAction(null)
     }
-  }, [actingApprovalId, bulkApprovalAction, isSending, loadPendingApprovals, pendingApprovals, t])
+  }, [actingApprovalId, bulkApprovalAction, isSending, loadPendingApprovals, pendingApprovals, scopeApprovalAction, t])
+
+  const handleScopeApprovalDecision = useCallback(async (scopeId: string, decision: 'approve' | 'reject') => {
+    if (isSending || actingApprovalId || bulkApprovalAction || scopeApprovalAction) return
+    const group = groupedApprovals.find((item) => item.scopeId === scopeId)
+    if (!group || group.approvals.length === 0) return
+    setScopeApprovalAction(`${scopeId}:${decision}`)
+    setApprovalError(null)
+    try {
+      const endpoint = decision === 'approve' ? 'approve' : 'reject'
+      await Promise.all(group.approvals.map((approval) => apiClient.post(`/approvals/${approval.id}/${endpoint}`, {})))
+      setDisplayMessages((prev) => [
+        ...prev,
+        {
+          id: `approval-scope-${Date.now()}`,
+          role: 'assistant',
+          content: t('chatSession.scopeDone', { count: group.approvals.length, action: decision === 'approve' ? t('chatSession.approve') : t('chatSession.reject') }),
+          timestamp: new Date(),
+        },
+      ])
+      await loadPendingApprovals()
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : t('chatSession.error.bulkApproval'))
+    } finally {
+      setScopeApprovalAction(null)
+    }
+  }, [actingApprovalId, bulkApprovalAction, groupedApprovals, isSending, loadPendingApprovals, scopeApprovalAction, t])
 
   // 键盘事件处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -842,7 +892,7 @@ export default function ChatSessionPage() {
                     size="xs"
                     variant="secondary"
                     loading={bulkApprovalAction === 'approve'}
-                    disabled={isSending || !!actingApprovalId || !!bulkApprovalAction}
+                    disabled={isSending || !!actingApprovalId || !!bulkApprovalAction || !!scopeApprovalAction}
                     onClick={() => void handleBulkApprovalDecision('approve')}
                   >
                     {t('chatSession.approveAll')}
@@ -851,7 +901,7 @@ export default function ChatSessionPage() {
                     size="xs"
                     variant="destructive"
                     loading={bulkApprovalAction === 'reject'}
-                    disabled={isSending || !!actingApprovalId || !!bulkApprovalAction}
+                    disabled={isSending || !!actingApprovalId || !!bulkApprovalAction || !!scopeApprovalAction}
                     onClick={() => void handleBulkApprovalDecision('reject')}
                   >
                     {t('chatSession.rejectAll')}
@@ -873,6 +923,43 @@ export default function ChatSessionPage() {
 
               {approvalError && (
                 <p className="mt-2 text-xs text-error-400">{approvalError}</p>
+              )}
+
+              {groupedApprovals.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  <p className="text-[11px] text-text-tertiary">{t('chatSession.scopeGroups')}</p>
+                  {groupedApprovals.map((group) => (
+                    <div
+                      key={group.scopeId}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-subtle bg-bg-elevated px-2 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-xs text-text-primary break-words">{t('chatSession.scopeLabel', { id: group.scopeId })}</p>
+                        <p className="text-[11px] text-text-tertiary">{t('chatSession.scopeCount', { count: group.approvals.length })}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          loading={scopeApprovalAction === `${group.scopeId}:approve`}
+                          disabled={isSending || !!actingApprovalId || !!bulkApprovalAction || !!scopeApprovalAction}
+                          onClick={() => void handleScopeApprovalDecision(group.scopeId, 'approve')}
+                        >
+                          {t('chatSession.approveScope')}
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="destructive"
+                          loading={scopeApprovalAction === `${group.scopeId}:reject`}
+                          disabled={isSending || !!actingApprovalId || !!bulkApprovalAction || !!scopeApprovalAction}
+                          onClick={() => void handleScopeApprovalDecision(group.scopeId, 'reject')}
+                        >
+                          {t('chatSession.rejectScope')}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
 
               <div className="mt-2 space-y-2">
@@ -901,7 +988,7 @@ export default function ChatSessionPage() {
                         size="xs"
                         variant="secondary"
                         loading={actingApprovalId === `${approval.id}:approve`}
-                        disabled={isSending || !!actingApprovalId}
+                        disabled={isSending || !!actingApprovalId || !!bulkApprovalAction || !!scopeApprovalAction}
                         leftIcon={<Check size={12} />}
                         onClick={() => void handleApprovalDecision(approval.id, 'approve')}
                       >
@@ -911,7 +998,7 @@ export default function ChatSessionPage() {
                         size="xs"
                         variant="destructive"
                         loading={actingApprovalId === `${approval.id}:reject`}
-                        disabled={isSending || !!actingApprovalId}
+                        disabled={isSending || !!actingApprovalId || !!bulkApprovalAction || !!scopeApprovalAction}
                         leftIcon={<X size={12} />}
                         onClick={() => void handleApprovalDecision(approval.id, 'reject')}
                       >

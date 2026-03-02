@@ -155,6 +155,22 @@ class RuntimeConfigStore:
                 CREATE INDEX IF NOT EXISTS idx_gateway_instances_provider ON gateway_instances(provider);
                 CREATE INDEX IF NOT EXISTS idx_gateway_instances_active ON gateway_instances(is_active);
                 CREATE INDEX IF NOT EXISTS idx_gateway_instances_default ON gateway_instances(provider, is_default);
+
+                CREATE TABLE IF NOT EXISTS cron_jobs (
+                  id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL UNIQUE,
+                  schedule TEXT NOT NULL,
+                  event_type TEXT NOT NULL,
+                  source TEXT NOT NULL DEFAULT 'system.cron',
+                  subject TEXT,
+                  payload_json TEXT NOT NULL DEFAULT '{}',
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  deleted_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_active ON cron_jobs(is_active);
                 """
             )
         self._seed_gateway_configs()
@@ -1035,3 +1051,134 @@ class RuntimeConfigStore:
                 """
             ).fetchall()
         return [self._mcp_row_to_dict(row) for row in rows]
+
+    def _cron_job_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "schedule": row["schedule"],
+            "event_type": row["event_type"],
+            "source": row["source"],
+            "subject": row["subject"],
+            "payload": _json_loads(row["payload_json"], {}),
+            "is_active": bool(row["is_active"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_cron_jobs(self, *, active_only: bool = True) -> list[dict[str, Any]]:
+        where_clause = "deleted_at IS NULL"
+        if active_only:
+            where_clause += " AND is_active = 1"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM cron_jobs
+                WHERE {where_clause}
+                ORDER BY name ASC
+                """
+            ).fetchall()
+        return [self._cron_job_row_to_dict(row) for row in rows]
+
+    def get_cron_job(self, name: str) -> dict[str, Any] | None:
+        safe_name = str(name or "").strip()
+        if not safe_name:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM cron_jobs
+                WHERE name = ? AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (safe_name,),
+            ).fetchone()
+        return self._cron_job_row_to_dict(row) if row else None
+
+    def upsert_cron_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("cron_job_name_required")
+        schedule = str(payload.get("schedule") or "").strip()
+        if not schedule:
+            raise ValueError("cron_job_schedule_required")
+
+        event_type = str(payload.get("event_type") or "cron.job.tick").strip() or "cron.job.tick"
+        source = str(payload.get("source") or "system.cron").strip() or "system.cron"
+        subject = payload.get("subject")
+        safe_subject = str(subject).strip() if isinstance(subject, str) else None
+        raw_payload = payload.get("payload")
+        payload_map = raw_payload if isinstance(raw_payload, dict) else {}
+        is_active = bool(payload.get("is_active", True))
+        now = _now_iso()
+
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT id FROM cron_jobs
+                WHERE name = ? AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (name,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE cron_jobs
+                    SET schedule = ?, event_type = ?, source = ?, subject = ?,
+                        payload_json = ?, is_active = ?, updated_at = ?, deleted_at = NULL
+                    WHERE name = ?
+                    """,
+                    (
+                        schedule,
+                        event_type,
+                        source,
+                        safe_subject,
+                        _json_dumps(payload_map),
+                        1 if is_active else 0,
+                        now,
+                        name,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO cron_jobs (
+                      id, name, schedule, event_type, source, subject, payload_json,
+                      is_active, created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    """,
+                    (
+                        str(uuid4()),
+                        name,
+                        schedule,
+                        event_type,
+                        source,
+                        safe_subject,
+                        _json_dumps(payload_map),
+                        1 if is_active else 0,
+                        now,
+                        now,
+                    ),
+                )
+
+        item = self.get_cron_job(name)
+        if item is None:
+            raise ValueError("cron_job_upsert_failed")
+        return item
+
+    def soft_delete_cron_job(self, name: str) -> bool:
+        safe_name = str(name or "").strip()
+        if not safe_name:
+            return False
+        now = _now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE cron_jobs
+                SET deleted_at = ?, is_active = 0, updated_at = ?
+                WHERE name = ? AND deleted_at IS NULL
+                """,
+                (now, now, safe_name),
+            )
+        return cur.rowcount > 0

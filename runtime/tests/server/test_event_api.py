@@ -235,6 +235,100 @@ async def test_event_api_sessions_agents_and_memory_endpoints(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_scheduler_cron_job_endpoints_and_persistence(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_resp = await client.post(
+            "/v1/scheduler/cron-jobs",
+            json={
+                "name": "workday_digest",
+                "schedule": "0 9 * * 1-5",
+                "event_type": "cron.job.tick",
+                "source": "system.cron",
+                "subject": "system",
+                "payload": {"channel": "chat"},
+            },
+        )
+        assert create_resp.status_code == 200
+        assert create_resp.json()["accepted"] is True
+
+        listing = await client.get("/v1/scheduler/cron-jobs")
+        assert listing.status_code == 200
+        names = {item["name"] for item in listing.json()["data"]}
+        assert "workday_digest" in names
+
+        delete_resp = await client.delete("/v1/scheduler/cron-jobs/workday_digest")
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["removed"] is True
+
+    # Re-open with same DB and verify deleted job does not reappear.
+    app2 = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport2 = httpx.ASGITransport(app=app2)
+    async with httpx.AsyncClient(transport=transport2, base_url="http://testserver") as client:
+        listing = await client.get("/v1/scheduler/cron-jobs")
+        assert listing.status_code == 200
+        names = {item["name"] for item in listing.json()["data"]}
+        assert "workday_digest" not in names
+
+
+@pytest.mark.asyncio
+async def test_rule_crud_and_simulate_endpoints(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_resp = await client.post(
+            "/v1/rules",
+            json={
+                "name": "chat_subject_exists",
+                "event_type": "chat.message.received",
+                "conditions": {"all": [{"field": "subject", "op": "exists", "value": True}]},
+                "action_mode": "suggest",
+                "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+                "risk_level": "low",
+                "priority": 55,
+            },
+        )
+        assert create_resp.status_code == 200
+        created = create_resp.json()
+        rule_id = created["id"]
+
+        update_resp = await client.put(
+            f"/v1/rules/{rule_id}",
+            json={"priority": 88},
+        )
+        assert update_resp.status_code == 200
+        assert update_resp.json()["priority"] == 88
+
+        sim_resp = await client.post(
+            "/v1/rules/simulate",
+            json={
+                "rule_id": rule_id,
+                "event": {
+                    "event_type": "chat.message.received",
+                    "source": "test",
+                    "subject": "sess_1",
+                    "payload": {"message": "hello"},
+                },
+            },
+        )
+        assert sim_resp.status_code == 200
+        assert sim_resp.json()["matched"] is True
+
+        delete_resp = await client.delete(f"/v1/rules/{rule_id}")
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["rule_id"] == rule_id
+
+
+@pytest.mark.asyncio
 async def test_event_api_run_task_endpoint(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"

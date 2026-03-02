@@ -181,6 +181,15 @@ class EventEngine:
     def start_cron_jobs(self, jobs: list[dict[str, object]]) -> int:
         return self.trigger_scheduler.start_cron_jobs(jobs)
 
+    def upsert_cron_job(self, job: dict[str, object]) -> bool:
+        return self.trigger_scheduler.upsert_cron_job(job)
+
+    def list_cron_jobs(self) -> list[dict[str, object]]:
+        return self.trigger_scheduler.list_cron_jobs()
+
+    def remove_cron_job(self, name: str) -> bool:
+        return self.trigger_scheduler.remove_cron_job(name)
+
     async def stop_triggers(self) -> None:
         await self.trigger_scheduler.stop()
 

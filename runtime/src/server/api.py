@@ -22,10 +22,10 @@ from src.events.event_engine import EventEngine
 from src.events.event_router import EventRouter
 from src.events.event_store import EventStore
 from src.events.models import Event
-from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.events.runtime_action_executor import RuntimeActionExecutor
 from src.gateway.context_service import GatewayContextService
 from src.gateway.manager import GatewayManager
+from src.services.rule_service import RuleService, RuleServiceError
 from src.gateway.notifiers.feishu_notifier import SendFn
 from src.gateway.notifiers.telegram_notifier import SendFn as TelegramSendFn
 from src.gateway.parsers.approval_text import extract_message_text
@@ -56,12 +56,66 @@ class HeartbeatRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class CronJobUpsertRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    schedule: str = Field(min_length=1, max_length=120)
+    event_type: str = Field(default="cron.job.tick", min_length=1, max_length=160)
+    source: str = Field(default="system.cron", min_length=1, max_length=160)
+    subject: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class RunTaskRequest(BaseModel):
     task: str
     agent_id: str = "semibot"
     session_id: str | None = None
     model: str | None = None
     system_prompt: str | None = None
+
+
+class RuleActionRequest(BaseModel):
+    action_type: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    target: str | None = None
+
+
+class CreateRuleRequest(BaseModel):
+    id: str | None = None
+    name: str
+    event_type: str
+    conditions: dict[str, Any] = Field(default_factory=lambda: {"all": []})
+    action_mode: str = "suggest"
+    actions: list[RuleActionRequest]
+    risk_level: str = "low"
+    priority: int = 50
+    dedupe_window_seconds: int = 300
+    cooldown_seconds: int = 600
+    attention_budget_per_day: int = 10
+    is_active: bool = True
+    cron: dict[str, Any] | None = None
+    override_reason: str | None = None
+
+
+class UpdateRuleRequest(BaseModel):
+    name: str | None = None
+    event_type: str | None = None
+    conditions: dict[str, Any] | None = None
+    action_mode: str | None = None
+    actions: list[RuleActionRequest] | None = None
+    risk_level: str | None = None
+    priority: int | None = None
+    dedupe_window_seconds: int | None = None
+    cooldown_seconds: int | None = None
+    attention_budget_per_day: int | None = None
+    is_active: bool | None = None
+    cron: dict[str, Any] | None = None
+    override_reason: str | None = None
+
+
+class SimulateRuleRequest(BaseModel):
+    rule: dict[str, Any] | None = None
+    rule_id: str | None = None
+    event: dict[str, Any]
 
 
 class ChatStartRequest(BaseModel):
@@ -105,7 +159,9 @@ def create_app(
     _task_runner = task_runner or run_task_once
     # Expose runtime db path for tool-level config readers (e.g. SearchTool).
     os.environ["SEMIBOT_EVENTS_DB_PATH"] = db
+    os.environ["SEMIBOT_RULES_PATH"] = rules
     config_store = RuntimeConfigStore(db_path=db)
+    rule_service = RuleService(rules_path=rules, db_path=db)
     gateway_context = GatewayContextService(
         db_path=db,
         config_store=config_store,
@@ -171,6 +227,9 @@ def create_app(
         engine.start_rule_watch(poll_interval=1.0)
         if heartbeat_interval_seconds and heartbeat_interval_seconds > 0:
             engine.start_heartbeat(interval_seconds=heartbeat_interval_seconds)
+        persisted_cron_jobs = config_store.list_cron_jobs(active_only=True)
+        if persisted_cron_jobs:
+            engine.start_cron_jobs(persisted_cron_jobs)
         if cron_jobs:
             normalized_jobs = [
                 {str(key): value for key, value in item.items()}
@@ -795,6 +854,34 @@ def create_app(
         outcomes = await engine.emit(event)
         return {"event_id": event.event_id, "matched_rules": len(outcomes)}
 
+    @app.get("/v1/scheduler/cron-jobs")
+    async def list_cron_jobs() -> dict[str, Any]:
+        return {"data": config_store.list_cron_jobs(active_only=False)}
+
+    @app.post("/v1/scheduler/cron-jobs")
+    async def upsert_cron_job(req: CronJobUpsertRequest) -> dict[str, Any]:
+        job_payload = {
+            "name": req.name,
+            "schedule": req.schedule,
+            "event_type": req.event_type,
+            "source": req.source,
+            "subject": req.subject,
+            "payload": req.payload,
+        }
+        accepted = engine.upsert_cron_job(job_payload)
+        if not accepted:
+            raise HTTPException(status_code=400, detail="invalid_cron_job")
+        config_store.upsert_cron_job(job_payload)
+        return {"accepted": True, "data": config_store.list_cron_jobs(active_only=False)}
+
+    @app.delete("/v1/scheduler/cron-jobs/{name}")
+    async def delete_cron_job(name: str) -> dict[str, Any]:
+        runtime_removed = engine.remove_cron_job(name)
+        removed = config_store.soft_delete_cron_job(name)
+        if not runtime_removed and not removed:
+            raise HTTPException(status_code=404, detail="cron_job_not_found")
+        return {"removed": True}
+
     @app.post("/v1/events/replay")
     async def replay_event(req: ReplayEventRequest) -> dict[str, Any]:
         outcomes = await engine.replay_event(req.event_id)
@@ -817,22 +904,64 @@ def create_app(
 
     @app.get("/v1/rules")
     async def list_rules() -> dict[str, Any]:
-        loaded = load_rules(rules)
-        return {"items": rules_to_json(loaded)}
+        return {"items": rule_service.list_rules()}
+
+    @app.post("/v1/rules")
+    async def create_rule(req: CreateRuleRequest) -> dict[str, Any]:
+        payload = req.model_dump(exclude_none=True)
+        payload["actions"] = [item.model_dump(exclude_none=True) for item in req.actions]
+        try:
+            created = rule_service.create_rule(payload)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        return created
+
+    @app.put("/v1/rules/{rule_id}")
+    async def update_rule_endpoint(rule_id: str, req: UpdateRuleRequest) -> dict[str, Any]:
+        payload = req.model_dump(exclude_none=True)
+        if req.actions is not None:
+            payload["actions"] = [item.model_dump(exclude_none=True) for item in req.actions]
+        try:
+            updated = rule_service.update_rule(rule_id, payload)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        return updated
+
+    @app.delete("/v1/rules/{rule_id}")
+    async def delete_rule_endpoint(rule_id: str) -> dict[str, Any]:
+        try:
+            deleted = rule_service.delete_rule(rule_id)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        return deleted
+
+    @app.post("/v1/rules/simulate")
+    async def simulate_rule_endpoint(req: SimulateRuleRequest) -> dict[str, Any]:
+        try:
+            return rule_service.simulate_rule(req.model_dump(exclude_none=True))
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
     @app.post("/v1/rules/{rule_id}/enable")
     async def enable_rule(rule_id: str) -> dict[str, Any]:
-        updated = set_rule_active(rules, rule_id, active=True)
-        if not updated:
-            raise HTTPException(status_code=404, detail="rule_not_found")
-        return {"rule_id": rule_id, "is_active": True}
+        try:
+            result = rule_service.enable_rule(rule_id)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        return {"rule_id": rule_id, "is_active": bool(result.get("active", False))}
 
     @app.post("/v1/rules/{rule_id}/disable")
     async def disable_rule(rule_id: str) -> dict[str, Any]:
-        updated = set_rule_active(rules, rule_id, active=False)
-        if not updated:
-            raise HTTPException(status_code=404, detail="rule_not_found")
-        return {"rule_id": rule_id, "is_active": False}
+        try:
+            result = rule_service.disable_rule(rule_id)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        return {"rule_id": rule_id, "is_active": bool(result.get("active", True))}
 
     @app.get("/v1/approvals")
     async def list_approvals(

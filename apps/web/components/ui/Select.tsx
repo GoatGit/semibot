@@ -68,6 +68,7 @@ export function Select({
   const flat = flatOptions(options)
   const selectedOption = flat.find((o) => o.value === value)
   const resolvedPlaceholder = placeholder ?? t('ui.select.placeholder')
+  const triggerTitle = selectedOption?.label ?? resolvedPlaceholder
 
   const close = useCallback(() => {
     setOpen(false)
@@ -165,6 +166,7 @@ export function Select({
           }
         }}
         onKeyDown={handleKeyDown}
+        title={triggerTitle}
         className={clsx(
           'w-full rounded-md text-left flex items-center justify-between gap-2',
           'bg-bg-surface border',
@@ -226,7 +228,7 @@ export function Select({
                         aria-selected={opt.value === value}
                         onClick={() => handleSelect(opt)}
                         className={clsx(
-                          'px-3 py-2 text-sm cursor-pointer',
+                          'px-3 py-2 pl-6 text-sm cursor-pointer',
                           'transition-colors duration-fast',
                           opt.value === value && 'text-primary-500 bg-primary-500/10',
                           opt.value !== value && 'text-text-primary',

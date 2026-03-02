@@ -1,0 +1,1396 @@
+{
+  "common": {
+    "confirm": "確認",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "delete": "削除",
+    "edit": "編集",
+    "create": "作成",
+    "search": "検索",
+    "loading": "読み込み中…",
+    "noData": "データがありません",
+    "retry": "再試行",
+    "back": "戻る",
+    "close": "閉じる",
+    "submit": "送信",
+    "reset": "リセット",
+    "copy": "コピー",
+    "copied": "コピー済み",
+    "refresh": "更新"
+  },
+  "nav": {
+    "dashboard": "ダッシュボード",
+    "agents": "エージェント",
+    "sessions": "会話",
+    "events": "イベント",
+    "rules": "ルール",
+    "approvals": "承認",
+    "skills": "スキル",
+    "tools": "ツール",
+    "config": "設定",
+    "settings": "設定",
+    "logs": "ログ",
+    "apiKeys": "API キー",
+    "mcpServers": "MCP サーバー",
+    "webhooks": "Webhook",
+    "memory": "メモリ",
+    "evolution": "進化",
+    "language": "言語",
+    "switchLanguage": "言語を切り替える",
+    "languageOptions": {
+      "zh-CN": "簡体字中国語",
+      "en-US": "英語",
+      "ja-JP": "日本語"
+    },
+    "helpCenter": "ヘルプセンター"
+  },
+  "auth": {
+    "login": "ログイン",
+    "logout": "ログアウト",
+    "register": "登録",
+    "email": "メールアドレス",
+    "password": "パスワード",
+    "forgotPassword": "パスワードをお忘れですか？",
+    "resetPassword": "パスワードをリセット"
+  },
+  "agent": {
+    "name": "名前",
+    "description": "説明",
+    "systemPrompt": "システムプロンプト",
+    "runtimeEngine": "実行エンジン",
+    "model": "モデル",
+    "status": "ステータス",
+    "active": "有効",
+    "inactive": "無効",
+    "createAgent": "エージェント作成",
+    "editAgent": "エージェント編集",
+    "deleteAgent": "エージェント削除",
+    "deleteConfirm": "このエージェントを削除してもよろしいですか？"
+  },
+  "chat": {
+    "placeholder": "メッセージを入力…",
+    "send": "送信",
+    "newChat": "新しい会話",
+    "thinking": "思考中…",
+    "connecting": "接続中…",
+    "reconnecting": "再接続中…",
+    "disconnected": "接続が切断されました",
+    "connectionFailed": "接続に失敗しました"
+  },
+  "error": {
+    "unknown": "不明なエラー",
+    "networkError": "ネットワークエラーです。接続を確認してください",
+    "unauthorized": "認証されていません。再ログインしてください",
+    "forbidden": "アクセスが拒否されました",
+    "notFound": "リソースが見つかりません",
+    "serverError": "サーバーエラーです。しばらくしてから再試行してください",
+    "rateLimited": "リクエストが多すぎます。しばらくしてから再試行してください",
+    "validationError": "入力検証に失敗しました"
+  },
+  "form": {
+    "required": "この項目は必須です",
+    "invalidEmail": "有効なメールアドレスを入力してください",
+    "minLength": "最低 {min} 文字必要です",
+    "maxLength": "最大 {max} 文字までです",
+    "invalidUrl": "有効な URL を入力してください"
+  },
+  "mcp": {
+    "title": "MCP サーバー",
+    "subtitle": "エージェント向けの外部ツールとリソースを提供する MCP サーバーを管理します",
+    "addServer": "サーバー追加",
+    "searchPlaceholder": "サーバーを検索…",
+    "system": "システム",
+    "noDescription": "説明がありません",
+    "testAndSync": "テスト & 同期",
+    "transport": {
+      "stdio": {
+        "description": "ローカルにインストールされた MCP サーバーをローカルコマンドで起動します"
+      },
+      "sse": {
+        "description": "Server-Sent Events（旧プロトコル）でリモート MCP サーバーに接続します"
+      },
+      "streamableHttp": {
+        "description": "Streamable HTTP（推奨）でリモート MCP サーバーに接続します"
+      }
+    },
+    "form": {
+      "transport": "転送方式",
+      "name": "名前",
+      "namePlaceholder": "例: filesystem, github, time",
+      "description": "説明",
+      "descriptionPlaceholder": "この MCP サーバーの説明を入力",
+      "optional": "（任意）",
+      "systemMcp": "システム MCP として設定（全組織で表示）",
+      "endpointLabel": {
+        "command": "コマンド"
+      },
+      "endpointHint": {
+        "command": "実行コマンドを引数込みで入力（例: uvx mcp-server-time --local-timezone=Asia/Tokyo）",
+        "sse": "MCP Server の SSE エンドポイント URL を入力（通常 /sse で終わる）",
+        "streamableHttp": "MCP Server の HTTP エンドポイント URL を入力（通常 /mcp で終わる、推奨）"
+      },
+      "apiKeyHint": {
+        "stdio": "任意。サブプロセスへ MCP_API_KEY 環境変数として渡します",
+        "http": "任意。Authorization: Bearer <key> ヘッダーとして送信します"
+      }
+    },
+    "status": {
+      "connected": "接続済み",
+      "connecting": "接続中",
+      "error": "接続に失敗しました",
+      "disconnected": "未接続"
+    },
+    "tools": {
+      "notSynced": "ツール一覧は未同期です。「同期」をクリックしてください",
+      "count": "{count} ツール"
+    },
+    "resources": {
+      "count": "{count} リソース"
+    },
+    "error": {
+      "load": "MCP サーバーの読み込みに失敗しました",
+      "create": "MCP サーバーの作成に失敗しました",
+      "delete": "MCP サーバーの削除に失敗しました",
+      "test": "接続テストに失敗しました",
+      "update": "MCP サーバーの更新に失敗しました",
+      "batchTest": "一括テスト完了。{failed}/{total} 件が失敗しました",
+      "batchDelete": "一括削除完了。{failed}/{total} 件が失敗しました"
+    },
+    "batch": {
+      "selectAllVisible": "表示中をすべて選択",
+      "selectedCount": "{count} 件の MCP を選択中",
+      "testAndSync": "一括テスト & 同期",
+      "delete": "一括削除"
+    },
+    "confirm": {
+      "batchDelete": "選択した {count} 件の MCP サーバーを削除しますか？"
+    },
+    "empty": {
+      "filteredTitle": "一致するサーバーが見つかりません",
+      "filteredDescription": "検索条件を調整してください",
+      "clearSearch": "検索をクリア",
+      "defaultTitle": "まだ MCP サーバーがありません",
+      "defaultDescription": "最初の MCP サーバーを追加して開始してください"
+    },
+    "modal": {
+      "addTitle": "MCP サーバー追加",
+      "editTitle": "MCP サーバー編集"
+    }
+  },
+  "config": {
+    "header": {
+      "title": "設定",
+      "subtitle": "LLM、ツール、ゲートウェイ、API キー、Webhook を一元管理します。"
+    },
+    "loading": "設定を読み込み中…",
+    "common": {
+      "notSet": "未設定"
+    },
+    "status": {
+      "available": "利用可能",
+      "configured": "設定済み",
+      "notConfigured": "未設定",
+      "connected": "接続済み",
+      "disconnected": "未接続",
+      "enabled": "有効",
+      "disabled": "無効"
+    },
+    "errors": {
+      "llmLoad": "LLM 設定の読み込みに失敗しました",
+      "runtimeToolsLoad": "Runtime 内蔵ツールの読み取りに失敗しました",
+      "toolsConfigLoad": "ツール設定の読み込みに失敗しました（Runtime ツールを表示中）",
+      "toolsLoad": "ツール一覧の読み込みに失敗しました",
+      "gatewaysLoad": "ゲートウェイの読み込みに失敗しました",
+      "apiKeysLoad": "API キー一覧の読み込みに失敗しました",
+      "webhooksLoad": "Webhook 一覧の読み込みに失敗しました",
+      "saveDefaultModel": "デフォルトモデル設定の保存に失敗しました",
+      "saveProvider": "プロバイダ設定の保存に失敗しました",
+      "timeoutInvalid": "timeout は 1000 以上の整数（ms）である必要があります",
+      "retryAttemptsInvalid": "retryAttempts は 0 から 5 の間である必要があります",
+      "apiEndpointInvalid": "apiEndpoint は有効な URL である必要があります",
+      "httpAuthHeaderRequired": "authType=api_key の場合は authHeader が必須です",
+      "maxReadBytesInvalid": "maxReadBytes は正の整数である必要があります",
+      "maxTextLengthInvalid": "maxTextLength は 100 から 500000 の間である必要があります",
+      "maxResponseCharsInvalid": "maxResponseChars は 100 から 500000 の間である必要があります",
+      "maxRowsInvalid": "maxRows は 1 から 5000 の間である必要があります",
+      "sqlConnectionsRowInvalid": "{count} 件の接続行が未入力です（alias または dsn が空）",
+      "sqlConnectionsDuplicateAlias": "重複した接続 alias が {count} 件あります。修正して再試行してください",
+      "missingToolId": "ツール ID がないため保存できません",
+      "updateToolConfig": "ツール設定の更新に失敗しました",
+      "updateToolStatus": "ツール状態の更新に失敗しました",
+      "updateGateway": "ゲートウェイ設定の更新に失敗しました",
+      "deleteGateway": "ゲートウェイインスタンスの削除に失敗しました",
+      "testGateway": "ゲートウェイ接続テストに失敗しました",
+      "gatewayBindingsImportInvalid": "インポート失敗: {count} 行の形式が不正です。",
+      "gatewayBindingsPartial": "Chat バインディングに {count} 件の未入力行があります。",
+      "createApiKey": "API キー作成に失敗しました",
+      "deleteApiKey": "API キー削除に失敗しました",
+      "webhookUrlInvalid": "Webhook URL は http(s) 形式である必要があります",
+      "webhookSecretMin": "Webhook secret は {min} 文字以上必要です",
+      "webhookEventRequired": "イベントを1つ以上設定してください",
+      "createWebhook": "Webhook 作成に失敗しました",
+      "updateWebhook": "Webhook 更新に失敗しました",
+      "testWebhook": "Webhook テストに失敗しました",
+      "deleteWebhook": "Webhook 削除に失敗しました"
+    },
+    "confirm": {
+      "deleteApiKey": "この API キーを削除しますか？この操作は元に戻せません。",
+      "deleteWebhook": "この Webhook を削除しますか？この操作は元に戻せません。",
+      "deleteGateway": "このゲートウェイインスタンスを削除しますか？この操作は元に戻せません。",
+      "deleteGateways": "選択した {count} 件のゲートウェイインスタンスを削除しますか？この操作は元に戻せません。",
+      "gatewayBindingsDuplicate": "重複した chat ID が {count} 件見つかりました。各 chat ID の最後の1件だけ残して続行しますか？",
+      "gatewayBindingsOutsideAllowed": "{count} 件のバインディングが allowedChatIds 外にあり、反映されない可能性があります。続行しますか？"
+    },
+    "llm": {
+      "routingDefaults": "モデルルーティング既定値",
+      "saveRouting": "ルーティング既定値を保存",
+      "providerConfig": "プロバイダ設定",
+      "viewModels": "モデルを表示"
+    },
+    "tools": {
+      "activeCount": "有効 {count}",
+      "configTitle": "ツール設定（ON/OFF とパラメータのみ）",
+      "loading": "ツールを読み込み中…",
+      "empty": "ツール設定データがありません（V2 は追加/削除非対応）",
+      "risk": "リスク",
+      "approval": "承認",
+      "approvalScope": "スコープ",
+      "on": "オン",
+      "off": "オフ",
+      "builtIn": "内蔵",
+      "configure": "設定",
+      "disable": "無効化",
+      "enable": "有効化"
+    },
+    "gateways": {
+      "title": "ゲートウェイ",
+      "activeCount": "有効 {count}",
+      "newTelegram": "Telegram を追加",
+      "newFeishu": "Feishu を追加",
+      "filterAll": "すべて",
+      "filterTelegram": "Telegram",
+      "filterFeishu": "Feishu",
+      "selectAllVisible": "表示中をすべて選択",
+      "selectedCount": "{count} 件選択中",
+      "batchEnable": "一括有効化",
+      "batchDisable": "一括無効化",
+      "batchTest": "一括テスト",
+      "batchDelete": "一括削除",
+      "batchSelectHint": "先に1件以上のゲートウェイを選択してください。",
+      "batchNoDeletable": "デフォルトインスタンスのみ選択されています。一括削除できません。",
+      "batchPartialFailed": "一括操作は一部失敗しました: 成功 {success}、失敗 {failed}。",
+      "batchTestPartialFailed": "一括テストは一部失敗しました: 成功 {success}、失敗 {failed}。",
+      "defaultTag": "デフォルト",
+      "loading": "ゲートウェイを読み込み中…",
+      "empty": "ゲートウェイがありません",
+      "chatBindingsSummary": "Chat バインディング: {count}",
+      "chatBindingsNone": "Chat バインディングなし",
+      "chatBindingsMore": "+{count} 件",
+      "quickEditBindings": "クイック編集",
+      "quickSaveBindings": "バインディングを保存",
+      "importBindingsPlaceholder": "chatId=agentId 形式で貼り付け（chatId のみならデフォルト agent）",
+      "applyImportedBindings": "インポートを適用",
+      "agent": "エージェント",
+      "updatedAt": "更新日時",
+      "test": "テスト"
+    },
+    "apiKeys": {
+      "newKey": "新しいキー",
+      "loading": "API キーを読み込み中…",
+      "empty": "API キーがありません",
+      "lastUsed": "最終使用",
+      "expires": "有効期限"
+    },
+    "webhooks": {
+      "newWebhook": "新しい Webhook",
+      "loading": "Webhook を読み込み中…",
+      "empty": "Webhook がありません",
+      "events": "イベント",
+      "createdAt": "作成日時"
+    },
+    "modals": {
+      "provider": {
+        "title": "LLM プロバイダを編集",
+        "apiKeyPlaceholder": "新しい API キー（空欄で変更なし）",
+        "clearApiKey": "既存 API キーをクリア"
+      },
+      "tool": {
+        "title": "ツール設定",
+        "description": "V2 は内蔵ツールのパラメータおよび有効/無効のみ対応。名称/タイプ変更や追加/削除は非対応です。",
+        "namePlaceholder": "ツール名",
+        "typePlaceholder": "ツールタイプ",
+        "timeoutPlaceholder": "timeout ms（任意、>=1000）",
+        "retryAttemptsPlaceholder": "retryAttempts（任意、0-5）",
+        "hitl": "高リスク操作で HITL 承認を要求",
+        "riskLevel": "リスクレベル",
+        "approvalScope": "承認グループ化スコープ",
+        "approvalScopeHint": "類似承認のグループ化単位を制御しノイズを減らします。",
+        "approvalDedupeKeysPlaceholder": "approvalDedupeKeys（任意、カンマ区切り。例: url,selector）",
+        "approvalScopes": {
+          "session": "セッション単位でグループ化（推奨）",
+          "sessionAction": "セッション + アクション単位でグループ化",
+          "action": "アクション単位でグループ化",
+          "target": "アクション + 対象単位でグループ化",
+          "tool": "ツール単位でグループ化",
+          "call": "呼び出しごと"
+        },
+        "apiEndpointPlaceholder": "API endpoint（任意）",
+        "apiKeyPlaceholder": "API key（空欄で変更なし）",
+        "noApiNeeded": "{tool} は API endpoint / API key を必要としません。",
+        "rootPathPlaceholder": "Root path（任意、例: /Users/xxx）",
+        "maxReadBytesPlaceholder": "maxReadBytes（任意、正の整数）",
+        "http": {
+          "allowLocalhost": "localhost / 内部ネットワークへのアクセスを許可",
+          "allowedDomainsPlaceholder": "allowedDomains（任意、カンマ区切り。例: api.example.com）",
+          "blockedDomainsPlaceholder": "blockedDomains（任意、カンマ区切り）",
+          "maxResponseCharsPlaceholder": "maxResponseChars（任意、100-500000）",
+          "authType": "デフォルト認証タイプ",
+          "authHeaderPlaceholder": "authHeader（例: X-API-Key）",
+          "authTypes": {
+            "none": "認証なし",
+            "bearer": "Bearer トークン",
+            "basic": "Basic 認証（呼び出しごとにユーザー名/パスワード指定）",
+            "apiKey": "API キーヘッダー"
+          }
+        },
+        "sql": {
+          "maxRowsPlaceholder": "maxRows（任意、1-5000）",
+          "defaultDatabasePlaceholder": "defaultDatabase（任意、既定 DB エイリアス）",
+          "allowedDatabasesPlaceholder": "allowedDatabases（任意、カンマ区切り）",
+          "connectionsLabel": "connections（データベース alias マップ）",
+          "addConnection": "接続を追加",
+          "connectionAliasPlaceholder": "Alias（例: main）",
+          "connectionDsnPlaceholder": "DSN（例: postgresql://... または sqlite:///...）",
+          "connectionsHint": "1 行に 1 接続を設定: alias は DB キー、dsn は接続文字列です。"
+        },
+        "browser": {
+          "headless": "ヘッドレスモードでブラウザを実行",
+          "allowLocalhost": "localhost / 内部ネットワークへのアクセスを許可",
+          "browserType": "ブラウザ種類",
+          "allowedDomainsPlaceholder": "allowedDomains（任意、カンマ区切り。例: example.com,news.ycombinator.com）",
+          "blockedDomainsPlaceholder": "blockedDomains（任意、カンマ区切り）",
+          "maxTextLengthPlaceholder": "maxTextLength（任意、100-500000）"
+        }
+      },
+      "gateway": {
+        "title": "ゲートウェイ設定",
+        "instanceKeyPlaceholder": "instanceKey（任意、重複しない値推奨）",
+        "displayNamePlaceholder": "表示名",
+        "agentIdPlaceholder": "エージェント ID（既定: semibot）",
+        "chatBindingsTitle": "Chat バインディング",
+        "chatBindingsEmpty": "Chat バインディングがありません。追加してチャットごとにエージェントを振り分けます。",
+        "addChatBinding": "バインディング追加",
+        "removeChatBinding": "削除",
+        "importBindingsPlaceholder": "chatId=agentId 形式で貼り付け（chatId のみなら既定 agent を使用）",
+        "applyImportedBindings": "インポート適用",
+        "chatIdPlaceholder": "チャット ID",
+        "chatBindingAgentPlaceholder": "エージェント ID",
+        "setDefault": "デフォルトインスタンスとして設定",
+        "enabled": "このゲートウェイを有効化",
+        "notifyEventTypesPlaceholder": "notifyEventTypes（任意、カンマ区切り）",
+        "addressing": {
+          "title": "アドレッシングポリシー",
+          "modeLabel": "メッセージトリガーモード",
+          "modeMentionOnly": "@mention / 返信 / コマンド時のみトリガー",
+          "modeAllMessages": "グループ内すべてのメッセージでトリガー",
+          "allowReplyToBot": "Bot メッセージへの返信を addressed とみなす",
+          "executeOnUnaddressed": "addressed でなくても実行（注意して使用）",
+          "commandPrefixesPlaceholder": "commandPrefixes（任意、カンマ区切り。例: /ask,/run,/approve,/reject）",
+          "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec（正の整数秒）"
+        },
+        "proactive": {
+          "title": "プロアクティブ通知ポリシー",
+          "modeLabel": "通知モード",
+          "modeSilent": "サイレント（既定）",
+          "modeRiskBased": "リスクベース",
+          "modeAlways": "常に通知",
+          "minRiskToNotifyLabel": "通知する最小リスクレベル"
+        },
+        "context": {
+          "title": "コンテキスト保持ポリシー",
+          "ttlDaysPlaceholder": "ttlDays（保持日数）",
+          "maxRecentMessagesPlaceholder": "maxRecentMessages（保持する最近メッセージ数）",
+          "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages（N 件ごとに要約）"
+        },
+        "feishu": {
+          "verifyTokenPlaceholder": "Feishu verify token（空欄でクリア）",
+          "webhookUrlPlaceholder": "Feishu webhook URL（任意）",
+          "clearVerifyToken": "既存 verify token をクリア"
+        },
+        "telegram": {
+          "botTokenPlaceholder": "Telegram bot token（空欄でクリア）",
+          "clearBotToken": "既存 bot token をクリア",
+          "webhookSecretPlaceholder": "Telegram webhook secret（任意）",
+          "clearWebhookSecret": "既存 webhook secret をクリア",
+          "defaultChatIdPlaceholder": "デフォルト Chat ID（任意）",
+          "allowedChatIdsPlaceholder": "allowedChatIds（任意、カンマ区切り）"
+        }
+      },
+      "apiKey": {
+        "title": "API キー作成",
+        "description": "フルキーは一度だけ表示されます。",
+        "namePlaceholder": "キー名"
+      },
+      "webhook": {
+        "title": "Webhook 作成",
+        "description": "イベントはカンマ区切りで入力し、少なくとも1件必須です。",
+        "secretPlaceholder": "secret（16 文字以上）"
+      },
+      "createdKey": {
+        "title": "API キーを作成しました",
+        "description": "今すぐ保存してください。閉じると再表示されません。",
+        "saved": "保存済み",
+        "fullKey": "フルキー"
+      }
+    }
+  },
+  "events": {
+    "title": "イベントセンター",
+    "subtitle": "発生したイベント、マッチング結果、単一イベントのリプレイを確認します。",
+    "positioning": "システム挙動を把握し、問題を素早く特定し、イベントから自動化ルールを作成します。",
+    "capabilities": "利用可能な操作: 同種イベントのフィルタ、イベントのリプレイ、イベントからのルール作成。",
+    "newRule": "新しいルール",
+    "filterPlaceholder": "イベントタイプで絞り込み（例: task.completed）",
+    "apiUnavailable": "イベント API はまだ接続されていません。`/v1/events` と `/v1/events/replay` を実装してください。",
+    "riskLabel": "リスク",
+    "unknown": "不明",
+    "unknownEventType": "不明なイベントタイプ",
+    "createRule": "ルールを作成",
+    "copyType": "タイプをコピー",
+    "copyTypeSuccess": "イベントタイプをコピーしました",
+    "filterSameType": "同じタイプで絞り込み",
+    "details": "詳細",
+    "replay": "リプレイ",
+    "empty": "イベントが見つかりません",
+    "detailsTitle": "イベント詳細",
+    "error": {
+      "replay": "リプレイに失敗しました",
+      "copy": "コピーに失敗しました"
+    },
+    "source": "ソース",
+    "time": "時刻",
+    "type": "タイプ",
+    "subject": "サブジェクト",
+    "truncated": " ...",
+    "riskLevel": {
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "unknown": "不明"
+    },
+    "categories": {
+      "system": "システム",
+      "task": "タスク",
+      "tool": "ツール",
+      "rule": "ルール",
+      "approval": "承認",
+      "chat": "チャット",
+      "gateway": "ゲートウェイ",
+      "memory": "メモリ",
+      "scheduler": "スケジューラ",
+      "replay": "リプレイ",
+      "unknown": "不明"
+    },
+    "actionNames": {
+      "bootCompleted": "起動完了",
+      "messageReceived": "メッセージ受信",
+      "messageCompleted": "メッセージ完了",
+      "execStarted": "実行開始",
+      "execCompleted": "実行完了",
+      "execFailed": "実行失敗",
+      "lifecyclePreExecute": "実行前",
+      "lifecyclePostExecute": "実行後",
+      "queueTelemetry": "キューテレメトリ"
+    },
+    "actions": {
+      "boot.completed": "起動完了",
+      "message.received": "メッセージ受信",
+      "message.completed": "メッセージ完了",
+      "exec.started": "実行開始",
+      "exec.completed": "実行完了",
+      "exec.failed": "実行失敗",
+      "lifecycle.pre_execute": "実行前",
+      "lifecycle.post_execute": "実行後",
+      "queue.telemetry": "キューテレメトリ",
+      "action": "アクション",
+      "unknown": "不明なアクション"
+    },
+    "summary": {
+      "message": "要約",
+      "tool": "ツール",
+      "action": "アクション",
+      "target": "対象",
+      "status": "ステータス",
+      "replayId": "リプレイ ID",
+      "originalEventId": "元イベント ID"
+    }
+  },
+  "approvals": {
+    "title": "承認センター",
+    "subtitle": "実行前にリスクの高い操作をレビューします。",
+    "pending": "保留中",
+    "total": "合計",
+    "approve": "承認",
+    "reject": "拒否",
+    "empty": "承認待ちがありません",
+    "unknownEvent": "不明なイベント",
+    "status": {
+      "all": "すべてのステータス",
+      "pending": "保留中",
+      "approved": "承認済み",
+      "rejected": "拒否済み",
+      "expired": "期限切れ"
+    },
+    "error": {
+      "action": "承認操作に失敗しました"
+    },
+    "apiUnavailablePrefix": "承認APIがまだ接続されていません。実装してください",
+    "and": "と",
+    "period": "。",
+    "risk": "リスク",
+    "detail": {
+      "tool": "ツール {tool}",
+      "action": "アクション {action}",
+      "target": "対象 {target}"
+    },
+    "scopeGroups": {
+      "title": "タスクスコープ別グループ",
+      "scopeLabel": "スコープ: {id}",
+      "pendingCount": "{count} 件の承認待ち",
+      "approveScope": "スコープを承認",
+      "rejectScope": "スコープを拒否"
+    },
+    "riskLevel": {
+      "low": "低",
+      "medium": "中",
+      "high": "高"
+    }
+  },
+  "toolsPage": {
+    "title": "ツールセンター",
+    "subtitle": "統合ツールビュー: 内蔵ツールの有効/無効と設定を管理できます。",
+    "openConfig": "設定を開く",
+    "configTitle": "ツール設定",
+    "connected": "接続済み",
+    "disconnected": "未接続",
+    "builtin": "内蔵",
+    "enabled": "有効",
+    "disabled": "無効",
+    "empty": "ツール設定がありません（V2 では追加/削除をサポートしていません）。",
+    "runtimeUnavailable": "ランタイム利用不可",
+    "error": {
+      "load": "ツールデータの読み込みに失敗しました。API と Runtime を確認してください。"
+    },
+    "stats": {
+      "total": "ツール総数",
+      "enabled": "有効",
+      "runtimeConnected": "ランタイム接続"
+    },
+    "builtinDescriptions": {
+      "search": "内蔵 Web 検索ツール",
+      "code_executor": "内蔵コード実行ツール",
+      "file_io": "内蔵ローカルファイル読み書きツール",
+      "browser_automation": "内蔵ブラウザ自動化ツール（Playwright）",
+      "http_client": "内蔵 HTTP クライアント（REST 呼び出し/認証/リトライ）",
+      "web_fetch": "内蔵 Web 取得・本文抽出ツール（readability モード対応）",
+      "json_transform": "内蔵 JSON 変換ツール（JSONPath/JMESPath/マッピングテンプレート）",
+      "csv_xlsx": "内蔵 CSV/Excel 読み込み・フィルタ・集計・ピボットツール",
+      "pdf_report": "内蔵 PDF レポート生成ツール（テンプレート表/チャート/結論）",
+      "sql_query_readonly": "内蔵読み取り専用 SQL クエリツール（許可リスト/タイムアウト/行数制限）"
+    }
+  },
+  "rules": {
+    "title": "ルール管理",
+    "subtitle": "通知・提案・自動化のイベントポリシーを設定します。",
+    "enabled": "有効",
+    "new": "新しいルール",
+    "edit": "ルールを編集",
+    "disable": "無効化",
+    "enable": "有効化",
+    "empty": "まだルールがありません。作成して開始してください。",
+    "apiUnavailable": "ルール API はまだ接続されていません。`/v1/rules` を実装してください。",
+    "createDescription": "イベントトリガールールを作成",
+    "updateDescription": "ルール設定を更新",
+    "actionMode": {
+      "ask": "ask（確認してから実行）",
+      "suggest": "suggest（提案）",
+      "auto": "auto（自動実行）",
+      "skip": "スキップ"
+    },
+    "error": {
+      "requiredFields": "ルール名とイベントタイプを入力してください",
+      "invalidConditionsJson": "conditions JSON が不正です",
+      "invalidActionParamsJson": "action params JSON が不正です",
+      "cronRequired": "cron ジョブ名とスケジュールの両方を入力してください",
+      "cronCreateFailed": "cron スケジューラの作成に失敗しました",
+      "save": "ルールの保存に失敗しました",
+      "updateStatus": "ルール状態の更新に失敗しました"
+    },
+    "form": {
+      "ruleName": "ルール名",
+      "eventType": "イベントタイプ（例: tool.exec.failed）",
+      "advancedMode": "詳細モード（JSON）",
+      "conditionPreset": "条件プリセット",
+      "advancedHint": "通常はプリセットを使用し、複雑なルールの場合のみ詳細モードを使用してください。",
+      "conditionsJson": "条件（JSON）",
+      "actionParamsJson": "アクションパラメータ（JSON）",
+      "actions": "アクション",
+      "addAction": "アクションを追加",
+      "cronCreateScheduler": "このルールで cron スケジューラを作成/更新",
+      "cronJobName": "cron ジョブ名（trigger_name）",
+      "cronSchedule": "cron スケジュール（5フィールド推奨）",
+      "conditionPresets": {
+        "all": "すべて一致（追加条件なし）",
+        "subjectExists": "subject が存在する場合にトリガー",
+        "hasAttachments": "メッセージに添付がある場合にトリガー",
+        "highRisk": "高リスクイベントでトリガー",
+        "cronAny": "任意の cron トリガー",
+        "cronNamed": "トリガー名付き cron",
+        "cronSchedule": "スケジュール付き cron"
+      },
+      "eventTypeGroups": {
+        "chat": "チャット",
+        "tool": "ツール",
+        "approval": "承認",
+        "gateway": "ゲートウェイ",
+        "system": "システム"
+      },
+      "priority": "優先度",
+      "dedupe": "重複排除（秒）",
+      "cooldown": "クールダウン（秒）",
+      "budgetPerDay": "日次上限"
+    },
+    "formHelp": {
+      "priority": "priority: 値が高いほど実行優先度が高くなります。",
+      "dedupe": "dedupeWindowSeconds: この時間内では、同一ルール + 同一 subject は1回のみ実行されます。",
+      "cooldown": "cooldownSeconds: 一度実行された後、クールダウン中は再トリガーされません。",
+      "budgetPerDay": "attentionBudgetPerDay: 1日あたりの最大トリガー回数（rule_id:subject 単位）。",
+      "cronSchedule": "5フィールド cron を推奨（例: 0 9 * * 1-5, */5 * * * *）。互換性のため @every:seconds も引き続きサポートされます。"
+    },
+    "status": {
+      "active": "有効",
+      "inactive": "無効"
+    },
+    "actionType": {
+      "notify": "通知",
+      "runAgent": "エージェント実行",
+      "executePlan": "プラン実行",
+      "callWebhook": "Webhook 呼び出し",
+      "logOnly": "ログのみ"
+    },
+    "risk": {
+      "low": "低",
+      "medium": "中",
+      "high": "高"
+    },
+    "meta": {
+      "dedupe": "重複排除",
+      "cooldown": "クールダウン",
+      "budgetPerDay": "日次上限"
+    }
+  },
+  "chatLayout": {
+    "newChat": "新しい会話",
+    "refresh": "更新",
+    "noSessions": "会話がありません",
+    "untitled": "無題の会話"
+  },
+  "agents": {
+    "new": "新しいエージェント",
+    "searchPlaceholder": "エージェントを検索…",
+    "system": "システム",
+    "noDescription": "説明がありません",
+    "createdOn": "作成日",
+    "header": {
+      "prefix": "AI エージェントを管理、",
+      "suffix": ""
+    },
+    "filter": {
+      "all": "すべて",
+      "active": "稼働中",
+      "inactive": "停止中"
+    },
+    "pagination": {
+      "label": "ページネーション",
+      "prev": "前へ",
+      "next": "次へ"
+    },
+    "action": {
+      "disable": "無効化",
+      "enable": "有効化"
+    },
+    "empty": {
+      "filteredTitle": "一致するエージェントがありません",
+      "filteredDescription": "検索条件またはフィルターを調整してください",
+      "clearFilters": "フィルターをクリア",
+      "defaultTitle": "まだエージェントがありません",
+      "defaultDescription": "最初の AI エージェントを作成して開始してください"
+    },
+    "error": {
+      "load": "読み込みに失敗しました。再試行してください",
+      "nameRequired": "名前は必須です",
+      "modelRequired": "モデルを選択してください",
+      "save": "保存に失敗しました。再試行してください",
+      "toggle": "ステータス変更に失敗しました",
+      "delete": "削除に失敗しました。再試行してください"
+    },
+    "toast": {
+      "created": "作成しました",
+      "deleted": "削除しました"
+    },
+    "modal": {
+      "createTitle": "エージェント作成",
+      "editTitle": "エージェント編集",
+      "namePlaceholder": "エージェント名",
+      "modelsLoadFailed": "モデルの読み込みに失敗しました。バックエンド API を確認してください",
+      "noModels": "利用可能なモデルがありません。LLM Provider 設定を確認してください",
+      "selectModel": "モデルを選択",
+      "systemPromptPlaceholder": "システムプロンプト"
+    },
+    "deleteModal": {
+      "title": "エージェント削除",
+      "description": "\"{name}\" を削除すると元に戻せません。"
+    }
+  },
+  "agentsDetail": {
+    "createTitle": "エージェント作成",
+    "editTitle": "エージェント編集",
+    "basicConfig": "基本設定",
+    "basicConfigDescription": "ライブ API 経由でエージェント設定を保存します",
+    "current": "現在値",
+    "currentModelNotInList": "{model}（利用可能一覧にありません）",
+    "namePlaceholder": "エージェント名を入力",
+    "descriptionPlaceholder": "説明を入力",
+    "selectModel": "モデルを選択",
+    "noModels": "利用可能なモデルがありません",
+    "systemPromptPlaceholder": "システムプロンプトを入力",
+    "skillsTitle": "スキル",
+    "skillsDescription": "このエージェントで使用可能なスキルを選択",
+    "loadingSkills": "スキルを読み込み中…",
+    "noSkills": "利用可能なスキルがありません",
+    "builtin": "内蔵",
+    "mcpTitle": "MCP サーバー",
+    "mcpDescription": "このエージェントで使用可能な MCP サーバーを選択",
+    "loadingMcp": "MCP サーバーを読み込み中…",
+    "noMcp": "利用可能な MCP サーバーがありません",
+    "system": "システム",
+    "error": {
+      "load": "エージェントの読み込みに失敗しました。後で再試行してください",
+      "nameRequired": "名前は必須です",
+      "modelRequired": "モデルを選択してください",
+      "createFailed": "作成に失敗しました",
+      "updateFailed": "更新に失敗しました",
+      "save": "保存に失敗しました。後で再試行してください"
+    }
+  },
+  "chatNew": {
+    "title": "新しい会話を開始",
+    "subtitle": "エージェントを選択するか、質問を入力して会話を開始してください",
+    "chooseAgent": "エージェントを選択",
+    "smartAssistant": "スマート AI アシスタント",
+    "quickStart": "クイックスタート",
+    "inputPlaceholder": "質問やタスク内容を入力してください…",
+    "selectedPrefix": "選択中:",
+    "startChat": "会話を開始",
+    "suggestionsTitle": "おすすめプロンプト",
+    "system": "システム",
+    "defaultMessage": "こんにちは。自己紹介をお願いします。",
+    "templates": {
+      "general": {
+        "name": "汎用アシスタント",
+        "description": "日常業務向けのマルチ用途 AI アシスタント"
+      },
+      "code": {
+        "name": "コードアシスタント",
+        "description": "コーディングとコードレビューに特化"
+      },
+      "research": {
+        "name": "リサーチアシスタント",
+        "description": "情報の検索・整理・分析"
+      },
+      "data": {
+        "name": "データアナリスト",
+        "description": "データ処理・可視化・洞察"
+      },
+      "creative": {
+        "name": "クリエイティブライター",
+        "description": "コピー作成・コンテンツ生成・編集"
+      }
+    },
+    "suggestions": {
+      "item1": "この売上データを分析してレポートを作成してください",
+      "item2": "ファイルアップロード用の React コンポーネントを作ってください",
+      "item3": "最新の AI 業界ニュースを調べて要約してください",
+      "item4": "この Python コードのパフォーマンスを最適化してください"
+    },
+    "warning": {
+      "noAvailableAgent": "利用可能なエージェントがありません。会話を開始できません。",
+      "goCreateAgent": "エージェントを作成または有効化してください"
+    },
+    "error": {
+      "noAvailableAgent": "利用可能なエージェントがありません。先に作成または有効化してください。",
+      "selectAgent": "先にエージェントを選択してください。",
+      "createSession": "セッション作成に失敗しました"
+    }
+  },
+  "chatSession": {
+    "loadingSession": "セッションを読み込み中…",
+    "newChat": "新しい会話",
+    "backToChats": "会話一覧に戻る",
+    "sessionLabel": "セッション",
+    "new": "新規",
+    "welcome": "こんにちは。AI アシスタントです。今日は何をお手伝いできますか？",
+    "pendingApprovals": "承認待ち",
+    "risk": "リスク",
+    "approve": "承認",
+    "reject": "拒否",
+    "approveAll": "すべて承認",
+    "rejectAll": "すべて拒否",
+    "approveScope": "スコープ承認",
+    "rejectScope": "スコープ拒否",
+    "scopeGroups": "タスクスコープ別グループ",
+    "scopeLabel": "スコープ: {id}",
+    "scopeCount": "{count} 件保留中",
+    "bulkDone": "{count} 件の承認に対する一括 {action} が完了しました。",
+    "scopeDone": "このスコープで {count} 件の一括 {action} が完了しました。",
+    "moreApprovalsHint": "さらに {count} 件の承認が非表示です。すべて承認/拒否を利用してください。",
+    "approvalHint": "承認後、ブロック中のタスクは自動的に再開します。",
+    "sendFailed": "送信に失敗しました",
+    "addAttachment": "添付ファイルを追加",
+    "inputPlaceholder": "質問を入力してください…",
+    "voiceInput": "音声入力",
+    "stop": "停止",
+    "send": "送信",
+    "keyboardHint": "Enter で送信、Shift + Enter で改行",
+    "messageStatus": {
+      "sending": "送信中…",
+      "sent": "送信済み",
+      "failed": "送信失敗"
+    },
+    "error": {
+      "loadApprovals": "承認一覧の読み込みに失敗しました",
+      "bulkApproval": "一括承認に失敗しました",
+      "loadSession": "セッションの読み込みに失敗しました",
+      "messageWithReason": "エラーが発生しました: {message}"
+    }
+  },
+  "dashboard": {
+    "subtitle": "実行・リマインド・協調・成長を続けるデジタル社員。",
+    "cards": {
+      "agents": {
+        "label": "エージェント",
+        "hint": "利用可能なエージェント"
+      },
+      "sessions": {
+        "label": "セッション",
+        "hint": "稼働中 {count}"
+      },
+      "mcp": {
+        "hint": "外部との連携"
+      },
+      "skills": {
+        "hint": "スキル定義"
+      },
+      "events": {
+        "label": "イベント",
+        "hint": "承認待ち {count}"
+      }
+    },
+    "recentSessions": {
+      "title": "最近の会話",
+      "viewAll": "すべて表示",
+      "empty": "まだ会話がありません。最初の対話を開始してください。",
+      "sources": {
+        "web": "ウェブ",
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "gateway": "ゲートウェイ"
+      }
+    },
+    "quickLinks": {
+      "title": "クイックリンク",
+      "note": "このインターフェースは新しいナビゲーション構造に移行しています。",
+      "items": {
+        "newChat": {
+          "title": "新しい会話",
+          "desc": "セッションを作成してすぐ質問。"
+        },
+        "agents": {
+          "title": "エージェント管理",
+          "desc": "エージェントの作成・編集・有効化/停止。"
+        },
+        "events": {
+          "title": "イベントセンター",
+          "desc": "発生したイベントを確認し再生。"
+        },
+        "rules": {
+          "title": "ルール管理",
+          "desc": "リマインダーや自動化戦略を設定。"
+        },
+        "approvals": {
+          "title": "承認センター",
+          "desc": "ハイリスク承認を処理。"
+        },
+        "tools": {
+          "title": "ツール",
+          "desc": "ランタイム・DB ツールを表示。"
+        },
+        "config": {
+          "title": "構成",
+          "desc": "モデル・ツール・Webhook 設定。"
+        },
+        "mcp": {
+          "title": "MCP 統合",
+          "desc": "外部ツールとリソースを接続。"
+        }
+      }
+    },
+    "recentEvents": {
+      "title": "最近のイベント",
+      "open": "イベントセンターを開く",
+      "empty": "イベントがありません"
+    },
+    "gatewayList": {
+      "title": "ゲートウェイ会話",
+      "subtitle": "ソースと Chat ID でグループ化されたすべてのゲートウェイ会話と最近の実行を参照。",
+      "searchPlaceholder": "Chat ID、会話 ID、要約、または Run ID を検索",
+      "filterAll": "すべてのソース",
+      "conversations": "{count} の会話",
+      "runs": "{count} の実行",
+      "latest": "最終更新 {time}",
+      "openLatest": "最新の詳細を開く",
+      "showingRuns": "最新 {shown} / 全 {total} の実行を表示",
+      "runFallbackTitle": "ゲートウェイ会話の実行",
+      "unknownChat": "不明なチャット",
+      "empty": "一致するゲートウェイ会話がありません"
+    },
+    "gatewayDetail": {
+      "title": "ゲートウェイ会話",
+      "subtitle": "Telegram / Feishu 会話の実行履歴とコンテキストを確認します。",
+      "back": "ダッシュボードに戻る",
+      "conversationId": "会話 ID",
+      "chatId": "チャット ID",
+      "runs": "実行履歴",
+      "context": "コンテキストメッセージ",
+      "emptyRuns": "実行履歴がありません",
+      "emptyContext": "コンテキストメッセージがありません"
+    },
+    "error": {
+      "coreData": "ダッシュボードの主要データを読み込めませんでした。API サービスを確認してください。",
+      "load": "読み込みに失敗しました"
+    }
+  },
+  "skillDefinitions": {
+    "title": "スキル管理",
+    "subtitlePrefix": "スキル定義を管理、",
+    "subtitleSuffix": "",
+    "create": "スキル作成",
+    "searchPlaceholder": "スキル名、ID、説明で検索…",
+    "builtin": "内蔵",
+    "enabled": "有効",
+    "disabled": "無効",
+    "noDescription": "説明がありません",
+    "category": "カテゴリ:",
+    "install": "インストール",
+    "empty": {
+      "filteredTitle": "一致するスキルが見つかりません",
+      "filteredDescription": "検索条件を調整してください",
+      "clearSearch": "検索をクリア",
+      "defaultTitle": "まだスキル定義がありません",
+      "defaultDescription": "最初のスキル定義を作成して開始してください"
+    },
+    "installModal": {
+      "title": "スキルをインストール",
+      "sourceType": "ソースタイプ *",
+      "sourceUrl": "ソース URL *"
+    },
+    "editModal": {
+      "title": "スキル定義を編集",
+      "name": "名前 *",
+      "builtinHint": "内蔵スキルとして設定（全組織に表示）"
+    },
+    "error": {
+      "load": "スキル定義の読み込みに失敗しました",
+      "install": "インストールに失敗しました",
+      "delete": "削除に失敗しました",
+      "update": "更新に失敗しました"
+    }
+  },
+  "skillsPage": {
+    "title": "スキル管理",
+    "subtitlePrefix": "スキル定義を管理、",
+    "subtitleSuffix": "",
+    "create": "スキル作成",
+    "searchPlaceholder": "スキル名、ID、説明で検索…",
+    "emptyTitle": "一致するスキルが見つかりません",
+    "emptyDescription": "検索条件を調整してください",
+    "noDescription": "説明がありません",
+    "enabled": "有効",
+    "disabled": "無効",
+    "enable": "有効化",
+    "disable": "無効化",
+    "createDescription": "SKILL.md を含むパッケージをアップロードして、スキルを自動作成・インストールします。",
+    "packageLabel": "パッケージファイル *",
+    "packageHint": "対応形式: .zip/.tar.gz/.tgz（最大 100MB）。パッケージには SKILL.md が必要です。",
+    "uploadAndCreate": "アップロードして作成",
+    "batch": {
+      "selectAllVisible": "現在の一覧を選択",
+      "selectedCount": "{count} 件のスキルを選択中",
+      "enable": "一括有効化",
+      "disable": "一括無効化",
+      "delete": "一括削除"
+    },
+    "confirm": {
+      "delete": "スキル \"{name}\" を削除しますか？この操作は元に戻せません。",
+      "batchDelete": "選択した {count} 件のスキルを削除しますか？この操作は元に戻せません。"
+    },
+    "error": {
+      "load": "スキル定義の読み込みに失敗しました",
+      "create": "スキル作成に失敗しました",
+      "toggle": "状態変更に失敗しました",
+      "delete": "削除に失敗しました",
+      "batchToggle": "一括処理完了。{failed}/{total} 件の更新に失敗しました",
+      "batchDelete": "一括削除完了。{failed}/{total} 件の削除に失敗しました"
+    }
+  },
+  "dashboardError": {
+    "title": "問題が発生しました",
+    "message": "ページの読み込みに失敗しました。しばらくしてから再試行してください。",
+    "errorId": "エラー ID",
+    "backHome": "ホームに戻る"
+  },
+  "settings": {
+    "title": "個人設定",
+    "subtitle": "プロフィール、アカウントセキュリティ、UI 設定を管理します。",
+    "platformConfig": "プラットフォーム設定",
+    "sections": {
+      "profile": "プロフィール",
+      "password": "パスワード",
+      "preferences": "表示設定"
+    },
+    "profile": {
+      "title": "プロフィール",
+      "subtitle": "ライブ `/users/me` API より取得",
+      "username": "ユーザー名",
+      "avatarUrl": "アバター URL",
+      "saveChanges": "変更を保存",
+      "success": {
+        "saved": "保存しました"
+      },
+      "error": {
+        "load": "プロフィールの読み込みに失敗しました",
+        "save": "保存に失敗しました"
+      }
+    },
+    "password": {
+      "title": "パスワード変更",
+      "subtitle": "ログインパスワードを更新します",
+      "currentPassword": "現在のパスワード",
+      "newPassword": "新しいパスワード",
+      "confirmPassword": "新しいパスワード（確認）",
+      "currentPasswordPlaceholder": "現在のパスワードを入力",
+      "newPasswordPlaceholder": "8 文字以上",
+      "confirmPasswordPlaceholder": "新しいパスワードを再入力",
+      "changePassword": "パスワードを変更",
+      "success": {
+        "changed": "パスワードを変更しました"
+      },
+      "error": {
+        "required": "すべての項目を入力してください",
+        "minLength": "新しいパスワードは 8 文字以上必要です",
+        "mismatch": "新しいパスワードが一致しません",
+        "changeFailed": "パスワード変更に失敗しました"
+      }
+    },
+    "preferences": {
+      "title": "表示設定",
+      "subtitle": "ライブ `/users/preferences` API より取得",
+      "theme": "テーマ",
+      "language": "言語",
+      "themeOptions": {
+        "dark": "ダーク",
+        "light": "ライト",
+        "system": "システム"
+      },
+      "languageOptions": {
+        "zhCN": "中国語",
+        "enUS": "英語"
+      },
+      "languageHint": "保存後に言語が自動更新されます",
+      "saved": "保存しました",
+      "save": "設定を保存",
+      "error": {
+        "load": "設定の読み込みに失敗しました",
+        "save": "設定の保存に失敗しました"
+      }
+    }
+  },
+  "detailCanvas": {
+    "title": "詳細キャンバス",
+    "collapse": "詳細キャンバスを折りたたむ",
+    "maximize": "詳細キャンバスを最大化",
+    "exitMaximize": "最大化を終了",
+    "expand": "詳細キャンバスを展開",
+    "emptyTitle": "まだ詳細コンテンツがありません",
+    "emptyDescription": "レポート、ファイル、構造化結果がここに表示されます"
+  },
+  "ui": {
+    "select": {
+      "placeholder": "選択してください"
+    }
+  },
+  "fileUpload": {
+    "dropOr": "ここにファイルをドロップ、または",
+    "clickSelect": "クリックして選択",
+    "error": {
+      "maxSize": "ファイルサイズ {size} が上限 {max} を超えています",
+      "invalidType": "ファイル形式 {ext} は許可されていません。許可形式: {allowed}"
+    }
+  },
+  "agent2ui": {
+    "renderer": {
+      "renderFailed": "表示に失敗しました"
+    },
+    "chart": {
+      "item": "項目 {index}",
+      "unsupported": "未対応のチャートタイプ: {type}"
+    },
+    "citation": {
+      "references": "参考資料（{count}）"
+    },
+    "code": {
+      "copyCode": "コードをコピー"
+    },
+    "dataTable": {
+      "pagination": "全 {total} 件、{page}/{totalPages} ページ",
+      "prevPage": "前のページ",
+      "nextPage": "次のページ"
+    },
+    "fileDownload": {
+      "unknownSize": "サイズ不明",
+      "downloadFile": "ファイルをダウンロード",
+      "error": {
+        "http": "ダウンロード失敗（HTTP {status}）",
+        "invalidResponse": "ダウンロードエンドポイントの応答が不正です"
+      }
+    },
+    "image": {
+      "defaultAlt": "画像",
+      "defaultFilename": "画像",
+      "download": "ダウンロード",
+      "zoom": "拡大",
+      "loadFailed": "画像の読み込みに失敗しました"
+    },
+    "loading": {
+      "contentLoading": "コンテンツを読み込み中"
+    },
+    "plan": {
+      "status": {
+        "pending": "保留中",
+        "running": "実行中",
+        "completed": "完了",
+        "failed": "失敗",
+        "skipped": "スキップ"
+      }
+    },
+    "progress": {
+      "processing": "処理中…"
+    },
+    "thinking": {
+      "title": "思考中"
+    },
+    "toolCall": {
+      "arguments": "引数",
+      "result": "結果",
+      "running": "実行中",
+      "success": "成功",
+      "successWithDuration": "成功（{seconds}秒）",
+      "error": "失敗",
+      "errorWithDuration": "失敗（{seconds}秒）"
+    },
+    "sandbox": {
+      "title": "サンドボックス実行",
+      "output": "出力",
+      "logs": "ログ",
+      "waitingOutput": "出力を待機中…",
+      "noOutput": "出力なし",
+      "waitingLogs": "ログを待機中…",
+      "noLogs": "ログなし",
+      "status": {
+        "starting": "開始中",
+        "running": "実行中",
+        "success": "成功",
+        "timeout": "タイムアウト",
+        "error": "失敗"
+      }
+    },
+    "process": {
+      "expand": "展開",
+      "collapse": "折りたたむ",
+      "details": "詳細",
+      "failed": "失敗",
+      "planSummary": "実行計画: {count} ステップ",
+      "thinkingMergedExtra": "（+{count} 件）",
+      "toolCallSummary": "{count} 件のツールを呼び出し",
+      "stepSummary": "{count} ステップを実行",
+      "failedSummary": "{count} 件失敗",
+      "summarySeparator": "、 ",
+      "status": {
+        "thinking": "詳細な思考を実行中",
+        "completed": "思考が完了しました",
+        "failed": "実行中に問題が発生しました"
+      }
+    }
+  },
+  "globalError": {
+    "title": "アプリケーションエラー",
+    "message": "予期しないエラーが発生しました。",
+    "errorId": "エラー ID",
+    "reload": "アプリを再読み込み"
+  },
+  "errorBoundary": {
+    "title": "コンポーネントの読み込みに失敗しました"
+  },
+  "help": {
+    "languageSwitch": "表示言語を切り替えます。選択後、このページの文言がすぐ更新されます。",
+    "actions": {
+      "refreshDashboard": "ダッシュボードの指標・最近のセッション・イベントを再取得します。"
+    },
+    "nav": {
+      "dashboard": "システム全体の状態、主要指標、最新アクティビティを確認します。",
+      "sessions": "会話の作成・管理を行い、文脈と実行結果を確認します。",
+      "events": "システムイベントを検索し、詳細確認やリプレイを行います。",
+      "rules": "イベント条件、実行アクション、リスク戦略を設定します。",
+      "approvals": "高リスク操作の承認を一元管理します。",
+      "agents": "エージェント、モデル、実行状態を管理します。",
+      "skills": "スキル定義とバージョンを管理し、機能を拡張します。",
+      "mcpServers": "外部ツール/リソース接続のために MCP サーバーを設定します。",
+      "tools": "内蔵ツールの有効化、リスク、実行パラメータを管理します。",
+      "config": "LLM、Gateway、API Key、Webhook を統合管理します。",
+      "helpCenter": "機能ガイド、設定チュートリアル、トラブル対処を確認します。"
+    }
+  },
+  "helpCenter": {
+    "title": "ヘルプセンター",
+    "subtitle": "機能の使い方、ホバー説明、重要な Gateway 設定手順をまとめて確認できます。",
+    "badges": {
+      "hover": "ホバーガイダンス",
+      "gateway": "Gateway チュートリアル",
+      "quickStart": "クイックスタート"
+    },
+    "featureGuide": {
+      "title": "機能ナビゲーションガイド",
+      "subtitle": "各入口をホバーすると詳細説明を表示。クリックで対象ページへ移動できます。"
+    },
+    "hoverTips": {
+      "title": "ホバー説明の使い方",
+      "subtitle": "ボタン・ナビ項目・クイックリンクにホバーすると目的と影響範囲を確認できます。",
+      "items": {
+        "1": "左ナビ: 各モジュールの役割と利用シーンを確認できます。",
+        "2": "主要ボタン: 更新/変更される内容を事前に把握できます。",
+        "3": "設定入口: 推奨設定順序と注意点を確認できます。"
+      }
+    },
+    "gatewayTutorial": {
+      "title": "Gateway 設定チュートリアル（重要）",
+      "subtitle": "Telegram / Feishu 連携向け。以下の順番で実施してください。",
+      "openConfig": "設定センターを開く",
+      "openConfigTip": "Config の Gateway セクションで作成・テスト・有効化を行います。",
+      "securityTitle": "セキュリティ推奨",
+      "securityBody": "本番環境では承認を有効化し、allowedChatIds を制限し、token/secret を定期的に更新してください。",
+      "steps": {
+        "prepare": {
+          "title": "接続パラメータを準備",
+          "description": "bot token、webhook URL、デフォルト agent、許可 chatId 一覧を準備します。"
+        },
+        "create": {
+          "title": "Gateway インスタンスを作成",
+          "description": "Config で Telegram または Feishu を選択し、基本接続情報を保存します。"
+        },
+        "policy": {
+          "title": "Addressing / Proactive ポリシーを設定",
+          "description": "addressingPolicy、proactivePolicy、contextPolicy を設定して誤動作を防ぎます。"
+        },
+        "test": {
+          "title": "接続テストを実行",
+          "description": "「テスト」で疎通を確認し、状態が ready になることを確認します。"
+        },
+        "platformWebhook": {
+          "title": "外部プラットフォームのコールバック設定",
+          "description": "Telegram/Feishu の callback URL を Semibot Runtime の対応エンドポイントに設定します。"
+        },
+        "observe": {
+          "title": "Events とセッションで検証",
+          "description": "実メッセージ送信後、イベント入站と実行結果を Gateway 会話詳細で確認します。"
+        }
+      }
+    },
+    "gatewayFaq": {
+      "title": "Gateway よくある質問",
+      "items": {
+        "noResponse": {
+          "q": "グループで送信しても Bot が応答しない場合は？",
+          "a": "Webhook 状態、インスタンス有効化、Bot プライバシー設定、承認待ちを確認してください。"
+        },
+        "notInAllowedChatIds": {
+          "q": "一部のグループメッセージがトリガーされないのはなぜ？",
+          "a": "chatId が allowedChatIds に含まれていない、または利用可能な agent 未紐付けの可能性があります。"
+        },
+        "tokenInvalid": {
+          "q": "token/secret が無効と表示される場合は？",
+          "a": "認証情報を再発行して Gateway 設定を更新し、再度テストしてください。"
+        },
+        "approvalStuck": {
+          "q": "タスクが承認待ちで止まる場合は？",
+          "a": "承認センターで処理するか、ツール設定でリスク/承認ポリシーを調整してください。"
+        }
+      }
+    },
+    "gatewayProviders": {
+      "feishu": {
+        "title": "Feishu Gateway 詳細設定ガイド",
+        "subtitle": "Feishu Bot のイベント連携とカードアクションのコールバック設定向けです。",
+        "items": {
+          "credentials": {
+            "title": "Feishu アプリ認証情報を準備",
+            "description": "Feishu 開発者プラットフォームで App ID / App Secret を取得し、Gateway に verifyToken / webhookSecret / bot token を設定します。"
+          },
+          "events": {
+            "title": "イベントコールバック URL を設定",
+            "description": "イベント購読 URL を /v1/integrations/feishu/events に設定し、公開 HTTPS 到達性と検証を完了します。"
+          },
+          "cardActions": {
+            "title": "カードアクション URL を設定",
+            "description": "カード操作コールバック URL を /v1/integrations/feishu/card-actions に設定し、承認/却下などの操作を処理します。"
+          },
+          "testAndObserve": {
+            "title": "疎通テストと観測",
+            "description": "保存後に Gateway テストを実行し、Feishu グループ送信後にイベント入站と実行履歴を確認します。"
+          }
+        }
+      },
+      "telegram": {
+        "title": "Telegram Gateway 詳細設定ガイド",
+        "subtitle": "Telegram Bot の webhook 連携とグループ会話ルーティング向けです。",
+        "items": {
+          "credentials": {
+            "title": "Bot Token と既定ルーティングを準備",
+            "description": "BotFather で token を取得し、defaultChatId・allowedChatIds・chatId -> agentId バインドを設定します。"
+          },
+          "setWebhook": {
+            "title": "Telegram webhook を設定",
+            "description": "Telegram webhook を /v1/integrations/telegram/webhook に向け、Telegram から到達可能な公開 HTTPS URL を使います。"
+          },
+          "privacyAndChatId": {
+            "title": "プライバシーモードと chatId を確認",
+            "description": "グループ応答がない場合、Bot プライバシーモード・allowed chat_id・Gateway 有効状態を確認します。"
+          },
+          "testAndObserve": {
+            "title": "統合テストと検証",
+            "description": "テスト送信後、Events で chat.message.received、Gateway 会話詳細でツール実行と返信結果を確認します。"
+          }
+        }
+      }
+    }
+  }
+}

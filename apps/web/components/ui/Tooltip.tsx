@@ -7,10 +7,11 @@ interface TooltipProps {
   content: string
   side?: 'top' | 'right' | 'bottom' | 'left'
   delay?: number
+  triggerClassName?: string
   children: React.ReactNode
 }
 
-export function Tooltip({ content, side = 'top', delay = 300, children }: TooltipProps) {
+export function Tooltip({ content, side = 'top', delay = 300, triggerClassName, children }: TooltipProps) {
   const [visible, setVisible] = useState(false)
   const [position, setPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   const [actualSide, setActualSide] = useState(side)
@@ -99,7 +100,7 @@ export function Tooltip({ content, side = 'top', delay = 300, children }: Toolti
   return (
     <div
       ref={triggerRef}
-      className="inline-flex"
+      className={clsx('inline-flex', triggerClassName)}
       onMouseEnter={show}
       onMouseLeave={hide}
       onFocus={show}
@@ -112,22 +113,23 @@ export function Tooltip({ content, side = 'top', delay = 300, children }: Toolti
           role="tooltip"
           style={{ position: 'fixed', top: position.top, left: position.left }}
           className={clsx(
-            'z-[100] px-2.5 py-1.5 rounded-md text-xs font-medium',
-            'bg-bg-elevated text-text-primary',
-            'border border-border-default shadow-lg',
+            'z-tooltip max-w-[280px] px-2.5 py-1.5 rounded-lg',
+            'text-[11px] leading-[1.35] font-normal',
+            'bg-bg-surface text-text-secondary',
+            'border border-border-subtle shadow-sm',
             'pointer-events-none',
-            'animate-in fade-in duration-150'
+            'animate-in fade-in duration-100'
           )}
         >
           {content}
           <span
             className={clsx(
-              'absolute w-2 h-2 rotate-45',
-              'bg-bg-elevated border-border-default',
-              actualSide === 'top' && 'bottom-[-5px] left-1/2 -translate-x-1/2 border-b border-r',
-              actualSide === 'bottom' && 'top-[-5px] left-1/2 -translate-x-1/2 border-t border-l',
-              actualSide === 'left' && 'right-[-5px] top-1/2 -translate-y-1/2 border-t border-r',
-              actualSide === 'right' && 'left-[-5px] top-1/2 -translate-y-1/2 border-b border-l'
+              'absolute w-1.5 h-1.5 rotate-45',
+              'bg-bg-surface border-border-subtle',
+              actualSide === 'top' && 'bottom-[-4px] left-1/2 -translate-x-1/2 border-b border-r',
+              actualSide === 'bottom' && 'top-[-4px] left-1/2 -translate-x-1/2 border-t border-l',
+              actualSide === 'left' && 'right-[-4px] top-1/2 -translate-y-1/2 border-t border-r',
+              actualSide === 'right' && 'left-[-4px] top-1/2 -translate-y-1/2 border-b border-l'
             )}
           />
         </div>

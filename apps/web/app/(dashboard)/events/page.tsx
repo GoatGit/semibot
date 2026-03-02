@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { useEvents } from '@/hooks/useEvents'
 import type { EventRecord } from '@/types'
+import type { EventPresentationDictionary } from '@/types/events'
 import { useLocale } from '@/components/providers/LocaleProvider'
 
 function formatTime(dateString: string, locale: string): string {
@@ -32,10 +33,26 @@ function getCategoryVariant(category: string): 'outline' | 'success' | 'warning'
   return 'outline'
 }
 
-function eventTypeToDisplay(eventType: string, t: (key: string, params?: Record<string, string | number>) => string): {
+function getRiskLabel(
+  risk: EventRecord['riskHint'],
+  t: (key: string, params?: Record<string, string | number>) => string
+): string {
+  if (!risk) return t('events.riskLevel.unknown')
+  const key = `events.riskLevel.${risk}`
+  const translated = t(key)
+  return translated !== key ? translated : risk
+}
+
+function eventTypeToDisplay(
+  eventType: string,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  presentation: EventPresentationDictionary
+): {
   title: string
   category: string
   action: string
+  actionLabel: string
+  categoryLabel: string
 } {
   const normalized = String(eventType || '').trim()
   const parts = normalized.split('.')
@@ -54,17 +71,25 @@ function eventTypeToDisplay(eventType: string, t: (key: string, params?: Record<
   }
   const categoryLabelKey = `events.categories.${category}`
   const actionLabelKey = actionKeyMap[action]
-  const categoryLabel = t(categoryLabelKey)
+  const categoryLabel =
+    presentation.categoryLabels[category]
+    || (t(categoryLabelKey) !== categoryLabelKey ? t(categoryLabelKey) : category)
+  const directTypeLabel = presentation.eventTypeLabels[normalized]
+  const customActionLabel = presentation.actionLabels[action]
+  const translatedActionLabel = actionLabelKey ? t(actionLabelKey) : ''
   const actionLabel =
-    actionLabelKey && t(actionLabelKey) !== actionKeyMap[action]
-      ? t(actionLabelKey)
-      : action.replace(/\./g, ' / ')
+    customActionLabel
+    || (translatedActionLabel && translatedActionLabel !== actionLabelKey
+      ? translatedActionLabel
+      : action.replace(/\./g, ' / '))
   const fallbackTitle = normalized || t('events.unknownEventType')
-  const title = `${categoryLabel !== categoryLabelKey ? categoryLabel : category} · ${actionLabel}`
+  const title = directTypeLabel || `${categoryLabel} · ${actionLabel}`
   return {
     title: normalized ? title : fallbackTitle,
     category,
     action,
+    actionLabel,
+    categoryLabel,
   }
 }
 
@@ -146,10 +171,12 @@ export default function EventsPage() {
 
   const {
     events,
+    presentation,
     isLoading,
     error,
     apiAvailable,
     loadEvents,
+    loadPresentation,
     replayEvent,
   } = useEvents()
 
@@ -168,6 +195,10 @@ export default function EventsPage() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    void loadPresentation()
+  }, [loadPresentation])
 
   const handleReplay = async (eventId: string) => {
     try {
@@ -216,6 +247,7 @@ export default function EventsPage() {
                   {t('events.subtitle')}
                 </p>
                 <p className="mt-2 text-xs text-text-tertiary">{t('events.positioning')}</p>
+                <p className="mt-1 text-xs text-text-tertiary">{t('events.capabilities')}</p>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -310,9 +342,7 @@ export default function EventsPage() {
             ))
           ) : events.length > 0 ? (
             events.map((event) => {
-              const meta = eventTypeToDisplay(event.eventType, t)
-              const categoryLabelKey = `events.categories.${meta.category}`
-              const categoryLabel = t(categoryLabelKey) !== categoryLabelKey ? t(categoryLabelKey) : meta.category
+              const meta = eventTypeToDisplay(event.eventType, t, presentation)
               const payloadSummaryText = summarizePayloadText(event.payload)
               const payloadSummaryItems = summarizePayload(event.payload, t)
               return (
@@ -321,17 +351,20 @@ export default function EventsPage() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="mb-2 flex items-center gap-2">
-                          <Badge variant={getCategoryVariant(meta.category)}>{categoryLabel}</Badge>
+                          <Badge variant={getCategoryVariant(meta.category)}>{meta.categoryLabel}</Badge>
                           <p className="font-medium text-text-primary break-all">{meta.title}</p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm text-text-secondary break-all">{event.eventType}</p>
+                          <p className="text-sm text-text-secondary break-all">{meta.actionLabel}</p>
                           <Badge variant={mapRiskVariant(event.riskHint)}>
-                            {t('events.riskLabel')} {event.riskHint || t('events.unknown')}
+                            {t('events.riskLabel')} {getRiskLabel(event.riskHint, t)}
                           </Badge>
                         </div>
                         <div className="mt-1 text-xs text-text-secondary">
-                          {event.id} · {event.source} · {formatTime(event.createdAt, locale)}
+                          {t('events.source')}: {event.source} · {t('events.time')}: {formatTime(event.createdAt, locale)}
+                        </div>
+                        <div className="mt-1 text-xs text-text-tertiary break-all">
+                          {t('events.type')}: {event.eventType}
                         </div>
                         {event.subject && (
                           <div className="mt-2 text-sm text-text-secondary break-all">

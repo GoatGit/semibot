@@ -96,10 +96,32 @@ class TelegramNotifier:
             return
 
         payload = event.payload if isinstance(event.payload, dict) else {}
-        text = (
-            f"*Semibot* `{event.event_type}`\n"
-            f"subject: `{event.subject or payload.get('session_id') or 'n/a'}`\n"
-            f"summary: {payload.get('summary') or payload.get('final_response') or payload.get('message') or '任务已完成。'}"
-        )
+        if event.event_type == "approval.requested":
+            context = payload.get("context")
+            context_map = context if isinstance(context, dict) else {}
+            approval_id = str(payload.get("approval_id") or event.subject or "").strip() or "unknown"
+            risk = str(payload.get("risk_level") or "").strip() or "high"
+            tool_name = str(context_map.get("tool_name") or "").strip()
+            action = str(context_map.get("action") or "").strip()
+            target = str(context_map.get("target") or "").strip()
+            lines = [
+                "需要审批后才能继续执行：",
+                f"- 审批ID: {approval_id}",
+                f"- 风险: {risk}",
+            ]
+            if tool_name:
+                lines.append(f"- 工具: {tool_name}")
+            if action:
+                lines.append(f"- 动作: {action}")
+            if target:
+                lines.append(f"- 目标: {target}")
+            lines.append("回复“同意”可一次通过当前会话待审批，或发送 /approve <id>。")
+            text = "\n".join(lines)
+        else:
+            text = (
+                f"*Semibot* `{event.event_type}`\n"
+                f"subject: `{event.subject or payload.get('session_id') or 'n/a'}`\n"
+                f"summary: {payload.get('summary') or payload.get('final_response') or payload.get('message') or '任务已完成。'}"
+            )
         chat_id = str(payload.get("chat_id")) if payload.get("chat_id") else None
         await self.send_message(text=text, chat_id=chat_id)

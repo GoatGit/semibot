@@ -16,3 +16,4 @@ def test_default_registry_includes_core_builtin_tools() -> None:
     assert "csv_xlsx" in tools
     assert "pdf_report" in tools
     assert "sql_query_readonly" in tools
+    assert "rule_authoring" in tools

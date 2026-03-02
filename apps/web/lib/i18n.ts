@@ -6,14 +6,16 @@
 
 import zhCN from '@/messages/zh-CN.json'
 import enUS from '@/messages/en-US.json'
+import jaJP from '@/messages/ja-JP.json'
 
 export const defaultLocale = 'zh-CN'
-export const locales = ['zh-CN', 'en-US'] as const
+export const locales = ['zh-CN', 'en-US', 'ja-JP'] as const
 export type Locale = (typeof locales)[number]
 
 const messages: Record<Locale, typeof zhCN> = {
   'zh-CN': zhCN,
   'en-US': enUS,
+  'ja-JP': jaJP,
 }
 
 /**
@@ -26,6 +28,7 @@ export function detectLocale(): Locale {
   if (stored && locales.includes(stored)) return stored
 
   const browserLang = navigator.language
+  if (browserLang.startsWith('ja')) return 'ja-JP'
   if (browserLang.startsWith('en')) return 'en-US'
   return 'zh-CN'
 }

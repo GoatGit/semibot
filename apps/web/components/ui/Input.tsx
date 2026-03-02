@@ -27,10 +27,13 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
       rightIcon,
       className,
       disabled,
+      title,
+      placeholder,
       ...props
     },
     ref
   ) => {
+    const resolvedTitle = title ?? placeholder
     return (
       <div className="w-full">
         <div className="relative">
@@ -48,6 +51,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           <input
             ref={ref}
             disabled={disabled}
+            title={resolvedTitle}
             className={clsx(
               // Base styles
               'w-full rounded-md',

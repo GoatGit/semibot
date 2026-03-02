@@ -2,12 +2,17 @@
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
 
+from src.events.event_store import EventStore
+from src.events.models import ApprovalRequest
+from src.gateway.manager import GatewayManager
 from src.server.api import create_app
 
 
@@ -164,7 +169,7 @@ async def test_telegram_webhook_ingestion_and_text_approval(tmp_path: Path):
             json={
                 "isActive": True,
                 "config": {
-                    "botToken": "token_abc",
+                    "botToken": "123456:token_abc",
                     "defaultChatId": "-100001",
                     "addressingPolicy": {
                         "mode": "all_messages",
@@ -253,6 +258,441 @@ async def test_telegram_webhook_ingestion_and_text_approval(tmp_path: Path):
         assert callback_resp.json()["event_type"] == "chat.card.action"
         assert callback_resp.json()["approval_command"]["resolved"] is True
         assert callback_resp.json()["approval_command"]["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_telegram_text_approval_triggers_resume_followup(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        task = str(kwargs.get("task") or "")
+        return {
+            "status": "success",
+            "task": task,
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": f"done: {task}",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        enable = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "123456:token_abc",
+                    "defaultChatId": "-100001",
+                    "addressingPolicy": {
+                        "mode": "all_messages",
+                        "executeOnUnaddressed": True,
+                    },
+                },
+            },
+        )
+        assert enable.status_code == 200
+
+        # Seed conversation with a user task, so approval resume has context to replay.
+        first = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 1001,
+                "message": {
+                    "message_id": 2001,
+                    "chat": {"id": -100001, "type": "supergroup"},
+                    "from": {"id": 7788},
+                    "text": "hello semibot",
+                },
+            },
+        )
+        assert first.status_code == 200
+        await asyncio.sleep(0.05)
+
+        emit_resp = await client.post(
+            "/v1/events",
+            json={"event_type": "fund.transfer", "payload": {"amount": 12000}, "source": "test"},
+        )
+        assert emit_resp.status_code == 200
+        pending = await client.get("/v1/approvals?status=pending")
+        approval_id = pending.json()["items"][0]["approval_id"]
+
+        approve_resp = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 1002,
+                "message": {
+                    "message_id": 2002,
+                    "chat": {"id": -100001, "type": "supergroup"},
+                    "from": {"id": 7788},
+                    "text": f"同意 {approval_id}",
+                },
+            },
+        )
+        assert approve_resp.status_code == 200
+        approve_payload = approve_resp.json()
+        assert approve_payload["approval_command"]["resolved"] is True
+        assert approve_payload["approval_command"]["status"] == "approved"
+        assert isinstance(approve_payload.get("resume"), dict)
+        assert approve_payload["resume"]["resumed"] is True
+        assert approve_payload["resume"]["task_run_id"]
+
+        await asyncio.sleep(0.05)
+        sent_texts = [str(item["payload"].get("text") or "") for item in sent]
+        assert any("正在继续执行任务" in text for text in sent_texts)
+        assert any(text.startswith("done: hello semibot") for text in sent_texts)
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_file_attachment_is_downloaded_and_passed_to_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+    runner_calls: list[dict[str, Any]] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        runner_calls.append(dict(kwargs))
+        task = str(kwargs.get("task") or "")
+        return {
+            "status": "success",
+            "task": task,
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": f"done: {task}",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    async def _fake_download(
+        self: GatewayManager,
+        *,
+        token: str,
+        chat_id: str,
+        message_id: Any,
+        attachments: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        assert token == "token_abc"
+        assert chat_id == "-100001"
+        assert message_id == 501
+        assert len(attachments) == 1
+        return [
+            {
+                **attachments[0],
+                "status": "downloaded",
+                "local_path": str((tmp_path / "inbound" / "telegram" / "report.csv").resolve()),
+                "stored_size": 1234,
+            }
+        ]
+
+    monkeypatch.setattr(GatewayManager, "_download_telegram_attachments", _fake_download)
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        enable = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "token_abc",
+                    "defaultChatId": "-100001",
+                    "addressingPolicy": {
+                        "mode": "all_messages",
+                        "executeOnUnaddressed": True,
+                    },
+                },
+            },
+        )
+        assert enable.status_code == 200
+
+        ingest = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 77,
+                "message": {
+                    "message_id": 501,
+                    "chat": {"id": -100001, "type": "supergroup"},
+                    "from": {"id": 7788},
+                    "document": {
+                        "file_id": "file_abc",
+                        "file_name": "report.csv",
+                        "mime_type": "text/csv",
+                        "file_size": 1234,
+                    },
+                },
+            },
+        )
+        assert ingest.status_code == 200
+        payload = ingest.json()
+        assert payload["accepted"] is True
+        assert payload["should_execute"] is True
+
+        await asyncio.sleep(0.05)
+        assert runner_calls
+        task = str(runner_calls[-1].get("task") or "")
+        assert "report.csv" in task
+        assert "local_path" not in task
+        assert "path=" in task
+        assert "用户上传了 1 个文件" in task
+        assert sent
+        assert "done:" in str(sent[-1]["payload"]["text"])
+
+
+@pytest.mark.asyncio
+async def test_telegram_gateway_appends_approval_hints_to_reply(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        return {
+            "status": "completed",
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": "我已完成初步分析。",
+            "runtime_events": [
+                {
+                    "event": "approval.requested",
+                    "data": {"approval_id": "appr_test_123"},
+                }
+            ],
+            "tool_results": [],
+            "error": None,
+        }
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        enable = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "token_abc",
+                    "defaultChatId": "-100001",
+                    "addressingPolicy": {
+                        "mode": "all_messages",
+                        "executeOnUnaddressed": True,
+                    },
+                },
+            },
+        )
+        assert enable.status_code == 200
+
+        ingest = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 9010,
+                "message": {
+                    "message_id": 901,
+                    "chat": {"id": -100001, "type": "supergroup"},
+                    "from": {"id": 7788},
+                    "text": "hello semibot",
+                },
+            },
+        )
+        assert ingest.status_code == 200
+        await asyncio.sleep(0.05)
+
+        assert sent
+        texts = [str(item["payload"].get("text") or "") for item in sent]
+        assert any("appr_test_123" in text for text in texts)
+        assert any("同意" in text for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_telegram_gateway_task_timeout_reports_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        await asyncio.sleep(2.0)
+        return {
+            "status": "success",
+            "task": str(kwargs.get("task") or ""),
+            "session_id": kwargs.get("session_id"),
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": "should timeout before this",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    monkeypatch.setenv("SEMIBOT_GATEWAY_TASK_TIMEOUT_SEC", "1")
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        enable = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "token_abc",
+                    "defaultChatId": "-100001",
+                    "addressingPolicy": {
+                        "mode": "all_messages",
+                        "executeOnUnaddressed": True,
+                    },
+                },
+            },
+        )
+        assert enable.status_code == 200
+
+        ingest = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 9001,
+                "message": {
+                    "message_id": 901,
+                    "chat": {"id": -100001, "type": "supergroup"},
+                    "from": {"id": 7788},
+                    "text": "hello timeout",
+                },
+            },
+        )
+        assert ingest.status_code == 200
+        payload = ingest.json()
+        assert payload["accepted"] is True
+        assert payload["should_execute"] is True
+
+        await asyncio.sleep(1.4)
+        assert sent
+        assert "超时" in str(sent[-1]["payload"].get("text") or "")
+
+        convs = await client.get("/v1/gateway/conversations?provider=telegram&limit=10")
+        conv_id = convs.json()["data"][0]["conversation_id"]
+        runs = await client.get(f"/v1/gateway/conversations/{conv_id}/runs?limit=5")
+        run_items = runs.json()["data"]
+        assert run_items[0]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_telegram_gateway_marks_awaiting_approval_without_waiting_timeout(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    sent: list[dict] = []
+
+    async def _send(token: str, payload: dict, timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _task_runner(**kwargs):
+        db_path_runtime = str(kwargs.get("db_path") or "")
+        session_id = str(kwargs.get("session_id") or "")
+        store = EventStore(db_path=db_path_runtime)
+        store.insert_approval(
+            ApprovalRequest(
+                approval_id=f"appr_{uuid4().hex[:12]}",
+                rule_id="tool.file_io",
+                event_id=f"{session_id}:evt",
+                risk_level="high",
+                context={"session_id": session_id, "tool_name": "file_io", "action": "read"},
+                status="pending",
+                created_at=datetime.now(UTC),
+            )
+        )
+        await asyncio.sleep(5.0)
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "agent_id": kwargs.get("agent_id"),
+            "final_response": "should not reach here before awaiting_approval",
+            "runtime_events": [],
+            "error": None,
+        }
+
+    app = create_app(
+        db_path=str(db_path),
+        rules_path=str(rules_path),
+        telegram_send_fn=_send,
+        task_runner=_task_runner,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        enable = await client.put(
+            "/v1/config/gateways/telegram",
+            json={
+                "isActive": True,
+                "config": {
+                    "botToken": "token_abc",
+                    "defaultChatId": "-100001",
+                    "addressingPolicy": {"mode": "all_messages", "executeOnUnaddressed": True},
+                },
+            },
+        )
+        assert enable.status_code == 200
+
+        ingest = await client.post(
+            "/v1/integrations/telegram/webhook",
+            json={
+                "update_id": 9201,
+                "message": {
+                    "message_id": 921,
+                    "chat": {"id": -100001, "type": "supergroup"},
+                    "from": {"id": 7788},
+                    "text": "hello semibot",
+                },
+            },
+        )
+        assert ingest.status_code == 200
+        await asyncio.sleep(1.3)
+
+        texts = [str(item["payload"].get("text") or "") for item in sent]
+        assert any("待审批操作" in text for text in texts)
+
+        convs = await client.get("/v1/gateway/conversations?provider=telegram&limit=10")
+        conv_id = convs.json()["data"][0]["conversation_id"]
+        runs = await client.get(f"/v1/gateway/conversations/{conv_id}/runs?limit=5")
+        run_items = runs.json()["data"]
+        assert run_items[0]["status"] == "awaiting_approval"
 
 
 @pytest.mark.asyncio
