@@ -168,6 +168,28 @@ async def test_rule_authoring_tool_accepts_send_message_action_alias(
 
 
 @pytest.mark.asyncio
+async def test_rule_authoring_tool_rejects_non_cron_send_message_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    result = await tool.execute(
+        action="send_message",
+        payload={
+            "name": "ask_doubao_now",
+            "description": "帮我问下豆包怎么看美国总统访华",
+            "actions": [{"action_type": "http_client", "params": {"url": "https://example.com"}}],
+        },
+    )
+    assert result.success is False
+    assert "unsupported action: send_message" in (result.error or "")
+
+
+@pytest.mark.asyncio
 async def test_rule_authoring_tool_infers_legacy_create_when_action_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

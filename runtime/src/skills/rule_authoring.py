@@ -188,13 +188,19 @@ class RuleAuthoringTool(BaseTool):
             "delete": "delete_rule",
             "simulate": "simulate_rule",
             "list": "list_rules",
-            # Legacy planner outputs may pass a business action instead of
-            # tool action. Treat them as create_rule and normalize payload.
-            "send_message": "create_rule",
-            "remind": "create_rule",
-            "set_reminder": "create_rule",
         }
         return alias_map.get(action, action)
+
+    def _is_legacy_create_intent(self, action_name: str, payload_obj: dict[str, Any]) -> bool:
+        if action_name not in {"send_message", "remind", "set_reminder"}:
+            return False
+        if any(key in payload_obj for key in ("cron_expression", "schedule", "cron", "rule_condition", "trigger_type")):
+            return True
+        event_type = str(payload_obj.get("event_type") or "").strip()
+        if event_type.startswith("cron."):
+            return True
+        intent_text = self._merge_intent_text(payload_obj)
+        return self._looks_like_relative_intent(intent_text) or self._looks_like_periodic_intent(intent_text)
 
     def _infer_action(self, payload_obj: dict[str, Any]) -> str:
         # Case 1: nested envelope accidentally put inside payload.
@@ -388,7 +394,7 @@ class RuleAuthoringTool(BaseTool):
     def _normalize_legacy_payload(self, action_name: str, payload_obj: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         # Backward-compatible path for legacy planner outputs:
         # action=create + rule_name/cron_expression/... schema.
-        if action_name not in {"create_rule", "create", "search_and_summarize_news", "send_message", "remind", "set_reminder"}:
+        if action_name not in {"create_rule", "create", "search_and_summarize_news"}:
             return action_name, payload_obj
 
         has_new_schema = "event_type" in payload_obj and ("actions" in payload_obj or "action_mode" in payload_obj)
@@ -506,6 +512,9 @@ class RuleAuthoringTool(BaseTool):
         action_name = self._normalize_action((action or "").strip())
         if not action_name:
             action_name = self._infer_action(payload_obj)
+        elif self._is_legacy_create_intent(action_name, payload_obj):
+            # Keep backward compatibility for reminder-style legacy actions only.
+            action_name = "create_rule"
         if not action_name:
             return ToolResult.error_result("action is required")
 
