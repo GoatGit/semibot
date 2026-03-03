@@ -96,7 +96,8 @@ interface OpenAIModelsResponse {
 // ═══════════════════════════════════════════════════════════════
 
 export class OpenAIProvider implements LLMProvider {
-  readonly name = 'openai'
+  readonly name: string
+  readonly displayName: string
   models: string[] = []
 
   private apiKey: string | null
@@ -105,9 +106,16 @@ export class OpenAIProvider implements LLMProvider {
   private modelsCacheTime: number = 0
   private readonly CACHE_TTL = 5 * 60 * 1000 // 5分钟缓存
 
-  constructor() {
-    this.apiKey = process.env.OPENAI_API_KEY || null
-    this.baseUrl = process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1'
+  constructor(options?: {
+    name?: string
+    displayName?: string
+    apiKey?: string | null
+    baseUrl?: string | null
+  }) {
+    this.name = options?.name ?? 'openai'
+    this.displayName = options?.displayName ?? this.name
+    this.apiKey = (options?.apiKey ?? process.env.OPENAI_API_KEY) || null
+    this.baseUrl = (options?.baseUrl ?? process.env.OPENAI_API_BASE_URL) || 'https://api.openai.com/v1'
   }
 
   isAvailable(): boolean {

@@ -35,27 +35,56 @@ const llmLogger = createLogger('llm')
 
 let isInitialized = false
 
-type CustomProviderEnvConfig = {
+type ProviderInstanceEnvConfig = {
+  type: 'openai' | 'anthropic' | 'google' | 'custom'
   id: string
   displayName?: string
   apiKey?: string
   baseUrl?: string
 }
 
-function parseCustomProvidersFromEnv(): CustomProviderEnvConfig[] {
-  const raw = process.env.CUSTOM_LLM_PROVIDERS
-  if (!raw) return []
+function parseProviderInstancesFromEnv(): ProviderInstanceEnvConfig[] {
+  const items: ProviderInstanceEnvConfig[] = []
+  const raw = process.env.LLM_PROVIDER_INSTANCES
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== 'object') continue
+          const row = item as Record<string, unknown>
+          const typeValue = String(row.type || '').trim()
+          if (!['openai', 'anthropic', 'google', 'custom'].includes(typeValue)) continue
+          const id = String(row.id || '').trim()
+          if (!id) continue
+          items.push({
+            type: typeValue as 'openai' | 'anthropic' | 'google' | 'custom',
+            id,
+            displayName: String(row.displayName || '').trim() || undefined,
+            apiKey: String(row.apiKey || '').trim() || undefined,
+            baseUrl: String(row.baseUrl || '').trim() || undefined,
+          })
+        }
+      }
+    } catch {
+      llmLogger.warn('解析 LLM_PROVIDER_INSTANCES 失败，已忽略')
+    }
+  }
 
+  // backward compatibility
+  const legacyRaw = process.env.CUSTOM_LLM_PROVIDERS
+  if (!legacyRaw) return items
   try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    const items: CustomProviderEnvConfig[] = []
+    const parsed = JSON.parse(legacyRaw) as unknown
+    if (!Array.isArray(parsed)) return items
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue
       const row = item as Record<string, unknown>
       const id = String(row.id || '').trim()
       if (!id) continue
+      if (items.some((entry) => entry.type === 'custom' && entry.id === id)) continue
       items.push({
+        type: 'custom',
         id,
         displayName: String(row.displayName || '').trim() || undefined,
         apiKey: String(row.apiKey || '').trim() || undefined,
@@ -65,7 +94,7 @@ function parseCustomProvidersFromEnv(): CustomProviderEnvConfig[] {
     return items
   } catch {
     llmLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
-    return []
+    return items
   }
 }
 
@@ -73,30 +102,56 @@ function initializeProviders(): void {
   if (isInitialized) return
 
   // 注册 OpenAI Provider
-  const openai = new OpenAIProvider()
+  const openai = new OpenAIProvider({ name: 'openai', displayName: 'OpenAI' })
   registerProvider(openai)
 
   // 注册 Anthropic Provider
-  const anthropic = new AnthropicProvider()
+  const anthropic = new AnthropicProvider({ name: 'anthropic', displayName: 'Anthropic' })
   registerProvider(anthropic)
 
   // 注册 Google AI Provider
-  const google = new GoogleAIProvider()
+  const google = new GoogleAIProvider({ name: 'google', displayName: 'Google AI' })
   registerProvider(google)
 
   // 注册 Custom Provider (兼容 OpenAI API 的第三方服务)
   const custom = new CustomProvider({ name: 'custom', displayName: '自定义模型' })
   registerProvider(custom)
 
-  for (const item of parseCustomProvidersFromEnv()) {
-    const providerName = `custom:${item.id}`
-    const customProvider = new CustomProvider({
+  for (const item of parseProviderInstancesFromEnv()) {
+    const providerName = `${item.type}:${item.id}`
+    if (item.type === 'openai') {
+      registerProvider(new OpenAIProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl,
+      }))
+      continue
+    }
+    if (item.type === 'anthropic') {
+      registerProvider(new AnthropicProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl,
+      }))
+      continue
+    }
+    if (item.type === 'google') {
+      registerProvider(new GoogleAIProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl,
+      }))
+      continue
+    }
+    registerProvider(new CustomProvider({
       name: providerName,
       displayName: item.displayName || item.id,
       apiKey: item.apiKey,
       baseUrl: item.baseUrl,
-    })
-    registerProvider(customProvider)
+    }))
   }
 
   isInitialized = true

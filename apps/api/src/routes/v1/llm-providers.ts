@@ -51,6 +51,7 @@ const updateLlmConfigSchema = z.object({
 })
 
 type CustomProviderConfig = {
+  type: 'openai' | 'anthropic' | 'google' | 'custom'
   id: string
   displayName?: string
   apiKey?: string
@@ -110,19 +111,47 @@ function applyProcessEnvUpdates(updates: Record<string, string | null>): void {
   }
 }
 
-function parseCustomProvidersFromEnv(): CustomProviderConfig[] {
-  const raw = process.env.CUSTOM_LLM_PROVIDERS
-  if (!raw) return []
+function parseProviderInstancesFromEnv(): CustomProviderConfig[] {
+  const items: CustomProviderConfig[] = []
+  const raw = process.env.LLM_PROVIDER_INSTANCES
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== 'object') continue
+          const row = item as Record<string, unknown>
+          const typeValue = String(row.type || '').trim()
+          if (!['openai', 'anthropic', 'google', 'custom'].includes(typeValue)) continue
+          const id = String(row.id || '').trim()
+          if (!id) continue
+          items.push({
+            type: typeValue as 'openai' | 'anthropic' | 'google' | 'custom',
+            id,
+            displayName: String(row.displayName || '').trim() || undefined,
+            apiKey: String(row.apiKey || '').trim() || undefined,
+            baseUrl: String(row.baseUrl || '').trim() || undefined,
+          })
+        }
+      }
+    } catch {
+      llmProviderRouteLogger.warn('解析 LLM_PROVIDER_INSTANCES 失败，已忽略')
+    }
+  }
+
+  const legacyRaw = process.env.CUSTOM_LLM_PROVIDERS
+  if (!legacyRaw) return items
   try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    const items: CustomProviderConfig[] = []
+    const parsed = JSON.parse(legacyRaw) as unknown
+    if (!Array.isArray(parsed)) return items
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue
       const row = item as Record<string, unknown>
       const id = String(row.id || '').trim()
       if (!id) continue
+      if (items.some((entry) => entry.type === 'custom' && entry.id === id)) continue
       items.push({
+        type: 'custom',
         id,
         displayName: String(row.displayName || '').trim() || undefined,
         apiKey: String(row.apiKey || '').trim() || undefined,
@@ -132,21 +161,23 @@ function parseCustomProvidersFromEnv(): CustomProviderConfig[] {
     return items
   } catch {
     llmProviderRouteLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
-    return []
+    return items
   }
 }
 
 function getProviderDisplayName(providerName: string, displayName?: string): string {
   if (displayName) return displayName
   if (PROVIDER_DISPLAY_NAMES[providerName]) return PROVIDER_DISPLAY_NAMES[providerName]
-  if (providerName.startsWith('custom:')) {
-    return providerName.replace(/^custom:/, '')
+  const prefixMatched = providerName.match(/^(openai|anthropic|google|custom):(.+)$/)
+  if (prefixMatched) {
+    const base = PROVIDER_DISPLAY_NAMES[prefixMatched[1]] || prefixMatched[1]
+    return `${base} (${prefixMatched[2]})`
   }
   return providerName
 }
 
 function buildProviderConfig() {
-  const customProviders = parseCustomProvidersFromEnv()
+  const providerInstances = parseProviderInstancesFromEnv()
   const providers: Record<string, {
     apiKeyConfigured: boolean
     apiKeyPreview: string | null
@@ -179,13 +210,13 @@ function buildProviderConfig() {
     },
   }
 
-  for (const custom of customProviders) {
-    const key = `custom:${custom.id}`
+  for (const item of providerInstances) {
+    const key = `${item.type}:${item.id}`
     providers[key] = {
-      apiKeyConfigured: Boolean(custom.apiKey),
-      apiKeyPreview: keyPreview(custom.apiKey),
-      baseUrl: custom.baseUrl || '',
-      displayName: custom.displayName || custom.id,
+      apiKeyConfigured: Boolean(item.apiKey),
+      apiKeyPreview: keyPreview(item.apiKey),
+      baseUrl: item.baseUrl || '',
+      displayName: item.displayName || item.id,
     }
   }
 
@@ -212,8 +243,8 @@ function buildRuntimeLlmConfigPayload() {
     },
   }
 
-  for (const item of parseCustomProvidersFromEnv()) {
-    providers[`custom:${item.id}`] = {
+  for (const item of parseProviderInstancesFromEnv()) {
+    providers[`${item.type}:${item.id}`] = {
       base_url: item.baseUrl || '',
     }
   }
@@ -232,8 +263,8 @@ function buildRuntimeApiKeysPayload(): Record<string, string> {
     google: process.env.GOOGLE_AI_API_KEY ?? '',
     custom: process.env.CUSTOM_LLM_API_KEY ?? '',
   }
-  for (const item of parseCustomProvidersFromEnv()) {
-    payload[`custom:${item.id}`] = item.apiKey || ''
+  for (const item of parseProviderInstancesFromEnv()) {
+    payload[`${item.type}:${item.id}`] = item.apiKey || ''
   }
   return payload
 }
@@ -397,15 +428,18 @@ router.put(
     mapProvider(body.providers?.google, 'GOOGLE_AI_API_KEY', 'GOOGLE_AI_API_BASE_URL')
     mapProvider(body.providers?.custom, 'CUSTOM_LLM_API_KEY', 'CUSTOM_LLM_API_BASE_URL')
 
-    const nextCustomProviders = parseCustomProvidersFromEnv()
-    const customProviderById = new Map(nextCustomProviders.map((item) => [item.id, item] as const))
-    let hasCustomDynamicProviderUpdates = false
+    const nextInstances = parseProviderInstancesFromEnv()
+    const instancesByKey = new Map(nextInstances.map((item) => [`${item.type}:${item.id}`, item] as const))
+    let hasDynamicProviderUpdates = false
     for (const [providerKey, providerConfig] of Object.entries(body.providers || {})) {
-      if (!providerKey.startsWith('custom:') || providerKey === 'custom') continue
-      hasCustomDynamicProviderUpdates = true
-      const id = providerKey.replace(/^custom:/, '').trim()
+      const matched = providerKey.match(/^(openai|anthropic|google|custom):(.+)$/)
+      if (!matched) continue
+      hasDynamicProviderUpdates = true
+      const type = matched[1] as 'openai' | 'anthropic' | 'google' | 'custom'
+      const id = matched[2].trim()
       if (!id) continue
-      const current = customProviderById.get(id) || { id }
+      const dynamicKey = `${type}:${id}` as const
+      const current = instancesByKey.get(dynamicKey) || { type, id }
 
       if (providerConfig.clearApiKey) {
         delete current.apiKey
@@ -422,22 +456,31 @@ router.put(
       }
 
       if (!current.displayName) current.displayName = id
-      customProviderById.set(id, current)
+      instancesByKey.set(dynamicKey, current)
     }
 
-    if (hasCustomDynamicProviderUpdates) {
-      const customProvidersForEnv = Array.from(customProviderById.values())
+    if (hasDynamicProviderUpdates) {
+      const providersForEnv = Array.from(instancesByKey.values())
         .map((item) => ({
+          type: item.type,
           id: item.id,
           ...(item.displayName ? { displayName: item.displayName } : {}),
           ...(item.apiKey ? { apiKey: item.apiKey } : {}),
           ...(item.baseUrl ? { baseUrl: item.baseUrl } : {}),
         }))
-        .sort((a, b) => a.id.localeCompare(b.id))
+        .sort((a, b) => `${a.type}:${a.id}`.localeCompare(`${b.type}:${b.id}`))
 
-      updates.CUSTOM_LLM_PROVIDERS = customProvidersForEnv.length > 0
-        ? JSON.stringify(customProvidersForEnv)
+      updates.LLM_PROVIDER_INSTANCES = providersForEnv.length > 0
+        ? JSON.stringify(providersForEnv)
         : null
+      // 保留兼容写入：仅写 custom 子集
+      const legacyCustom = providersForEnv.filter((item) => item.type === 'custom').map(({ id, displayName, apiKey, baseUrl }) => ({
+        id,
+        ...(displayName ? { displayName } : {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(baseUrl ? { baseUrl } : {}),
+      }))
+      updates.CUSTOM_LLM_PROVIDERS = legacyCustom.length > 0 ? JSON.stringify(legacyCustom) : null
     }
 
     if (Object.keys(updates).length > 0) {

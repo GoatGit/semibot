@@ -140,6 +140,7 @@ type EvolutionCapabilityType = 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
 type ConfigTab = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
 type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
 type ProviderKey = string
+type ProviderType = 'openai' | 'anthropic' | 'google' | 'custom'
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram'
 type GatewayFilter = 'all' | GatewayProvider
@@ -313,6 +314,12 @@ const TOOL_MAX_TEXT_LENGTH_OPTIONS = ['', '2000', '5000', '10000', '20000', '500
 const TOOL_MAX_RESPONSE_CHARS_OPTIONS = ['', '2000', '5000', '10000', '20000', '50000', '100000', '200000']
 const TOOL_SQL_MAX_ROWS_OPTIONS = ['', '100', '500', '1000', '2000', '5000']
 const EVOLUTION_CAPABILITY_TYPES: EvolutionCapabilityType[] = ['hands', 'reflex', 'spine', 'guard', 'mind']
+const PROVIDER_TYPE_OPTIONS: Array<{ value: ProviderType; label: string }> = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'google', label: 'Google AI' },
+  { value: 'custom', label: 'Custom' },
+]
 const TOOL_APPROVAL_DEDUPE_OPTIONS: Record<string, string[]> = {
   browser_automation: ['', 'action,target', 'action', 'target', 'tool'],
   file_io: ['', 'action,target', 'target', 'tool'],
@@ -540,7 +547,8 @@ export default function ConfigPage() {
   const [providerConfigSaving, setProviderConfigSaving] = useState(false)
   const [providerConfigForm, setProviderConfigForm] = useState({
     provider: 'openai' as ProviderKey,
-    customProviderId: '',
+    providerType: 'custom' as ProviderType,
+    providerId: '',
     apiKey: '',
     baseUrl: '',
     clearApiKey: false,
@@ -950,9 +958,11 @@ export default function ConfigPage() {
 
   const openProviderConfigDialog = (provider: ProviderKey) => {
     const cfg = llmConfig?.providers[provider]
+    const matched = provider.match(/^(openai|anthropic|google|custom):(.+)$/)
     setProviderConfigForm({
       provider,
-      customProviderId: provider.startsWith('custom:') ? provider.replace(/^custom:/, '') : '',
+      providerType: (matched?.[1] as ProviderType | undefined) || 'custom',
+      providerId: matched?.[2] || '',
       apiKey: '',
       baseUrl: cfg?.baseUrl || '',
       clearApiKey: false,
@@ -960,10 +970,11 @@ export default function ConfigPage() {
     setShowProviderConfigModal(true)
   }
 
-  const openCreateCustomProviderDialog = () => {
+  const openCreateProviderInstanceDialog = () => {
     setProviderConfigForm({
-      provider: 'custom:new',
-      customProviderId: '',
+      provider: 'new',
+      providerType: 'custom',
+      providerId: '',
       apiKey: '',
       baseUrl: '',
       clearApiKey: false,
@@ -972,13 +983,13 @@ export default function ConfigPage() {
   }
 
   const saveProviderConfig = async () => {
-    const isCreateCustomProvider = providerConfigForm.provider === 'custom:new'
+    const isCreateProviderInstance = providerConfigForm.provider === 'new'
     const targetProvider =
-      isCreateCustomProvider
-        ? `custom:${providerConfigForm.customProviderId.trim()}`
+      isCreateProviderInstance
+        ? `${providerConfigForm.providerType}:${providerConfigForm.providerId.trim()}`
         : providerConfigForm.provider
-    if (!targetProvider || targetProvider === 'custom:' || targetProvider === 'custom:new') {
-      setError(tSafe('config.errors.providerIdRequired', '请填写自定义 Provider ID'))
+    if (!targetProvider || targetProvider === 'new' || /^(openai|anthropic|google|custom):\s*$/.test(targetProvider)) {
+      setError(tSafe('config.errors.providerIdRequired', '请填写 Provider 实例 ID'))
       return
     }
 
@@ -2159,8 +2170,8 @@ export default function ConfigPage() {
                   <CardContent className="p-5 space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <h2 className="text-lg font-semibold text-text-primary">{t('config.llm.providerConfig')}</h2>
-                      <Button size="xs" variant="tertiary" leftIcon={<Plus size={12} />} onClick={openCreateCustomProviderDialog}>
-                        {tSafe('config.llm.addCustomProvider', '新增自定义 Provider')}
+                      <Button size="xs" variant="tertiary" leftIcon={<Plus size={12} />} onClick={openCreateProviderInstanceDialog}>
+                        {tSafe('config.llm.addProviderInstance', '新增 Provider 实例')}
                       </Button>
                     </div>
                     {(Object.keys(llmConfig?.providers || {}) as ProviderKey[]).map((providerKey) => {
@@ -2936,7 +2947,7 @@ export default function ConfigPage() {
         open={showProviderConfigModal}
         onClose={() => setShowProviderConfigModal(false)}
         title={t('config.modals.provider.title')}
-        description={providerConfigForm.provider === 'custom:new' ? 'custom:<provider-id>' : providerConfigForm.provider}
+        description={providerConfigForm.provider === 'new' ? `${providerConfigForm.providerType}:<provider-id>` : providerConfigForm.provider}
         maxWidth="lg"
         footer={
           <>
@@ -2954,21 +2965,35 @@ export default function ConfigPage() {
         }
       >
         <div className="space-y-4">
-          {providerConfigForm.provider === 'custom:new' && (
-            <div className="space-y-1">
-              <p className="text-xs text-text-tertiary">
-                {tSafe('config.modals.provider.customIdLabel', 'Provider ID')}
-              </p>
-              <Input
-                data-testid="provider-custom-id-input"
-                placeholder={tSafe('config.modals.provider.customIdPlaceholder', '自定义 Provider ID（示例: deepseek）')}
-                value={providerConfigForm.customProviderId}
-                onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, customProviderId: e.target.value }))}
-              />
-              <p className="text-xs text-text-secondary">
-                {tSafe('config.modals.provider.customIdHelp', '用于生成键名 custom:&lt;provider-id&gt;，建议使用小写字母、数字与连字符。')}
-              </p>
-            </div>
+          {providerConfigForm.provider === 'new' && (
+            <>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">
+                  {tSafe('config.modals.provider.providerTypeLabel', 'Provider 类型')}
+                </p>
+                <Select
+                  value={providerConfigForm.providerType}
+                  onChange={(value) =>
+                    setProviderConfigForm((prev) => ({ ...prev, providerType: value as ProviderType }))
+                  }
+                  options={PROVIDER_TYPE_OPTIONS}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">
+                  {tSafe('config.modals.provider.customIdLabel', 'Provider 实例 ID')}
+                </p>
+                <Input
+                  data-testid="provider-custom-id-input"
+                  placeholder={tSafe('config.modals.provider.customIdPlaceholder', 'Provider 实例 ID（示例: primary）')}
+                  value={providerConfigForm.providerId}
+                  onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, providerId: e.target.value }))}
+                />
+                <p className="text-xs text-text-secondary">
+                  {tSafe('config.modals.provider.customIdHelp', '用于生成键名 <type>:<provider-id>，建议使用小写字母、数字与连字符。')}
+                </p>
+              </div>
+            </>
           )}
           <div className="space-y-1">
             <p className="text-xs text-text-tertiary">

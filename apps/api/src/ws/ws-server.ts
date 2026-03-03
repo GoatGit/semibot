@@ -71,6 +71,64 @@ interface RuntimeLLMConfigPayload {
   providers: Record<string, RuntimeProviderConfig>
 }
 
+type ProviderInstanceEnvConfig = {
+  type: 'openai' | 'anthropic' | 'google' | 'custom'
+  id: string
+  apiKey?: string
+  baseUrl?: string
+}
+
+function parseProviderInstancesFromEnv(): ProviderInstanceEnvConfig[] {
+  const items: ProviderInstanceEnvConfig[] = []
+  const raw = process.env.LLM_PROVIDER_INSTANCES
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== 'object') continue
+          const row = item as Record<string, unknown>
+          const typeValue = String(row.type || '').trim()
+          if (!['openai', 'anthropic', 'google', 'custom'].includes(typeValue)) continue
+          const id = String(row.id || '').trim()
+          if (!id) continue
+          items.push({
+            type: typeValue as 'openai' | 'anthropic' | 'google' | 'custom',
+            id,
+            apiKey: String(row.apiKey || '').trim() || undefined,
+            baseUrl: String(row.baseUrl || '').trim() || undefined,
+          })
+        }
+      }
+    } catch {
+      wsLogger.warn('解析 LLM_PROVIDER_INSTANCES 失败，已忽略')
+    }
+  }
+
+  const legacyRaw = process.env.CUSTOM_LLM_PROVIDERS
+  if (!legacyRaw) return items
+  try {
+    const parsed = JSON.parse(legacyRaw) as unknown
+    if (!Array.isArray(parsed)) return items
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      const id = String(row.id || '').trim()
+      if (!id) continue
+      if (items.some((entry) => entry.type === 'custom' && entry.id === id)) continue
+      items.push({
+        type: 'custom',
+        id,
+        apiKey: String(row.apiKey || '').trim() || undefined,
+        baseUrl: String(row.baseUrl || '').trim() || undefined,
+      })
+    }
+  } catch {
+    wsLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
+  }
+  return items
+}
+
 interface WSRequestMessage {
   type: 'request'
   id: string
@@ -290,23 +348,9 @@ export class WSServer {
     if (process.env.ANTHROPIC_API_KEY) apiKeys.anthropic = this.encryptSecret(process.env.ANTHROPIC_API_KEY, vmToken)
     if (process.env.GOOGLE_AI_API_KEY) apiKeys.google = this.encryptSecret(process.env.GOOGLE_AI_API_KEY, vmToken)
     if (process.env.CUSTOM_LLM_API_KEY) apiKeys.custom = this.encryptSecret(process.env.CUSTOM_LLM_API_KEY, vmToken)
-    const customProvidersRaw = process.env.CUSTOM_LLM_PROVIDERS
-    if (customProvidersRaw) {
-      try {
-        const parsed = JSON.parse(customProvidersRaw) as unknown
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            if (!item || typeof item !== 'object') continue
-            const row = item as Record<string, unknown>
-            const id = String(row.id || '').trim()
-            const apiKey = String(row.apiKey || '').trim()
-            if (!id || !apiKey) continue
-            apiKeys[`custom:${id}`] = this.encryptSecret(apiKey, vmToken)
-          }
-        }
-      } catch {
-        wsLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，忽略自定义 API Key 注入')
-      }
+    for (const item of parseProviderInstancesFromEnv()) {
+      if (!item.apiKey) continue
+      apiKeys[`${item.type}:${item.id}`] = this.encryptSecret(item.apiKey, vmToken)
     }
     return apiKeys
   }
@@ -326,23 +370,8 @@ export class WSServer {
         base_url: process.env.CUSTOM_LLM_API_BASE_URL || '',
       },
     }
-    const customProvidersRaw = process.env.CUSTOM_LLM_PROVIDERS
-    if (customProvidersRaw) {
-      try {
-        const parsed = JSON.parse(customProvidersRaw) as unknown
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            if (!item || typeof item !== 'object') continue
-            const row = item as Record<string, unknown>
-            const id = String(row.id || '').trim()
-            const baseUrl = String(row.baseUrl || '').trim()
-            if (!id) continue
-            providers[`custom:${id}`] = { base_url: baseUrl }
-          }
-        }
-      } catch {
-        wsLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，忽略自定义 Provider 配置注入')
-      }
+    for (const item of parseProviderInstancesFromEnv()) {
+      providers[`${item.type}:${item.id}`] = { base_url: item.baseUrl || '' }
     }
 
     return {

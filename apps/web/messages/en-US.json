@@ -263,7 +263,7 @@
       "routingDefaults": "Model routing defaults",
       "saveRouting": "Save routing defaults",
       "providerConfig": "Provider configuration",
-      "addCustomProvider": "Add custom provider",
+      "addProviderInstance": "Add provider instance",
       "viewModels": "View models",
       "apiKeyLabel": "API Key",
       "endpointLabel": "Endpoint",
@@ -364,9 +364,10 @@
     "modals": {
       "provider": {
         "title": "Edit LLM provider",
-        "customIdLabel": "Provider ID",
-        "customIdPlaceholder": "Custom provider ID (e.g. deepseek)",
-        "customIdHelp": "Used to build key custom:<provider-id>; use lowercase letters, numbers, and hyphens.",
+        "providerTypeLabel": "Provider type",
+        "customIdLabel": "Provider instance ID",
+        "customIdPlaceholder": "Provider instance ID (e.g. primary)",
+        "customIdHelp": "Used to build key <type>:<provider-id>; use lowercase letters, numbers, and hyphens.",
         "apiKeyLabel": "API Key",
         "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "New API key (leave empty to keep unchanged)",

@@ -263,7 +263,7 @@
       "routingDefaults": "模型路由默认值",
       "saveRouting": "保存模型路由",
       "providerConfig": "Provider 配置",
-      "addCustomProvider": "新增自定义 Provider",
+      "addProviderInstance": "新增 Provider 实例",
       "viewModels": "查看模型列表",
       "apiKeyLabel": "API Key",
       "endpointLabel": "Endpoint",
@@ -364,9 +364,10 @@
     "modals": {
       "provider": {
         "title": "编辑 LLM Provider",
-        "customIdLabel": "Provider ID",
-        "customIdPlaceholder": "自定义 Provider ID（示例: deepseek）",
-        "customIdHelp": "用于生成键名 custom:<provider-id>，建议使用小写字母、数字与连字符。",
+        "providerTypeLabel": "Provider 类型",
+        "customIdLabel": "Provider 实例 ID",
+        "customIdPlaceholder": "Provider 实例 ID（示例: primary）",
+        "customIdHelp": "用于生成键名 <type>:<provider-id>，建议使用小写字母、数字与连字符。",
         "apiKeyLabel": "API Key",
         "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "新 API Key（留空则不修改）",

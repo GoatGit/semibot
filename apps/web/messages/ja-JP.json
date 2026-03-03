@@ -263,7 +263,7 @@
       "routingDefaults": "モデルルーティング既定値",
       "saveRouting": "ルーティング既定値を保存",
       "providerConfig": "プロバイダ設定",
-      "addCustomProvider": "カスタムプロバイダを追加",
+      "addProviderInstance": "プロバイダインスタンスを追加",
       "viewModels": "モデルを表示",
       "apiKeyLabel": "API キー",
       "endpointLabel": "エンドポイント",
@@ -364,9 +364,10 @@
     "modals": {
       "provider": {
         "title": "LLM プロバイダを編集",
-        "customIdLabel": "Provider ID",
-        "customIdPlaceholder": "カスタム Provider ID（例: deepseek）",
-        "customIdHelp": "キー custom:<provider-id> の生成に使用します。小文字・数字・ハイフンを推奨します。",
+        "providerTypeLabel": "Provider タイプ",
+        "customIdLabel": "Provider インスタンス ID",
+        "customIdPlaceholder": "Provider インスタンス ID（例: primary）",
+        "customIdHelp": "キー <type>:<provider-id> の生成に使用します。小文字・数字・ハイフンを推奨します。",
         "apiKeyLabel": "API キー",
         "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "新しい API キー（空欄で変更なし）",

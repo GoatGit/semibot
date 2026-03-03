@@ -54,7 +54,8 @@ interface GoogleAIModelsResponse {
 // ═══════════════════════════════════════════════════════════════
 
 export class GoogleAIProvider implements LLMProvider {
-  readonly name = 'google'
+  readonly name: string
+  readonly displayName: string
   models: string[] = []
 
   private apiKey: string | null
@@ -63,9 +64,16 @@ export class GoogleAIProvider implements LLMProvider {
   private modelsCacheTime: number = 0
   private readonly CACHE_TTL = 5 * 60 * 1000
 
-  constructor() {
-    this.apiKey = process.env.GOOGLE_AI_API_KEY || null
-    this.baseUrl = process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta'
+  constructor(options?: {
+    name?: string
+    displayName?: string
+    apiKey?: string | null
+    baseUrl?: string | null
+  }) {
+    this.name = options?.name ?? 'google'
+    this.displayName = options?.displayName ?? this.name
+    this.apiKey = (options?.apiKey ?? process.env.GOOGLE_AI_API_KEY) || null
+    this.baseUrl = (options?.baseUrl ?? process.env.GOOGLE_AI_API_BASE_URL) || 'https://generativelanguage.googleapis.com/v1beta'
   }
 
   isAvailable(): boolean {
