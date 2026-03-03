@@ -231,7 +231,9 @@
       "createWebhook": "创建 Webhook 失败",
       "updateWebhook": "更新 Webhook 失败",
       "testWebhook": "测试 Webhook 失败",
-      "deleteWebhook": "删除 Webhook 失败"
+      "deleteWebhook": "删除 Webhook 失败",
+      "evolutionCapabilitiesLoad": "加载进化能力配置失败",
+      "evolutionCapabilitiesSave": "保存进化能力配置失败"
     },
     "confirm": {
       "deleteApiKey": "确认删除这个 API Key 吗？删除后无法恢复。",
@@ -308,6 +310,20 @@
       "events": "事件",
       "createdAt": "创建时间"
     },
+    "evolutionCapabilities": {
+      "tab": "进化",
+      "title": "进化中心",
+      "description": "统一管理 5 类进化对象，可分别编辑、切换版本与回退。",
+      "gene": "Hands（执行能力）",
+      "agents": "Reflex（规则模板）",
+      "tools": "Guard（工具策略）",
+      "version": "版本",
+      "updatedAt": "更新时间",
+      "placeholder": "输入能力内容...",
+      "history": "历史版本",
+      "rollbackTo": "切换到",
+      "rollback": "切换版本"
+    },
     "modals": {
       "provider": {
         "title": "编辑 LLM Provider",
@@ -319,12 +335,19 @@
         "description": "V2 仅支持配置内建工具参数与启停，不支持修改工具名称/类型，不支持新增或删除。",
         "namePlaceholder": "工具名称",
         "typePlaceholder": "工具类型",
+        "timeoutLabel": "超时时间",
+        "timeoutDefault": "使用默认超时",
         "timeoutPlaceholder": "timeout 毫秒（可选，>=1000）",
+        "retryAttemptsLabel": "重试次数",
+        "retryAttemptsDefault": "使用默认重试策略",
         "retryAttemptsPlaceholder": "retryAttempts（可选，0-5）",
-        "hitl": "高风险操作需要人工审批（HITL）",
+        "hitl": "执行前必须人工审批（requiresApproval）",
+        "hitlHint": "开启后，此工具在执行时会进入审批流；关闭后按风险和规则自动执行。",
         "riskLevel": "风险等级",
         "approvalScope": "审批聚合范围",
         "approvalScopeHint": "控制同类审批如何聚合，减少重复审批。",
+        "approvalDedupeKeysLabel": "审批去重维度",
+        "approvalDedupeDefault": "默认去重（系统决定）",
         "approvalDedupeKeysPlaceholder": "approvalDedupeKeys（可选，逗号分隔，例如 url,selector）",
         "approvalScopes": {
           "session": "按会话聚合（推荐）",
@@ -686,7 +709,8 @@
     "meta": {
       "dedupe": "去重窗",
       "cooldown": "冷却",
-      "budgetPerDay": "注意力/日"
+      "budgetPerDay": "注意力/日",
+      "effectiveAt": "生效时间"
     }
   },
   "chatLayout": {

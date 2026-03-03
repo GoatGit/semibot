@@ -25,6 +25,8 @@ import eventsRouter from './events'
 import rulesRouter from './rules'
 import approvalsRouter from './approvals'
 import gatewaysRouter from './gateways'
+import contextPoliciesRouter from './context-policies'
+import evolutionCapabilitiesRouter from './evolution-capabilities'
 
 const router: Router = Router()
 
@@ -65,5 +67,7 @@ router.use('/events', eventsRouter)
 router.use('/rules', rulesRouter)
 router.use('/approvals', approvalsRouter)
 router.use('/gateways', gatewaysRouter)
+router.use('/context-policies', contextPoliciesRouter)
+router.use('/evolution-capabilities', evolutionCapabilitiesRouter)
 
 export default router

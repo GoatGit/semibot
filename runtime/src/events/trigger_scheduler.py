@@ -13,6 +13,7 @@ from uuid import uuid4
 from src.events.models import Event, utc_now
 
 EmitEventFn = Callable[[Event], Awaitable[Any]]
+CronCompleteFn = Callable[[str, dict[str, Any]], Awaitable[Any] | Any]
 
 
 @dataclass
@@ -47,11 +48,51 @@ class ScheduledTrigger:
 class TriggerScheduler:
     """Run periodic trigger jobs and emit events through EventEngine."""
 
-    def __init__(self, *, emit_event: EmitEventFn):
+    def __init__(self, *, emit_event: EmitEventFn, on_cron_completed: CronCompleteFn | None = None):
         self._emit_event = emit_event
+        self._on_cron_completed = on_cron_completed
         self._tasks: list[asyncio.Task[None]] = []
         self._cron_jobs: dict[str, ScheduledTrigger] = {}
         self._cron_tasks: dict[str, asyncio.Task[None]] = {}
+
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", ""}:
+                return False
+        return bool(value)
+
+    async def _handle_one_shot_completion(self, trigger: ScheduledTrigger) -> None:
+        self._cron_jobs.pop(trigger.name, None)
+        self._cron_tasks.pop(trigger.name, None)
+        if not self._on_cron_completed:
+            return
+        payload = {
+            "name": trigger.name,
+            "event_type": trigger.event_type,
+            "schedule": trigger.schedule,
+            "source": trigger.source,
+            "subject": trigger.subject,
+            "payload": trigger.payload,
+            "trigger_kind": trigger.trigger_kind,
+            "schedule_kind": trigger.schedule_kind,
+        }
+        maybe = self._on_cron_completed(trigger.name, payload)
+        if asyncio.iscoroutine(maybe):
+            await maybe
+
+    def _is_one_shot(self, trigger: ScheduledTrigger) -> bool:
+        payload = trigger.payload if isinstance(trigger.payload, dict) else {}
+        return self._to_bool(payload.get("one_shot", payload.get("oneShot", False)), default=False)
 
     @staticmethod
     def parse_schedule_to_interval_seconds(schedule: str) -> float | None:
@@ -383,6 +424,9 @@ class TriggerScheduler:
                     risk_hint="low",
                 )
                 await self._emit_event(generic_event)
+            if trigger.trigger_kind == "cron" and self._is_one_shot(trigger):
+                await self._handle_one_shot_completion(trigger)
+                break
             next_due += trigger.interval_seconds
 
     async def _run_cron(self, trigger: ScheduledTrigger) -> None:
@@ -429,5 +473,8 @@ class TriggerScheduler:
                         risk_hint="low",
                     )
                     await self._emit_event(generic_event)
+                if self._is_one_shot(trigger):
+                    await self._handle_one_shot_completion(trigger)
+                    break
                 last_minute_key = minute_key
             await asyncio.sleep(1.0)

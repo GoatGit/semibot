@@ -40,7 +40,7 @@ export interface Agent {
   isActive: boolean
   isPublic: boolean
   isSystem: boolean
-  runtimeType: 'semigraph' | 'openclaw'
+  runtimeType: 'semigraph'
   openclawConfig?: Record<string, unknown>
   createdAt: string
   updatedAt: string
@@ -63,7 +63,7 @@ export interface CreateAgentInput {
   skills?: string[]
   subAgents?: string[]
   isPublic?: boolean
-  runtimeType?: 'semigraph' | 'openclaw'
+  runtimeType?: 'semigraph'
   openclawConfig?: Record<string, unknown>
 }
 
@@ -76,7 +76,7 @@ export interface UpdateAgentInput {
   subAgents?: string[]
   isActive?: boolean
   isPublic?: boolean
-  runtimeType?: 'semigraph' | 'openclaw'
+  runtimeType?: 'semigraph'
   openclawConfig?: Record<string, unknown>
 }
 
@@ -122,6 +122,11 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
   const rawConfig = typeof row.config === 'string' ? JSON.parse(row.config) : row.config
   const config = (rawConfig ?? {}) as Record<string, unknown>
 
+  const rawRuntimeType = String(row.runtime_type ?? 'semigraph').toLowerCase()
+  if (rawRuntimeType === 'openclaw') {
+    agentLogger.warn('检测到已弃用 runtimeType=openclaw，已自动降级为 semigraph', { agentId: row.id })
+  }
+
   return {
     id: row.id,
     orgId: row.org_id,
@@ -142,7 +147,7 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
     isActive: row.is_active,
     isPublic: row.is_public,
     isSystem: row.is_system,
-    runtimeType: (row.runtime_type as 'semigraph' | 'openclaw' | null) ?? 'semigraph',
+    runtimeType: 'semigraph',
     openclawConfig: row.openclaw_config ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -192,6 +197,10 @@ export async function createAgent(orgId: string, input: CreateAgentInput): Promi
   }
   const systemPrompt = input.systemPrompt?.trim() || 'You are a helpful AI assistant.'
 
+  if ((input as { runtimeType?: string }).runtimeType === 'openclaw') {
+    agentLogger.warn('创建 Agent 请求使用已弃用 runtimeType=openclaw，已强制使用 semigraph', { orgId })
+  }
+
   const row = await agentRepository.create({
     orgId,
     name: input.name,
@@ -201,7 +210,7 @@ export async function createAgent(orgId: string, input: CreateAgentInput): Promi
     skills: input.skills,
     subAgents: input.subAgents,
     isPublic: input.isPublic,
-    runtimeType: input.runtimeType,
+    runtimeType: 'semigraph',
     openclawConfig: input.openclawConfig,
   })
 
@@ -313,7 +322,7 @@ export async function updateAgent(
     subAgents: input.subAgents,
     isActive: input.isActive,
     isPublic: input.isPublic,
-    runtimeType: input.runtimeType,
+    runtimeType: 'semigraph',
     openclawConfig: input.openclawConfig,
   })
 

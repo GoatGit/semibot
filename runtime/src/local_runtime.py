@@ -82,6 +82,22 @@ def _as_non_empty_str(value: Any) -> str | None:
     return trimmed or None
 
 
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return bool(value)
+
+
 def _short_text(value: Any, *, max_len: int = 120) -> str:
     text = str(value or "").strip()
     if len(text) <= max_len:
@@ -472,19 +488,17 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
             risk_level = "high"
         else:
             risk_level = "low"
-        requires_approval = bool(
-            cfg.get(
-                "requiresApproval",
-                tool.name in {
-                    "code_executor",
-                    "file_io",
-                    "browser_automation",
-                    "http_client",
-                    "csv_xlsx",
-                    "sql_query_readonly",
-                    "rule_authoring",
-                },
-            )
+        requires_approval = _to_bool(
+            cfg.get("requiresApproval"),
+            default=tool.name in {
+                "code_executor",
+                "file_io",
+                "browser_automation",
+                "http_client",
+                "csv_xlsx",
+                "sql_query_readonly",
+                "rule_authoring",
+            },
         )
         raw_approval_scope = str(cfg.get("approvalScope") or "").strip().lower()
         approval_scope = (

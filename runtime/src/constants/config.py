@@ -222,16 +222,6 @@ SANDBOX_AUDIT_MAX_ENTRIES = 10000
 SANDBOX_POLICY_FILE = "sandbox_policy.yaml"
 """Default sandbox policy configuration file."""
 
-# High-risk tools that require sandbox execution
-SANDBOX_REQUIRED_TOOLS = [
-    "code_run",
-    "shell_exec",
-    "browser_automation",
-    "file_write",
-    "file_edit",
-]
-"""Tools that must execute in sandbox."""
-
 # Low-risk tools that can bypass sandbox
 SANDBOX_BYPASS_TOOLS = [
     "file_read",

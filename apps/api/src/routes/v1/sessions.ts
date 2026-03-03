@@ -19,7 +19,7 @@ const createSessionSchema = z.object({
   agentId: z.string().uuid(),
   title: z.string().max(200).optional(),
   metadata: z.record(z.unknown()).optional(),
-  runtimeType: z.enum(['semigraph', 'openclaw']).optional(),
+  runtimeType: z.enum(['semigraph']).optional(),
 })
 
 const updateSessionSchema = z.object({

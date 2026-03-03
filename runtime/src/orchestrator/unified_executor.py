@@ -13,9 +13,24 @@ from src.orchestrator.context import RuntimeSessionContext
 from src.orchestrator.capability import CapabilityGraph
 from src.events.runtime_emitter import RuntimeEventEmitter, emit_runtime_event
 from src.utils.logging import get_logger
-from src.constants.config import SANDBOX_REQUIRED_TOOLS
 
 logger = get_logger(__name__)
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return bool(value)
 
 
 @dataclass
@@ -76,9 +91,6 @@ class UnifiedActionExecutor:
 
         # High-risk tools from runtime policy
         self.high_risk_tools = set(runtime_context.runtime_policy.high_risk_tools)
-        if not self.high_risk_tools:
-            # Fallback to default high-risk tools
-            self.high_risk_tools = set(SANDBOX_REQUIRED_TOOLS)
 
     async def execute(
         self,
@@ -426,7 +438,7 @@ class UnifiedActionExecutor:
         metadata_map = capability.metadata if isinstance(capability.metadata, dict) else {}
         raw_risk_level = metadata_map.get("risk_level")
         risk_level = str(raw_risk_level).strip().lower() if raw_risk_level is not None else ""
-        configured_requires_approval = bool(metadata_map.get("requires_approval"))
+        configured_requires_approval = _to_bool(metadata_map.get("requires_approval"), default=False)
 
         is_high_risk = (
             tool_name in self.high_risk_tools

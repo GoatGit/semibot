@@ -36,20 +36,63 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 /**
  * 获取 API 基础 URL
  */
+function normalizeApiBase(url: string): string {
+  const normalized = url.replace(/\/$/, '')
+  return normalized.endsWith(API_BASE_PATH) ? normalized : `${normalized}${API_BASE_PATH}`
+}
+
+function isLocalHostname(hostname: string): boolean {
+  const safe = String(hostname || '').toLowerCase()
+  return safe === 'localhost' || safe === '127.0.0.1' || safe === '::1'
+}
+
+function shouldUseEnvApiUrlInBrowser(envUrl: string): boolean {
+  if (typeof window === 'undefined') return true
+  try {
+    const envHost = new URL(envUrl).hostname
+    const currentHost = window.location.hostname
+    if (isLocalHostname(envHost) && !isLocalHostname(currentHost)) {
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function getApiBaseUrl(): string {
-  // 优先使用环境变量
-  if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
-    const normalized = process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '')
-    return normalized.endsWith(API_BASE_PATH) ? normalized : `${normalized}${API_BASE_PATH}`
+  if (typeof window !== 'undefined') {
+    const envApiUrl = process.env.NEXT_PUBLIC_API_URL
+    if (envApiUrl && shouldUseEnvApiUrlInBrowser(envApiUrl)) {
+      return normalizeApiBase(envApiUrl)
+    }
+    return API_BASE_PATH
   }
 
-  // 浏览器环境使用相对路径
-  if (typeof window !== 'undefined') {
-    return API_BASE_PATH
+  // 非浏览器环境优先使用环境变量
+  if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
+    return normalizeApiBase(process.env.NEXT_PUBLIC_API_URL)
   }
 
   // 服务端默认
   return `${process.env.API_INTERNAL_URL || 'http://localhost:3001'}${API_BASE_PATH}`
+}
+
+export function getDirectApiBaseUrlForBrowser(): string {
+  if (typeof window === 'undefined') {
+    return normalizeApiBase(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1')
+  }
+
+  const envApiUrl = process.env.NEXT_PUBLIC_API_URL
+  if (envApiUrl && shouldUseEnvApiUrlInBrowser(envApiUrl)) {
+    return normalizeApiBase(envApiUrl)
+  }
+
+  // 远程访问场景下，避免直连访问者机器 localhost。
+  // 默认回退到当前主机的 API 端口。
+  const protocol = window.location.protocol || 'http:'
+  const host = window.location.hostname
+  return `${protocol}//${host}:3001${API_BASE_PATH}`
 }
 
 /**
@@ -291,10 +334,7 @@ export const apiClient = {
     } = options
 
     // 上传直连后端，绕过 Next.js rewrite 代理（代理可能破坏 multipart body）
-    const directBaseRaw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
-    const directBase = directBaseRaw.replace(/\/$/, '').endsWith('/api/v1')
-      ? directBaseRaw.replace(/\/$/, '')
-      : `${directBaseRaw.replace(/\/$/, '')}/api/v1`
+    const directBase = getDirectApiBaseUrlForBrowser()
     const url = `${directBase}${path}`
 
     const headers: Record<string, string> = {

@@ -129,6 +129,40 @@ async def test_gateway_manager_config_and_test_send(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_gateway_manager_notify_routes_by_gateway_id_for_telegram(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    sent: list[dict[str, Any]] = []
+
+    async def _send(token: str, payload: dict[str, Any], timeout: float) -> None:
+        sent.append({"token": token, "payload": payload, "timeout": timeout})
+
+    manager = _build_manager(db_path=db_path, rules_path=rules_path, telegram_send_fn=_send)
+    manager.upsert_gateway_config(
+        "telegram",
+        {
+            "isActive": True,
+            "config": {
+                "botToken": "123456:abc",
+                "defaultChatId": "-100001",
+            },
+        },
+    )
+
+    await manager.handle_runtime_notify_payload(
+        {
+            "summary": "notify by gateway id",
+            "gateway_id": "telegram:123456:-200002",
+        }
+    )
+    assert len(sent) == 1
+    assert sent[0]["payload"]["chat_id"] == "-200002"
+    assert sent[0]["payload"]["text"] == "notify by gateway id"
+
+
+@pytest.mark.asyncio
 async def test_gateway_manager_telegram_ingest_with_addressing_policy(tmp_path: Path):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"
@@ -188,7 +222,8 @@ async def test_gateway_manager_telegram_ingest_with_addressing_policy(tmp_path: 
 
     await asyncio.sleep(0.05)
     assert sent[-1]["payload"]["chat_id"] == "-100001"
-    assert sent[-1]["payload"]["text"] == "done: @semibot hello again"
+    assert "@semibot hello again" in sent[-1]["payload"]["text"]
+    assert "gateway_id=telegram:" in sent[-1]["payload"]["text"]
 
     convs = manager.list_gateway_conversations(provider="telegram", limit=10)["data"]
     assert len(convs) == 1

@@ -9,6 +9,7 @@ import { useAgent2UI } from './useAgent2UI'
 import { useSessionStore } from '@/stores/sessionStore'
 import type { Agent2UIMessage, SSEDoneData, SSEErrorData } from '@/types'
 import { AUTH_DISABLED } from '@/lib/auth-mode'
+import { getDirectApiBaseUrlForBrowser } from '@/lib/api'
 
 // ═══════════════════════════════════════════════════════════════
 // 常量
@@ -19,8 +20,9 @@ import { AUTH_DISABLED } from '@/lib/auth-mode'
  * Next.js dev server 的 rewrite proxy 会缓冲整个响应体，导致 SSE 事件
  * 无法实时推送到浏览器，表现为"文本一次性蹦出来"。
  */
-const SSE_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'
+function getSseBaseUrl(): string {
+  return getDirectApiBaseUrlForBrowser()
+}
 
 /** 获取认证 Token */
 function getAuthToken(): string | undefined {
@@ -242,9 +244,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       if (parentMessageId) formData.append('parentMessageId', parentMessageId)
 
       if (sessionId) {
-        url = `${SSE_BASE_URL}/chat/sessions/${sessionId}`
+        url = `${getSseBaseUrl()}/chat/sessions/${sessionId}`
       } else if (agentId) {
-        url = `${SSE_BASE_URL}/chat/start`
+        url = `${getSseBaseUrl()}/chat/start`
         formData.append('agentId', agentId)
       } else {
         setIsSending(false)
@@ -266,10 +268,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       // JSON 模式
       let body: unknown
       if (sessionId) {
-        url = `${SSE_BASE_URL}/chat/sessions/${sessionId}`
+        url = `${getSseBaseUrl()}/chat/sessions/${sessionId}`
         body = { message, parentMessageId }
       } else if (agentId) {
-        url = `${SSE_BASE_URL}/chat/start`
+        url = `${getSseBaseUrl()}/chat/start`
         body = { agentId, message }
       } else {
         setIsSending(false)

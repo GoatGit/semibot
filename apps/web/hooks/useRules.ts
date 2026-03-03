@@ -69,11 +69,21 @@ function readBoolean(value: unknown, fallback = false): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
+function toUnixTs(value?: string): number {
+  if (!value) return 0
+  const ts = new Date(value).getTime()
+  return Number.isFinite(ts) ? ts : 0
+}
+
 function normalizeRule(raw: unknown): EventRule | null {
   if (!isObject(raw)) return null
 
   const id = readString(raw.id)
   if (!id) return null
+
+  const createdAt = readString(raw.createdAt) || readString(raw.created_at)
+  const updatedAt = readString(raw.updatedAt) || readString(raw.updated_at)
+  const effectiveAt = updatedAt || createdAt
 
   return {
     id,
@@ -100,6 +110,9 @@ function normalizeRule(raw: unknown): EventRule | null {
     dedupeWindowSeconds: readNumber(raw.dedupeWindowSeconds, readNumber(raw.dedupe_window_seconds, 0)),
     cooldownSeconds: readNumber(raw.cooldownSeconds, readNumber(raw.cooldown_seconds, 0)),
     attentionBudgetPerDay: readNumber(raw.attentionBudgetPerDay, readNumber(raw.attention_budget_per_day, 0)),
+    createdAt: createdAt || undefined,
+    updatedAt: updatedAt || undefined,
+    effectiveAt: effectiveAt || undefined,
   }
 }
 
@@ -117,7 +130,11 @@ function normalizeRulesResponse(raw: unknown): EventRule[] {
   return items
     .map(normalizeRule)
     .filter((item): item is EventRule => item !== null)
-    .sort((a, b) => b.priority - a.priority)
+    .sort((a, b) => {
+      const diff = toUnixTs(b.effectiveAt) - toUnixTs(a.effectiveAt)
+      if (diff !== 0) return diff
+      return b.priority - a.priority
+    })
 }
 
 function getHttpStatus(error: unknown): number | undefined {

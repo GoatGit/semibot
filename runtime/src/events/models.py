@@ -51,6 +51,8 @@ class EventRule:
     cooldown_seconds: int = 0
     attention_budget_per_day: int = 0
     is_active: bool = True
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass

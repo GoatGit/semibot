@@ -166,6 +166,12 @@ pnpm dev
 - **API 服务**: http://localhost:3001
 - **API 文档**: http://localhost:3001/api-docs
 
+### API 迁移提示（进化中心）
+
+- `GET/PUT /api/v1/context-policies/*` 已标记为 deprecated（兼容保留）。
+- 进化中心统一使用新接口：`/api/v1/evolution-capabilities/*`。
+- 新接口对象类型：`hands`、`reflex`、`spine`、`guard`、`mind`。
+
 ## 常用命令
 
 ```bash

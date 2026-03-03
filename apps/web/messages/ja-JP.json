@@ -231,7 +231,9 @@
       "createWebhook": "Webhook 作成に失敗しました",
       "updateWebhook": "Webhook 更新に失敗しました",
       "testWebhook": "Webhook テストに失敗しました",
-      "deleteWebhook": "Webhook 削除に失敗しました"
+      "deleteWebhook": "Webhook 削除に失敗しました",
+      "evolutionCapabilitiesLoad": "進化能力設定の読み込みに失敗しました",
+      "evolutionCapabilitiesSave": "進化能力設定の保存に失敗しました"
     },
     "confirm": {
       "deleteApiKey": "この API キーを削除しますか？この操作は元に戻せません。",
@@ -308,6 +310,20 @@
       "events": "イベント",
       "createdAt": "作成日時"
     },
+    "evolutionCapabilities": {
+      "tab": "進化",
+      "title": "進化センター",
+      "description": "5つの進化オブジェクトを個別に編集し、バージョン切替・ロールバックできます。",
+      "gene": "Hands（実行能力）",
+      "agents": "Reflex（ルールテンプレート）",
+      "tools": "Guard（ツールポリシー）",
+      "version": "バージョン",
+      "updatedAt": "更新日時",
+      "placeholder": "能力内容を入力してください...",
+      "history": "履歴",
+      "rollbackTo": "切替先",
+      "rollback": "バージョン切替"
+    },
     "modals": {
       "provider": {
         "title": "LLM プロバイダを編集",
@@ -319,12 +335,19 @@
         "description": "V2 は内蔵ツールのパラメータおよび有効/無効のみ対応。名称/タイプ変更や追加/削除は非対応です。",
         "namePlaceholder": "ツール名",
         "typePlaceholder": "ツールタイプ",
+        "timeoutLabel": "タイムアウト",
+        "timeoutDefault": "デフォルトのタイムアウトを使用",
         "timeoutPlaceholder": "timeout ms（任意、>=1000）",
+        "retryAttemptsLabel": "リトライ回数",
+        "retryAttemptsDefault": "デフォルトのリトライ設定を使用",
         "retryAttemptsPlaceholder": "retryAttempts（任意、0-5）",
-        "hitl": "高リスク操作で HITL 承認を要求",
+        "hitl": "実行前に承認必須（requiresApproval）",
+        "hitlHint": "有効にすると、実行前に承認フローへ入ります。無効時はリスクとルールに応じて自動実行されます。",
         "riskLevel": "リスクレベル",
         "approvalScope": "承認グループ化スコープ",
         "approvalScopeHint": "類似承認のグループ化単位を制御しノイズを減らします。",
+        "approvalDedupeKeysLabel": "承認の重複排除キー",
+        "approvalDedupeDefault": "デフォルト重複排除（システム判定）",
         "approvalDedupeKeysPlaceholder": "approvalDedupeKeys（任意、カンマ区切り。例: url,selector）",
         "approvalScopes": {
           "session": "セッション単位でグループ化（推奨）",
@@ -686,7 +709,8 @@
     "meta": {
       "dedupe": "重複排除",
       "cooldown": "クールダウン",
-      "budgetPerDay": "日次上限"
+      "budgetPerDay": "日次上限",
+      "effectiveAt": "有効化時刻"
     }
   },
   "chatLayout": {

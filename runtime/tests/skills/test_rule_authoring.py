@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from src.server.config_store import RuntimeConfigStore
 from src.skills.rule_authoring import RuleAuthoringTool
 
 
@@ -94,6 +95,30 @@ async def test_rule_authoring_tool_infers_action_when_missing(tmp_path: Path, mo
 
 
 @pytest.mark.asyncio
+async def test_rule_authoring_tool_maps_notify_action_mode_to_suggest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    created = await tool.execute(
+        action="create_rule",
+        payload={
+            "name": "mode_notify_alias",
+            "event_type": "chat.message.received",
+            "conditions": {"all": []},
+            "action_mode": "notify",
+            "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+            "risk_level": "low",
+        },
+    )
+    assert created.success is True
+
+
+@pytest.mark.asyncio
 async def test_rule_authoring_tool_accepts_legacy_create_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules_dir = tmp_path / "rules"
     db_path = tmp_path / "events.db"
@@ -108,9 +133,159 @@ async def test_rule_authoring_tool_accepts_legacy_create_payload(tmp_path: Path,
             "description": "每天早上10点触发，整理当日最新新闻并发送给用户",
             "trigger_type": "cron",
             "cron_expression": "0 10 * * *",
+            "gateway_id": "telegram:bot:chat",
             "enabled": True,
         },
     )
     assert result.success is True
     assert result.result.get("action") == "create_rule"
     assert result.result.get("event_type") == "cron.job.tick"
+
+
+@pytest.mark.asyncio
+async def test_rule_authoring_tool_accepts_send_message_action_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    result = await tool.execute(
+        action="send_message",
+        payload={
+            "rule_name": "5分钟喝水提醒",
+            "description": "5分钟后提醒喝热水",
+            "rule_condition": "cron",
+            "cron_expression": "*/5 * * * *",
+            "gateway_id": "telegram:bot:chat",
+        },
+    )
+    assert result.success is True
+    assert result.result.get("action") == "create_rule"
+    assert result.result.get("event_type") == "cron.job.tick"
+
+
+@pytest.mark.asyncio
+async def test_rule_authoring_tool_infers_legacy_create_when_action_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    result = await tool.execute(
+        payload={
+            "rule_name": "每日10点新闻整理",
+            "rule_action": "send_message",
+            "rule_condition": "cron",
+            "cron_expression": "0 10 * * *",
+            "description": "每天10点推送新闻摘要",
+            "gateway_id": "telegram:bot:chat",
+        }
+    )
+    assert result.success is True
+    assert result.result.get("action") == "create_rule"
+    assert result.result.get("event_type") == "cron.job.tick"
+
+
+@pytest.mark.asyncio
+async def test_rule_authoring_tool_infers_cron_from_text_when_schedule_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    result = await tool.execute(
+        action="create",
+        payload={
+            "rule_name": "站立活动提醒",
+            "description": "3分钟后提醒我要站起来活动一下",
+            "rule_condition": "cron",
+            "gateway_id": "telegram:bot:chat",
+            # intentionally no cron_expression/schedule
+        },
+    )
+    assert result.success is True
+    assert result.result.get("action") == "create_rule"
+    assert result.result.get("event_type") == "cron.job.tick"
+
+    store = RuntimeConfigStore(db_path=str(db_path))
+    cron = store.get_cron_job("站立活动提醒")
+    assert cron is not None
+    assert cron.get("schedule") == "*/3 * * * *"
+    cron_payload = cron.get("payload") if isinstance(cron.get("payload"), dict) else {}
+    assert cron_payload.get("one_shot") is True
+
+
+@pytest.mark.asyncio
+async def test_rule_authoring_tool_normalizes_natural_language_explicit_schedule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    result = await tool.execute(
+        action="create",
+        payload={
+            "rule_name": "14分钟后提醒",
+            "description": "14分钟后提醒",
+            "rule_condition": "cron",
+            "gateway_id": "telegram:bot:chat",
+            "cron_expression": "14分钟后",
+        },
+    )
+    assert result.success is True
+    store = RuntimeConfigStore(db_path=str(db_path))
+    cron = store.get_cron_job("14分钟后提醒")
+    assert cron is not None
+    assert cron.get("schedule") == "*/14 * * * *"
+    cron_payload = cron.get("payload") if isinstance(cron.get("payload"), dict) else {}
+    assert cron_payload.get("one_shot") is True
+
+
+@pytest.mark.asyncio
+async def test_rule_authoring_tool_auto_resolves_name_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    first = await tool.execute(
+        action="create",
+        payload={
+            "rule_name": "重名提醒",
+            "description": "每5分钟提醒",
+            "rule_condition": "cron",
+            "gateway_id": "telegram:bot:chat",
+            "cron_expression": "*/5 * * * *",
+        },
+    )
+    assert first.success is True
+
+    second = await tool.execute(
+        action="create",
+        payload={
+            "rule_name": "重名提醒",
+            "description": "每5分钟提醒",
+            "rule_condition": "cron",
+            "gateway_id": "telegram:bot:chat",
+            "cron_expression": "*/5 * * * *",
+        },
+    )
+    assert second.success is True
+    assert second.result.get("conflict_resolved") is True
+    assert second.result.get("original_name") == "重名提醒"
+    assert str(second.result.get("resolved_name") or "").startswith("重名提醒_")

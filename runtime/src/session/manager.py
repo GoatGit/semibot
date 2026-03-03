@@ -6,7 +6,6 @@ import shutil
 from typing import Any
 
 from src.security.api_key_cipher import decrypt_api_keys
-from src.session.openclaw_adapter import OpenClawBridgeAdapter
 from src.session.runtime_adapter import RuntimeAdapter
 from src.session.semigraph_adapter import SemiGraphAdapter
 from src.utils.logging import get_logger
@@ -14,7 +13,7 @@ from src.ws.client import ControlPlaneClient
 
 logger = get_logger(__name__)
 
-SUPPORTED_RUNTIME_TYPES = {"semigraph", "openclaw"}
+SUPPORTED_RUNTIME_TYPES = {"semigraph"}
 
 
 class SessionManager:
@@ -251,11 +250,15 @@ class SessionManager:
         return copied
 
     def _create_adapter(self, runtime_type: str, session_id: str, data: dict[str, Any]) -> RuntimeAdapter:
+        if runtime_type == "openclaw":
+            logger.warning(
+                "openclaw_runtime_deprecated_fallback",
+                extra={"session_id": session_id, "runtime_type": runtime_type},
+            )
+            runtime_type = "semigraph"
+
         if runtime_type not in SUPPORTED_RUNTIME_TYPES:
             raise ValueError(f"不支持的 runtime_type: {runtime_type}")
-
-        if runtime_type == "openclaw":
-            return OpenClawBridgeAdapter(self.client, session_id, data)
 
         return SemiGraphAdapter(
             client=self.client,

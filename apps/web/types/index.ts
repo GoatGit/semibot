@@ -287,6 +287,9 @@ export interface EventRule {
   dedupeWindowSeconds?: number
   cooldownSeconds?: number
   attentionBudgetPerDay?: number
+  createdAt?: string
+  updatedAt?: string
+  effectiveAt?: string
 }
 
 export interface ApprovalRecord {

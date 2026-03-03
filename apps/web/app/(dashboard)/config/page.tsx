@@ -7,6 +7,7 @@ import {
   KeyRound,
   Webhook,
   Wrench,
+  FileText,
   RefreshCw,
   Loader2,
   Plus,
@@ -124,8 +125,17 @@ interface RuntimeSkillsData {
   error?: string
 }
 
-type ConfigTab = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks'
-type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks'
+interface EvolutionCapabilityDoc {
+  id: string
+  capabilityType: 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
+  version: string
+  content: string
+  updatedAt: string
+}
+type EvolutionCapabilityType = 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
+
+type ConfigTab = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
+type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
 type ProviderKey = keyof LlmConfigData['providers']
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram'
@@ -273,6 +283,7 @@ const HIGH_RISK_DEFAULT_TOOLS = [
   'http_client',
   'csv_xlsx',
   'sql_query_readonly',
+  'rule_authoring',
 ]
 const TOOLS_WITHOUT_API_CREDENTIALS = [
   'code_executor',
@@ -282,8 +293,37 @@ const TOOLS_WITHOUT_API_CREDENTIALS = [
   'json_transform',
   'csv_xlsx',
   'pdf_report',
+  'rule_authoring',
+]
+const TOOLS_WITH_EXECUTION_TUNING = [
+  'code_executor',
+  'browser_automation',
+  'http_client',
+  'web_fetch',
+  'sql_query_readonly',
 ]
 const NON_TOOL_SKILLS = ['xlsx', 'pdf']
+
+const DEFAULT_APPROVAL_DEDUPE_OPTIONS = ['', 'action,target', 'action', 'tool']
+const EVOLUTION_CAPABILITY_TYPES: EvolutionCapabilityType[] = ['hands', 'reflex', 'spine', 'guard', 'mind']
+const TOOL_APPROVAL_DEDUPE_OPTIONS: Record<string, string[]> = {
+  browser_automation: ['', 'action,target', 'action', 'target', 'tool'],
+  file_io: ['', 'action,target', 'target', 'tool'],
+  code_executor: ['', 'action', 'tool'],
+  rule_authoring: ['', 'action,target', 'action', 'tool'],
+}
+
+function parseBooleanFlag(value: unknown, fallback = false): boolean {
+  if (value === undefined || value === null) return fallback
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true
+    if (['0', 'false', 'no', 'n', 'off', ''].includes(normalized)) return false
+  }
+  return Boolean(value)
+}
 
 function formatDate(dateString: string | undefined, locale: string, t: (key: string, params?: Record<string, string | number>) => string): string {
   if (!dateString) return t('config.common.notSet')
@@ -435,6 +475,67 @@ function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
 
 export default function ConfigPage() {
   const { locale, t } = useLocale()
+  const tSafe = useCallback(
+    (key: string, fallback: string, params?: Record<string, string | number>) => {
+      const value = t(key, params)
+      return value === key ? fallback : value
+    },
+    [t]
+  )
+  const evolutionUiText = useMemo(() => {
+    if (locale === 'ja-JP') {
+      return {
+        tab: '進化',
+        title: '進化センター',
+        description: '5つの進化オブジェクトを個別に編集・バージョン切替できます。保存すると自動採番されます。',
+        hands: 'Hands（実行能力）',
+        reflex: 'Reflex（ルールテンプレート）',
+        spine: 'Spine（Planner 規範）',
+        guard: 'Guard（ツールポリシー）',
+        mind: 'Mind（全体行動方針）',
+        version: 'バージョン',
+        updatedAt: '更新日時',
+        history: '履歴',
+        placeholder: '進化オブジェクトの内容を入力...',
+        rollbackTo: '切替先バージョン',
+        rollback: 'バージョン切替',
+      }
+    }
+    if (locale === 'en-US') {
+      return {
+        tab: 'Evolution',
+        title: 'Evolution Center',
+        description: 'Manage five evolution objects independently. Saving creates a new version automatically.',
+        hands: 'Hands (Execution Capability)',
+        reflex: 'Reflex (Rule Template)',
+        spine: 'Spine (Planner Guidance)',
+        guard: 'Guard (Tool Policy)',
+        mind: 'Mind (Global Behavior)',
+        version: 'Version',
+        updatedAt: 'Updated at',
+        history: 'History',
+        placeholder: 'Enter capability content...',
+        rollbackTo: 'Switch to',
+        rollback: 'Switch Version',
+      }
+    }
+    return {
+      tab: '进化',
+      title: '进化中心',
+      description: '统一管理 5 类进化对象，可分别编辑与切换版本。保存后自动累加版本号。',
+      hands: 'Hands（执行能力）',
+      reflex: 'Reflex（规则模板）',
+      spine: 'Spine（规划规范）',
+      guard: 'Guard（工具策略）',
+      mind: 'Mind（全局行为）',
+      version: '版本',
+      updatedAt: '更新时间',
+      history: '历史版本',
+      placeholder: '输入能力内容...',
+      rollbackTo: '切换到',
+      rollback: '切换版本',
+    }
+  }, [locale])
   const [activeTab, setActiveTab] = useState<ConfigTab>('llm')
   const [loading, setLoading] = useState(true)
   const [refreshingAll, setRefreshingAll] = useState(false)
@@ -446,6 +547,7 @@ export default function ConfigPage() {
     gateways: false,
     apiKeys: false,
     webhooks: false,
+    evolutionCapabilities: false,
   })
   const [sectionErrors, setSectionErrors] = useState<Record<SectionKey, string | null>>({
     llm: null,
@@ -453,6 +555,7 @@ export default function ConfigPage() {
     gateways: null,
     apiKeys: null,
     webhooks: null,
+    evolutionCapabilities: null,
   })
 
   const [llmProviders, setLlmProviders] = useState<LlmProviderStatus[]>([])
@@ -564,6 +667,43 @@ export default function ConfigPage() {
     secret: '',
     eventsText: DEFAULT_EVENTS.join(','),
   })
+  const [evolutionCapabilities, setEvolutionCapabilities] = useState<Record<EvolutionCapabilityType, EvolutionCapabilityDoc>>({
+    hands: { id: '', capabilityType: 'hands', version: 'v0', content: '', updatedAt: '' },
+    reflex: { id: '', capabilityType: 'reflex', version: 'v0', content: '', updatedAt: '' },
+    spine: { id: '', capabilityType: 'spine', version: 'v0', content: '', updatedAt: '' },
+    guard: { id: '', capabilityType: 'guard', version: 'v0', content: '', updatedAt: '' },
+    mind: { id: '', capabilityType: 'mind', version: 'v0', content: '', updatedAt: '' },
+  })
+  const [evolutionCapabilityDrafts, setEvolutionCapabilityDrafts] = useState<Record<EvolutionCapabilityType, string>>({
+    hands: '',
+    reflex: '',
+    spine: '',
+    guard: '',
+    mind: '',
+  })
+  const [evolutionCapabilityVersions, setEvolutionCapabilityVersions] = useState<Record<EvolutionCapabilityType, EvolutionCapabilityDoc[]>>({
+    hands: [],
+    reflex: [],
+    spine: [],
+    guard: [],
+    mind: [],
+  })
+  const [evolutionHistoryExpanded, setEvolutionHistoryExpanded] = useState<Record<EvolutionCapabilityType, boolean>>({
+    hands: false,
+    reflex: false,
+    spine: false,
+    guard: false,
+    mind: false,
+  })
+  const [evolutionSwitchVersion, setEvolutionSwitchVersion] = useState<Record<EvolutionCapabilityType, string>>({
+    hands: '',
+    reflex: '',
+    spine: '',
+    guard: '',
+    mind: '',
+  })
+  const [savingEvolutionCapability, setSavingEvolutionCapability] = useState<EvolutionCapabilityType | null>(null)
+  const [switchingEvolutionCapability, setSwitchingEvolutionCapability] = useState<EvolutionCapabilityType | null>(null)
 
   const setSectionLoadingFlag = useCallback((section: SectionKey, value: boolean) => {
     setSectionLoading((prev) => ({ ...prev, [section]: value }))
@@ -684,6 +824,65 @@ export default function ConfigPage() {
     }
   }, [setSectionLoadingFlag, t])
 
+  const loadEvolutionCapabilities = useCallback(async () => {
+    setSectionLoadingFlag('evolutionCapabilities', true)
+    try {
+      const response = await apiClient.get<ApiResponse<EvolutionCapabilityDoc[]>>('/evolution-capabilities')
+      if (!response.success) {
+        throw new Error(t('config.errors.evolutionCapabilitiesLoad'))
+      }
+      const docs = response.data || []
+      const merged: Record<EvolutionCapabilityType, EvolutionCapabilityDoc> = {
+        hands: { id: '', capabilityType: 'hands', version: 'v0', content: '', updatedAt: '' },
+        reflex: { id: '', capabilityType: 'reflex', version: 'v0', content: '', updatedAt: '' },
+        spine: { id: '', capabilityType: 'spine', version: 'v0', content: '', updatedAt: '' },
+        guard: { id: '', capabilityType: 'guard', version: 'v0', content: '', updatedAt: '' },
+        mind: { id: '', capabilityType: 'mind', version: 'v0', content: '', updatedAt: '' },
+      }
+      for (const doc of docs) {
+        if (EVOLUTION_CAPABILITY_TYPES.includes(doc.capabilityType)) {
+          merged[doc.capabilityType] = doc
+        }
+      }
+      setEvolutionCapabilities(merged)
+      setEvolutionCapabilityDrafts({
+        hands: merged.hands.content || '',
+        reflex: merged.reflex.content || '',
+        spine: merged.spine.content || '',
+        guard: merged.guard.content || '',
+        mind: merged.mind.content || '',
+      })
+      setSectionErrors((prev) => ({ ...prev, evolutionCapabilities: null }))
+    } catch (err) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        evolutionCapabilities: getErrorMessage(err, t('config.errors.evolutionCapabilitiesLoad')),
+      }))
+    } finally {
+      setSectionLoadingFlag('evolutionCapabilities', false)
+    }
+  }, [setSectionLoadingFlag, t])
+
+  const loadEvolutionCapabilityVersions = useCallback(async (docType: EvolutionCapabilityType) => {
+    try {
+      const response = await apiClient.get<ApiResponse<EvolutionCapabilityDoc[]>>(
+        `/evolution-capabilities/${docType}/versions`,
+        { params: { limit: 20 } }
+      )
+      if (!response.success) {
+        throw new Error(t('config.errors.evolutionCapabilitiesLoad'))
+      }
+      const versions = response.data || []
+      setEvolutionCapabilityVersions((prev) => ({ ...prev, [docType]: versions }))
+      setEvolutionSwitchVersion((prev) => ({
+        ...prev,
+        [docType]: versions[0]?.version || '',
+      }))
+    } catch (err) {
+      setError(getErrorMessage(err, t('config.errors.evolutionCapabilitiesLoad')))
+    }
+  }, [t])
+
   const loadGateways = useCallback(async () => {
     setSectionLoadingFlag('gateways', true)
     try {
@@ -707,10 +906,17 @@ export default function ConfigPage() {
   const loadData = useCallback(async () => {
     setRefreshingAll(true)
     setError(null)
-    await Promise.all([loadLlmData(), loadTools(), loadGateways(), loadApiKeys(), loadWebhooks()])
+    await Promise.all([
+      loadLlmData(),
+      loadTools(),
+      loadGateways(),
+      loadApiKeys(),
+      loadWebhooks(),
+      loadEvolutionCapabilities(),
+    ])
     setLoading(false)
     setRefreshingAll(false)
-  }, [loadApiKeys, loadGateways, loadLlmData, loadTools, loadWebhooks])
+  }, [loadApiKeys, loadEvolutionCapabilities, loadGateways, loadLlmData, loadTools, loadWebhooks])
 
   useEffect(() => {
     loadData()
@@ -729,6 +935,41 @@ export default function ConfigPage() {
       setError(getErrorMessage(err, t('config.errors.saveDefaultModel')))
     } finally {
       setSavingModelDefaults(false)
+    }
+  }
+
+  const saveEvolutionCapability = async (docType: EvolutionCapabilityType) => {
+    try {
+      setSavingEvolutionCapability(docType)
+      setError(null)
+      await apiClient.put<ApiResponse<EvolutionCapabilityDoc>>(`/evolution-capabilities/${docType}`, {
+        content: evolutionCapabilityDrafts[docType],
+        changeNote: 'updated via evolution center',
+      })
+      await loadEvolutionCapabilities()
+    } catch (err) {
+      setError(getErrorMessage(err, t('config.errors.evolutionCapabilitiesSave')))
+    } finally {
+      setSavingEvolutionCapability((current) => (current === docType ? null : current))
+    }
+  }
+
+  const switchEvolutionCapabilityVersion = async (docType: EvolutionCapabilityType) => {
+    const targetVersion = evolutionSwitchVersion[docType]?.trim()
+    if (!targetVersion) return
+    try {
+      setSwitchingEvolutionCapability(docType)
+      setError(null)
+      await apiClient.post<ApiResponse<EvolutionCapabilityDoc>>(`/evolution-capabilities/${docType}/switch`, {
+        targetVersion,
+        reason: 'switch via evolution center',
+      })
+      await loadEvolutionCapabilities()
+      await loadEvolutionCapabilityVersions(docType)
+    } catch (err) {
+      setError(getErrorMessage(err, t('config.errors.evolutionCapabilitiesSave')))
+    } finally {
+      setSwitchingEvolutionCapability((current) => (current === docType ? null : current))
     }
   }
 
@@ -783,7 +1024,7 @@ export default function ConfigPage() {
         typeof tool.config?.retryAttempts === 'number'
           ? String(tool.config.retryAttempts)
           : '',
-      requiresApproval: Boolean(tool.config?.requiresApproval),
+      requiresApproval: parseBooleanFlag(tool.config?.requiresApproval, HIGH_RISK_DEFAULT_TOOLS.includes(tool.name)),
       riskLevel: (tool.config?.riskLevel || (HIGH_RISK_DEFAULT_TOOLS.includes(tool.name) ? 'high' : 'low')) as
         | 'low'
         | 'medium'
@@ -1718,8 +1959,9 @@ export default function ConfigPage() {
       { id: 'gateways' as const, label: 'Gateways', count: gateways.length },
       { id: 'apiKeys' as const, label: 'API Keys', count: apiKeys.length },
       { id: 'webhooks' as const, label: 'Webhooks', count: webhooks.length },
+      { id: 'evolutionCapabilities' as const, label: evolutionUiText.tab, count: 5 },
     ],
-    [apiKeys.length, gateways.length, llmProviders, tools.length, webhooks.length]
+    [apiKeys.length, evolutionUiText.tab, gateways.length, llmProviders, tools.length, webhooks.length]
   )
 
   const isAnySectionLoading = Object.values(sectionLoading).some(Boolean)
@@ -1799,6 +2041,7 @@ export default function ConfigPage() {
                       <p className="text-xs text-warning-500">{sectionErrors.llm}</p>
                     )}
                     <Input
+                      data-testid="llm-default-model-input"
                       placeholder="DEFAULT_LLM_MODEL"
                       value={modelDefaults.defaultModel}
                       onChange={(e) =>
@@ -1806,6 +2049,7 @@ export default function ConfigPage() {
                       }
                     />
                     <Input
+                      data-testid="llm-fallback-model-input"
                       placeholder="FALLBACK_LLM_MODEL"
                       value={modelDefaults.fallbackModel}
                       onChange={(e) =>
@@ -1813,6 +2057,7 @@ export default function ConfigPage() {
                       }
                     />
                     <Button
+                      data-testid="llm-save-routing-button"
                       onClick={saveModelConfig}
                       loading={savingModelDefaults}
                     >
@@ -1936,8 +2181,8 @@ export default function ConfigPage() {
                                 </p>
                                 <p className="mt-1 text-xs text-text-tertiary">
                                   {t('config.tools.risk')}: {tool.config?.riskLevel || 'low'} · {t('config.tools.approval')}:{' '}
-                                  {tool.config?.requiresApproval ? t('config.tools.on') : t('config.tools.off')}
-                                  {tool.config?.requiresApproval
+                                  {parseBooleanFlag(tool.config?.requiresApproval, false) ? t('config.tools.on') : t('config.tools.off')}
+                                  {parseBooleanFlag(tool.config?.requiresApproval, false)
                                     ? ` · ${t('config.tools.approvalScope')}: ${String(tool.config?.approvalScope || 'session')}`
                                     : ''}
                                 </p>
@@ -2302,6 +2547,125 @@ export default function ConfigPage() {
               </Card>
             )}
 
+            {activeTab === 'evolutionCapabilities' && (
+              <Card className="border-border-default">
+                <CardContent className="p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText size={18} className="text-primary-400" />
+                      <h2 className="text-lg font-semibold text-text-primary">
+                        {evolutionUiText.title}
+                      </h2>
+                    </div>
+                    <Button
+                      size="xs"
+                      variant="tertiary"
+                      leftIcon={<RefreshCw size={13} className={sectionLoading.evolutionCapabilities ? 'animate-spin' : ''} />}
+                      onClick={loadEvolutionCapabilities}
+                    >
+                      {t('common.refresh')}
+                    </Button>
+                  </div>
+                  <p className="text-sm text-text-secondary">
+                    {evolutionUiText.description}
+                  </p>
+                  {sectionErrors.evolutionCapabilities && (
+                    <p className="text-xs text-warning-500">{sectionErrors.evolutionCapabilities}</p>
+                  )}
+                  {EVOLUTION_CAPABILITY_TYPES.map((docType) => (
+                    <div
+                      key={docType}
+                      className="space-y-2 rounded-lg border border-border-subtle bg-bg-surface p-4"
+                      data-testid={`evolution-capability-card-${docType}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-text-primary">
+                            {docType === 'hands'
+                              ? evolutionUiText.hands
+                              : docType === 'reflex'
+                                ? evolutionUiText.reflex
+                                : docType === 'spine'
+                                  ? evolutionUiText.spine
+                                  : docType === 'guard'
+                                    ? evolutionUiText.guard
+                                    : evolutionUiText.mind}
+                          </p>
+                          <p className="text-xs text-text-tertiary">
+                            {evolutionUiText.version}: {evolutionCapabilities[docType].version || 'v0'} · {evolutionUiText.updatedAt}:{' '}
+                            {formatDate(evolutionCapabilities[docType].updatedAt, locale, t)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="xs"
+                            variant="tertiary"
+                            data-testid={`evolution-capability-history-${docType}`}
+                            onClick={async () => {
+                              const nextExpanded = !evolutionHistoryExpanded[docType]
+                              setEvolutionHistoryExpanded((prev) => ({ ...prev, [docType]: nextExpanded }))
+                              if (nextExpanded) {
+                                await loadEvolutionCapabilityVersions(docType)
+                              }
+                            }}
+                          >
+                            {evolutionUiText.history}
+                          </Button>
+                          <Button
+                            size="sm"
+                            data-testid={`evolution-capability-save-${docType}`}
+                            onClick={() => void saveEvolutionCapability(docType)}
+                            loading={savingEvolutionCapability === docType}
+                          >
+                            {t('common.save')}
+                          </Button>
+                        </div>
+                      </div>
+                      <textarea
+                        data-testid={`evolution-capability-textarea-${docType}`}
+                        className="min-h-[300px] w-full resize-y rounded-lg border border-border-default bg-bg-canvas px-4 py-3 text-sm leading-6 text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                        placeholder={evolutionUiText.placeholder}
+                        value={evolutionCapabilityDrafts[docType]}
+                        onChange={(e) =>
+                          setEvolutionCapabilityDrafts((prev) => ({ ...prev, [docType]: e.target.value }))
+                        }
+                      />
+                      {evolutionHistoryExpanded[docType] && (
+                        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border-default bg-bg-canvas px-3 py-2">
+                          <span className="text-xs text-text-secondary">
+                            {evolutionUiText.rollbackTo}
+                          </span>
+                          <select
+                            className="rounded-md border border-border-default bg-bg-surface px-2 py-1 text-xs text-text-primary"
+                            value={evolutionSwitchVersion[docType]}
+                            onChange={(e) =>
+                              setEvolutionSwitchVersion((prev) => ({ ...prev, [docType]: e.target.value }))
+                            }
+                          >
+                            {evolutionCapabilityVersions[docType].map((doc) => (
+                              <option key={`${docType}-${doc.version}`} value={doc.version}>
+                                {doc.version} · {formatDate(doc.updatedAt, locale, t)}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            size="xs"
+                            variant="tertiary"
+                            data-testid={`evolution-capability-rollback-${docType}`}
+                            onClick={() => void switchEvolutionCapabilityVersion(docType)}
+                            loading={switchingEvolutionCapability === docType}
+                            disabled={!evolutionSwitchVersion[docType]}
+                          >
+                            {evolutionUiText.rollback}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
             {activeTab === 'apiKeys' && (
               <Card className="border-border-default">
                 <CardContent className="p-5 space-y-4">
@@ -2459,6 +2823,7 @@ export default function ConfigPage() {
               {t('common.cancel')}
             </Button>
             <Button
+              data-testid="provider-save-button"
               onClick={saveProviderConfig}
               loading={providerConfigSaving}
             >
@@ -2469,12 +2834,14 @@ export default function ConfigPage() {
       >
         <div className="space-y-4">
           <Input
+            data-testid="provider-api-key-input"
             type="password"
             placeholder={t('config.modals.provider.apiKeyPlaceholder')}
             value={providerConfigForm.apiKey}
             onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, apiKey: e.target.value }))}
           />
           <Input
+            data-testid="provider-endpoint-input"
             placeholder="API Endpoint"
             value={providerConfigForm.baseUrl}
             onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
@@ -2503,7 +2870,7 @@ export default function ConfigPage() {
             <Button variant="secondary" onClick={() => setShowEditTool(false)} disabled={savingTool}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={saveToolConfig} loading={savingTool}>
+            <Button data-testid="tool-save-button" onClick={saveToolConfig} loading={savingTool}>
               {t('common.save')}
             </Button>
           </>
@@ -2523,16 +2890,40 @@ export default function ConfigPage() {
             value={toolForm.type}
             disabled
           />
-          <Input
-            placeholder={t('config.modals.tool.timeoutPlaceholder')}
-            value={toolForm.timeoutMs}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
-          />
-          <Input
-            placeholder={t('config.modals.tool.retryAttemptsPlaceholder')}
-            value={toolForm.retryAttempts}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, retryAttempts: e.target.value }))}
-          />
+          {TOOLS_WITH_EXECUTION_TUNING.includes(toolForm.name) ? (
+            <>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{t('config.modals.tool.timeoutLabel')}</p>
+                <select
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.timeoutMs}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
+                >
+                  <option value="">{t('config.modals.tool.timeoutDefault')}</option>
+                  <option value="30000">30s</option>
+                  <option value="60000">60s</option>
+                  <option value="120000">120s</option>
+                  <option value="300000">300s</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{t('config.modals.tool.retryAttemptsLabel')}</p>
+                <select
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.retryAttempts}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, retryAttempts: e.target.value }))}
+                >
+                  <option value="">{t('config.modals.tool.retryAttemptsDefault')}</option>
+                  <option value="0">0</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </div>
+            </>
+          ) : null}
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"
@@ -2541,6 +2932,7 @@ export default function ConfigPage() {
             />
             {t('config.modals.tool.hitl')}
           </label>
+          <p className="text-[11px] text-text-tertiary">{t('config.modals.tool.hitlHint')}</p>
           <div className="space-y-1">
             <p className="text-xs text-text-tertiary">{t('config.modals.tool.riskLevel')}</p>
             <select
@@ -2580,11 +2972,22 @@ export default function ConfigPage() {
             </select>
             <p className="text-[11px] text-text-tertiary">{t('config.modals.tool.approvalScopeHint')}</p>
           </div>
-          <Input
-            placeholder={t('config.modals.tool.approvalDedupeKeysPlaceholder')}
-            value={toolForm.approvalDedupeKeys}
-            onChange={(e) => setToolForm((prev) => ({ ...prev, approvalDedupeKeys: e.target.value }))}
-          />
+          {toolForm.requiresApproval ? (
+            <div className="space-y-1">
+              <p className="text-xs text-text-tertiary">{t('config.modals.tool.approvalDedupeKeysLabel')}</p>
+              <select
+                className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                value={toolForm.approvalDedupeKeys}
+                onChange={(e) => setToolForm((prev) => ({ ...prev, approvalDedupeKeys: e.target.value }))}
+              >
+                {(TOOL_APPROVAL_DEDUPE_OPTIONS[toolForm.name] || DEFAULT_APPROVAL_DEDUPE_OPTIONS).map((value) => (
+                  <option key={value || 'default'} value={value}>
+                    {value || t('config.modals.tool.approvalDedupeDefault')}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           {!TOOLS_WITHOUT_API_CREDENTIALS.includes(toolForm.name) ? (
             <>
               <Input
@@ -2647,16 +3050,19 @@ export default function ConfigPage() {
                 </select>
               </div>
               <Input
+                data-testid="tool-browser-allowed-domains-input"
                 placeholder={t('config.modals.tool.browser.allowedDomainsPlaceholder')}
                 value={toolForm.allowedDomains}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, allowedDomains: e.target.value }))}
               />
               <Input
+                data-testid="tool-browser-blocked-domains-input"
                 placeholder={t('config.modals.tool.browser.blockedDomainsPlaceholder')}
                 value={toolForm.blockedDomains}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, blockedDomains: e.target.value }))}
               />
               <Input
+                data-testid="tool-browser-max-text-length-input"
                 placeholder={t('config.modals.tool.browser.maxTextLengthPlaceholder')}
                 value={toolForm.maxTextLength}
                 onChange={(e) => setToolForm((prev) => ({ ...prev, maxTextLength: e.target.value }))}
@@ -2802,7 +3208,7 @@ export default function ConfigPage() {
             <Button variant="secondary" onClick={() => setShowGatewayModal(false)} disabled={savingGateway}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={saveGatewayConfig} loading={savingGateway}>
+            <Button data-testid="gateway-save-button" onClick={saveGatewayConfig} loading={savingGateway}>
               {t('common.save')}
             </Button>
           </>
@@ -2817,11 +3223,13 @@ export default function ConfigPage() {
             />
           )}
           <Input
+            data-testid="gateway-display-name-input"
             placeholder={t('config.modals.gateway.displayNamePlaceholder')}
             value={gatewayForm.displayName}
             onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
           />
           <Input
+            data-testid="gateway-agent-id-input"
             placeholder={t('config.modals.gateway.agentIdPlaceholder')}
             value={gatewayForm.agentId}
             onChange={(e) => setGatewayForm((prev) => ({ ...prev, agentId: e.target.value }))}
@@ -2845,6 +3253,7 @@ export default function ConfigPage() {
           {gatewayForm.provider === 'telegram' ? (
             <>
               <Input
+                data-testid="gateway-telegram-bot-token-input"
                 type="password"
                 placeholder={t('config.modals.gateway.telegram.botTokenPlaceholder')}
                 value={gatewayForm.botToken}
@@ -2883,11 +3292,13 @@ export default function ConfigPage() {
                 {t('config.modals.gateway.telegram.clearWebhookSecret')}
               </label>
               <Input
+                data-testid="gateway-telegram-default-chat-id-input"
                 placeholder={t('config.modals.gateway.telegram.defaultChatIdPlaceholder')}
                 value={gatewayForm.defaultChatId}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, defaultChatId: e.target.value }))}
               />
               <Input
+                data-testid="gateway-telegram-allowed-chat-ids-input"
                 placeholder={t('config.modals.gateway.telegram.allowedChatIdsPlaceholder')}
                 value={gatewayForm.allowedChatIds}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
@@ -2984,6 +3395,7 @@ export default function ConfigPage() {
             )}
           </div>
           <Input
+            data-testid="gateway-notify-event-types-input"
             placeholder={t('config.modals.gateway.notifyEventTypesPlaceholder')}
             value={gatewayForm.notifyEventTypes}
             onChange={(e) => setGatewayForm((prev) => ({ ...prev, notifyEventTypes: e.target.value }))}
@@ -3034,11 +3446,13 @@ export default function ConfigPage() {
               {t('config.modals.gateway.addressing.executeOnUnaddressed')}
             </label>
             <Input
+              data-testid="gateway-command-prefixes-input"
               placeholder={t('config.modals.gateway.addressing.commandPrefixesPlaceholder')}
               value={gatewayForm.commandPrefixes}
               onChange={(e) => setGatewayForm((prev) => ({ ...prev, commandPrefixes: e.target.value }))}
             />
             <Input
+              data-testid="gateway-session-window-input"
               placeholder={t('config.modals.gateway.addressing.sessionContinuationWindowSecPlaceholder')}
               value={gatewayForm.sessionContinuationWindowSec}
               onChange={(e) =>
@@ -3092,11 +3506,13 @@ export default function ConfigPage() {
           <div className="space-y-2 rounded-md border border-border-default p-3">
             <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.context.title')}</p>
             <Input
+              data-testid="gateway-context-ttl-days-input"
               placeholder={t('config.modals.gateway.context.ttlDaysPlaceholder')}
               value={gatewayForm.contextTtlDays}
               onChange={(e) => setGatewayForm((prev) => ({ ...prev, contextTtlDays: e.target.value }))}
             />
             <Input
+              data-testid="gateway-context-max-recent-input"
               placeholder={t('config.modals.gateway.context.maxRecentMessagesPlaceholder')}
               value={gatewayForm.contextMaxRecentMessages}
               onChange={(e) =>
@@ -3107,6 +3523,7 @@ export default function ConfigPage() {
               }
             />
             <Input
+              data-testid="gateway-context-summarize-every-n-input"
               placeholder={t('config.modals.gateway.context.summarizeEveryNMessagesPlaceholder')}
               value={gatewayForm.contextSummarizeEveryNMessages}
               onChange={(e) =>

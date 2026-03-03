@@ -23,7 +23,7 @@ interface AgentFormValues {
   model: string
   temperature: number
   maxTokens: number
-  runtimeType: 'semigraph' | 'openclaw'
+  runtimeType: 'semigraph'
 }
 
 const EMPTY_VALUES: AgentFormValues = {
@@ -112,7 +112,7 @@ export default function AgentDetailPage() {
         setError(null)
         const response = await apiClient.get<ApiResponse<Agent & {
           mcpServerIds?: string[]
-          runtimeType?: 'semigraph' | 'openclaw'
+          runtimeType?: 'semigraph'
         }>>(`/agents/${agentId}`)
         if (!response.success || !response.data || cancelled) {
           return
@@ -289,14 +289,10 @@ export default function AgentDetailPage() {
                   <label className="block text-sm font-medium text-text-primary mb-1.5">{t('agent.runtimeEngine')}</label>
                   <Select
                     value={values.runtimeType}
-                    onChange={(val) => setValues((prev) => ({
-                      ...prev,
-                      runtimeType: (val === 'openclaw' ? 'openclaw' : 'semigraph'),
-                    }))}
-                    disabled={isSaving}
+                    onChange={() => setValues((prev) => ({ ...prev, runtimeType: 'semigraph' }))}
+                    disabled
                     options={[
                       { value: 'semigraph', label: 'Semigraph' },
-                      { value: 'openclaw', label: 'OpenClaw' },
                     ]}
                   />
                 </div>

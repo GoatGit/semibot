@@ -110,3 +110,32 @@ async def test_event_engine_can_upsert_list_and_remove_cron_job(tmp_path: Path):
     assert removed is True
     assert engine.list_cron_jobs() == []
     await engine.stop_triggers()
+
+
+@pytest.mark.asyncio
+async def test_event_engine_one_shot_cron_job_fires_once_and_auto_removes(tmp_path: Path):
+    store = EventStore(db_path=str(tmp_path / "events.db"))
+    completed: list[str] = []
+
+    async def _on_completed(name: str, payload: dict[str, object]) -> None:
+        completed.append(name)
+
+    engine = EventEngine(store=store, rules=[], on_cron_completed=_on_completed)
+    accepted = engine.upsert_cron_job(
+        {
+            "name": "oneshot_3m",
+            "schedule": "@every:0.02",
+            "event_type": "cron.job.tick",
+            "payload": {"trigger_name": "oneshot_3m", "one_shot": True},
+        }
+    )
+    assert accepted is True
+    try:
+        await asyncio.sleep(0.09)
+    finally:
+        await engine.stop_triggers()
+
+    rows = store.list_events(limit=20, event_type="cron.job.tick")
+    fired = [row for row in rows if row.payload.get("trigger_name") == "oneshot_3m"]
+    assert len(fired) == 1
+    assert completed == ["oneshot_3m"]

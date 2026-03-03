@@ -193,10 +193,25 @@ def create_app(
             await gateway_manager.handle_runtime_notify_payload(payload)
 
     action_executor = RuntimeActionExecutor(runtime_event_sink=_runtime_event_sink)
+
+    async def _on_cron_completed(job_name: str, job_payload: dict[str, Any]) -> None:
+        payload = job_payload.get("payload") if isinstance(job_payload, dict) else {}
+        if not isinstance(payload, dict):
+            return
+        one_shot = _to_bool(payload.get("one_shot", payload.get("oneShot")), False)
+        if not one_shot:
+            return
+        try:
+            config_store.set_cron_job_active(job_name, active=False)
+        except Exception:
+            # Keep scheduler resilient even if persistence update fails.
+            return
+
     engine = EventEngine(
         store=EventStore(db_path=db),
         router=EventRouter(action_executor),
         rules_path=rules,
+        on_cron_completed=_on_cron_completed,
     )
 
     gateway_manager = GatewayManager(

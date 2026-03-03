@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 
 from src.events.approval_manager import ApprovalManager
 from src.events.attention_budget import AttentionBudget
@@ -34,6 +35,7 @@ class EventEngine:
         attention_budget: AttentionBudget | None = None,
         rules: list[EventRule] | None = None,
         rules_path: str | None = None,
+        on_cron_completed: Callable[[str, dict[str, Any]], Awaitable[Any] | Any] | None = None,
     ):
         self.store = store or EventStore()
         self.bus = bus or EventBus()
@@ -54,7 +56,7 @@ class EventEngine:
             rules=loaded_rules,
         )
         self.replay_manager = ReplayManager(store=self.store, rules_engine=self.rules_engine)
-        self.trigger_scheduler = TriggerScheduler(emit_event=self.emit)
+        self.trigger_scheduler = TriggerScheduler(emit_event=self.emit, on_cron_completed=on_cron_completed)
         self.bus.subscribe(self._on_event)
         self._refresh_rule_files_snapshot()
 

@@ -15,6 +15,8 @@ import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
 import * as agentService from './agent.service'
 import * as mcpService from './mcp.service'
+import * as contextPolicyService from './context-policy.service'
+import * as evolutionCapabilityService from './evolution-capability.service'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import * as skillPackageRepo from '../repositories/skill-package.repository'
 import {
@@ -245,6 +247,36 @@ function appendApprovalHints(
   const hint = `\n\n发现待审批操作：${approvalIds.join(', ')}。\n可在聊天中执行：/approve <id> 或 /reject <id>`
   if (finalResponse.trim()) return `${finalResponse}${hint}`
   return `操作需要人工审批。${hint}`
+}
+
+async function buildAgentSystemPrompt(orgId: string, agent: Agent): Promise<string> {
+  const n = new Date()
+  const d = `${n.getFullYear()}年${n.getMonth() + 1}月${n.getDate()}日`
+  const base = agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`
+  const withDate = `${base}\n\n当前日期: ${d}`
+
+  try {
+    const docs = await contextPolicyService.getActivePolicies(orgId)
+    const policyBlock = contextPolicyService.buildPolicyInjectionBlock(docs)
+    const evolutionDocs = await evolutionCapabilityService.getActiveCapabilities(orgId)
+    const evolutionBlock = evolutionCapabilityService.buildCapabilityInjectionBlock(evolutionDocs)
+    const blocks: string[] = []
+    if (policyBlock) {
+      blocks.push(`以下为组织级上下文策略，请严格遵循：\n${policyBlock}`)
+    }
+    if (evolutionBlock) {
+      blocks.push(`以下为进化中心能力注入内容，请严格遵循：\n${evolutionBlock}`)
+    }
+    if (blocks.length === 0) return withDate
+    return `${withDate}\n\n${blocks.join('\n\n')}`
+  } catch (error) {
+    chatLogger.warn('加载 context policy / evolution capabilities 失败，降级为基础 system prompt', {
+      orgId,
+      agentId: agent.id,
+      error: (error as Error).message,
+    })
+    return withDate
+  }
 }
 
 async function resolveSkillMetadata(pkg: skillPackageRepo.SkillPackage): Promise<{
@@ -600,8 +632,14 @@ async function handleChatViaExecutionPlane(
 
   const sessionRuntimeType = (_session.runtimeType ?? '').toLowerCase()
   const agentRuntimeType = (agent.runtimeType ?? '').toLowerCase()
-  const runtimeType: 'semigraph' | 'openclaw' =
-    (sessionRuntimeType === 'openclaw' || agentRuntimeType === 'openclaw') ? 'openclaw' : 'semigraph'
+  if (sessionRuntimeType === 'openclaw' || agentRuntimeType === 'openclaw') {
+    chatLogger.warn('检测到已弃用 runtimeType=openclaw，已强制回退到 semigraph', {
+      sessionId,
+      agentId: agent.id,
+    })
+  }
+  const runtimeType: 'semigraph' = 'semigraph'
+  const systemPrompt = await buildAgentSystemPrompt(orgId, agent)
 
   wsServer.sendStartSession(userId, {
     session_id: sessionId,
@@ -609,12 +647,7 @@ async function handleChatViaExecutionPlane(
     agent_id: agent.id,
     openclaw_config: agent.openclawConfig ?? {},
     agent_config: {
-      system_prompt: (() => {
-        const n = new Date()
-        const d = `${n.getFullYear()}年${n.getMonth() + 1}月${n.getDate()}日`
-        const base = agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`
-        return `${base}\n\n当前日期: ${d}`
-      })(),
+      system_prompt: systemPrompt,
       model: agent.config?.model,
       temperature: agent.config?.temperature ?? 0.7,
       max_tokens: agent.config?.maxTokens ?? 4096,
@@ -766,6 +799,7 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
   }
 
   const enhanced = buildEnhancedMessage(input)
+  const systemPrompt = await buildAgentSystemPrompt(orgId, agent)
   const runtimeErrors: string[] = []
   let runtimeResult: Record<string, unknown> | null = null
 
@@ -778,7 +812,7 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
           message: enhanced.text,
           agent_id: agent.id,
           model: agent.config?.model,
-          system_prompt: agent.systemPrompt,
+          system_prompt: systemPrompt,
           stream: false,
         }),
       })

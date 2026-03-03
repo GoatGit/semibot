@@ -33,7 +33,7 @@ export interface Session {
   status: SessionStatus
   title?: string
   metadata?: Record<string, unknown>
-  runtimeType?: 'semigraph' | 'openclaw'
+  runtimeType?: 'semigraph'
   startedAt: string
   endedAt?: string
   createdAt: string
@@ -66,7 +66,7 @@ export interface CreateSessionInput {
   agentId: string
   title?: string
   metadata?: Record<string, unknown>
-  runtimeType?: 'semigraph' | 'openclaw'
+  runtimeType?: 'semigraph'
 }
 
 export interface AddMessageInput {
@@ -105,6 +105,10 @@ export interface PaginatedResult<T> {
  * 将数据库行转换为 Session 对象
  */
 function rowToSession(row: sessionRepository.SessionRow): Session {
+  const rawRuntimeType = String(row.runtime_type ?? '').toLowerCase()
+  if (rawRuntimeType === 'openclaw') {
+    sessionLogger.warn('检测到已弃用 runtimeType=openclaw 会话，已自动降级为 semigraph', { sessionId: row.id })
+  }
   return {
     id: row.id,
     orgId: row.org_id,
@@ -113,7 +117,7 @@ function rowToSession(row: sessionRepository.SessionRow): Session {
     status: row.status,
     title: row.title ?? undefined,
     metadata: row.metadata ?? undefined,
-    runtimeType: (row.runtime_type as 'semigraph' | 'openclaw' | null) ?? undefined,
+    runtimeType: 'semigraph',
     startedAt: row.started_at,
     endedAt: row.ended_at ?? undefined,
     createdAt: row.created_at,
@@ -157,7 +161,7 @@ export async function createSession(
     userId,
     title: input.title,
     metadata: input.metadata,
-    runtimeType: input.runtimeType,
+    runtimeType: 'semigraph',
   })
 
   return rowToSession(row)

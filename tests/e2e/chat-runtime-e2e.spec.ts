@@ -24,6 +24,11 @@ test.skip(
   'Set RUN_LIVE_E2E=1 after API/Runtime are up to run runtime comparison E2E.'
 )
 
+test.skip(
+  true,
+  'OpenClaw runtime is deprecated; runtime comparison suite is disabled.'
+)
+
 /* ------------------------------------------------------------------ */
 /*  常量 & 工具函数                                                    */
 /* ------------------------------------------------------------------ */

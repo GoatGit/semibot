@@ -231,7 +231,9 @@
       "createWebhook": "Failed to create webhook",
       "updateWebhook": "Failed to update webhook",
       "testWebhook": "Failed to test webhook",
-      "deleteWebhook": "Failed to delete webhook"
+      "deleteWebhook": "Failed to delete webhook",
+      "evolutionCapabilitiesLoad": "Failed to load evolution capabilities",
+      "evolutionCapabilitiesSave": "Failed to save evolution capability"
     },
     "confirm": {
       "deleteApiKey": "Delete this API key? This action cannot be undone.",
@@ -308,6 +310,20 @@
       "events": "Events",
       "createdAt": "Created at"
     },
+    "evolutionCapabilities": {
+      "tab": "Evolution",
+      "title": "Evolution Center",
+      "description": "Manage five evolution objects independently with version switch and rollback.",
+      "gene": "Hands (Execution Capability)",
+      "agents": "Reflex (Rule Template)",
+      "tools": "Guard (Tool Policy)",
+      "version": "Version",
+      "updatedAt": "Updated at",
+      "placeholder": "Enter capability content...",
+      "history": "History",
+      "rollbackTo": "Switch to",
+      "rollback": "Switch Version"
+    },
     "modals": {
       "provider": {
         "title": "Edit LLM provider",
@@ -319,12 +335,19 @@
         "description": "V2 only supports built-in tool params and enable/disable; rename/type change and add/delete are not supported.",
         "namePlaceholder": "Tool name",
         "typePlaceholder": "Tool type",
+        "timeoutLabel": "Timeout",
+        "timeoutDefault": "Use default timeout",
         "timeoutPlaceholder": "timeout ms (optional, >=1000)",
+        "retryAttemptsLabel": "Retry attempts",
+        "retryAttemptsDefault": "Use default retry policy",
         "retryAttemptsPlaceholder": "retryAttempts (optional, 0-5)",
-        "hitl": "Require HITL approval for high-risk actions",
+        "hitl": "Require approval before execution (requiresApproval)",
+        "hitlHint": "When enabled, this tool enters approval flow before execution; when disabled, runtime decides by risk and rules.",
         "riskLevel": "Risk level",
         "approvalScope": "Approval grouping scope",
         "approvalScopeHint": "Controls how similar approvals are grouped to reduce noise.",
+        "approvalDedupeKeysLabel": "Approval dedupe dimensions",
+        "approvalDedupeDefault": "Default dedupe (system decides)",
         "approvalDedupeKeysPlaceholder": "approvalDedupeKeys (optional, comma-separated, e.g. url,selector)",
         "approvalScopes": {
           "session": "Group by session (recommended)",
@@ -686,7 +709,8 @@
     "meta": {
       "dedupe": "dedupe",
       "cooldown": "cooldown",
-      "budgetPerDay": "budget/day"
+      "budgetPerDay": "budget/day",
+      "effectiveAt": "effective at"
     }
   },
   "chatLayout": {

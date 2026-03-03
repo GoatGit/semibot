@@ -6,6 +6,11 @@ test.skip(
   'Set RUN_LIVE_E2E=1 after API/Runtime are up to run live search+pdf scenario.'
 )
 
+test.skip(
+  true,
+  'OpenClaw runtime is deprecated; this OpenClaw live scenario is disabled.'
+)
+
 test.setTimeout(600_000)
 
 function resolveApiBase(): string {

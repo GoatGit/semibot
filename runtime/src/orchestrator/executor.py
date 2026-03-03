@@ -9,7 +9,6 @@ from typing import Any
 from src.constants import (
     SANDBOX_BYPASS_TOOLS,
     SANDBOX_DEFAULT_TIMEOUT,
-    SANDBOX_REQUIRED_TOOLS,
 )
 from src.orchestrator.state import PlanStep, ToolCallResult
 from src.sandbox import (
@@ -147,10 +146,6 @@ class ActionExecutor:
         # Check bypass list first
         if tool_name in SANDBOX_BYPASS_TOOLS:
             return False
-
-        # Check required list
-        if tool_name in SANDBOX_REQUIRED_TOOLS:
-            return True
 
         # Use policy engine for others
         if self.policy_engine:

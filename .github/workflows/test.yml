@@ -45,6 +45,12 @@ jobs:
       - name: Run unit tests
         run: pnpm test
 
+      - name: Install Playwright Chromium
+        run: pnpm -C tests exec playwright install --with-deps chromium
+
+      - name: Run Web E2E smoke (event/rules/approvals)
+        run: pnpm -C tests run test:e2e:smoke
+
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
         with:

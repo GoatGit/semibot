@@ -218,6 +218,19 @@ class GatewayManager:
         return prefix or None
 
     @staticmethod
+    def _parse_gateway_id(value: str | None) -> tuple[str | None, str | None, str | None]:
+        raw = str(value or "").strip()
+        if not raw:
+            return None, None, None
+        parts = raw.split(":", 2)
+        if len(parts) != 3:
+            return None, None, None
+        provider = parts[0].strip().lower() or None
+        bot_id = parts[1].strip() or None
+        chat_id = parts[2].strip() or None
+        return provider, bot_id, chat_id
+
+    @staticmethod
     def _sanitize_path_component(value: str) -> str:
         cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
         return cleaned.strip("._") or "unknown"
@@ -404,6 +417,44 @@ class GatewayManager:
         )
 
     async def handle_runtime_notify_payload(self, payload: dict[str, Any]) -> None:
+        gateway_id = str(payload.get("gateway_id") or payload.get("gatewayId") or "").strip()
+        target_provider, target_bot_id, target_chat_id = self._parse_gateway_id(gateway_id)
+
+        if target_provider == "telegram":
+            telegram_items = self.list_provider_instances("telegram", active_only=True)
+            if not telegram_items and self.provider_active("telegram"):
+                telegram_items = [{}]
+            narrowed: list[dict[str, Any]] = []
+            for item in telegram_items:
+                cfg = item.get("config") if isinstance(item, dict) else self.provider_config("telegram")
+                cfg = cfg if isinstance(cfg, dict) else {}
+                token = str(cfg.get("botToken") or "").strip() or self.telegram_bot_token
+                bot_id = self._telegram_bot_id(token)
+                if target_bot_id and bot_id != target_bot_id:
+                    continue
+                narrowed.append(item)
+            send_payload = dict(payload)
+            if target_chat_id and not str(send_payload.get("chat_id") or "").strip():
+                send_payload["chat_id"] = target_chat_id
+            for item in narrowed:
+                telegram_notifier = self.build_telegram_notifier(item)
+                if telegram_notifier:
+                    await telegram_notifier.send_notify_payload(send_payload)
+            return
+
+        if target_provider == "feishu":
+            feishu_items = self.list_provider_instances("feishu", active_only=True)
+            if not feishu_items and self.provider_active("feishu"):
+                feishu_items = [{}]
+            send_payload = dict(payload)
+            if target_chat_id and not str(send_payload.get("channel") or "").strip():
+                send_payload["channel"] = target_chat_id
+            for item in feishu_items:
+                feishu_notifier = self.build_feishu_notifier(item)
+                if feishu_notifier:
+                    await feishu_notifier.send_notify_payload(send_payload)
+            return
+
         feishu_items = self.list_provider_instances("feishu", active_only=True)
         if not feishu_items and self.provider_active("feishu"):
             feishu_items = [{}]

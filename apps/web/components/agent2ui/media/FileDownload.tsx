@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { Download, File, FileText, FileImage, FileVideo, FileAudio, FileArchive } from 'lucide-react'
 import { AUTH_DISABLED } from '@/lib/auth-mode'
 import { useLocale } from '@/components/providers/LocaleProvider'
+import { getDirectApiBaseUrlForBrowser } from '@/lib/api'
 
 interface FileDownloadProps {
   data: {
@@ -66,7 +67,7 @@ export function FileDownload({ data }: FileDownloadProps) {
 
   const resolveDownloadUrl = () => {
     if (/^https?:\/\//i.test(url)) return url
-    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1').replace(/\/$/, '')
+    const base = getDirectApiBaseUrlForBrowser().replace(/\/$/, '')
     const origin = base.replace(/\/api\/v1$/, '')
 
     if (url.startsWith('/api/v1/')) {

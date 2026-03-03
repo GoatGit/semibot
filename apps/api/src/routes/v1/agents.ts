@@ -35,7 +35,7 @@ const createAgentSchema = z.object({
   mcpServerIds: z.array(z.string().uuid()).optional(),
   subAgents: z.array(z.string()).optional(),
   isPublic: z.boolean().optional(),
-  runtimeType: z.enum(['semigraph', 'openclaw']).optional(),
+  runtimeType: z.enum(['semigraph']).optional(),
   openclawConfig: z.record(z.unknown()).optional(),
 })
 
@@ -58,7 +58,7 @@ const updateAgentSchema = z.object({
   subAgents: z.array(z.string()).optional(),
   isActive: z.boolean().optional(),
   isPublic: z.boolean().optional(),
-  runtimeType: z.enum(['semigraph', 'openclaw']).optional(),
+  runtimeType: z.enum(['semigraph']).optional(),
   openclawConfig: z.record(z.unknown()).optional(),
 })
 

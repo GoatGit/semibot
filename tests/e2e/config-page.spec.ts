@@ -322,6 +322,129 @@ async function setupConfigPageMocks(page: Page, onLlmConfigPut?: (payload: any) 
       },
     })
   })
+
+  const contextState: Record<'hands' | 'reflex' | 'spine' | 'guard' | 'mind', Array<any>> = {
+    hands: [
+      {
+        id: 'hands-v2',
+        capabilityType: 'hands',
+        version: 'v2',
+        content: 'HANDS capability current',
+        updatedAt: '2026-03-02T10:00:00.000Z',
+      },
+      {
+        id: 'hands-v1',
+        capabilityType: 'hands',
+        version: 'v1',
+        content: 'HANDS capability legacy',
+        updatedAt: '2026-03-01T10:00:00.000Z',
+      },
+    ],
+    reflex: [
+      {
+        id: 'reflex-v1',
+        capabilityType: 'reflex',
+        version: 'v1',
+        content: 'REFLEX capability current',
+        updatedAt: '2026-03-02T10:00:00.000Z',
+      },
+    ],
+    spine: [
+      {
+        id: 'spine-v1',
+        capabilityType: 'spine',
+        version: 'v1',
+        content: 'SPINE capability current',
+        updatedAt: '2026-03-02T10:00:00.000Z',
+      },
+    ],
+    guard: [
+      {
+        id: 'guard-v3',
+        capabilityType: 'guard',
+        version: 'v3',
+        content: 'GUARD capability current',
+        updatedAt: '2026-03-02T10:00:00.000Z',
+      },
+      {
+        id: 'guard-v2',
+        capabilityType: 'guard',
+        version: 'v2',
+        content: 'GUARD capability old',
+        updatedAt: '2026-03-01T10:00:00.000Z',
+      },
+    ],
+    mind: [
+      {
+        id: 'mind-v1',
+        capabilityType: 'mind',
+        version: 'v1',
+        content: 'MIND capability current',
+        updatedAt: '2026-03-01T10:00:00.000Z',
+      },
+    ],
+  }
+
+  await page.route('**/api/v1/evolution-capabilities**', async (route, request) => {
+    const url = new URL(request.url())
+    const path = url.pathname
+    const method = request.method()
+    const parts = path.split('/').filter(Boolean)
+    const docType = parts[parts.length - 1] as 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
+    const lastPart = parts[parts.length - 1]
+    const secondLastPart = parts[parts.length - 2]
+
+    if (method === 'GET' && lastPart === 'evolution-capabilities') {
+      await json(route, {
+        success: true,
+        data: [contextState.hands[0], contextState.reflex[0], contextState.spine[0], contextState.guard[0], contextState.mind[0]],
+      })
+      return
+    }
+
+    if (method === 'GET' && lastPart === 'versions' && secondLastPart && secondLastPart in contextState) {
+      await json(route, {
+        success: true,
+        data: contextState[secondLastPart as 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'],
+      })
+      return
+    }
+
+    if (method === 'PUT' && docType in contextState) {
+      const payload = request.postDataJSON() as { content?: string }
+      const currentVersion = contextState[docType][0]?.version || 'v0'
+      const nextVersionNum = Number(currentVersion.replace(/^v/i, '')) + 1
+      const next = {
+        id: `${docType}-v${nextVersionNum}`,
+        capabilityType: docType,
+        version: `v${nextVersionNum}`,
+        content: payload?.content || '',
+        updatedAt: '2026-03-03T10:00:00.000Z',
+      }
+      contextState[docType].unshift(next)
+      await json(route, { success: true, data: next })
+      return
+    }
+
+    if (method === 'POST' && lastPart === 'switch' && secondLastPart && secondLastPart in contextState) {
+      const type = secondLastPart as 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
+      const payload = request.postDataJSON() as { targetVersion?: string }
+      const target = contextState[type].find((item) => item.version === payload?.targetVersion) || contextState[type][0]
+      const currentVersion = contextState[type][0]?.version || 'v0'
+      const nextVersionNum = Number(currentVersion.replace(/^v/i, '')) + 1
+      const rollbacked = {
+        ...target,
+        id: `${type}-v${nextVersionNum}`,
+        version: `v${nextVersionNum}`,
+        updatedAt: '2026-03-04T10:00:00.000Z',
+      }
+      contextState[type].unshift(rollbacked)
+      await json(route, { success: true, data: rollbacked })
+      return
+    }
+
+    await route.continue()
+  })
 }
 
 test.describe('Config Page', () => {
@@ -329,12 +452,12 @@ test.describe('Config Page', () => {
     await setupConfigPageMocks(page)
     await page.goto('/config')
 
-    await expect(page.getByRole('heading', { name: '配置管理' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '模型路由默认值' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /配置管理|Configuration|設定/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /模型路由默认值|Model routing defaults|モデルルーティング/ })).toBeVisible()
 
-    await expect(page.getByPlaceholder('DEFAULT_LLM_MODEL')).toHaveValue('gpt-4o')
-    await expect(page.getByPlaceholder('FALLBACK_LLM_MODEL')).toHaveValue('gpt-3.5-turbo')
-    await expect(page.getByText('组织配置')).toHaveCount(0)
+    await expect(page.getByTestId('llm-default-model-input')).toHaveValue('gpt-4o')
+    await expect(page.getByTestId('llm-fallback-model-input')).toHaveValue('gpt-3.5-turbo')
+    await expect(page.getByText(/组织配置|Organization/)).toHaveCount(0)
 
     await page.getByRole('button', { name: 'Tools' }).click()
     await expect(page.getByText('工具配置（仅启停与参数）')).toBeVisible()
@@ -353,9 +476,9 @@ test.describe('Config Page', () => {
     })
     await page.goto('/config')
 
-    await page.getByPlaceholder('DEFAULT_LLM_MODEL').fill('gpt-4.1')
-    await page.getByPlaceholder('FALLBACK_LLM_MODEL').fill('gpt-4.1-mini')
-    await page.getByRole('button', { name: '保存模型路由' }).click()
+    await page.getByTestId('llm-default-model-input').fill('gpt-4.1')
+    await page.getByTestId('llm-fallback-model-input').fill('gpt-4.1-mini')
+    await page.getByTestId('llm-save-routing-button').click()
 
     await expect.poll(() => capturedPayload).not.toBeNull()
     expect(capturedPayload).toMatchObject({
@@ -371,10 +494,10 @@ test.describe('Config Page', () => {
 
     await page.getByRole('button', { name: '编辑' }).first().click()
 
-    await expect(page.getByRole('dialog', { name: '编辑 LLM Provider' })).toBeVisible()
-    await page.getByPlaceholder('新 API Key（留空则不修改）').fill('sk-test-new-key')
-    await page.getByPlaceholder('API Endpoint').fill('https://api.openai.com/v1')
-    await page.getByRole('dialog', { name: '编辑 LLM Provider' }).getByRole('button', { name: '保存' }).click()
+    await expect(page.getByRole('dialog', { name: /LLM Provider|LLM プロバイダ|LLM Provider/ })).toBeVisible()
+    await page.getByTestId('provider-api-key-input').fill('sk-test-new-key')
+    await page.getByTestId('provider-endpoint-input').fill('https://api.openai.com/v1')
+    await page.getByTestId('provider-save-button').click()
 
     await expect.poll(() => payloads.length).toBeGreaterThan(0)
     expect(payloads[payloads.length - 1]).toMatchObject({
@@ -415,14 +538,14 @@ test.describe('Config Page', () => {
     const browserCard = page.locator('div').filter({ hasText: /^browser_automation/ }).first()
     await browserCard.getByRole('button', { name: '配置' }).click()
 
-    await expect(page.getByRole('dialog', { name: '工具配置' })).toBeVisible()
-    await page.getByLabel('使用无头模式运行浏览器').uncheck()
-    await page.getByPlaceholder('allowedDomains（可选，逗号分隔，如 example.com,news.ycombinator.com）').fill(
+    await expect(page.getByRole('dialog', { name: /工具配置|Tool configuration|ツール設定/ })).toBeVisible()
+    await page.getByLabel(/使用无头模式运行浏览器|Run browser in headless mode|ヘッドレス/).uncheck()
+    await page.getByTestId('tool-browser-allowed-domains-input').fill(
       'example.com,news.ycombinator.com'
     )
-    await page.getByPlaceholder('blockedDomains（可选，逗号分隔）').fill('localhost,127.0.0.1')
-    await page.getByPlaceholder('maxTextLength（可选，100-500000）').fill('25000')
-    const saveBtn = page.getByRole('dialog', { name: '工具配置' }).getByRole('button', { name: '保存' })
+    await page.getByTestId('tool-browser-blocked-domains-input').fill('localhost,127.0.0.1')
+    await page.getByTestId('tool-browser-max-text-length-input').fill('25000')
+    const saveBtn = page.getByTestId('tool-save-button')
     await saveBtn.scrollIntoViewIfNeeded()
     await saveBtn.click({ force: true })
 
@@ -489,34 +612,32 @@ test.describe('Config Page', () => {
     await expect(page.getByRole('heading', { name: 'Gateways' })).toBeVisible()
 
     const tgCard = page.locator('div').filter({ hasText: /^Telegram/ }).first()
-    await tgCard.getByRole('button', { name: /^编辑$/ }).click()
-    await expect(page.getByRole('dialog', { name: 'Gateway 配置' })).toBeVisible()
-    await page.getByPlaceholder('显示名称').fill('Telegram Ops')
-    await page.getByPlaceholder('Agent ID（默认 semibot）').fill('fund-analyst')
-    await page.getByPlaceholder('Telegram Bot Token（留空可清空）').fill('tg_token_123')
-    await page.getByPlaceholder('默认 Chat ID（可选）').fill('-10012345')
-    await page.getByPlaceholder('allowedChatIds（可选，逗号分隔）').fill('-10012345,-100999')
+    await tgCard.getByRole('button', { name: /^编辑$|^Edit$|^編集$/ }).click()
+    await expect(page.getByRole('dialog', { name: /Gateway 配置|Gateway Configuration|Gateway 設定/ })).toBeVisible()
+    await page.getByTestId('gateway-display-name-input').fill('Telegram Ops')
+    await page.getByTestId('gateway-agent-id-input').fill('fund-analyst')
+    await page.getByTestId('gateway-telegram-bot-token-input').fill('tg_token_123')
+    await page.getByTestId('gateway-telegram-default-chat-id-input').fill('-10012345')
+    await page.getByTestId('gateway-telegram-allowed-chat-ids-input').fill('-10012345,-100999')
     await page.getByTestId('gateway-chat-binding-add').click()
     await page.getByTestId('gateway-chat-binding-chat-0').fill('-10012345')
     await page.getByTestId('gateway-chat-binding-agent-0').fill('fund-analyst')
     await page.getByTestId('gateway-chat-binding-add').click()
     await page.getByTestId('gateway-chat-binding-chat-1').fill('-100999')
     await page.getByTestId('gateway-chat-binding-agent-1').fill('risk-officer')
-    await page.getByPlaceholder('notifyEventTypes（可选，逗号分隔）').fill('approval.requested,task.completed')
-    const gatewayDialog = page.getByRole('dialog', { name: 'Gateway 配置' })
+    await page.getByTestId('gateway-notify-event-types-input').fill('approval.requested,task.completed')
+    const gatewayDialog = page.getByRole('dialog', { name: /Gateway 配置|Gateway Configuration|Gateway 設定/ })
     await gatewayDialog.locator('select').nth(0).selectOption('all_messages')
     await gatewayDialog.getByLabel('将“回复 Bot 消息”视为命中').uncheck()
     await gatewayDialog.getByLabel('未命中时仍执行（谨慎开启）').check()
-    await page
-      .getByPlaceholder('commandPrefixes（可选，逗号分隔，如 /ask,/run,/approve,/reject）')
-      .fill('/ask,/run')
-    await page.getByPlaceholder('sessionContinuationWindowSec（正整数秒）').fill('600')
+    await page.getByTestId('gateway-command-prefixes-input').fill('/ask,/run')
+    await page.getByTestId('gateway-session-window-input').fill('600')
     await gatewayDialog.locator('select').nth(1).selectOption('risk_based')
     await gatewayDialog.locator('select').nth(2).selectOption('high')
-    await page.getByPlaceholder('ttlDays（上下文保留天数）').fill('14')
-    await page.getByPlaceholder('maxRecentMessages（最近消息条数上限）').fill('120')
-    await page.getByPlaceholder('summarizeEveryNMessages（每 N 条触发摘要）').fill('30')
-    const gatewaySaveBtn = page.getByRole('dialog', { name: 'Gateway 配置' }).getByRole('button', { name: '保存' })
+    await page.getByTestId('gateway-context-ttl-days-input').fill('14')
+    await page.getByTestId('gateway-context-max-recent-input').fill('120')
+    await page.getByTestId('gateway-context-summarize-every-n-input').fill('30')
+    const gatewaySaveBtn = page.getByTestId('gateway-save-button')
     await gatewaySaveBtn.scrollIntoViewIfNeeded()
     await gatewaySaveBtn.click({ force: true })
 
@@ -691,6 +812,51 @@ test.describe('Config Page', () => {
           { chatId: '-1002', agentId: 'semibot' },
         ],
       },
+    })
+  })
+
+  test('should edit, view history and switch evolution capabilities', async ({ page }) => {
+    const putCalls: Array<{ url: string; payload: any }> = []
+    const switchCalls: Array<{ url: string; payload: any }> = []
+
+    page.on('request', (request) => {
+      const url = request.url()
+      if (request.method() === 'PUT' && url.includes('/api/v1/evolution-capabilities/')) {
+        putCalls.push({ url, payload: request.postDataJSON() })
+      }
+      if (request.method() === 'POST' && url.includes('/api/v1/evolution-capabilities/') && url.endsWith('/switch')) {
+        switchCalls.push({ url, payload: request.postDataJSON() })
+      }
+    })
+
+    await setupConfigPageMocks(page)
+    await page.goto('/config')
+    await page.getByRole('button', { name: /进化|Evolution|進化|config\.evolutionCapabilities\.tab/ }).click()
+
+    await expect(
+      page.getByRole('heading', { name: /进化中心|Evolution Center|進化センター|config\.evolutionCapabilities\.title/ })
+    ).toBeVisible()
+
+    const handsCard = page.getByTestId('evolution-capability-card-hands')
+    await page.getByTestId('evolution-capability-textarea-hands').fill('HANDS capability updated from evolution center')
+    await page.getByTestId('evolution-capability-save-hands').click()
+
+    await expect.poll(() => putCalls.length).toBeGreaterThan(0)
+    expect(putCalls[0].url).toContain('/api/v1/evolution-capabilities/hands')
+    expect(putCalls[0].payload).toMatchObject({
+      content: 'HANDS capability updated from evolution center',
+    })
+
+    await page.getByTestId('evolution-capability-history-hands').click()
+    const selects = handsCard.locator('select')
+    await expect(selects).toHaveCount(1)
+    await selects.first().selectOption('v1')
+    await page.getByTestId('evolution-capability-rollback-hands').click()
+
+    await expect.poll(() => switchCalls.length).toBeGreaterThan(0)
+    expect(switchCalls[0].url).toContain('/api/v1/evolution-capabilities/hands/switch')
+    expect(switchCalls[0].payload).toMatchObject({
+      targetVersion: 'v1',
     })
   })
 })

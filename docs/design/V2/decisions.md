@@ -16,6 +16,7 @@
 - Gateway 配置（飞书/Telegram）统一持久化到 runtime SQLite（`~/.semibot/semibot.db`）
 - Gateway 配置模型升级为 `gateway_instances`：同 provider 支持多实例（多 bot + 多 chat），provider 级接口保留兼容
 - Gateway 会话治理采用统一 `Gateway Context Service`：runtime 维持单层 session，外部聊天上下文在 Gateway 侧维护，执行结果仅最小回写主会话
+- `GENE.md / AGENTS.md / TOOLS.md` 存储在数据库（`context_policy_docs`）作为唯一真源，并在配置管理中心可编辑/发布/回滚
 
 ## 待定项（需要后续实现时确认）
 

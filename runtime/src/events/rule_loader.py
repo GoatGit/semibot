@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -47,6 +47,10 @@ def default_rules_path() -> Path:
     return Path("~/.semibot/rules").expanduser()
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _candidate_rule_files(path: Path) -> list[Path]:
     if path.is_file():
         return [path] if path.suffix == ".json" else []
@@ -65,7 +69,7 @@ def list_rule_files(path: str | Path | None = None) -> list[Path]:
     return _candidate_rule_files(target)
 
 
-def _normalize_rule(raw: dict[str, Any]) -> EventRule | None:
+def _normalize_rule(raw: dict[str, Any], *, fallback_timestamp: str | None = None) -> EventRule | None:
     if raw.get("deleted_at"):
         return None
     rule_id = str(raw.get("id") or raw.get("name") or "").strip()
@@ -91,6 +95,9 @@ def _normalize_rule(raw: dict[str, Any]) -> EventRule | None:
                 )
             )
 
+    created_at = str(raw.get("created_at") or "").strip() or fallback_timestamp
+    updated_at = str(raw.get("updated_at") or "").strip() or created_at or fallback_timestamp
+
     return EventRule(
         id=rule_id,
         name=name,
@@ -104,6 +111,8 @@ def _normalize_rule(raw: dict[str, Any]) -> EventRule | None:
         cooldown_seconds=int(raw.get("cooldown_seconds", 0) or 0),
         attention_budget_per_day=int(raw.get("attention_budget_per_day", 0) or 0),
         is_active=bool(raw.get("is_active", True)),
+        created_at=created_at,
+        updated_at=updated_at,
     )
 
 
@@ -120,6 +129,11 @@ def load_rules(path: str | Path | None = None) -> list[EventRule]:
     files = _candidate_rule_files(target)
     merged_by_key: dict[str, EventRule] = {}
     for file in files:
+        file_fallback_timestamp: str | None = None
+        try:
+            file_fallback_timestamp = datetime.fromtimestamp(file.stat().st_mtime, timezone.utc).isoformat()
+        except Exception:
+            file_fallback_timestamp = None
         try:
             with file.open("r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -135,7 +149,7 @@ def load_rules(path: str | Path | None = None) -> list[EventRule]:
             continue
 
         for raw in items:
-            rule = _normalize_rule(raw)
+            rule = _normalize_rule(raw, fallback_timestamp=file_fallback_timestamp)
             if rule is None:
                 continue
             key = rule.name or rule.id
@@ -164,6 +178,8 @@ def _write_json_file(path: Path, data: Any) -> None:
 
 
 def _rule_to_raw(rule: EventRule) -> dict[str, Any]:
+    created_at = str(rule.created_at or "").strip() or _now_iso()
+    updated_at = str(rule.updated_at or "").strip() or created_at
     return {
         "id": rule.id,
         "name": rule.name,
@@ -177,6 +193,8 @@ def _rule_to_raw(rule: EventRule) -> dict[str, Any]:
         "cooldown_seconds": rule.cooldown_seconds,
         "attention_budget_per_day": rule.attention_budget_per_day,
         "is_active": rule.is_active,
+        "created_at": created_at,
+        "updated_at": updated_at,
     }
 
 
@@ -212,11 +230,13 @@ def set_rule_active(path: str | Path, rule_id: str, *, active: bool) -> bool:
                 item_id = str(item.get("id") or item.get("name") or "").strip()
                 if item_id == rule_id:
                     item["is_active"] = active
+                    item["updated_at"] = _now_iso()
                     changed = True
         elif isinstance(data, dict):
             item_id = str(data.get("id") or data.get("name") or "").strip()
             if item_id == rule_id:
                 data["is_active"] = active
+                data["updated_at"] = _now_iso()
                 changed = True
 
         if changed:
@@ -231,7 +251,11 @@ def create_rule(path: str | Path, payload: dict[str, Any]) -> EventRule:
     """Create a rule in mutable rule file and return normalized model."""
     target = Path(path).expanduser()
     ensure_default_rules(target)
-    rule = _normalize_rule(payload)
+    seeded_payload = dict(payload)
+    now = _now_iso()
+    seeded_payload.setdefault("created_at", now)
+    seeded_payload.setdefault("updated_at", now)
+    rule = _normalize_rule(seeded_payload)
     if rule is None:
         raise ValueError("invalid_rule_payload")
 
@@ -271,6 +295,9 @@ def update_rule(path: str | Path, rule_id: str, patch: dict[str, Any]) -> EventR
             merged = dict(item)
             for key, value in patch.items():
                 merged[key] = value
+            merged["updated_at"] = _now_iso()
+            if not str(merged.get("created_at") or "").strip():
+                merged["created_at"] = merged["updated_at"]
             normalized = _normalize_rule(merged)
             if normalized is None:
                 raise ValueError("invalid_rule_patch")
@@ -302,7 +329,7 @@ def update_rule(path: str | Path, rule_id: str, patch: dict[str, Any]) -> EventR
 def delete_rule(path: str | Path, rule_id: str) -> bool:
     """Soft-delete a rule (is_active=false + deleted_at)."""
     target = Path(path).expanduser()
-    deleted_at = datetime.now(UTC).isoformat()
+    deleted_at = datetime.now(timezone.utc).isoformat()
     files = _iter_rule_files_for_mutation(target)
     for file in files:
         try:

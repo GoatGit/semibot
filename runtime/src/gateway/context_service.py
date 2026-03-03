@@ -79,11 +79,35 @@ class GatewayContextService:
         return items
 
     @staticmethod
-    def _build_task_input(*, text: str, attachments: list[dict[str, Any]]) -> str:
+    def _build_task_input(
+        *,
+        text: str,
+        attachments: list[dict[str, Any]],
+        gateway_id: str | None = None,
+        provider: str | None = None,
+        bot_id: str | None = None,
+        chat_id: str | None = None,
+    ) -> str:
+        context_lines: list[str] = []
+        if gateway_id:
+            context_lines.extend(
+                [
+                    "【Gateway Context】",
+                    f"gateway_id={gateway_id}",
+                    f"provider={provider or ''}",
+                    f"bot_id={bot_id or ''}",
+                    f"chat_id={chat_id or ''}",
+                    "When creating cron rules with notify action, set actions[].params.gateway_id to this gateway_id.",
+                    "",
+                ]
+            )
+
         if not attachments:
+            if context_lines:
+                return "\n".join(context_lines + [text])
             return text
         lead = text.strip() or f"用户上传了 {len(attachments)} 个文件，请先阅读附件后再完成任务。"
-        lines = [lead, "", "【用户上传附件】"]
+        lines = context_lines + [lead, "", "【用户上传附件】"]
         for idx, item in enumerate(attachments, start=1):
             name = str(item.get("file_name") or item.get("name") or f"attachment_{idx}").strip()
             local_path = str(item.get("local_path") or "").strip()
@@ -276,7 +300,14 @@ class GatewayContextService:
         if not decision.should_execute:
             return result
 
-        task_input = self._build_task_input(text=text, attachments=attachments)
+        task_input = self._build_task_input(
+            text=text,
+            attachments=attachments,
+            gateway_id=gateway_key,
+            provider=provider,
+            bot_id=bot_id,
+            chat_id=chat_id,
+        )
         runtime_session_id = f"sess_{provider}_{uuid4().hex[:12]}"
         run = self.store.create_task_run(
             conversation_id=conversation["id"],

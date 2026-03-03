@@ -1182,3 +1182,19 @@ class RuntimeConfigStore:
                 (now, now, safe_name),
             )
         return cur.rowcount > 0
+
+    def set_cron_job_active(self, name: str, *, active: bool) -> bool:
+        safe_name = str(name or "").strip()
+        if not safe_name:
+            return False
+        now = _now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE cron_jobs
+                SET is_active = ?, updated_at = ?, deleted_at = NULL
+                WHERE name = ? AND deleted_at IS NULL
+                """,
+                (1 if active else 0, now, safe_name),
+            )
+        return cur.rowcount > 0

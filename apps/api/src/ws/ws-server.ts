@@ -150,7 +150,7 @@ export class WSServer {
     data: {
       session_id: string
       agent_id: string
-      runtime_type: 'semigraph' | 'openclaw'
+      runtime_type: 'semigraph'
       agent_config: Record<string, unknown>
       mcp_servers: Array<Record<string, unknown>>
       skill_index: Array<Record<string, unknown>>

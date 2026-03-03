@@ -190,9 +190,16 @@ function mapRiskVariant(risk: RiskLevel): 'success' | 'warning' | 'error' {
   return 'success'
 }
 
+function formatRuleEffectiveTime(value: string | undefined, locale: string): string {
+  if (!value) return '--'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '--'
+  return date.toLocaleString(locale)
+}
+
 export default function RulesPage() {
   const searchParams = useSearchParams()
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const actionTypeOptions = ACTION_TYPE_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))
   const eventTypeOptions = EVENT_TYPE_GROUPS.map((group) => ({
     label: t(`rules.form.eventTypeGroups.${group.key}`),
@@ -660,6 +667,9 @@ export default function RulesPage() {
                       )}
                       <div className="mt-2 text-xs text-text-tertiary">
                         {t('rules.meta.dedupe')}={rule.dedupeWindowSeconds ?? 0}s · {t('rules.meta.cooldown')}={rule.cooldownSeconds ?? 0}s · {t('rules.meta.budgetPerDay')}={rule.attentionBudgetPerDay ?? 0}
+                      </div>
+                      <div className="mt-1 text-xs text-text-tertiary">
+                        {t('rules.meta.effectiveAt')}={formatRuleEffectiveTime(rule.effectiveAt, locale)}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
