@@ -19,6 +19,7 @@ import {
   clearProviders,
   getProvider,
   getAvailableProviders,
+  getAllProviders,
 } from './llm/index'
 import { OpenAIProvider } from './llm/openai.provider'
 import { AnthropicProvider } from './llm/anthropic.provider'
@@ -34,24 +35,124 @@ const llmLogger = createLogger('llm')
 
 let isInitialized = false
 
+type ProviderInstanceEnvConfig = {
+  type: 'openai' | 'anthropic' | 'google' | 'custom'
+  id: string
+  displayName?: string
+  apiKey?: string
+  baseUrl?: string
+}
+
+function parseProviderInstancesFromEnv(): ProviderInstanceEnvConfig[] {
+  const items: ProviderInstanceEnvConfig[] = []
+  const raw = process.env.LLM_PROVIDER_INSTANCES
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== 'object') continue
+          const row = item as Record<string, unknown>
+          const typeValue = String(row.type || '').trim()
+          if (!['openai', 'anthropic', 'google', 'custom'].includes(typeValue)) continue
+          const id = String(row.id || '').trim()
+          if (!id) continue
+          items.push({
+            type: typeValue as 'openai' | 'anthropic' | 'google' | 'custom',
+            id,
+            displayName: String(row.displayName || '').trim() || undefined,
+            apiKey: String(row.apiKey || '').trim() || undefined,
+            baseUrl: String(row.baseUrl || '').trim() || undefined,
+          })
+        }
+      }
+    } catch {
+      llmLogger.warn('解析 LLM_PROVIDER_INSTANCES 失败，已忽略')
+    }
+  }
+
+  // backward compatibility
+  const legacyRaw = process.env.CUSTOM_LLM_PROVIDERS
+  if (!legacyRaw) return items
+  try {
+    const parsed = JSON.parse(legacyRaw) as unknown
+    if (!Array.isArray(parsed)) return items
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      const id = String(row.id || '').trim()
+      if (!id) continue
+      if (items.some((entry) => entry.type === 'custom' && entry.id === id)) continue
+      items.push({
+        type: 'custom',
+        id,
+        displayName: String(row.displayName || '').trim() || undefined,
+        apiKey: String(row.apiKey || '').trim() || undefined,
+        baseUrl: String(row.baseUrl || '').trim() || undefined,
+      })
+    }
+    return items
+  } catch {
+    llmLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
+    return items
+  }
+}
+
 function initializeProviders(): void {
   if (isInitialized) return
 
   // 注册 OpenAI Provider
-  const openai = new OpenAIProvider()
+  const openai = new OpenAIProvider({ name: 'openai', displayName: 'OpenAI' })
   registerProvider(openai)
 
   // 注册 Anthropic Provider
-  const anthropic = new AnthropicProvider()
+  const anthropic = new AnthropicProvider({ name: 'anthropic', displayName: 'Anthropic' })
   registerProvider(anthropic)
 
   // 注册 Google AI Provider
-  const google = new GoogleAIProvider()
+  const google = new GoogleAIProvider({ name: 'google', displayName: 'Google AI' })
   registerProvider(google)
 
   // 注册 Custom Provider (兼容 OpenAI API 的第三方服务)
-  const custom = new CustomProvider()
+  const custom = new CustomProvider({ name: 'custom', displayName: '自定义模型' })
   registerProvider(custom)
+
+  for (const item of parseProviderInstancesFromEnv()) {
+    const providerName = `${item.type}:${item.id}`
+    if (item.type === 'openai') {
+      registerProvider(new OpenAIProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl,
+      }))
+      continue
+    }
+    if (item.type === 'anthropic') {
+      registerProvider(new AnthropicProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl,
+      }))
+      continue
+    }
+    if (item.type === 'google') {
+      registerProvider(new GoogleAIProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl,
+      }))
+      continue
+    }
+    registerProvider(new CustomProvider({
+      name: providerName,
+      displayName: item.displayName || item.id,
+      apiKey: item.apiKey,
+      baseUrl: item.baseUrl,
+    }))
+  }
 
   isInitialized = true
   llmLogger.info('Providers 初始化完成')
@@ -200,16 +301,12 @@ export async function getAvailableModels(): Promise<string[]> {
  */
 export async function getProviderStatus(): Promise<Array<{
   name: string
+  displayName?: string
   available: boolean
   models: string[]
   modelInfos: LLMModelInfo[]
 }>> {
   initializeProviders()
-
-  const openai = getProvider('openai')
-  const anthropic = getProvider('anthropic')
-  const google = getProvider('google')
-  const custom = getProvider('custom')
 
   const loadProviderModels = async (
     provider?: LLMProvider
@@ -233,37 +330,29 @@ export async function getProviderStatus(): Promise<Array<{
     }
   }
 
-  const openaiModels = await loadProviderModels(openai)
-  const anthropicModels = await loadProviderModels(anthropic)
-  const googleModels = await loadProviderModels(google)
-  const customModels = await loadProviderModels(custom)
+  const defaultOrder = ['openai', 'anthropic', 'google', 'custom']
+  const providers = getAllProviders()
+  const providerNames = Array.from(
+    new Set([
+      ...defaultOrder,
+      ...providers.map((provider) => provider.name),
+    ])
+  )
 
-  return [
-    {
-      name: 'openai',
-      available: openai?.isAvailable() ?? false,
-      models: openaiModels.models,
-      modelInfos: openaiModels.modelInfos,
-    },
-    {
-      name: 'anthropic',
-      available: anthropic?.isAvailable() ?? false,
-      models: anthropicModels.models,
-      modelInfos: anthropicModels.modelInfos,
-    },
-    {
-      name: 'google',
-      available: google?.isAvailable() ?? false,
-      models: googleModels.models,
-      modelInfos: googleModels.modelInfos,
-    },
-    {
-      name: 'custom',
-      available: custom?.isAvailable() ?? false,
-      models: customModels.models,
-      modelInfos: customModels.modelInfos,
-    },
-  ]
+  const statuses = await Promise.all(providerNames.map(async (name) => {
+    const provider = getProvider(name)
+    const loaded = await loadProviderModels(provider)
+    const withDisplayName = provider as LLMProvider & { displayName?: string }
+    return {
+      name,
+      displayName: withDisplayName?.displayName,
+      available: provider?.isAvailable() ?? false,
+      models: loaded.models,
+      modelInfos: loaded.modelInfos,
+    }
+  }))
+
+  return statuses
 }
 
 // 导出类型

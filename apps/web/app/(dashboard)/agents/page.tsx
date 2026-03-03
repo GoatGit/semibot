@@ -2,15 +2,17 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Plus, Search, Settings, Trash2, Loader2, Power, Sparkles } from 'lucide-react'
+import { Bot, Plus, Search, Settings, Trash2, Loader2, Power, Sparkles, CircleHelp, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
 import { Select, type SelectGroup } from '@/components/ui/Select'
 import { Tooltip } from '@/components/ui/Tooltip'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { apiClient } from '@/lib/api'
 import { toast } from '@/stores/toastStore'
 import type { ApiResponse, Agent } from '@/types'
@@ -191,13 +193,24 @@ export default function AgentsPage() {
                 {t('agents.header.prefix')} {agents.length} {t('agents.header.suffix')}
               </p>
             </div>
-            <Button
-              leftIcon={<Plus size={16} />}
-              data-testid="create-agent-btn"
-              onClick={openCreateForm}
-            >
-              {t('agents.new')}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Link href="/help" className="inline-flex">
+                <Button variant="tertiary" leftIcon={<CircleHelp size={16} />} title={t('help.nav.helpCenter')}>
+                  {t('nav.helpCenter')}
+                </Button>
+              </Link>
+              <Tooltip content={t('help.nav.agents')}>
+                <div>
+                  <Button
+                    leftIcon={<Plus size={16} />}
+                    data-testid="create-agent-btn"
+                    onClick={openCreateForm}
+                  >
+                    {t('agents.new')}
+                  </Button>
+                </div>
+              </Tooltip>
+            </div>
           </div>
 
           {/* 搜索和筛选 */}
@@ -236,6 +249,8 @@ export default function AgentsPage() {
             </div>
           </div>
         </header>
+
+        <PageHelpStrip text={t('help.nav.agents')} ctaLabel={t('nav.helpCenter')} />
 
         {/* Agent 卡片网格 */}
         <div>

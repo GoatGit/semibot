@@ -187,11 +187,14 @@
   "config": {
     "header": {
       "title": "配置管理",
-      "subtitle": "统一管理 LLM、Tools、Gateway、API Key、Webhook。"
+      "subtitle": "统一管理 LLM、Tools、Gateway、API Key、Webhook。",
+      "helpHint": "需要配置说明或排障指引？打开帮助中心查看教程与 FAQ。",
+      "openHelpCenter": "打开帮助中心"
     },
     "loading": "加载配置中...",
     "common": {
       "notSet": "未设置",
+      "customValue": "自定义",
       "riskLevels": {
         "low": "低",
         "medium": "中",
@@ -260,15 +263,26 @@
       "routingDefaults": "模型路由默认值",
       "saveRouting": "保存模型路由",
       "providerConfig": "Provider 配置",
+      "addProviderInstance": "新增 Provider 实例",
       "viewModels": "查看模型列表",
       "apiKeyLabel": "API Key",
+      "providerIdLabel": "Provider ID",
       "endpointLabel": "Endpoint",
+      "noConfiguredProviders": "暂无已配置的 Provider，请先新增 Provider 实例或配置 API Key。",
+      "defaultModelLabel": "默认模型",
+      "fallbackModelLabel": "回退模型",
       "defaultModelPlaceholder": "默认模型（例如 gpt-4o）",
       "fallbackModelPlaceholder": "回退模型（例如 gpt-4o-mini）"
     },
     "tools": {
       "activeCount": "活跃 {count}",
       "configTitle": "工具配置（仅启停与参数）",
+      "quickTips": {
+        "title": "快速提示",
+        "fields": "配置时优先按字段名理解参数，避免误填。",
+        "scope": "高风险工具建议优先使用 session / session_action 聚合审批。",
+        "domains": "域名白名单和黑名单使用逗号分隔，并会匹配子域名。"
+      },
       "loading": "正在加载工具列表...",
       "empty": "暂无工具配置数据（V2 不支持新增/删除 Tool）",
       "risk": "风险",
@@ -277,6 +291,8 @@
       "on": "开启",
       "off": "关闭",
       "builtIn": "内置",
+      "toolCardHint": "在这里可以设置风险、审批策略和运行参数。",
+      "toolCardHintAria": "工具配置帮助",
       "configure": "配置",
       "disable": "停用",
       "enable": "启用",
@@ -341,6 +357,7 @@
       "mind": "Mind（全局行为）",
       "version": "版本",
       "updatedAt": "更新时间",
+      "contentLabel": "能力内容",
       "placeholder": "输入能力内容...",
       "history": "历史版本",
       "rollbackTo": "切换到",
@@ -349,13 +366,21 @@
     "modals": {
       "provider": {
         "title": "编辑 LLM Provider",
+        "providerTypeLabel": "Provider 类型",
+        "customIdLabel": "Provider 实例 ID",
+        "customIdPlaceholder": "Provider 实例 ID（示例: primary）",
+        "customIdHelp": "用于生成键名 <type>:<provider-id>，建议使用小写字母、数字与连字符。",
+        "apiKeyLabel": "API Key",
+        "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "新 API Key（留空则不修改）",
         "clearApiKey": "清除已有 API Key"
       },
       "tool": {
         "title": "工具配置",
         "description": "V2 仅支持配置内建工具参数与启停，不支持修改工具名称/类型，不支持新增或删除。",
+        "nameLabel": "字段名：name",
         "namePlaceholder": "工具名称",
+        "typeLabel": "字段名：type",
         "typePlaceholder": "工具类型",
         "timeoutLabel": "超时时间",
         "timeoutDefault": "使用默认超时",
@@ -379,17 +404,27 @@
           "tool": "按工具聚合",
           "call": "按每次调用"
         },
+        "apiEndpointLabel": "字段名：apiEndpoint",
         "apiEndpointPlaceholder": "API Endpoint（可选）",
+        "apiKeyLabel": "字段名：apiKey",
         "apiKeyPlaceholder": "API Key（留空不修改）",
         "noApiNeeded": "{tool} 无需配置 API Endpoint / API Key。",
+        "rootPathLabel": "字段名：rootPath",
         "rootPathPlaceholder": "根目录（可选，如 /Users/xxx）",
+        "maxReadBytesLabel": "字段名：maxReadBytes",
+        "maxReadBytesDefault": "使用默认 maxReadBytes",
         "maxReadBytesPlaceholder": "maxReadBytes（可选，正整数）",
         "http": {
           "allowLocalhost": "允许访问 localhost / 内网地址",
+          "allowedDomainsLabel": "字段名：allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains（可选，逗号分隔，如 api.example.com）",
+          "blockedDomainsLabel": "字段名：blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains（可选，逗号分隔）",
+          "maxResponseCharsLabel": "字段名：maxResponseChars",
+          "maxResponseCharsDefault": "使用默认 maxResponseChars",
           "maxResponseCharsPlaceholder": "maxResponseChars（可选，100-500000）",
           "authType": "默认鉴权类型",
+          "authHeaderLabel": "字段名：authHeader",
           "authHeaderPlaceholder": "authHeader（例如 X-API-Key）",
           "authTypes": {
             "none": "不鉴权",
@@ -399,10 +434,17 @@
           }
         },
         "sql": {
+          "maxRowsLabel": "字段名：maxRows",
+          "maxRowsDefault": "使用默认 maxRows",
           "maxRowsPlaceholder": "maxRows（可选，1-5000）",
+          "defaultDatabaseLabel": "字段名：defaultDatabase",
+          "defaultDatabaseDefault": "使用运行时默认数据库",
           "defaultDatabasePlaceholder": "defaultDatabase（可选，默认数据库别名）",
+          "allowedDatabasesLabel": "字段名：allowedDatabases",
           "allowedDatabasesPlaceholder": "allowedDatabases（可选，逗号分隔）",
           "connectionsLabel": "connections（数据库别名映射）",
+          "connectionAliasLabel": "字段名：alias",
+          "connectionDsnLabel": "字段名：dsn",
           "addConnection": "新增连接",
           "connectionAliasPlaceholder": "别名（例如 main）",
           "connectionDsnPlaceholder": "DSN（例如 postgresql://... 或 sqlite:///...）",
@@ -412,8 +454,12 @@
           "headless": "使用无头模式运行浏览器",
           "allowLocalhost": "允许访问 localhost / 内网地址",
           "browserType": "浏览器类型",
+          "allowedDomainsLabel": "字段名：allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains（可选，逗号分隔，如 example.com,news.ycombinator.com）",
+          "blockedDomainsLabel": "字段名：blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains（可选，逗号分隔）",
+          "maxTextLengthLabel": "字段名：maxTextLength",
+          "maxTextLengthDefault": "使用默认 maxTextLength",
           "maxTextLengthPlaceholder": "maxTextLength（可选，100-500000）",
           "browserTypes": {
             "chromium": "Chromium",
@@ -424,19 +470,26 @@
       },
       "gateway": {
         "title": "Gateway 配置",
+        "instanceKeyLabel": "字段名：instanceKey",
         "instanceKeyPlaceholder": "instanceKey（可选，建议唯一）",
+        "displayNameLabel": "字段名：displayName",
         "displayNamePlaceholder": "显示名称",
+        "agentIdLabel": "字段名：agentId",
         "agentIdPlaceholder": "Agent ID（默认 semibot）",
         "chatBindingsTitle": "会话绑定",
         "chatBindingsEmpty": "暂未设置 chat 绑定。可添加后把不同群/会话路由到不同 Agent。",
         "addChatBinding": "新增绑定",
         "removeChatBinding": "删除",
+        "importBindingsLabel": "导入绑定",
+        "chatIdLabel": "字段名：chatId",
+        "chatBindingAgentLabel": "字段名：agentId",
         "importBindingsPlaceholder": "粘贴多行：chatId=agentId（也支持只填 chatId，自动用默认 Agent）",
         "applyImportedBindings": "应用导入",
         "chatIdPlaceholder": "Chat ID",
         "chatBindingAgentPlaceholder": "Agent ID",
         "setDefault": "设为默认实例",
         "enabled": "启用此 Gateway",
+        "notifyEventTypesLabel": "字段名：notifyEventTypes",
         "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",
         "addressing": {
           "title": "Addressing 策略",
@@ -445,7 +498,9 @@
           "modeAllMessages": "群聊全量消息模式",
           "allowReplyToBot": "将“回复 Bot 消息”视为命中",
           "executeOnUnaddressed": "未命中时仍执行（谨慎开启）",
+          "commandPrefixesLabel": "字段名：commandPrefixes",
           "commandPrefixesPlaceholder": "commandPrefixes（可选，逗号分隔，如 /ask,/run,/approve,/reject）",
+          "sessionContinuationWindowSecLabel": "字段名：sessionContinuationWindowSec",
           "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec（正整数秒）"
         },
         "proactive": {
@@ -458,32 +513,46 @@
         },
         "context": {
           "title": "上下文保留策略",
+          "ttlDaysLabel": "字段名：ttlDays",
           "ttlDaysPlaceholder": "ttlDays（上下文保留天数）",
+          "maxRecentMessagesLabel": "字段名：maxRecentMessages",
           "maxRecentMessagesPlaceholder": "maxRecentMessages（最近消息条数上限）",
+          "summarizeEveryNMessagesLabel": "字段名：summarizeEveryNMessages",
           "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages（每 N 条触发摘要）"
         },
         "feishu": {
+          "verifyTokenLabel": "字段名：verifyToken",
           "verifyTokenPlaceholder": "Feishu Verify Token（留空可清空）",
+          "webhookUrlLabel": "字段名：webhookUrl",
           "webhookUrlPlaceholder": "Feishu Webhook URL（可选）",
           "clearVerifyToken": "清空已有 Verify Token"
         },
         "telegram": {
+          "botTokenLabel": "字段名：botToken",
           "botTokenPlaceholder": "Telegram Bot Token（留空可清空）",
           "clearBotToken": "清空已有 Bot Token",
+          "webhookSecretLabel": "字段名：webhookSecret",
           "webhookSecretPlaceholder": "Telegram Webhook Secret（可选）",
           "clearWebhookSecret": "清空已有 Webhook Secret",
+          "defaultChatIdLabel": "字段名：defaultChatId",
           "defaultChatIdPlaceholder": "默认 Chat ID（可选）",
+          "allowedChatIdsLabel": "字段名：allowedChatIds",
           "allowedChatIdsPlaceholder": "allowedChatIds（可选，逗号分隔）"
         }
       },
       "apiKey": {
         "title": "创建 API Key",
         "description": "完整密钥只会展示一次。",
+        "nameLabel": "字段名：name",
+        "expiresAtLabel": "过期时间（可选）",
         "namePlaceholder": "Key 名称"
       },
       "webhook": {
         "title": "创建 Webhook",
         "description": "events 用逗号分隔，最少一个事件。",
+        "urlLabel": "Webhook URL",
+        "secretLabel": "secret",
+        "eventsLabel": "events",
         "secretPlaceholder": "secret(至少16字符)",
         "urlPlaceholder": "https://example.com/webhook",
         "eventsPlaceholder": "event.a,event.b"
@@ -1356,6 +1425,14 @@
       "hover": "全站 Hover 说明",
       "gateway": "Gateway 配置教程",
       "quickStart": "快速上手"
+    },
+    "searchPlaceholder": "搜索功能说明、模块入口和排障问题...",
+    "searchNoResults": "未找到匹配内容，请尝试更宽泛的关键词。",
+    "sections": {
+      "feature-guide": "功能导航",
+      "hover-tips": "悬停提示",
+      "gateway-tutorial": "网关教程",
+      "provider-guides": "平台指引"
     },
     "featureGuide": {
       "title": "功能导航速览",

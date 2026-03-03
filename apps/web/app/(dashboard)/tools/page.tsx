@@ -1,11 +1,16 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Wrench, RefreshCw, AlertCircle } from 'lucide-react'
+import { Wrench, RefreshCw, AlertCircle, CircleHelp, ExternalLink } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { apiClient } from '@/lib/api'
 import { formatRuntimeStatusError } from '@/lib/runtime-status'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -164,6 +169,11 @@ export default function ToolsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                <Link href="/help" className="inline-flex">
+                  <Button variant="tertiary" leftIcon={<CircleHelp size={16} />} title={t('help.nav.helpCenter')}>
+                    {t('nav.helpCenter')}
+                  </Button>
+                </Link>
                 <Button
                   variant="secondary"
                   leftIcon={<RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />}
@@ -177,11 +187,10 @@ export default function ToolsPage() {
           </CardContent>
         </Card>
 
+        <PageHelpStrip text={t('help.nav.tools')} ctaLabel={t('nav.helpCenter')} />
+
         {error && (
-          <div className="rounded-lg border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-500 flex items-center gap-2">
-            <AlertCircle size={16} />
-            {error}
-          </div>
+          <InlineErrorAlert message={error} />
         )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -195,9 +204,22 @@ export default function ToolsPage() {
             <CardContent className="p-5">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-lg font-semibold text-text-primary">{t('toolsPage.configTitle')}</h2>
-                <Badge variant={runtime.available ? 'success' : 'outline'}>
-                  {runtime.available ? t('toolsPage.connected') : t('toolsPage.disconnected')}
-                </Badge>
+                <Tooltip
+                  content={
+                    runtime.available
+                      ? t('toolsPage.connected')
+                      : runtimeErrorText || t('toolsPage.runtimeUnavailable')
+                  }
+                >
+                  <div>
+                    <Badge variant={runtime.available ? 'success' : 'outline'}>
+                      {runtime.available ? t('toolsPage.connected') : t('toolsPage.disconnected')}
+                    </Badge>
+                  </div>
+                </Tooltip>
+              </div>
+              <div className="mt-3 rounded-md border border-border-subtle bg-bg-elevated/70 px-3 py-2 text-xs text-text-secondary">
+                {t('help.nav.tools')}
               </div>
               {runtimeErrorText && (
                 <p className="mt-2 text-xs text-warning-500">{runtimeErrorText}</p>
@@ -235,7 +257,19 @@ export default function ToolsPage() {
                   })}
                 </div>
               ) : (
-                <p className="mt-4 text-sm text-text-secondary">{t('toolsPage.empty')}</p>
+                <div className="mt-4">
+                  <EmptyStateActions
+                    message={t('toolsPage.empty')}
+                    actions={(
+                      <>
+                        <Button size="xs" onClick={() => router.push('/config')}>{t('toolsPage.openConfig')}</Button>
+                        <Link href="/help" className="inline-flex">
+                          <Button size="xs" variant="tertiary">{t('nav.helpCenter')}</Button>
+                        </Link>
+                      </>
+                    )}
+                  />
+                </div>
               )}
             </CardContent>
           </Card>

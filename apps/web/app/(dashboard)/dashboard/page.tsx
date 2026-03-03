@@ -12,10 +12,14 @@ import {
   RefreshCw,
   Activity,
   Clock3,
+  CircleHelp,
+  ExternalLink,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { apiClient } from '@/lib/api'
 import { NEW_CHAT_PATH } from '@/constants/config'
 import type { Session } from '@/types'
@@ -327,24 +331,35 @@ export default function DashboardPage() {
                     {t('dashboard.subtitle')}
                   </p>
                 </div>
-                <Button
-                  variant="secondary"
-                  leftIcon={<RefreshCw size={16} />}
-                  onClick={load}
-                  disabled={isLoading}
-                  title={t('help.actions.refreshDashboard')}
-                >
-                  {t('common.refresh')}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Link href="/help" className="inline-flex">
+                    <Button
+                      variant="tertiary"
+                      leftIcon={<CircleHelp size={16} />}
+                      title={t('help.nav.helpCenter')}
+                    >
+                      {t('nav.helpCenter')}
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="secondary"
+                    leftIcon={<RefreshCw size={16} />}
+                    onClick={load}
+                    disabled={isLoading}
+                    title={t('help.actions.refreshDashboard')}
+                  >
+                    {t('common.refresh')}
+                  </Button>
+                </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
+        <PageHelpStrip text={t('help.nav.helpCenter')} ctaLabel={t('nav.helpCenter')} />
+
         {error && (
-          <div className="rounded-lg border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-500">
-            {error}
-          </div>
+          <InlineErrorAlert message={error} />
         )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">

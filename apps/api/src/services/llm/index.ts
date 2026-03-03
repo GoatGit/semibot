@@ -160,6 +160,10 @@ export function getAvailableProviders(): LLMProvider[] {
   return Array.from(providers.values()).filter((p) => p.isAvailable())
 }
 
+export function getAllProviders(): LLMProvider[] {
+  return Array.from(providers.values())
+}
+
 /**
  * 根据模型名称获取 Provider
  */

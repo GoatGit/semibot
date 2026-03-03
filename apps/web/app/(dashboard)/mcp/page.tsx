@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import clsx from 'clsx'
 import {
   Search,
@@ -16,12 +17,17 @@ import {
   ChevronUp,
   Wrench,
   FolderOpen,
+  CircleHelp,
+  ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
+import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { apiClient } from '@/lib/api'
 import { useLocale } from '@/components/providers/LocaleProvider'
 
@@ -591,6 +597,11 @@ export default function McpPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <Link href="/help" className="inline-flex">
+                <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
+                  {t('nav.helpCenter')}
+                </Button>
+              </Link>
               <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={loadServers}>
                 {t('common.refresh')}
               </Button>
@@ -657,14 +668,11 @@ export default function McpPage() {
           )}
         </header>
 
+        <PageHelpStrip text={t('help.nav.mcpServers')} ctaLabel={t('nav.helpCenter')} />
+
         <div>
           {error && (
-            <div className="mb-4 p-3 rounded-md bg-error-500/10 border border-error-500/30 text-sm text-error-500 flex items-center justify-between">
-              <span>{error}</span>
-              <button onClick={() => setError(null)} className="text-error-500/60 hover:text-error-500 text-xs">
-                {t('common.close')}
-              </button>
-            </div>
+            <InlineErrorAlert className="mb-4" message={error} onClose={() => setError(null)} />
           )}
 
           {loading ? (
@@ -685,8 +693,19 @@ export default function McpPage() {
               ) : (
                 <>
                   <h3 className="text-lg font-medium text-text-primary">{t('mcp.empty.defaultTitle')}</h3>
-                  <p className="text-sm text-text-secondary mt-1 mb-4">{t('mcp.empty.defaultDescription')}</p>
-                  <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>{t('mcp.addServer')}</Button>
+                  <div className="mt-2 w-full max-w-md">
+                    <EmptyStateActions
+                      message={t('mcp.empty.defaultDescription')}
+                      actions={(
+                        <>
+                          <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>{t('mcp.addServer')}</Button>
+                          <Link href="/help" className="inline-flex">
+                            <Button variant="tertiary">{t('nav.helpCenter')}</Button>
+                          </Link>
+                        </>
+                      )}
+                    />
+                  </div>
                 </>
               )}
             </div>

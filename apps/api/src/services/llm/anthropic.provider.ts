@@ -67,7 +67,8 @@ interface AnthropicModelsResponse {
 // ═══════════════════════════════════════════════════════════════
 
 export class AnthropicProvider implements LLMProvider {
-  readonly name = 'anthropic'
+  readonly name: string
+  readonly displayName: string
   models: string[] = []
 
   private apiKey: string | null
@@ -76,9 +77,16 @@ export class AnthropicProvider implements LLMProvider {
   private modelsCacheTime: number = 0
   private readonly CACHE_TTL = 5 * 60 * 1000
 
-  constructor() {
-    this.apiKey = process.env.ANTHROPIC_API_KEY || null
-    this.baseUrl = process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com/v1'
+  constructor(options?: {
+    name?: string
+    displayName?: string
+    apiKey?: string | null
+    baseUrl?: string | null
+  }) {
+    this.name = options?.name ?? 'anthropic'
+    this.displayName = options?.displayName ?? this.name
+    this.apiKey = (options?.apiKey ?? process.env.ANTHROPIC_API_KEY) || null
+    this.baseUrl = (options?.baseUrl ?? process.env.ANTHROPIC_API_BASE_URL) || 'https://api.anthropic.com/v1'
   }
 
   isAvailable(): boolean {

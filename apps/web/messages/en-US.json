@@ -187,11 +187,14 @@
   "config": {
     "header": {
       "title": "Configuration",
-      "subtitle": "Manage LLM, tools, gateways, API keys and webhooks in one place."
+      "subtitle": "Manage LLM, tools, gateways, API keys and webhooks in one place.",
+      "helpHint": "Need setup guidance or troubleshooting? Open Help Center for walkthroughs and FAQ.",
+      "openHelpCenter": "Open Help Center"
     },
     "loading": "Loading configuration...",
     "common": {
       "notSet": "Not set",
+      "customValue": "Custom",
       "riskLevels": {
         "low": "Low",
         "medium": "Medium",
@@ -260,15 +263,26 @@
       "routingDefaults": "Model routing defaults",
       "saveRouting": "Save routing defaults",
       "providerConfig": "Provider configuration",
+      "addProviderInstance": "Add provider instance",
       "viewModels": "View models",
       "apiKeyLabel": "API Key",
+      "providerIdLabel": "Provider ID",
       "endpointLabel": "Endpoint",
+      "noConfiguredProviders": "No configured providers yet. Add a provider instance or set an API key first.",
+      "defaultModelLabel": "Default model",
+      "fallbackModelLabel": "Fallback model",
       "defaultModelPlaceholder": "Default model (e.g. gpt-4o)",
       "fallbackModelPlaceholder": "Fallback model (e.g. gpt-4o-mini)"
     },
     "tools": {
       "activeCount": "Active {count}",
       "configTitle": "Tool configuration (toggle & params only)",
+      "quickTips": {
+        "title": "Quick Tips",
+        "fields": "Read and edit values by field name to avoid config mistakes.",
+        "scope": "For high-risk tools, keep approval scope at session or session_action.",
+        "domains": "Domain allow/block lists are comma-separated and apply to subdomains."
+      },
       "loading": "Loading tools...",
       "empty": "No tool config data (V2 does not support add/delete tools)",
       "risk": "Risk",
@@ -277,6 +291,8 @@
       "on": "On",
       "off": "Off",
       "builtIn": "Built-in",
+      "toolCardHint": "Configure risk, approval strategy, and runtime params here.",
+      "toolCardHintAria": "Tool config help",
       "configure": "Configure",
       "disable": "Disable",
       "enable": "Enable",
@@ -341,6 +357,7 @@
       "mind": "Mind (Global Behavior)",
       "version": "Version",
       "updatedAt": "Updated at",
+      "contentLabel": "Capability content",
       "placeholder": "Enter capability content...",
       "history": "History",
       "rollbackTo": "Switch to",
@@ -349,13 +366,21 @@
     "modals": {
       "provider": {
         "title": "Edit LLM provider",
+        "providerTypeLabel": "Provider type",
+        "customIdLabel": "Provider instance ID",
+        "customIdPlaceholder": "Provider instance ID (e.g. primary)",
+        "customIdHelp": "Used to build key <type>:<provider-id>; use lowercase letters, numbers, and hyphens.",
+        "apiKeyLabel": "API Key",
+        "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "New API key (leave empty to keep unchanged)",
         "clearApiKey": "Clear existing API key"
       },
       "tool": {
         "title": "Tool configuration",
         "description": "V2 only supports built-in tool params and enable/disable; rename/type change and add/delete are not supported.",
+        "nameLabel": "Field: name",
         "namePlaceholder": "Tool name",
+        "typeLabel": "Field: type",
         "typePlaceholder": "Tool type",
         "timeoutLabel": "Timeout",
         "timeoutDefault": "Use default timeout",
@@ -379,17 +404,27 @@
           "tool": "Group by tool",
           "call": "Per call"
         },
+        "apiEndpointLabel": "Field: apiEndpoint",
         "apiEndpointPlaceholder": "API endpoint (optional)",
+        "apiKeyLabel": "Field: apiKey",
         "apiKeyPlaceholder": "API key (leave empty to keep unchanged)",
         "noApiNeeded": "{tool} does not require API endpoint / API key.",
+        "rootPathLabel": "Field: rootPath",
         "rootPathPlaceholder": "Root path (optional, e.g. /Users/xxx)",
+        "maxReadBytesLabel": "Field: maxReadBytes",
+        "maxReadBytesDefault": "Use default maxReadBytes",
         "maxReadBytesPlaceholder": "maxReadBytes (optional, positive integer)",
         "http": {
           "allowLocalhost": "Allow localhost / internal network access",
+          "allowedDomainsLabel": "Field: allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. api.example.com)",
+          "blockedDomainsLabel": "Field: blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxResponseCharsLabel": "Field: maxResponseChars",
+          "maxResponseCharsDefault": "Use default maxResponseChars",
           "maxResponseCharsPlaceholder": "maxResponseChars (optional, 100-500000)",
           "authType": "Default auth type",
+          "authHeaderLabel": "Field: authHeader",
           "authHeaderPlaceholder": "authHeader (e.g. X-API-Key)",
           "authTypes": {
             "none": "No auth",
@@ -399,10 +434,17 @@
           }
         },
         "sql": {
+          "maxRowsLabel": "Field: maxRows",
+          "maxRowsDefault": "Use default maxRows",
           "maxRowsPlaceholder": "maxRows (optional, 1-5000)",
+          "defaultDatabaseLabel": "Field: defaultDatabase",
+          "defaultDatabaseDefault": "Use runtime default database",
           "defaultDatabasePlaceholder": "defaultDatabase (optional, default DB alias)",
+          "allowedDatabasesLabel": "Field: allowedDatabases",
           "allowedDatabasesPlaceholder": "allowedDatabases (optional, comma-separated)",
           "connectionsLabel": "connections (database alias map)",
+          "connectionAliasLabel": "Field: alias",
+          "connectionDsnLabel": "Field: dsn",
           "addConnection": "Add connection",
           "connectionAliasPlaceholder": "Alias (e.g. main)",
           "connectionDsnPlaceholder": "DSN (e.g. postgresql://... or sqlite:///...)",
@@ -412,8 +454,12 @@
           "headless": "Run browser in headless mode",
           "allowLocalhost": "Allow localhost / internal network access",
           "browserType": "Browser type",
+          "allowedDomainsLabel": "Field: allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. example.com,news.ycombinator.com)",
+          "blockedDomainsLabel": "Field: blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxTextLengthLabel": "Field: maxTextLength",
+          "maxTextLengthDefault": "Use default maxTextLength",
           "maxTextLengthPlaceholder": "maxTextLength (optional, 100-500000)",
           "browserTypes": {
             "chromium": "Chromium",
@@ -424,19 +470,26 @@
       },
       "gateway": {
         "title": "Gateway configuration",
+        "instanceKeyLabel": "Field: instanceKey",
         "instanceKeyPlaceholder": "instanceKey (optional, should be unique)",
+        "displayNameLabel": "Field: displayName",
         "displayNamePlaceholder": "Display name",
+        "agentIdLabel": "Field: agentId",
         "agentIdPlaceholder": "Agent ID (default: semibot)",
         "chatBindingsTitle": "Chat bindings",
         "chatBindingsEmpty": "No chat bindings. Add one to route different chats to different agents.",
         "addChatBinding": "Add binding",
         "removeChatBinding": "Remove",
+        "importBindingsLabel": "Import bindings",
+        "chatIdLabel": "Field: chatId",
+        "chatBindingAgentLabel": "Field: agentId",
         "importBindingsPlaceholder": "Paste lines: chatId=agentId (or only chatId to use default agent)",
         "applyImportedBindings": "Apply import",
         "chatIdPlaceholder": "Chat ID",
         "chatBindingAgentPlaceholder": "Agent ID",
         "setDefault": "Set as default instance",
         "enabled": "Enable this gateway",
+        "notifyEventTypesLabel": "Field: notifyEventTypes",
         "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",
         "addressing": {
           "title": "Addressing policy",
@@ -445,7 +498,9 @@
           "modeAllMessages": "All group messages mode",
           "allowReplyToBot": "Treat replies to bot messages as addressed",
           "executeOnUnaddressed": "Execute even when unaddressed (use carefully)",
+          "commandPrefixesLabel": "Field: commandPrefixes",
           "commandPrefixesPlaceholder": "commandPrefixes (optional, comma-separated, e.g. /ask,/run,/approve,/reject)",
+          "sessionContinuationWindowSecLabel": "Field: sessionContinuationWindowSec",
           "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec (positive integer seconds)"
         },
         "proactive": {
@@ -458,32 +513,46 @@
         },
         "context": {
           "title": "Context retention policy",
+          "ttlDaysLabel": "Field: ttlDays",
           "ttlDaysPlaceholder": "ttlDays (retention days)",
+          "maxRecentMessagesLabel": "Field: maxRecentMessages",
           "maxRecentMessagesPlaceholder": "maxRecentMessages (max recent messages)",
+          "summarizeEveryNMessagesLabel": "Field: summarizeEveryNMessages",
           "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages (summarize every N messages)"
         },
         "feishu": {
+          "verifyTokenLabel": "Field: verifyToken",
           "verifyTokenPlaceholder": "Feishu verify token (leave empty to clear)",
+          "webhookUrlLabel": "Field: webhookUrl",
           "webhookUrlPlaceholder": "Feishu webhook URL (optional)",
           "clearVerifyToken": "Clear existing verify token"
         },
         "telegram": {
+          "botTokenLabel": "Field: botToken",
           "botTokenPlaceholder": "Telegram bot token (leave empty to clear)",
           "clearBotToken": "Clear existing bot token",
+          "webhookSecretLabel": "Field: webhookSecret",
           "webhookSecretPlaceholder": "Telegram webhook secret (optional)",
           "clearWebhookSecret": "Clear existing webhook secret",
+          "defaultChatIdLabel": "Field: defaultChatId",
           "defaultChatIdPlaceholder": "Default chat ID (optional)",
+          "allowedChatIdsLabel": "Field: allowedChatIds",
           "allowedChatIdsPlaceholder": "allowedChatIds (optional, comma-separated)"
         }
       },
       "apiKey": {
         "title": "Create API key",
         "description": "The full key is shown only once.",
+        "nameLabel": "Field: name",
+        "expiresAtLabel": "Expires at (optional)",
         "namePlaceholder": "Key name"
       },
       "webhook": {
         "title": "Create webhook",
         "description": "Use comma-separated events, at least one event required.",
+        "urlLabel": "Webhook URL",
+        "secretLabel": "Secret",
+        "eventsLabel": "Events",
         "secretPlaceholder": "secret (at least 16 characters)",
         "urlPlaceholder": "https://example.com/webhook",
         "eventsPlaceholder": "event.a,event.b"
@@ -1356,6 +1425,14 @@
       "hover": "Hover Guidance",
       "gateway": "Gateway Tutorial",
       "quickStart": "Quick Start"
+    },
+    "searchPlaceholder": "Search guides, module pages, and troubleshooting...",
+    "searchNoResults": "No matching guides found. Try broader keywords.",
+    "sections": {
+      "feature-guide": "Feature Guide",
+      "hover-tips": "Hover Tips",
+      "gateway-tutorial": "Gateway Tutorial",
+      "provider-guides": "Provider Guides"
     },
     "featureGuide": {
       "title": "Feature Navigation Guide",

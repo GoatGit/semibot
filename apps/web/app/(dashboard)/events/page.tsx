@@ -1,14 +1,18 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Activity, RefreshCw, RotateCcw, AlertCircle, Search, Plus, Copy } from 'lucide-react'
+import { Activity, RefreshCw, RotateCcw, AlertCircle, Search, Plus, Copy, CircleHelp, ExternalLink } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
+import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { useEvents } from '@/hooks/useEvents'
 import type { EventRecord } from '@/types'
 import type { EventPresentationDictionary } from '@/types/events'
@@ -237,8 +241,8 @@ export default function EventsPage() {
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
         <Card className="border-border-default">
           <CardContent className="p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
                 <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
                   <Activity size={22} className="text-primary-400" />
                   {t('events.title')}
@@ -248,11 +252,16 @@ export default function EventsPage() {
                 </p>
                 <p className="mt-2 text-xs text-text-tertiary">{t('events.positioning')}</p>
                 <p className="mt-1 text-xs text-text-tertiary">{t('events.capabilities')}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  leftIcon={<RefreshCw size={16} />}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link href="/help" className="inline-flex">
+                    <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
+                      {t('nav.helpCenter')}
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="secondary"
+                    leftIcon={<RefreshCw size={16} />}
                   onClick={() => void refresh()}
                   disabled={isLoading}
                 >
@@ -269,6 +278,8 @@ export default function EventsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <PageHelpStrip text={t('help.nav.events')} ctaLabel={t('nav.helpCenter')} />
 
         <Card className="border-border-default">
           <CardContent className="p-4">
@@ -318,10 +329,7 @@ export default function EventsPage() {
         )}
 
         {(error || actionError) && (
-          <div className="rounded-lg border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-500 flex items-center gap-2">
-            <AlertCircle size={16} />
-            {actionError || error}
-          </div>
+          <InlineErrorAlert message={actionError || error || ''} />
         )}
         {actionNotice && (
           <div className="rounded-lg border border-success-500/30 bg-success-500/10 px-4 py-3 text-sm text-success-500">
@@ -434,8 +442,21 @@ export default function EventsPage() {
             })
           ) : (
             <Card className="border-border-subtle">
-              <CardContent className="p-8 text-center text-sm text-text-secondary">
-                {t('events.empty')}
+              <CardContent className="p-8">
+                <EmptyStateActions
+                  className="text-center"
+                  message={t('events.empty')}
+                  actions={(
+                    <>
+                      <Button size="sm" variant="secondary" onClick={() => router.push('/rules?create=1')}>
+                        {t('events.newRule')}
+                      </Button>
+                      <Link href="/help" className="inline-flex">
+                        <Button size="sm" variant="tertiary">{t('nav.helpCenter')}</Button>
+                      </Link>
+                    </>
+                  )}
+                />
               </CardContent>
             </Card>
           )}

@@ -142,9 +142,17 @@ class SemiGraphAdapter(RuntimeAdapter):
         llm_config = self.init_data.get("llm_config") or {}
         providers_cfg = llm_config.get("providers") if isinstance(llm_config, dict) else {}
 
+        extra_prefixed_keys: list[tuple[str, str]] = []
+        if isinstance(api_keys, dict):
+            for key, value in api_keys.items():
+                key_name = str(key or "")
+                key_value = str(value or "")
+                if ":" in key_name and key_value.strip():
+                    extra_prefixed_keys.append((key_name, key_value))
+
         openai_key = api_keys.get("openai") or os.getenv("OPENAI_API_KEY")
         custom_key = api_keys.get("custom") or os.getenv("CUSTOM_LLM_API_KEY")
-        api_key = openai_key or custom_key
+        api_key = openai_key or custom_key or (extra_prefixed_keys[0][1] if extra_prefixed_keys else None)
         if not api_key:
             return None
 
@@ -175,6 +183,14 @@ class SemiGraphAdapter(RuntimeAdapter):
                     or custom_cfg.get("baseUrl")
                     or None
                 )
+            if not base_url and extra_prefixed_keys and isinstance(providers_cfg, dict):
+                custom_provider_cfg = providers_cfg.get(extra_prefixed_keys[0][0])
+                if isinstance(custom_provider_cfg, dict):
+                    base_url = (
+                        custom_provider_cfg.get("base_url")
+                        or custom_provider_cfg.get("baseUrl")
+                        or None
+                    )
             base_url = base_url or os.getenv("CUSTOM_LLM_API_BASE_URL")
 
         base_url = base_url or os.getenv("OPENAI_API_BASE_URL") or os.getenv("CUSTOM_LLM_API_BASE_URL") or None

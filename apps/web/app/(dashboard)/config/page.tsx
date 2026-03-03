@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
+import Link from 'next/link'
 import {
   Cpu,
   KeyRound,
@@ -15,12 +16,18 @@ import {
   TestTube2,
   Pencil,
   MessageSquare,
+  CircleHelp,
+  ExternalLink,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
+import { Select } from '@/components/ui/Select'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { apiClient } from '@/lib/api'
 import { formatRuntimeStatusError } from '@/lib/runtime-status'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -69,17 +76,13 @@ interface LlmProviderConfigEntry {
   apiKeyConfigured: boolean
   apiKeyPreview: string | null
   baseUrl: string
+  displayName?: string
 }
 
 interface LlmConfigData {
   defaultModel: string
   fallbackModel: string
-  providers: {
-    openai: LlmProviderConfigEntry
-    anthropic: LlmProviderConfigEntry
-    google: LlmProviderConfigEntry
-    custom: LlmProviderConfigEntry
-  }
+  providers: Record<string, LlmProviderConfigEntry>
 }
 
 interface ToolItem {
@@ -136,7 +139,8 @@ type EvolutionCapabilityType = 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
 
 type ConfigTab = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
 type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
-type ProviderKey = keyof LlmConfigData['providers']
+type ProviderKey = string
+type ProviderType = 'openai' | 'anthropic' | 'google' | 'custom'
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram'
 type GatewayFilter = 'all' | GatewayProvider
@@ -305,7 +309,17 @@ const TOOLS_WITH_EXECUTION_TUNING = [
 const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
 const DEFAULT_APPROVAL_DEDUPE_OPTIONS = ['', 'action,target', 'action', 'tool']
+const TOOL_MAX_READ_BYTES_OPTIONS = ['', '4096', '16384', '65536', '262144', '1048576']
+const TOOL_MAX_TEXT_LENGTH_OPTIONS = ['', '2000', '5000', '10000', '20000', '50000', '100000', '200000']
+const TOOL_MAX_RESPONSE_CHARS_OPTIONS = ['', '2000', '5000', '10000', '20000', '50000', '100000', '200000']
+const TOOL_SQL_MAX_ROWS_OPTIONS = ['', '100', '500', '1000', '2000', '5000']
 const EVOLUTION_CAPABILITY_TYPES: EvolutionCapabilityType[] = ['hands', 'reflex', 'spine', 'guard', 'mind']
+const PROVIDER_TYPE_OPTIONS: Array<{ value: ProviderType; label: string }> = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'google', label: 'Google AI' },
+  { value: 'custom', label: 'Custom' },
+]
 const TOOL_APPROVAL_DEDUPE_OPTIONS: Record<string, string[]> = {
   browser_automation: ['', 'action,target', 'action', 'target', 'tool'],
   file_io: ['', 'action,target', 'target', 'tool'],
@@ -533,6 +547,8 @@ export default function ConfigPage() {
   const [providerConfigSaving, setProviderConfigSaving] = useState(false)
   const [providerConfigForm, setProviderConfigForm] = useState({
     provider: 'openai' as ProviderKey,
+    providerType: 'custom' as ProviderType,
+    providerId: '',
     apiKey: '',
     baseUrl: '',
     clearApiKey: false,
@@ -942,8 +958,11 @@ export default function ConfigPage() {
 
   const openProviderConfigDialog = (provider: ProviderKey) => {
     const cfg = llmConfig?.providers[provider]
+    const matched = provider.match(/^(openai|anthropic|google|custom):(.+)$/)
     setProviderConfigForm({
       provider,
+      providerType: (matched?.[1] as ProviderType | undefined) || 'custom',
+      providerId: matched?.[2] || '',
       apiKey: '',
       baseUrl: cfg?.baseUrl || '',
       clearApiKey: false,
@@ -951,7 +970,29 @@ export default function ConfigPage() {
     setShowProviderConfigModal(true)
   }
 
+  const openCreateProviderInstanceDialog = () => {
+    setProviderConfigForm({
+      provider: 'new',
+      providerType: 'custom',
+      providerId: '',
+      apiKey: '',
+      baseUrl: '',
+      clearApiKey: false,
+    })
+    setShowProviderConfigModal(true)
+  }
+
   const saveProviderConfig = async () => {
+    const isCreateProviderInstance = providerConfigForm.provider === 'new'
+    const targetProvider =
+      isCreateProviderInstance
+        ? `${providerConfigForm.providerType}:${providerConfigForm.providerId.trim()}`
+        : providerConfigForm.provider
+    if (!targetProvider || targetProvider === 'new' || /^(openai|anthropic|google|custom):\s*$/.test(targetProvider)) {
+      setError(tSafe('config.errors.providerIdRequired', '请填写 Provider 实例 ID'))
+      return
+    }
+
     const payloadProvider = {
       baseUrl: providerConfigForm.baseUrl.trim(),
       clearApiKey: providerConfigForm.clearApiKey,
@@ -963,7 +1004,7 @@ export default function ConfigPage() {
       setError(null)
       await apiClient.put('/llm-providers/config', {
         providers: {
-          [providerConfigForm.provider]: payloadProvider,
+          [targetProvider]: payloadProvider,
         },
       })
       setShowProviderConfigModal(false)
@@ -1614,6 +1655,16 @@ export default function ConfigPage() {
     }))
   }, [])
 
+  const sqlDefaultDatabaseOptions = useMemo(() => {
+    const aliases = toolForm.sqlConnectionsRows
+      .map((row) => row.alias.trim())
+      .filter(Boolean)
+    const set = new Set(aliases)
+    const current = toolForm.sqlDefaultDatabase.trim()
+    if (current) set.add(current)
+    return Array.from(set)
+  }, [toolForm.sqlConnectionsRows, toolForm.sqlDefaultDatabase])
+
   const applyGatewayBindingsImport = useCallback(() => {
     const parsed = parseGatewayChatBindingImportText(
       gatewayBindingsImportText,
@@ -1897,6 +1948,34 @@ export default function ConfigPage() {
     return map
   }, [llmProviders])
 
+  const visibleProviderEntries = useMemo(() => {
+    const entries = Object.entries(llmConfig?.providers || {}) as Array<[ProviderKey, LlmProviderConfigEntry]>
+    return entries.filter(([providerKey, cfg]) => {
+      const status = llmStatusMap.get(providerKey)
+      const isBuiltinProvider = !providerKey.includes(':')
+      if (isBuiltinProvider) {
+        return Boolean(status?.available || cfg.apiKeyConfigured)
+      }
+      return Boolean(cfg.apiKeyConfigured || cfg.baseUrl?.trim())
+    })
+  }, [llmConfig, llmStatusMap])
+
+  const availableModelOptions = useMemo(() => {
+    const unique = Array.from(new Set(llmProviders.flatMap((item) => item.models || []))).sort((a, b) =>
+      a.localeCompare(b)
+    )
+    return unique.map((model) => ({ value: model, label: model }))
+  }, [llmProviders])
+
+  const isDefaultModelCustom = useMemo(
+    () => Boolean(modelDefaults.defaultModel) && !availableModelOptions.some((opt) => opt.value === modelDefaults.defaultModel),
+    [availableModelOptions, modelDefaults.defaultModel]
+  )
+  const isFallbackModelCustom = useMemo(
+    () => Boolean(modelDefaults.fallbackModel) && !availableModelOptions.some((opt) => opt.value === modelDefaults.fallbackModel),
+    [availableModelOptions, modelDefaults.fallbackModel]
+  )
+
   const activeToolsCount = useMemo(
     () => tools.filter((tool) => tool.isActive).length,
     [tools]
@@ -1931,6 +2010,15 @@ export default function ConfigPage() {
     [apiKeys.length, evolutionUiText.tab, gateways.length, llmProviders, tSafe, tools.length, webhooks.length]
   )
 
+  const toolsQuickTips = useMemo(
+    () => [
+      tSafe('config.tools.quickTips.fields', 'Use explicit field names to avoid config mistakes.'),
+      tSafe('config.tools.quickTips.scope', 'For high-risk tools, keep approval scope at session or session_action.'),
+      tSafe('config.tools.quickTips.domains', 'Domain allow/block lists are comma-separated and apply to subdomains.'),
+    ],
+    [tSafe]
+  )
+
   const isAnySectionLoading = Object.values(sectionLoading).some(Boolean)
 
   return (
@@ -1943,19 +2031,32 @@ export default function ConfigPage() {
               {t('config.header.subtitle')}
             </p>
           </div>
-          <Button
-            variant="secondary"
-            onClick={loadData}
-            leftIcon={<Loader2 size={16} className={refreshingAll || isAnySectionLoading ? 'animate-spin' : ''} />}
-          >
-            {t('common.refresh')}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link href="/help" className="inline-flex">
+              <Button
+                variant="tertiary"
+                leftIcon={<CircleHelp size={16} />}
+              >
+                {tSafe('common.helpCenter', 'Help Center')}
+              </Button>
+            </Link>
+            <Button
+              variant="secondary"
+              onClick={loadData}
+              leftIcon={<Loader2 size={16} className={refreshingAll || isAnySectionLoading ? 'animate-spin' : ''} />}
+            >
+              {t('common.refresh')}
+            </Button>
+          </div>
         </div>
 
+        <PageHelpStrip
+          text={tSafe('config.header.helpHint', 'Need setup guidance or troubleshooting? Open Help Center for walkthroughs and FAQ.')}
+          ctaLabel={tSafe('config.header.openHelpCenter', 'Open Help Center')}
+        />
+
         {error && (
-          <div className="rounded-lg border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-500">
-            {error}
-          </div>
+          <InlineErrorAlert message={error} />
         )}
 
         <div className="flex flex-wrap items-center gap-2">
@@ -2007,22 +2108,66 @@ export default function ConfigPage() {
                     {sectionErrors.llm && (
                       <p className="text-xs text-warning-500">{sectionErrors.llm}</p>
                     )}
-                    <Input
-                      data-testid="llm-default-model-input"
-                      placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
-                      value={modelDefaults.defaultModel}
-                      onChange={(e) =>
-                        setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
-                      }
-                    />
-                    <Input
-                      data-testid="llm-fallback-model-input"
-                      placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
-                      value={modelDefaults.fallbackModel}
-                      onChange={(e) =>
-                        setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
-                      }
-                    />
+                    <div className="space-y-2">
+                      <p className="text-xs text-text-secondary">
+                        {tSafe('config.llm.defaultModelLabel', '默认模型')}
+                      </p>
+                      <Select
+                        data-testid="llm-default-model-select"
+                        value={isDefaultModelCustom ? '__custom__' : modelDefaults.defaultModel}
+                        onChange={(value) =>
+                          setModelDefaults((prev) => ({
+                            ...prev,
+                            defaultModel: value === '__custom__' ? prev.defaultModel : value,
+                          }))
+                        }
+                        options={[
+                          ...availableModelOptions,
+                          { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
+                        ]}
+                        placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
+                      />
+                      {(isDefaultModelCustom || modelDefaults.defaultModel === '') && (
+                        <Input
+                          data-testid="llm-default-model-input"
+                          placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
+                          value={modelDefaults.defaultModel}
+                          onChange={(e) =>
+                            setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
+                          }
+                        />
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs text-text-secondary">
+                        {tSafe('config.llm.fallbackModelLabel', '回退模型')}
+                      </p>
+                      <Select
+                        data-testid="llm-fallback-model-select"
+                        value={isFallbackModelCustom ? '__custom__' : modelDefaults.fallbackModel}
+                        onChange={(value) =>
+                          setModelDefaults((prev) => ({
+                            ...prev,
+                            fallbackModel: value === '__custom__' ? prev.fallbackModel : value,
+                          }))
+                        }
+                        options={[
+                          ...availableModelOptions,
+                          { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
+                        ]}
+                        placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
+                      />
+                      {(isFallbackModelCustom || modelDefaults.fallbackModel === '') && (
+                        <Input
+                          data-testid="llm-fallback-model-input"
+                          placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
+                          value={modelDefaults.fallbackModel}
+                          onChange={(e) =>
+                            setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
+                          }
+                        />
+                      )}
+                    </div>
                     <Button
                       data-testid="llm-save-routing-button"
                       onClick={saveModelConfig}
@@ -2035,11 +2180,16 @@ export default function ConfigPage() {
 
                 <Card className="border-border-default">
                   <CardContent className="p-5 space-y-3">
-                    <h2 className="text-lg font-semibold text-text-primary">{t('config.llm.providerConfig')}</h2>
-                    {(Object.keys(llmConfig?.providers || {}) as ProviderKey[]).map((providerKey) => {
-                      const cfg = llmConfig?.providers[providerKey]
+                    <div className="flex items-center justify-between gap-2">
+                      <h2 className="text-lg font-semibold text-text-primary">{t('config.llm.providerConfig')}</h2>
+                      <Button size="xs" variant="tertiary" leftIcon={<Plus size={12} />} onClick={openCreateProviderInstanceDialog}>
+                        {tSafe('config.llm.addProviderInstance', '新增 Provider 实例')}
+                      </Button>
+                    </div>
+                    {visibleProviderEntries.map(([providerKey, cfg]) => {
                       const status = llmStatusMap.get(providerKey)
                       if (!cfg) return null
+                      const providerId = providerKey.includes(':') ? providerKey.split(':').slice(1).join(':') : ''
 
                       return (
                         <div
@@ -2048,7 +2198,7 @@ export default function ConfigPage() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-sm font-medium text-text-primary">
-                              {status?.displayName || providerKey}
+                              {cfg.displayName || status?.displayName || providerKey}
                             </p>
                             <div className="flex items-center gap-2">
                               <Badge variant={status?.available ? 'success' : 'outline'}>
@@ -2068,6 +2218,11 @@ export default function ConfigPage() {
                             {tSafe('config.llm.apiKeyLabel', 'API Key')}:{' '}
                             {cfg.apiKeyConfigured ? (cfg.apiKeyPreview || t('config.status.configured')) : t('config.status.notConfigured')}
                           </p>
+                          {providerId ? (
+                            <p className="mt-1 text-xs text-text-tertiary">
+                              {tSafe('config.llm.providerIdLabel', 'Provider ID')}: {providerId}
+                            </p>
+                          ) : null}
                           <p className="mt-1 truncate text-xs text-text-tertiary">
                             {tSafe('config.llm.endpointLabel', 'Endpoint')}: {cfg.baseUrl || t('config.common.notSet')}
                           </p>
@@ -2089,6 +2244,11 @@ export default function ConfigPage() {
                         </div>
                       )
                     })}
+                    {visibleProviderEntries.length === 0 && (
+                      <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
+                        {tSafe('config.llm.noConfiguredProviders', '暂无已配置的 Provider，请先新增 Provider 实例或配置 API Key。')}
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -2118,6 +2278,20 @@ export default function ConfigPage() {
                   {sectionErrors.tools && (
                     <p className="text-xs text-warning-500">{sectionErrors.tools}</p>
                   )}
+
+                  <div className="rounded-md border border-border-subtle bg-bg-elevated/80 px-3 py-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">
+                      {tSafe('config.tools.quickTips.title', 'Quick Tips')}
+                    </p>
+                    <ul className="mt-2 space-y-1.5 text-xs text-text-secondary">
+                      {toolsQuickTips.map((tip, idx) => (
+                        <li key={`tool-tip-${idx}`} className="flex items-start gap-2">
+                          <span className="mt-0.5 inline-block h-1.5 w-1.5 rounded-full bg-primary-400/80" />
+                          <span>{tip}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
 
                   <div className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
                     <div className="flex items-center justify-between gap-2">
@@ -2156,6 +2330,15 @@ export default function ConfigPage() {
                                 </p>
                               </div>
                               <div className="flex items-center gap-1">
+                                <Tooltip content={tSafe('config.tools.toolCardHint', 'Configure risk, approval scope, and runtime parameters here.')}>
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-border-subtle text-text-tertiary hover:text-text-primary"
+                                    aria-label={tSafe('config.tools.toolCardHintAria', 'Tool config help')}
+                                  >
+                                    <CircleHelp size={13} />
+                                  </button>
+                                </Tooltip>
                                 {tool.isBuiltin && <Badge variant="outline">{t('config.tools.builtIn')}</Badge>}
                                 <Badge variant={tool.isActive ? 'success' : 'outline'}>
                                   {tool.isActive ? t('config.status.enabled') : t('config.status.disabled')}
@@ -2434,7 +2617,7 @@ export default function ConfigPage() {
                                   <div className="space-y-2">
                                     <textarea
                                       data-testid={`gateway-quick-import-${item.id}`}
-                                      className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                                      className="w-full rounded-lg border border-border-default bg-bg-surface px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
                                       rows={3}
                                       placeholder={t('config.gateways.importBindingsPlaceholder')}
                                       value={quickBindingsImportText}
@@ -2591,15 +2774,18 @@ export default function ConfigPage() {
                       </div>
                       <textarea
                         data-testid={`evolution-capability-textarea-${docType}`}
-                        className="min-h-[300px] w-full resize-y rounded-lg border border-border-default bg-bg-canvas px-4 py-3 text-sm leading-6 text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                        className="min-h-[300px] w-full resize-y rounded-lg border border-border-default bg-bg-surface px-4 py-3 text-sm leading-6 text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
                         placeholder={evolutionUiText.placeholder}
                         value={evolutionCapabilityDrafts[docType]}
                         onChange={(e) =>
                           setEvolutionCapabilityDrafts((prev) => ({ ...prev, [docType]: e.target.value }))
                         }
                       />
+                      <p className="text-[11px] text-text-tertiary">
+                        {tSafe('config.evolutionCapabilities.contentLabel', '能力内容')}
+                      </p>
                       {evolutionHistoryExpanded[docType] && (
-                        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border-default bg-bg-canvas px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border-default bg-bg-surface px-3 py-2">
                           <span className="text-xs text-text-secondary">
                             {evolutionUiText.rollbackTo}
                           </span>
@@ -2783,7 +2969,7 @@ export default function ConfigPage() {
         open={showProviderConfigModal}
         onClose={() => setShowProviderConfigModal(false)}
         title={t('config.modals.provider.title')}
-        description={providerConfigForm.provider}
+        description={providerConfigForm.provider === 'new' ? `${providerConfigForm.providerType}:<provider-id>` : providerConfigForm.provider}
         maxWidth="lg"
         footer={
           <>
@@ -2801,19 +2987,60 @@ export default function ConfigPage() {
         }
       >
         <div className="space-y-4">
-          <Input
-            data-testid="provider-api-key-input"
-            type="password"
-            placeholder={t('config.modals.provider.apiKeyPlaceholder')}
-            value={providerConfigForm.apiKey}
-            onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, apiKey: e.target.value }))}
-          />
-          <Input
-            data-testid="provider-endpoint-input"
-            placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
-            value={providerConfigForm.baseUrl}
-            onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
-          />
+          {providerConfigForm.provider === 'new' && (
+            <>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">
+                  {tSafe('config.modals.provider.providerTypeLabel', 'Provider 类型')}
+                </p>
+                <Select
+                  data-testid="provider-type-select"
+                  value={providerConfigForm.providerType}
+                  onChange={(value) =>
+                    setProviderConfigForm((prev) => ({ ...prev, providerType: value as ProviderType }))
+                  }
+                  options={PROVIDER_TYPE_OPTIONS}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">
+                  {tSafe('config.modals.provider.customIdLabel', 'Provider 实例 ID')}
+                </p>
+                <Input
+                  data-testid="provider-custom-id-input"
+                  placeholder={tSafe('config.modals.provider.customIdPlaceholder', 'Provider 实例 ID（示例: primary）')}
+                  value={providerConfigForm.providerId}
+                  onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, providerId: e.target.value }))}
+                />
+                <p className="text-xs text-text-secondary">
+                  {tSafe('config.modals.provider.customIdHelp', '用于生成键名 <type>:<provider-id>，建议使用小写字母、数字与连字符。')}
+                </p>
+              </div>
+            </>
+          )}
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">
+              {tSafe('config.modals.provider.apiKeyLabel', 'API Key')}
+            </p>
+            <Input
+              data-testid="provider-api-key-input"
+              type="password"
+              placeholder={t('config.modals.provider.apiKeyPlaceholder')}
+              value={providerConfigForm.apiKey}
+              onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">
+              {tSafe('config.modals.provider.endpointLabel', 'Endpoint / Base URL')}
+            </p>
+            <Input
+              data-testid="provider-endpoint-input"
+              placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
+              value={providerConfigForm.baseUrl}
+              onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+            />
+          </div>
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"
@@ -2848,16 +3075,22 @@ export default function ConfigPage() {
           <p className="text-xs text-text-tertiary">
             {t('config.modals.tool.description')}
           </p>
-          <Input
-            placeholder={t('config.modals.tool.namePlaceholder')}
-            value={toolForm.name}
-            disabled
-          />
-          <Input
-            placeholder={t('config.modals.tool.typePlaceholder')}
-            value={toolForm.type}
-            disabled
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.nameLabel', 'name')}</p>
+            <Input
+              placeholder={t('config.modals.tool.namePlaceholder')}
+              value={toolForm.name}
+              disabled
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.typeLabel', 'type')}</p>
+            <Input
+              placeholder={t('config.modals.tool.typePlaceholder')}
+              value={toolForm.type}
+              disabled
+            />
+          </div>
           {TOOLS_WITH_EXECUTION_TUNING.includes(toolForm.name) ? (
             <>
               <div className="space-y-1">
@@ -2958,18 +3191,24 @@ export default function ConfigPage() {
           ) : null}
           {!TOOLS_WITHOUT_API_CREDENTIALS.includes(toolForm.name) ? (
             <>
-              <Input
-                placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
-                value={toolForm.apiEndpoint}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, apiEndpoint: e.target.value }))}
-              />
-              {toolForm.name !== 'sql_query_readonly' ? (
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.apiEndpointLabel', 'apiEndpoint')}</p>
                 <Input
-                  type="password"
-                  placeholder={t('config.modals.tool.apiKeyPlaceholder')}
-                  value={toolForm.apiKey}
-                  onChange={(e) => setToolForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+                  placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
+                  value={toolForm.apiEndpoint}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, apiEndpoint: e.target.value }))}
                 />
+              </div>
+              {toolForm.name !== 'sql_query_readonly' ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.apiKeyLabel', 'apiKey')}</p>
+                  <Input
+                    type="password"
+                    placeholder={t('config.modals.tool.apiKeyPlaceholder')}
+                    value={toolForm.apiKey}
+                    onChange={(e) => setToolForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+                  />
+                </div>
               ) : null}
             </>
           ) : (
@@ -3017,24 +3256,44 @@ export default function ConfigPage() {
                   <option value="webkit">{tSafe('config.modals.tool.browser.browserTypes.webkit', 'webkit')}</option>
                 </select>
               </div>
-              <Input
-                data-testid="tool-browser-allowed-domains-input"
-                placeholder={t('config.modals.tool.browser.allowedDomainsPlaceholder')}
-                value={toolForm.allowedDomains}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, allowedDomains: e.target.value }))}
-              />
-              <Input
-                data-testid="tool-browser-blocked-domains-input"
-                placeholder={t('config.modals.tool.browser.blockedDomainsPlaceholder')}
-                value={toolForm.blockedDomains}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, blockedDomains: e.target.value }))}
-              />
-              <Input
-                data-testid="tool-browser-max-text-length-input"
-                placeholder={t('config.modals.tool.browser.maxTextLengthPlaceholder')}
-                value={toolForm.maxTextLength}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, maxTextLength: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.browser.allowedDomainsLabel', 'allowedDomains')}</p>
+                <Input
+                  data-testid="tool-browser-allowed-domains-input"
+                  placeholder={t('config.modals.tool.browser.allowedDomainsPlaceholder')}
+                  value={toolForm.allowedDomains}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, allowedDomains: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.browser.blockedDomainsLabel', 'blockedDomains')}</p>
+                <Input
+                  data-testid="tool-browser-blocked-domains-input"
+                  placeholder={t('config.modals.tool.browser.blockedDomainsPlaceholder')}
+                  value={toolForm.blockedDomains}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, blockedDomains: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.browser.maxTextLengthLabel', 'maxTextLength')}</p>
+                <select
+                  data-testid="tool-browser-max-text-length-input"
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.maxTextLength}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, maxTextLength: e.target.value }))}
+                >
+                  <option value="">{tSafe('config.modals.tool.browser.maxTextLengthDefault', 'Use default maxTextLength')}</option>
+                  {TOOL_MAX_TEXT_LENGTH_OPTIONS.filter((value) => value).map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                  {toolForm.maxTextLength &&
+                  !TOOL_MAX_TEXT_LENGTH_OPTIONS.includes(toolForm.maxTextLength) ? (
+                    <option value={toolForm.maxTextLength}>{`${tSafe('config.common.customValue', 'Custom')}: ${toolForm.maxTextLength}`}</option>
+                  ) : null}
+                </select>
+              </div>
             </div>
           ) : null}
           {toolForm.name === 'http_client' || toolForm.name === 'web_fetch' ? (
@@ -3052,21 +3311,41 @@ export default function ConfigPage() {
                 />
                 {t('config.modals.tool.http.allowLocalhost')}
               </label>
-              <Input
-                placeholder={t('config.modals.tool.http.allowedDomainsPlaceholder')}
-                value={toolForm.allowedDomains}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, allowedDomains: e.target.value }))}
-              />
-              <Input
-                placeholder={t('config.modals.tool.http.blockedDomainsPlaceholder')}
-                value={toolForm.blockedDomains}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, blockedDomains: e.target.value }))}
-              />
-              <Input
-                placeholder={t('config.modals.tool.http.maxResponseCharsPlaceholder')}
-                value={toolForm.maxResponseChars}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, maxResponseChars: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.http.allowedDomainsLabel', 'allowedDomains')}</p>
+                <Input
+                  placeholder={t('config.modals.tool.http.allowedDomainsPlaceholder')}
+                  value={toolForm.allowedDomains}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, allowedDomains: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.http.blockedDomainsLabel', 'blockedDomains')}</p>
+                <Input
+                  placeholder={t('config.modals.tool.http.blockedDomainsPlaceholder')}
+                  value={toolForm.blockedDomains}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, blockedDomains: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.http.maxResponseCharsLabel', 'maxResponseChars')}</p>
+                <select
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.maxResponseChars}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, maxResponseChars: e.target.value }))}
+                >
+                  <option value="">{tSafe('config.modals.tool.http.maxResponseCharsDefault', 'Use default maxResponseChars')}</option>
+                  {TOOL_MAX_RESPONSE_CHARS_OPTIONS.filter((value) => value).map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                  {toolForm.maxResponseChars &&
+                  !TOOL_MAX_RESPONSE_CHARS_OPTIONS.includes(toolForm.maxResponseChars) ? (
+                    <option value={toolForm.maxResponseChars}>{`${tSafe('config.common.customValue', 'Custom')}: ${toolForm.maxResponseChars}`}</option>
+                  ) : null}
+                </select>
+              </div>
               {toolForm.name === 'http_client' ? (
                 <>
                   <div className="space-y-1">
@@ -3088,11 +3367,14 @@ export default function ConfigPage() {
                     </select>
                   </div>
                   {toolForm.httpAuthType === 'api_key' ? (
-                    <Input
-                      placeholder={t('config.modals.tool.http.authHeaderPlaceholder')}
-                      value={toolForm.httpAuthHeader}
-                      onChange={(e) => setToolForm((prev) => ({ ...prev, httpAuthHeader: e.target.value }))}
-                    />
+                    <div className="space-y-1">
+                      <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.http.authHeaderLabel', 'authHeader')}</p>
+                      <Input
+                        placeholder={t('config.modals.tool.http.authHeaderPlaceholder')}
+                        value={toolForm.httpAuthHeader}
+                        onChange={(e) => setToolForm((prev) => ({ ...prev, httpAuthHeader: e.target.value }))}
+                      />
+                    </div>
                   ) : null}
                 </>
               ) : null}
@@ -3100,24 +3382,55 @@ export default function ConfigPage() {
           ) : null}
           {toolForm.name === 'sql_query_readonly' ? (
             <div className="space-y-2">
-              <Input
-                placeholder={t('config.modals.tool.sql.maxRowsPlaceholder')}
-                value={toolForm.sqlMaxRows}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, sqlMaxRows: e.target.value }))}
-              />
-              <Input
-                placeholder={t('config.modals.tool.sql.defaultDatabasePlaceholder')}
-                value={toolForm.sqlDefaultDatabase}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, sqlDefaultDatabase: e.target.value }))}
-              />
-              <Input
-                placeholder={t('config.modals.tool.sql.allowedDatabasesPlaceholder')}
-                value={toolForm.sqlAllowedDatabases}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, sqlAllowedDatabases: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.sql.maxRowsLabel', 'maxRows')}</p>
+                <select
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.sqlMaxRows}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, sqlMaxRows: e.target.value }))}
+                >
+                  <option value="">{tSafe('config.modals.tool.sql.maxRowsDefault', 'Use default maxRows')}</option>
+                  {TOOL_SQL_MAX_ROWS_OPTIONS.filter((value) => value).map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                  {toolForm.sqlMaxRows && !TOOL_SQL_MAX_ROWS_OPTIONS.includes(toolForm.sqlMaxRows) ? (
+                    <option value={toolForm.sqlMaxRows}>{`${tSafe('config.common.customValue', 'Custom')}: ${toolForm.sqlMaxRows}`}</option>
+                  ) : null}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.sql.defaultDatabaseLabel', 'defaultDatabase')}</p>
+                <select
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.sqlDefaultDatabase}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, sqlDefaultDatabase: e.target.value }))}
+                >
+                  <option value="">{tSafe('config.modals.tool.sql.defaultDatabaseDefault', 'Use runtime default')}</option>
+                  {sqlDefaultDatabaseOptions.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.sql.allowedDatabasesLabel', 'allowedDatabases')}</p>
+                <Input
+                  placeholder={t('config.modals.tool.sql.allowedDatabasesPlaceholder')}
+                  value={toolForm.sqlAllowedDatabases}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, sqlAllowedDatabases: e.target.value }))}
+                />
+              </div>
               <div className="space-y-1">
                 <p className="text-xs text-text-tertiary">{t('config.modals.tool.sql.connectionsLabel')}</p>
                 <div className="space-y-2">
+                  <div className="hidden md:grid md:grid-cols-[180px_1fr_auto] gap-2">
+                    <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.sql.connectionAliasLabel', 'alias')}</p>
+                    <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.sql.connectionDsnLabel', 'dsn')}</p>
+                    <span />
+                  </div>
                   {toolForm.sqlConnectionsRows.map((row, index) => (
                     <div key={index} className="grid grid-cols-1 gap-2 md:grid-cols-[180px_1fr_auto]">
                       <Input
@@ -3150,16 +3463,32 @@ export default function ConfigPage() {
           ) : null}
           {toolForm.name === 'file_io' ? (
             <div className="space-y-2">
-              <Input
-                placeholder={t('config.modals.tool.rootPathPlaceholder')}
-                value={toolForm.rootPath}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, rootPath: e.target.value }))}
-              />
-              <Input
-                placeholder={t('config.modals.tool.maxReadBytesPlaceholder')}
-                value={toolForm.maxReadBytes}
-                onChange={(e) => setToolForm((prev) => ({ ...prev, maxReadBytes: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.rootPathLabel', 'rootPath')}</p>
+                <Input
+                  placeholder={t('config.modals.tool.rootPathPlaceholder')}
+                  value={toolForm.rootPath}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, rootPath: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.tool.maxReadBytesLabel', 'maxReadBytes')}</p>
+                <select
+                  className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  value={toolForm.maxReadBytes}
+                  onChange={(e) => setToolForm((prev) => ({ ...prev, maxReadBytes: e.target.value }))}
+                >
+                  <option value="">{tSafe('config.modals.tool.maxReadBytesDefault', 'Use default maxReadBytes')}</option>
+                  {TOOL_MAX_READ_BYTES_OPTIONS.filter((value) => value).map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                  {toolForm.maxReadBytes && !TOOL_MAX_READ_BYTES_OPTIONS.includes(toolForm.maxReadBytes) ? (
+                    <option value={toolForm.maxReadBytes}>{`${tSafe('config.common.customValue', 'Custom')}: ${toolForm.maxReadBytes}`}</option>
+                  ) : null}
+                </select>
+              </div>
             </div>
           ) : null}
         </div>
@@ -3184,24 +3513,33 @@ export default function ConfigPage() {
       >
         <div className="space-y-3">
           {!gatewayForm.id && (
-            <Input
-              placeholder={t('config.modals.gateway.instanceKeyPlaceholder')}
-              value={gatewayForm.instanceKey}
-              onChange={(e) => setGatewayForm((prev) => ({ ...prev, instanceKey: e.target.value }))}
-            />
+            <div className="space-y-1">
+              <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.instanceKeyLabel', 'instanceKey')}</p>
+              <Input
+                placeholder={t('config.modals.gateway.instanceKeyPlaceholder')}
+                value={gatewayForm.instanceKey}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, instanceKey: e.target.value }))}
+              />
+            </div>
           )}
-          <Input
-            data-testid="gateway-display-name-input"
-            placeholder={t('config.modals.gateway.displayNamePlaceholder')}
-            value={gatewayForm.displayName}
-            onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
-          />
-          <Input
-            data-testid="gateway-agent-id-input"
-            placeholder={t('config.modals.gateway.agentIdPlaceholder')}
-            value={gatewayForm.agentId}
-            onChange={(e) => setGatewayForm((prev) => ({ ...prev, agentId: e.target.value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.displayNameLabel', 'displayName')}</p>
+            <Input
+              data-testid="gateway-display-name-input"
+              placeholder={t('config.modals.gateway.displayNamePlaceholder')}
+              value={gatewayForm.displayName}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.agentIdLabel', 'agentId')}</p>
+            <Input
+              data-testid="gateway-agent-id-input"
+              placeholder={t('config.modals.gateway.agentIdPlaceholder')}
+              value={gatewayForm.agentId}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, agentId: e.target.value }))}
+            />
+          </div>
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"
@@ -3220,13 +3558,16 @@ export default function ConfigPage() {
           </label>
           {gatewayForm.provider === 'telegram' ? (
             <>
-              <Input
-                data-testid="gateway-telegram-bot-token-input"
-                type="password"
-                placeholder={t('config.modals.gateway.telegram.botTokenPlaceholder')}
-                value={gatewayForm.botToken}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, botToken: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.botTokenLabel', 'botToken')}</p>
+                <Input
+                  data-testid="gateway-telegram-bot-token-input"
+                  type="password"
+                  placeholder={t('config.modals.gateway.telegram.botTokenPlaceholder')}
+                  value={gatewayForm.botToken}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, botToken: e.target.value }))}
+                />
+              </div>
               <label className="flex items-center gap-2 text-sm text-text-secondary">
                 <input
                   type="checkbox"
@@ -3240,12 +3581,15 @@ export default function ConfigPage() {
                 />
                 {t('config.modals.gateway.telegram.clearBotToken')}
               </label>
-              <Input
-                type="password"
-                placeholder={t('config.modals.gateway.telegram.webhookSecretPlaceholder')}
-                value={gatewayForm.webhookSecret}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookSecret: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.webhookSecretLabel', 'webhookSecret')}</p>
+                <Input
+                  type="password"
+                  placeholder={t('config.modals.gateway.telegram.webhookSecretPlaceholder')}
+                  value={gatewayForm.webhookSecret}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookSecret: e.target.value }))}
+                />
+              </div>
               <label className="flex items-center gap-2 text-sm text-text-secondary">
                 <input
                   type="checkbox"
@@ -3259,27 +3603,36 @@ export default function ConfigPage() {
                 />
                 {t('config.modals.gateway.telegram.clearWebhookSecret')}
               </label>
-              <Input
-                data-testid="gateway-telegram-default-chat-id-input"
-                placeholder={t('config.modals.gateway.telegram.defaultChatIdPlaceholder')}
-                value={gatewayForm.defaultChatId}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, defaultChatId: e.target.value }))}
-              />
-              <Input
-                data-testid="gateway-telegram-allowed-chat-ids-input"
-                placeholder={t('config.modals.gateway.telegram.allowedChatIdsPlaceholder')}
-                value={gatewayForm.allowedChatIds}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.defaultChatIdLabel', 'defaultChatId')}</p>
+                <Input
+                  data-testid="gateway-telegram-default-chat-id-input"
+                  placeholder={t('config.modals.gateway.telegram.defaultChatIdPlaceholder')}
+                  value={gatewayForm.defaultChatId}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, defaultChatId: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.allowedChatIdsLabel', 'allowedChatIds')}</p>
+                <Input
+                  data-testid="gateway-telegram-allowed-chat-ids-input"
+                  placeholder={t('config.modals.gateway.telegram.allowedChatIdsPlaceholder')}
+                  value={gatewayForm.allowedChatIds}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
+                />
+              </div>
             </>
           ) : (
             <>
-              <Input
-                type="password"
-                placeholder={t('config.modals.gateway.feishu.verifyTokenPlaceholder')}
-                value={gatewayForm.verifyToken}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, verifyToken: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.feishu.verifyTokenLabel', 'verifyToken')}</p>
+                <Input
+                  type="password"
+                  placeholder={t('config.modals.gateway.feishu.verifyTokenPlaceholder')}
+                  value={gatewayForm.verifyToken}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, verifyToken: e.target.value }))}
+                />
+              </div>
               <label className="flex items-center gap-2 text-sm text-text-secondary">
                 <input
                   type="checkbox"
@@ -3293,11 +3646,14 @@ export default function ConfigPage() {
                 />
                 {t('config.modals.gateway.feishu.clearVerifyToken')}
               </label>
-              <Input
-                placeholder={t('config.modals.gateway.feishu.webhookUrlPlaceholder')}
-                value={gatewayForm.webhookUrl}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.feishu.webhookUrlLabel', 'webhookUrl')}</p>
+                <Input
+                  placeholder={t('config.modals.gateway.feishu.webhookUrlPlaceholder')}
+                  value={gatewayForm.webhookUrl}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
+                />
+              </div>
             </>
           )}
           <div className="space-y-2 rounded-md border border-border-default p-3">
@@ -3314,8 +3670,9 @@ export default function ConfigPage() {
               </Button>
             </div>
             <div className="space-y-2">
+              <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.importBindingsLabel', '导入绑定')}</p>
               <textarea
-                className="w-full rounded-lg border border-border-default bg-bg-canvas px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+                className="w-full rounded-lg border border-border-default bg-bg-surface px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
                 rows={3}
                 placeholder={t('config.modals.gateway.importBindingsPlaceholder')}
                 value={gatewayBindingsImportText}
@@ -3334,6 +3691,11 @@ export default function ConfigPage() {
               <p className="text-xs text-text-secondary">{t('config.modals.gateway.chatBindingsEmpty')}</p>
             ) : (
               <div className="space-y-2">
+                <div className="hidden md:grid md:grid-cols-[1fr_1fr_auto] gap-2">
+                  <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.chatIdLabel', 'chatId')}</p>
+                  <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.chatBindingAgentLabel', 'agentId')}</p>
+                  <span />
+                </div>
                 {gatewayForm.chatBindings.map((row, index) => (
                   <div key={`chat-binding-${index}`} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
                     <Input
@@ -3362,12 +3724,15 @@ export default function ConfigPage() {
               </div>
             )}
           </div>
-          <Input
-            data-testid="gateway-notify-event-types-input"
-            placeholder={t('config.modals.gateway.notifyEventTypesPlaceholder')}
-            value={gatewayForm.notifyEventTypes}
-            onChange={(e) => setGatewayForm((prev) => ({ ...prev, notifyEventTypes: e.target.value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.notifyEventTypesLabel', 'notifyEventTypes')}</p>
+            <Input
+              data-testid="gateway-notify-event-types-input"
+              placeholder={t('config.modals.gateway.notifyEventTypesPlaceholder')}
+              value={gatewayForm.notifyEventTypes}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, notifyEventTypes: e.target.value }))}
+            />
+          </div>
 
           <div className="space-y-2 rounded-md border border-border-default p-3">
             <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.addressing.title')}</p>
@@ -3413,23 +3778,29 @@ export default function ConfigPage() {
               />
               {t('config.modals.gateway.addressing.executeOnUnaddressed')}
             </label>
-            <Input
-              data-testid="gateway-command-prefixes-input"
-              placeholder={t('config.modals.gateway.addressing.commandPrefixesPlaceholder')}
-              value={gatewayForm.commandPrefixes}
-              onChange={(e) => setGatewayForm((prev) => ({ ...prev, commandPrefixes: e.target.value }))}
-            />
-            <Input
-              data-testid="gateway-session-window-input"
-              placeholder={t('config.modals.gateway.addressing.sessionContinuationWindowSecPlaceholder')}
-              value={gatewayForm.sessionContinuationWindowSec}
-              onChange={(e) =>
-                setGatewayForm((prev) => ({
-                  ...prev,
-                  sessionContinuationWindowSec: e.target.value,
-                }))
-              }
-            />
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.addressing.commandPrefixesLabel', 'commandPrefixes')}</p>
+              <Input
+                data-testid="gateway-command-prefixes-input"
+                placeholder={t('config.modals.gateway.addressing.commandPrefixesPlaceholder')}
+                value={gatewayForm.commandPrefixes}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, commandPrefixes: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.addressing.sessionContinuationWindowSecLabel', 'sessionContinuationWindowSec')}</p>
+              <Input
+                data-testid="gateway-session-window-input"
+                placeholder={t('config.modals.gateway.addressing.sessionContinuationWindowSecPlaceholder')}
+                value={gatewayForm.sessionContinuationWindowSec}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    sessionContinuationWindowSec: e.target.value,
+                  }))
+                }
+              />
+            </div>
           </div>
 
           <div className="space-y-2 rounded-md border border-border-default p-3">
@@ -3473,34 +3844,43 @@ export default function ConfigPage() {
 
           <div className="space-y-2 rounded-md border border-border-default p-3">
             <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.context.title')}</p>
-            <Input
-              data-testid="gateway-context-ttl-days-input"
-              placeholder={t('config.modals.gateway.context.ttlDaysPlaceholder')}
-              value={gatewayForm.contextTtlDays}
-              onChange={(e) => setGatewayForm((prev) => ({ ...prev, contextTtlDays: e.target.value }))}
-            />
-            <Input
-              data-testid="gateway-context-max-recent-input"
-              placeholder={t('config.modals.gateway.context.maxRecentMessagesPlaceholder')}
-              value={gatewayForm.contextMaxRecentMessages}
-              onChange={(e) =>
-                setGatewayForm((prev) => ({
-                  ...prev,
-                  contextMaxRecentMessages: e.target.value,
-                }))
-              }
-            />
-            <Input
-              data-testid="gateway-context-summarize-every-n-input"
-              placeholder={t('config.modals.gateway.context.summarizeEveryNMessagesPlaceholder')}
-              value={gatewayForm.contextSummarizeEveryNMessages}
-              onChange={(e) =>
-                setGatewayForm((prev) => ({
-                  ...prev,
-                  contextSummarizeEveryNMessages: e.target.value,
-                }))
-              }
-            />
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.ttlDaysLabel', 'ttlDays')}</p>
+              <Input
+                data-testid="gateway-context-ttl-days-input"
+                placeholder={t('config.modals.gateway.context.ttlDaysPlaceholder')}
+                value={gatewayForm.contextTtlDays}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, contextTtlDays: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.maxRecentMessagesLabel', 'maxRecentMessages')}</p>
+              <Input
+                data-testid="gateway-context-max-recent-input"
+                placeholder={t('config.modals.gateway.context.maxRecentMessagesPlaceholder')}
+                value={gatewayForm.contextMaxRecentMessages}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    contextMaxRecentMessages: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.summarizeEveryNMessagesLabel', 'summarizeEveryNMessages')}</p>
+              <Input
+                data-testid="gateway-context-summarize-every-n-input"
+                placeholder={t('config.modals.gateway.context.summarizeEveryNMessagesPlaceholder')}
+                value={gatewayForm.contextSummarizeEveryNMessages}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    contextSummarizeEveryNMessages: e.target.value,
+                  }))
+                }
+              />
+            </div>
           </div>
         </div>
       </Modal>
@@ -3522,16 +3902,22 @@ export default function ConfigPage() {
         }
       >
         <div className="space-y-4">
-          <Input
-            placeholder={t('config.modals.apiKey.namePlaceholder')}
-            value={newKeyName}
-            onChange={(e) => setNewKeyName(e.target.value)}
-          />
-          <Input
-            type="datetime-local"
-            value={newKeyExpiresAt}
-            onChange={(e) => setNewKeyExpiresAt(e.target.value)}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.apiKey.nameLabel', 'Key Name')}</p>
+            <Input
+              placeholder={t('config.modals.apiKey.namePlaceholder')}
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.apiKey.expiresAtLabel', 'Expires At')}</p>
+            <Input
+              type="datetime-local"
+              value={newKeyExpiresAt}
+              onChange={(e) => setNewKeyExpiresAt(e.target.value)}
+            />
+          </div>
         </div>
       </Modal>
 
@@ -3557,21 +3943,30 @@ export default function ConfigPage() {
         maxWidth="lg"
       >
         <div className="space-y-4">
-          <Input
-            placeholder={t('config.modals.webhook.urlPlaceholder')}
-            value={webhookForm.url}
-            onChange={(e) => setWebhookForm((prev) => ({ ...prev, url: e.target.value }))}
-          />
-          <Input
-            placeholder={t('config.modals.webhook.secretPlaceholder')}
-            value={webhookForm.secret}
-            onChange={(e) => setWebhookForm((prev) => ({ ...prev, secret: e.target.value }))}
-          />
-          <Input
-            placeholder={t('config.modals.webhook.eventsPlaceholder')}
-            value={webhookForm.eventsText}
-            onChange={(e) => setWebhookForm((prev) => ({ ...prev, eventsText: e.target.value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.webhook.urlLabel', 'Webhook URL')}</p>
+            <Input
+              placeholder={t('config.modals.webhook.urlPlaceholder')}
+              value={webhookForm.url}
+              onChange={(e) => setWebhookForm((prev) => ({ ...prev, url: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.webhook.secretLabel', 'Secret')}</p>
+            <Input
+              placeholder={t('config.modals.webhook.secretPlaceholder')}
+              value={webhookForm.secret}
+              onChange={(e) => setWebhookForm((prev) => ({ ...prev, secret: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.webhook.eventsLabel', 'Events')}</p>
+            <Input
+              placeholder={t('config.modals.webhook.eventsPlaceholder')}
+              value={webhookForm.eventsText}
+              onChange={(e) => setWebhookForm((prev) => ({ ...prev, eventsText: e.target.value }))}
+            />
+          </div>
         </div>
       </Modal>
 

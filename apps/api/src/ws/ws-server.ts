@@ -68,12 +68,65 @@ interface RuntimeProviderConfig {
 interface RuntimeLLMConfigPayload {
   default_model: string
   fallback_model: string
-  providers: {
-    openai: RuntimeProviderConfig
-    anthropic: RuntimeProviderConfig
-    google: RuntimeProviderConfig
-    custom: RuntimeProviderConfig
+  providers: Record<string, RuntimeProviderConfig>
+}
+
+type ProviderInstanceEnvConfig = {
+  type: 'openai' | 'anthropic' | 'google' | 'custom'
+  id: string
+  apiKey?: string
+  baseUrl?: string
+}
+
+function parseProviderInstancesFromEnv(): ProviderInstanceEnvConfig[] {
+  const items: ProviderInstanceEnvConfig[] = []
+  const raw = process.env.LLM_PROVIDER_INSTANCES
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== 'object') continue
+          const row = item as Record<string, unknown>
+          const typeValue = String(row.type || '').trim()
+          if (!['openai', 'anthropic', 'google', 'custom'].includes(typeValue)) continue
+          const id = String(row.id || '').trim()
+          if (!id) continue
+          items.push({
+            type: typeValue as 'openai' | 'anthropic' | 'google' | 'custom',
+            id,
+            apiKey: String(row.apiKey || '').trim() || undefined,
+            baseUrl: String(row.baseUrl || '').trim() || undefined,
+          })
+        }
+      }
+    } catch {
+      wsLogger.warn('解析 LLM_PROVIDER_INSTANCES 失败，已忽略')
+    }
   }
+
+  const legacyRaw = process.env.CUSTOM_LLM_PROVIDERS
+  if (!legacyRaw) return items
+  try {
+    const parsed = JSON.parse(legacyRaw) as unknown
+    if (!Array.isArray(parsed)) return items
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      const id = String(row.id || '').trim()
+      if (!id) continue
+      if (items.some((entry) => entry.type === 'custom' && entry.id === id)) continue
+      items.push({
+        type: 'custom',
+        id,
+        apiKey: String(row.apiKey || '').trim() || undefined,
+        baseUrl: String(row.baseUrl || '').trim() || undefined,
+      })
+    }
+  } catch {
+    wsLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
+  }
+  return items
 }
 
 interface WSRequestMessage {
@@ -295,27 +348,36 @@ export class WSServer {
     if (process.env.ANTHROPIC_API_KEY) apiKeys.anthropic = this.encryptSecret(process.env.ANTHROPIC_API_KEY, vmToken)
     if (process.env.GOOGLE_AI_API_KEY) apiKeys.google = this.encryptSecret(process.env.GOOGLE_AI_API_KEY, vmToken)
     if (process.env.CUSTOM_LLM_API_KEY) apiKeys.custom = this.encryptSecret(process.env.CUSTOM_LLM_API_KEY, vmToken)
+    for (const item of parseProviderInstancesFromEnv()) {
+      if (!item.apiKey) continue
+      apiKeys[`${item.type}:${item.id}`] = this.encryptSecret(item.apiKey, vmToken)
+    }
     return apiKeys
   }
 
   private getRuntimeLLMConfig(): RuntimeLLMConfigPayload {
+    const providers: Record<string, RuntimeProviderConfig> = {
+      openai: {
+        base_url: process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1',
+      },
+      anthropic: {
+        base_url: process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com/v1',
+      },
+      google: {
+        base_url: process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+      },
+      custom: {
+        base_url: process.env.CUSTOM_LLM_API_BASE_URL || '',
+      },
+    }
+    for (const item of parseProviderInstancesFromEnv()) {
+      providers[`${item.type}:${item.id}`] = { base_url: item.baseUrl || '' }
+    }
+
     return {
       default_model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
       fallback_model: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
-      providers: {
-        openai: {
-          base_url: process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1',
-        },
-        anthropic: {
-          base_url: process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com/v1',
-        },
-        google: {
-          base_url: process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
-        },
-        custom: {
-          base_url: process.env.CUSTOM_LLM_API_BASE_URL || '',
-        },
-      },
+      providers,
     }
   }
 

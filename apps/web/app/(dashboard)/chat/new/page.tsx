@@ -1,11 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Sparkles, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle } from 'lucide-react'
+import { Bot, Sparkles, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle, CircleHelp, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { apiClient } from '@/lib/api'
 import type { ApiResponse, Agent } from '@/types'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -241,14 +244,20 @@ export default function NewChatPage() {
             <p className="text-text-secondary mt-2">
               {t('chatNew.subtitle')}
             </p>
+            <div className="mt-4 inline-flex">
+              <Link href="/help">
+                <Button variant="tertiary" size="sm" leftIcon={<CircleHelp size={14} />}>
+                  {t('nav.helpCenter')}
+                </Button>
+              </Link>
+            </div>
           </div>
+
+          <PageHelpStrip text={t('help.nav.sessions')} ctaLabel={t('nav.helpCenter')} />
 
           {/* 错误提示 */}
           {error && (
-            <div className="flex items-center gap-2 p-4 mb-6 rounded-lg bg-error-500/10 border border-error-500/20">
-              <AlertCircle size={20} className="text-error-500 flex-shrink-0" />
-              <p className="text-sm text-error-500">{error}</p>
-            </div>
+            <InlineErrorAlert className="mb-6" message={error} />
           )}
 
           {/* Agent 选择 */}
@@ -297,9 +306,14 @@ export default function NewChatPage() {
                 <AlertCircle size={18} className="text-warning-500 flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-warning-500">
                   <p>{t('chatNew.warning.noAvailableAgent')}</p>
-                  <a href="/agents" className="underline underline-offset-4">
-                    {t('chatNew.warning.goCreateAgent')}
-                  </a>
+                  <div className="mt-2 flex items-center gap-2">
+                    <a href="/agents" className="underline underline-offset-4">
+                      {t('chatNew.warning.goCreateAgent')}
+                    </a>
+                    <Link href="/help" className="inline-flex">
+                      <Button size="xs" variant="tertiary">{t('nav.helpCenter')}</Button>
+                    </Link>
+                  </div>
                 </div>
               </div>
             )}

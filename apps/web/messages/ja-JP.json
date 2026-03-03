@@ -187,11 +187,14 @@
   "config": {
     "header": {
       "title": "設定",
-      "subtitle": "LLM、ツール、ゲートウェイ、API キー、Webhook を一元管理します。"
+      "subtitle": "LLM、ツール、ゲートウェイ、API キー、Webhook を一元管理します。",
+      "helpHint": "セットアップ手順やトラブル対応が必要な場合は、ヘルプセンターを開いてください。",
+      "openHelpCenter": "ヘルプセンターを開く"
     },
     "loading": "設定を読み込み中…",
     "common": {
       "notSet": "未設定",
+      "customValue": "カスタム",
       "riskLevels": {
         "low": "低",
         "medium": "中",
@@ -260,15 +263,26 @@
       "routingDefaults": "モデルルーティング既定値",
       "saveRouting": "ルーティング既定値を保存",
       "providerConfig": "プロバイダ設定",
+      "addProviderInstance": "プロバイダインスタンスを追加",
       "viewModels": "モデルを表示",
       "apiKeyLabel": "API キー",
+      "providerIdLabel": "Provider ID",
       "endpointLabel": "エンドポイント",
+      "noConfiguredProviders": "設定済みの Provider がありません。まず Provider インスタンスを追加するか API キーを設定してください。",
+      "defaultModelLabel": "デフォルトモデル",
+      "fallbackModelLabel": "フォールバックモデル",
       "defaultModelPlaceholder": "デフォルトモデル（例: gpt-4o）",
       "fallbackModelPlaceholder": "フォールバックモデル（例: gpt-4o-mini）"
     },
     "tools": {
       "activeCount": "有効 {count}",
       "configTitle": "ツール設定（ON/OFF とパラメータのみ）",
+      "quickTips": {
+        "title": "クイックヒント",
+        "fields": "設定ミスを減らすため、値はフィールド名を確認して編集してください。",
+        "scope": "高リスクツールは session / session_action の承認スコープを推奨します。",
+        "domains": "ドメイン許可/拒否リストはカンマ区切りで、サブドメインにも適用されます。"
+      },
       "loading": "ツールを読み込み中…",
       "empty": "ツール設定データがありません（V2 は追加/削除非対応）",
       "risk": "リスク",
@@ -277,6 +291,8 @@
       "on": "オン",
       "off": "オフ",
       "builtIn": "内蔵",
+      "toolCardHint": "ここでリスク、承認戦略、実行パラメータを設定できます。",
+      "toolCardHintAria": "ツール設定ヘルプ",
       "configure": "設定",
       "disable": "無効化",
       "enable": "有効化",
@@ -341,6 +357,7 @@
       "mind": "Mind（全体行動方針）",
       "version": "バージョン",
       "updatedAt": "更新日時",
+      "contentLabel": "能力内容",
       "placeholder": "能力内容を入力してください...",
       "history": "履歴",
       "rollbackTo": "切替先",
@@ -349,13 +366,21 @@
     "modals": {
       "provider": {
         "title": "LLM プロバイダを編集",
+        "providerTypeLabel": "Provider タイプ",
+        "customIdLabel": "Provider インスタンス ID",
+        "customIdPlaceholder": "Provider インスタンス ID（例: primary）",
+        "customIdHelp": "キー <type>:<provider-id> の生成に使用します。小文字・数字・ハイフンを推奨します。",
+        "apiKeyLabel": "API キー",
+        "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "新しい API キー（空欄で変更なし）",
         "clearApiKey": "既存 API キーをクリア"
       },
       "tool": {
         "title": "ツール設定",
         "description": "V2 は内蔵ツールのパラメータおよび有効/無効のみ対応。名称/タイプ変更や追加/削除は非対応です。",
+        "nameLabel": "フィールド: name",
         "namePlaceholder": "ツール名",
+        "typeLabel": "フィールド: type",
         "typePlaceholder": "ツールタイプ",
         "timeoutLabel": "タイムアウト",
         "timeoutDefault": "デフォルトのタイムアウトを使用",
@@ -379,17 +404,27 @@
           "tool": "ツール単位でグループ化",
           "call": "呼び出しごと"
         },
+        "apiEndpointLabel": "フィールド: apiEndpoint",
         "apiEndpointPlaceholder": "API endpoint（任意）",
+        "apiKeyLabel": "フィールド: apiKey",
         "apiKeyPlaceholder": "API key（空欄で変更なし）",
         "noApiNeeded": "{tool} は API endpoint / API key を必要としません。",
+        "rootPathLabel": "フィールド: rootPath",
         "rootPathPlaceholder": "Root path（任意、例: /Users/xxx）",
+        "maxReadBytesLabel": "フィールド: maxReadBytes",
+        "maxReadBytesDefault": "デフォルト maxReadBytes を使用",
         "maxReadBytesPlaceholder": "maxReadBytes（任意、正の整数）",
         "http": {
           "allowLocalhost": "localhost / 内部ネットワークへのアクセスを許可",
+          "allowedDomainsLabel": "フィールド: allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains（任意、カンマ区切り。例: api.example.com）",
+          "blockedDomainsLabel": "フィールド: blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains（任意、カンマ区切り）",
+          "maxResponseCharsLabel": "フィールド: maxResponseChars",
+          "maxResponseCharsDefault": "デフォルト maxResponseChars を使用",
           "maxResponseCharsPlaceholder": "maxResponseChars（任意、100-500000）",
           "authType": "デフォルト認証タイプ",
+          "authHeaderLabel": "フィールド: authHeader",
           "authHeaderPlaceholder": "authHeader（例: X-API-Key）",
           "authTypes": {
             "none": "認証なし",
@@ -399,10 +434,17 @@
           }
         },
         "sql": {
+          "maxRowsLabel": "フィールド: maxRows",
+          "maxRowsDefault": "デフォルト maxRows を使用",
           "maxRowsPlaceholder": "maxRows（任意、1-5000）",
+          "defaultDatabaseLabel": "フィールド: defaultDatabase",
+          "defaultDatabaseDefault": "ランタイム既定DBを使用",
           "defaultDatabasePlaceholder": "defaultDatabase（任意、既定 DB エイリアス）",
+          "allowedDatabasesLabel": "フィールド: allowedDatabases",
           "allowedDatabasesPlaceholder": "allowedDatabases（任意、カンマ区切り）",
           "connectionsLabel": "connections（データベース alias マップ）",
+          "connectionAliasLabel": "フィールド: alias",
+          "connectionDsnLabel": "フィールド: dsn",
           "addConnection": "接続を追加",
           "connectionAliasPlaceholder": "Alias（例: main）",
           "connectionDsnPlaceholder": "DSN（例: postgresql://... または sqlite:///...）",
@@ -412,8 +454,12 @@
           "headless": "ヘッドレスモードでブラウザを実行",
           "allowLocalhost": "localhost / 内部ネットワークへのアクセスを許可",
           "browserType": "ブラウザ種類",
+          "allowedDomainsLabel": "フィールド: allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains（任意、カンマ区切り。例: example.com,news.ycombinator.com）",
+          "blockedDomainsLabel": "フィールド: blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains（任意、カンマ区切り）",
+          "maxTextLengthLabel": "フィールド: maxTextLength",
+          "maxTextLengthDefault": "デフォルト maxTextLength を使用",
           "maxTextLengthPlaceholder": "maxTextLength（任意、100-500000）",
           "browserTypes": {
             "chromium": "Chromium",
@@ -424,19 +470,26 @@
       },
       "gateway": {
         "title": "ゲートウェイ設定",
+        "instanceKeyLabel": "フィールド: instanceKey",
         "instanceKeyPlaceholder": "instanceKey（任意、重複しない値推奨）",
+        "displayNameLabel": "フィールド: displayName",
         "displayNamePlaceholder": "表示名",
+        "agentIdLabel": "フィールド: agentId",
         "agentIdPlaceholder": "エージェント ID（既定: semibot）",
         "chatBindingsTitle": "Chat バインディング",
         "chatBindingsEmpty": "Chat バインディングがありません。追加してチャットごとにエージェントを振り分けます。",
         "addChatBinding": "バインディング追加",
         "removeChatBinding": "削除",
+        "importBindingsLabel": "バインディングをインポート",
+        "chatIdLabel": "フィールド: chatId",
+        "chatBindingAgentLabel": "フィールド: agentId",
         "importBindingsPlaceholder": "chatId=agentId 形式で貼り付け（chatId のみなら既定 agent を使用）",
         "applyImportedBindings": "インポート適用",
         "chatIdPlaceholder": "チャット ID",
         "chatBindingAgentPlaceholder": "エージェント ID",
         "setDefault": "デフォルトインスタンスとして設定",
         "enabled": "このゲートウェイを有効化",
+        "notifyEventTypesLabel": "フィールド: notifyEventTypes",
         "notifyEventTypesPlaceholder": "notifyEventTypes（任意、カンマ区切り）",
         "addressing": {
           "title": "アドレッシングポリシー",
@@ -445,7 +498,9 @@
           "modeAllMessages": "グループ内すべてのメッセージでトリガー",
           "allowReplyToBot": "Bot メッセージへの返信を addressed とみなす",
           "executeOnUnaddressed": "addressed でなくても実行（注意して使用）",
+          "commandPrefixesLabel": "フィールド: commandPrefixes",
           "commandPrefixesPlaceholder": "commandPrefixes（任意、カンマ区切り。例: /ask,/run,/approve,/reject）",
+          "sessionContinuationWindowSecLabel": "フィールド: sessionContinuationWindowSec",
           "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec（正の整数秒）"
         },
         "proactive": {
@@ -458,32 +513,46 @@
         },
         "context": {
           "title": "コンテキスト保持ポリシー",
+          "ttlDaysLabel": "フィールド: ttlDays",
           "ttlDaysPlaceholder": "ttlDays（保持日数）",
+          "maxRecentMessagesLabel": "フィールド: maxRecentMessages",
           "maxRecentMessagesPlaceholder": "maxRecentMessages（保持する最近メッセージ数）",
+          "summarizeEveryNMessagesLabel": "フィールド: summarizeEveryNMessages",
           "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages（N 件ごとに要約）"
         },
         "feishu": {
+          "verifyTokenLabel": "フィールド: verifyToken",
           "verifyTokenPlaceholder": "Feishu verify token（空欄でクリア）",
+          "webhookUrlLabel": "フィールド: webhookUrl",
           "webhookUrlPlaceholder": "Feishu webhook URL（任意）",
           "clearVerifyToken": "既存 verify token をクリア"
         },
         "telegram": {
+          "botTokenLabel": "フィールド: botToken",
           "botTokenPlaceholder": "Telegram bot token（空欄でクリア）",
           "clearBotToken": "既存 bot token をクリア",
+          "webhookSecretLabel": "フィールド: webhookSecret",
           "webhookSecretPlaceholder": "Telegram webhook secret（任意）",
           "clearWebhookSecret": "既存 webhook secret をクリア",
+          "defaultChatIdLabel": "フィールド: defaultChatId",
           "defaultChatIdPlaceholder": "デフォルト Chat ID（任意）",
+          "allowedChatIdsLabel": "フィールド: allowedChatIds",
           "allowedChatIdsPlaceholder": "allowedChatIds（任意、カンマ区切り）"
         }
       },
       "apiKey": {
         "title": "API キー作成",
         "description": "フルキーは一度だけ表示されます。",
+        "nameLabel": "フィールド: name",
+        "expiresAtLabel": "有効期限（任意）",
         "namePlaceholder": "キー名"
       },
       "webhook": {
         "title": "Webhook 作成",
         "description": "イベントはカンマ区切りで入力し、少なくとも1件必須です。",
+        "urlLabel": "Webhook URL",
+        "secretLabel": "secret",
+        "eventsLabel": "events",
         "secretPlaceholder": "secret（16 文字以上）",
         "urlPlaceholder": "https://example.com/webhook",
         "eventsPlaceholder": "event.a,event.b"
@@ -1356,6 +1425,14 @@
       "hover": "ホバーガイダンス",
       "gateway": "Gateway チュートリアル",
       "quickStart": "クイックスタート"
+    },
+    "searchPlaceholder": "ガイド、モジュール、トラブル対処を検索...",
+    "searchNoResults": "一致するガイドが見つかりません。別のキーワードでお試しください。",
+    "sections": {
+      "feature-guide": "機能ガイド",
+      "hover-tips": "ホバー説明",
+      "gateway-tutorial": "Gateway チュートリアル",
+      "provider-guides": "プロバイダ別ガイド"
     },
     "featureGuide": {
       "title": "機能ナビゲーションガイド",
