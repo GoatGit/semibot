@@ -189,3 +189,60 @@ async def test_approval_event_never_requires_approval_again(store: EventStore):
     assert len(outcomes) == 1
     assert outcomes[0].decision == "suggest"
     assert outcomes[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_condition_not_met_does_not_trigger_cooldown(store: EventStore):
+    executor = RecordingExecutor()
+    engine = RulesEngine(
+        store=store,
+        evaluator=RuleEvaluator(),
+        router=EventRouter(executor),
+        rules=[
+            EventRule(
+                id="rule_cron_gate",
+                name="cron-gate",
+                event_type="cron.job.tick",
+                action_mode="auto",
+                risk_level="low",
+                cooldown_seconds=600,
+                conditions={
+                    "all": [
+                        {
+                            "field": "payload.trigger_name",
+                            "op": "==",
+                            "value": "rest_reminder_telegram",
+                        }
+                    ]
+                },
+                actions=[RuleAction(action_type="notify", params={"summary": "ok"})],
+            )
+        ],
+    )
+
+    # First event does not match condition, should be skipped but must not start cooldown.
+    first = await engine.handle_event(
+        Event(
+            event_id="evt_non_match",
+            event_type="cron.job.tick",
+            source="system.cron",
+            subject="system",
+            payload={"trigger_name": "other_job"},
+        )
+    )
+    assert first[0].status == "skipped"
+    assert first[0].reason == "condition_not_met"
+
+    # Immediate matching event should execute (not cooldown_active).
+    second = await engine.handle_event(
+        Event(
+            event_id="evt_match",
+            event_type="cron.job.tick",
+            source="system.cron",
+            subject="system",
+            payload={"trigger_name": "rest_reminder_telegram"},
+        )
+    )
+    assert second[0].status == "completed"
+    assert second[0].reason == "rule_match"
+    assert executor.calls and executor.calls[-1][0] == "notify"

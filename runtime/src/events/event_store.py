@@ -213,7 +213,14 @@ class EventStore:
     def get_last_rule_run_at(self, rule_id: str) -> datetime | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT created_at FROM event_rule_runs WHERE rule_id = ? ORDER BY created_at DESC LIMIT 1",
+                """
+                SELECT created_at
+                FROM event_rule_runs
+                WHERE rule_id = ?
+                  AND decision != 'skip'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
                 (rule_id,),
             ).fetchone()
             return _from_iso(row["created_at"]) if row else None
