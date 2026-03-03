@@ -245,6 +245,68 @@ class RuleAuthoringTool(BaseTool):
         safe = max(1, min(59, int(value)))
         return f"*/{safe} * * * *"
 
+    def _looks_like_periodic_intent(self, text: str) -> bool:
+        content = (text or "").strip()
+        if not content:
+            return False
+        patterns = [
+            r"每\s*(\d{1,2})\s*分钟",
+            r"every\s+(\d{1,2})\s+minutes?",
+        ]
+        return any(re.search(pattern, content, flags=re.IGNORECASE) for pattern in patterns)
+
+    def _looks_like_relative_intent(self, text: str) -> bool:
+        content = (text or "").strip()
+        if not content:
+            return False
+        patterns = [
+            r"(\d{1,2})\s*分钟\s*后",
+            r"in\s+(\d{1,2})\s+minutes?",
+        ]
+        return any(re.search(pattern, content, flags=re.IGNORECASE) for pattern in patterns)
+
+    def _merge_intent_text(self, payload_obj: dict[str, Any]) -> str:
+        cron_obj = payload_obj.get("cron") if isinstance(payload_obj.get("cron"), dict) else {}
+        candidates = [
+            payload_obj.get("name"),
+            payload_obj.get("rule_name"),
+            payload_obj.get("target"),
+            payload_obj.get("description"),
+            payload_obj.get("message"),
+            payload_obj.get("task"),
+            payload_obj.get("query"),
+            payload_obj.get("prompt"),
+            payload_obj.get("schedule"),
+            payload_obj.get("cron_expression"),
+            cron_obj.get("schedule"),
+        ]
+        return " ".join(str(item) for item in candidates if item)
+
+    def _apply_one_shot_hint_for_cron(self, payload_obj: dict[str, Any]) -> dict[str, Any]:
+        """Force one-shot for relative reminders (e.g. '3分钟后') in both schemas."""
+
+        event_type = str(payload_obj.get("event_type") or "").strip()
+        if event_type != "cron.job.tick":
+            return payload_obj
+
+        cron_obj = payload_obj.get("cron")
+        if not isinstance(cron_obj, dict):
+            return payload_obj
+
+        intent_text = self._merge_intent_text(payload_obj)
+        has_relative = self._looks_like_relative_intent(intent_text)
+        has_periodic = self._looks_like_periodic_intent(intent_text)
+        if not has_relative or has_periodic:
+            return payload_obj
+
+        cron_payload = cron_obj.get("payload")
+        if not isinstance(cron_payload, dict):
+            cron_payload = {}
+
+        # Relative-time reminders should be one-shot by default.
+        payload_obj["cron"] = {**cron_obj, "payload": {**cron_payload, "one_shot": True}}
+        return payload_obj
+
     def _infer_cron_from_text(self, text: str) -> tuple[str, bool]:
         content = (text or "").strip()
         if not content:
@@ -459,6 +521,7 @@ class RuleAuthoringTool(BaseTool):
             payload_obj["action_mode"] = "auto"
 
         action_name, payload_obj = self._normalize_legacy_payload(action_name, payload_obj)
+        payload_obj = self._apply_one_shot_hint_for_cron(payload_obj)
 
         if dry_run:
             return ToolResult.success_result(

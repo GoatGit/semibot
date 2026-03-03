@@ -289,3 +289,73 @@ async def test_rule_authoring_tool_auto_resolves_name_conflict(
     assert second.result.get("conflict_resolved") is True
     assert second.result.get("original_name") == "重名提醒"
     assert str(second.result.get("resolved_name") or "").startswith("重名提醒_")
+
+
+@pytest.mark.asyncio
+async def test_rule_authoring_tool_new_schema_relative_cron_defaults_to_one_shot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    result = await tool.execute(
+        action="create_rule",
+        payload={
+            "name": "relative_new_schema",
+            "event_type": "cron.job.tick",
+            "description": "3分钟后提醒我起来活动",
+            "action_mode": "auto",
+            "actions": [{"action_type": "notify", "params": {"channel": "chat", "gateway_id": "telegram:bot:chat"}}],
+            "risk_level": "low",
+            "cron": {
+                "upsert": True,
+                "name": "relative_new_schema",
+                "schedule": "*/3 * * * *",
+                "payload": {"trigger_name": "relative_new_schema"},
+            },
+        },
+    )
+    assert result.success is True
+    store = RuntimeConfigStore(db_path=str(db_path))
+    cron = store.get_cron_job("relative_new_schema")
+    assert cron is not None
+    cron_payload = cron.get("payload") if isinstance(cron.get("payload"), dict) else {}
+    assert cron_payload.get("one_shot") is True
+
+
+@pytest.mark.asyncio
+async def test_rule_authoring_tool_new_schema_periodic_cron_keeps_recurring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool()
+
+    result = await tool.execute(
+        action="create_rule",
+        payload={
+            "name": "periodic_new_schema",
+            "event_type": "cron.job.tick",
+            "description": "每3分钟提醒我起来活动",
+            "action_mode": "auto",
+            "actions": [{"action_type": "notify", "params": {"channel": "chat", "gateway_id": "telegram:bot:chat"}}],
+            "risk_level": "low",
+            "cron": {
+                "upsert": True,
+                "name": "periodic_new_schema",
+                "schedule": "*/3 * * * *",
+                "payload": {"trigger_name": "periodic_new_schema"},
+            },
+        },
+    )
+    assert result.success is True
+    store = RuntimeConfigStore(db_path=str(db_path))
+    cron = store.get_cron_job("periodic_new_schema")
+    assert cron is not None
+    cron_payload = cron.get("payload") if isinstance(cron.get("payload"), dict) else {}
+    assert cron_payload.get("one_shot") is not True
