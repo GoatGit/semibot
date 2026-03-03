@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -32,7 +32,9 @@ from src.gateway.parsers.approval_text import extract_message_text
 from src.runtime_service import run_task_once
 from src.server.config_store import RuntimeConfigStore
 from src.server.routes.gateway import register_gateway_routes
+from src.skills.index_manager import SkillsIndexManager
 from src.skills.bootstrap import create_default_registry
+from src.skills.skill_installer import install_or_refresh_skill
 
 TaskRunner = Callable[..., Awaitable[dict[str, Any]]]
 
@@ -305,6 +307,8 @@ def create_app(
             await engine.stop_rule_watch()
 
     app = FastAPI(title="Semibot Event API", version="2.0.0", lifespan=lifespan)
+    app.state.skill_registry = create_default_registry()
+    app.state.skills_index = SkillsIndexManager(os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"))
 
     def _latest_queue_state() -> dict[str, Any]:
         queue_events = engine.list_events(limit=1, event_type="rule.queue.telemetry")
@@ -440,7 +444,7 @@ def create_app(
 
     @app.get("/v1/skills")
     async def list_skills() -> dict[str, Any]:
-        registry = create_default_registry()
+        registry = app.state.skill_registry
         tool_names = registry.list_tools()
         skill_names = registry.list_skills()
         # Conceptual split for V2 UI/ops:
@@ -448,9 +452,11 @@ def create_app(
         skill_like_tools = {"xlsx", "pdf"}
         tools = [name for name in tool_names if name not in skill_like_tools]
         skills = sorted(set(skill_names + [name for name in tool_names if name in skill_like_tools]))
+        records = app.state.skills_index.list_records()
         return {
             "tools": tools,
             "skills": skills,
+            "metadata": records,
         }
 
     @app.get("/v1/config/tools")
@@ -721,12 +727,81 @@ def create_app(
         }
 
     @app.post("/v1/skills/install")
-    async def install_skill(payload: dict[str, Any]) -> dict[str, Any]:
-        source = payload.get("source")
+    async def install_skill(request: Request) -> dict[str, Any]:
+        content_type = str(request.headers.get("content-type") or "").lower()
+        source_path: str | None = None
+        source_url: str | None = None
+        skill_name: str | None = None
+        force = False
+        archive_file: UploadFile | None = None
+
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            source_path = str(form.get("source_path") or "").strip() or None
+            source_url = str(form.get("source_url") or "").strip() or None
+            skill_name = str(form.get("skill_name") or "").strip() or None
+            force_raw = str(form.get("force") or "").strip().lower()
+            force = force_raw in {"1", "true", "yes", "on"}
+            archive_candidate = form.get("archive")
+            if isinstance(archive_candidate, UploadFile):
+                archive_file = archive_candidate
+        else:
+            payload = await request.json()
+            source_path = str(payload.get("source_path") or "").strip() or None
+            source_url = str(payload.get("source_url") or "").strip() or None
+            skill_name = str(payload.get("skill_name") or "").strip() or None
+            force = _to_bool(payload.get("force"), False)
+
+        temp_upload_path: Path | None = None
+        try:
+            if archive_file is not None:
+                suffix = Path(str(archive_file.filename or "skill.zip")).suffix or ".zip"
+                temp_upload_path = Path("/tmp") / f"semibot_skill_upload_{uuid4().hex}{suffix}"
+                file_bytes = await archive_file.read()
+                temp_upload_path.write_bytes(file_bytes)
+                source_path = str(temp_upload_path)
+
+            result = install_or_refresh_skill(
+                registry=app.state.skill_registry,
+                source_path=source_path,
+                source_url=source_url,
+                skill_name=skill_name,
+                force=force,
+                refresh_only=False,
+                skills_root=os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"),
+            )
+            return result
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            if temp_upload_path and temp_upload_path.exists():
+                try:
+                    temp_upload_path.unlink()
+                except Exception:
+                    pass
+
+    @app.post("/v1/skills/reindex")
+    async def reindex_skills(request: Request) -> dict[str, Any]:
+        payload = await request.json() if str(request.headers.get("content-type") or "").startswith("application/json") else {}
+        scope = str(payload.get("scope") or "incremental")
+        result = app.state.skills_index.reindex(scope=scope)
+        return result
+
+    @app.post("/v1/skills/refresh-runtime")
+    async def refresh_runtime_skills(request: Request) -> dict[str, Any]:
+        payload = await request.json() if str(request.headers.get("content-type") or "").startswith("application/json") else {}
+        _session_id = str(payload.get("session_id") or "").strip() or None
+        result = install_or_refresh_skill(
+            registry=app.state.skill_registry,
+            refresh_only=True,
+            skills_root=os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"),
+        )
         return {
-            "accepted": False,
-            "source": source,
-            "reason": "skill install API placeholder; use local skill manager in current phase",
+            "reloaded": len(result.get("registered", [])),
+            "new_tools": result.get("registered", []),
+            "skipped": result.get("skipped", []),
+            "session_id": _session_id,
+            "reindex": result.get("reindex"),
         }
 
     @app.get("/v1/events")

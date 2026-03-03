@@ -112,6 +112,8 @@ _RECOVERABLE_REPLAN_ERROR_MARKERS = (
     "INVALID_NOTIFY_TARGET",
     "INVALID_ACTION_MODE",
     "INVALID_CRON_SCHEDULE",
+    "Tool or skill",
+    "not in capability graph",
 )
 
 _RULE_AUTHORING_INTENT_KEYWORDS = (
@@ -176,6 +178,41 @@ def _filter_rule_authoring_by_intent(available_schemas: list[dict[str, Any]], us
             continue
         filtered.append(schema)
     return filtered
+
+
+def _merge_dynamic_registry_schemas(
+    available_schemas: list[dict[str, Any]],
+    runtime_context: Any,
+) -> list[dict[str, Any]]:
+    """Merge latest tool schemas from runtime skill registry (if present)."""
+    if not runtime_context:
+        return available_schemas
+    metadata = getattr(runtime_context, "metadata", None)
+    if not isinstance(metadata, dict):
+        return available_schemas
+    registry = metadata.get("skill_registry")
+    if registry is None or not hasattr(registry, "get_tool_schemas"):
+        return available_schemas
+    try:
+        fresh = registry.get_tool_schemas()
+    except Exception:
+        return available_schemas
+
+    merged = list(available_schemas)
+    existing = {
+        str((item.get("function") or {}).get("name") or "")
+        for item in merged
+        if isinstance(item, dict)
+    }
+    for schema in fresh:
+        if not isinstance(schema, dict):
+            continue
+        name = str((schema.get("function") or {}).get("name") or "")
+        if not name or name in existing:
+            continue
+        merged.append(schema)
+        existing.add(name)
+    return merged
 
 
 def _is_latest_intent(text: str) -> bool:
@@ -862,6 +899,7 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
 
         capability_graph = CapabilityGraph(runtime_context)
         available_skills = capability_graph.get_schemas_for_planner()
+        available_skills = _merge_dynamic_registry_schemas(available_skills, runtime_context)
 
         logger.info(
             "Capability graph built for planning",

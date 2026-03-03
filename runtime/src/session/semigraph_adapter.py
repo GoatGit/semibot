@@ -274,7 +274,7 @@ class SemiGraphAdapter(RuntimeAdapter):
                     temperature=float(agent_cfg.get("temperature", 0.7)),
                     max_tokens=int(agent_cfg.get("max_tokens", 4096)),
                 ),
-                metadata={"event_emitter": event_engine},
+                metadata={"event_emitter": event_engine, "skill_registry": self.skill_registry},
                 available_skills=self._build_skill_definitions(),
                 available_tools=self._build_tool_definitions(),
                 available_mcp_servers=mcp_servers,

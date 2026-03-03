@@ -177,6 +177,7 @@ async def test_event_api_health_and_skills(tmp_path: Path, monkeypatch):
         assert skills.status_code == 200
         assert skills.json()["tools"] == ["code_executor"]
         assert skills.json()["skills"] == ["analyst", "pdf"]
+        assert isinstance(skills.json()["metadata"], list)
 
 
 @pytest.mark.asyncio
@@ -227,11 +228,9 @@ async def test_event_api_sessions_agents_and_memory_endpoints(tmp_path: Path):
             "session.deleted",
         }
 
-        install = await client.post(
-            "/v1/skills/install", json={"source": "https://example.com/repo"}
-        )
-        assert install.status_code == 200
-        assert install.json()["accepted"] is False
+        install = await client.post("/v1/skills/install", json={"source_url": "ftp://example.com/repo.zip"})
+        assert install.status_code == 400
+        assert "http://" in install.json()["detail"] or "https://" in install.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -486,3 +485,26 @@ async def test_event_api_background_heartbeat(tmp_path: Path):
             resp = await client.get("/v1/events?event_type=health.heartbeat.tick&limit=10")
             assert resp.status_code == 200
             assert len(resp.json()["items"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_skills_reindex_and_refresh_runtime_endpoints(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    skills_root = tmp_path / "skills-home"
+    monkeypatch.setenv("SEMIBOT_SKILLS_PATH", str(skills_root))
+    (skills_root / "demo_skill" / "scripts").mkdir(parents=True, exist_ok=True)
+    (skills_root / "demo_skill" / "scripts" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        reindex = await client.post("/v1/skills/reindex", json={"scope": "full"})
+        assert reindex.status_code == 200
+        assert reindex.json()["total"] >= 1
+
+        refresh = await client.post("/v1/skills/refresh-runtime", json={})
+        assert refresh.status_code == 200
+        assert isinstance(refresh.json()["new_tools"], list)

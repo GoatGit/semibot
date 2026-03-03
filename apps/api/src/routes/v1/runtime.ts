@@ -9,12 +9,15 @@ import { z } from 'zod'
 import { authenticate, type AuthRequest } from '../../middleware/auth'
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
+import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
+import fs from 'fs-extra'
 
 const router: Router = Router()
 
 interface RuntimeSkillsPayload {
   tools?: string[]
   skills?: string[]
+  metadata?: Array<Record<string, unknown>>
 }
 
 interface RuntimeGatewayConversationsPayload {
@@ -61,6 +64,20 @@ interface RuntimeCronJobsPayload {
   }>
 }
 
+interface RuntimeSkillsInstallPayload {
+  ok?: boolean
+  action?: string
+  installed_path?: string
+  skill_name?: string
+  source_type?: string
+  registered_in_runtime?: boolean
+  refresh?: {
+    registered?: string[]
+    skipped?: Array<{ name?: string; reason?: string }>
+  }
+  reindex?: Record<string, unknown>
+}
+
 const listGatewayConversationsSchema = z.object({
   provider: z.string().max(32).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
@@ -81,6 +98,17 @@ const upsertCronJobSchema = z.object({
   source: z.string().min(1).max(160).default('system.cron'),
   subject: z.string().max(160).nullable().optional(),
   payload: z.record(z.unknown()).optional(),
+})
+
+const runtimeSkillInstallSchema = z.object({
+  sourcePath: z.string().min(1).optional(),
+  sourceUrl: z.string().url().optional(),
+  skillName: z.string().min(1).max(120).optional(),
+  force: z.boolean().optional(),
+})
+
+const runtimeReindexSchema = z.object({
+  scope: z.enum(['incremental', 'full']).optional(),
 })
 
 function normalizeBaseUrl(raw: string): string {
@@ -142,6 +170,7 @@ router.get(
             available: true,
             tools: Array.isArray(payload.tools) ? payload.tools : [],
             skills: Array.isArray(payload.skills) ? payload.skills : [],
+            metadata: Array.isArray(payload.metadata) ? payload.metadata : [],
             source: baseUrl,
           },
         })
@@ -158,11 +187,206 @@ router.get(
         available: false,
         tools: [],
         skills: [],
+        metadata: [],
         source: baseUrls[0] || '',
         error: errors.join('; ') || 'runtime unreachable',
       },
     })
     return
+  })
+)
+
+router.post(
+  '/skills/install',
+  authenticate,
+  combinedRateLimit,
+  validate(runtimeSkillInstallSchema),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const baseUrls = getRuntimeBaseUrls()
+    const errors: string[] = []
+    const body = req.body as z.infer<typeof runtimeSkillInstallSchema>
+    const payload = {
+      source_path: body.sourcePath,
+      source_url: body.sourceUrl,
+      skill_name: body.skillName,
+      force: body.force === true,
+    }
+
+    for (const baseUrl of baseUrls) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 30000)
+      try {
+        const response = await fetch(`${baseUrl}/v1/skills/install`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
+        const data = (await response.json()) as RuntimeSkillsInstallPayload | { detail?: string }
+        if (!response.ok) {
+          errors.push(`${baseUrl}: ${(data as { detail?: string }).detail || `runtime returned ${response.status}`}`)
+          continue
+        }
+        res.status(201).json({ success: true, data })
+        return
+      } catch (error) {
+        clearTimeout(timeout)
+        errors.push(`${baseUrl}: ${stringifyError(error)}`)
+      }
+    }
+
+    res.status(502).json({
+      success: false,
+      error: { code: 'RUNTIME_UNREACHABLE', message: errors.join('; ') || 'runtime unreachable' },
+    })
+  })
+)
+
+router.post(
+  '/skills/install/upload',
+  authenticate,
+  combinedRateLimit,
+  handleFileUpload,
+  asyncHandler(async (req: UploadRequest & AuthRequest, res: Response) => {
+    if (!req.uploadedFile) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'SKILL_UPLOAD_NO_FILE', message: '未检测到上传文件' },
+      })
+      return
+    }
+
+    const baseUrls = getRuntimeBaseUrls()
+    const errors: string[] = []
+    const fields = req.uploadFields || {}
+    const force = String(fields.force || '').trim().toLowerCase()
+    const skillName = String(fields.skillName || fields.skill_name || '').trim()
+    const fileBuffer = await fs.readFile(req.uploadedFile.tempPath)
+
+    try {
+      for (const baseUrl of baseUrls) {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 45000)
+        try {
+          const formData = new FormData()
+          const fileName = req.uploadedFile.originalName || 'skill.zip'
+          const mimeType = req.uploadedFile.mimeType || 'application/zip'
+          formData.append('archive', new Blob([fileBuffer], { type: mimeType }), fileName)
+          if (skillName) formData.append('skill_name', skillName)
+          if (force) formData.append('force', force)
+
+          const response = await fetch(`${baseUrl}/v1/skills/install`, {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal,
+          })
+          clearTimeout(timeout)
+          const data = (await response.json()) as RuntimeSkillsInstallPayload | { detail?: string }
+          if (!response.ok) {
+            errors.push(`${baseUrl}: ${(data as { detail?: string }).detail || `runtime returned ${response.status}`}`)
+            continue
+          }
+          res.status(201).json({ success: true, data })
+          return
+        } catch (error) {
+          clearTimeout(timeout)
+          errors.push(`${baseUrl}: ${stringifyError(error)}`)
+        }
+      }
+    } finally {
+      await fs.remove(req.uploadedFile.tempPath).catch(() => undefined)
+    }
+
+    res.status(502).json({
+      success: false,
+      error: { code: 'RUNTIME_UNREACHABLE', message: errors.join('; ') || 'runtime unreachable' },
+    })
+  })
+)
+
+router.post(
+  '/skills/reindex',
+  authenticate,
+  combinedRateLimit,
+  validate(runtimeReindexSchema),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const baseUrls = getRuntimeBaseUrls()
+    const errors: string[] = []
+    const body = req.body as z.infer<typeof runtimeReindexSchema>
+    const payload = { scope: body.scope || 'incremental' }
+
+    for (const baseUrl of baseUrls) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 15000)
+      try {
+        const response = await fetch(`${baseUrl}/v1/skills/reindex`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
+        const data = await response.json()
+        if (!response.ok) {
+          const detail = (data as { detail?: string }).detail || `runtime returned ${response.status}`
+          errors.push(`${baseUrl}: ${detail}`)
+          continue
+        }
+        res.json({ success: true, data })
+        return
+      } catch (error) {
+        clearTimeout(timeout)
+        errors.push(`${baseUrl}: ${stringifyError(error)}`)
+      }
+    }
+
+    res.status(502).json({
+      success: false,
+      error: { code: 'RUNTIME_UNREACHABLE', message: errors.join('; ') || 'runtime unreachable' },
+    })
+  })
+)
+
+router.post(
+  '/skills/refresh-runtime',
+  authenticate,
+  combinedRateLimit,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const baseUrls = getRuntimeBaseUrls()
+    const errors: string[] = []
+    const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined
+    const payload = sessionId ? { session_id: sessionId } : {}
+
+    for (const baseUrl of baseUrls) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 15000)
+      try {
+        const response = await fetch(`${baseUrl}/v1/skills/refresh-runtime`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
+        const data = await response.json()
+        if (!response.ok) {
+          const detail = (data as { detail?: string }).detail || `runtime returned ${response.status}`
+          errors.push(`${baseUrl}: ${detail}`)
+          continue
+        }
+        res.json({ success: true, data })
+        return
+      } catch (error) {
+        clearTimeout(timeout)
+        errors.push(`${baseUrl}: ${stringifyError(error)}`)
+      }
+    }
+
+    res.status(502).json({
+      success: false,
+      error: { code: 'RUNTIME_UNREACHABLE', message: errors.join('; ') || 'runtime unreachable' },
+    })
   })
 )
 

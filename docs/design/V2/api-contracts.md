@@ -680,7 +680,36 @@ URL 验证响应：
 
 ## 19. `POST /v1/skills/install`
 
-用途：技能安装占位接口；当前阶段建议使用本地 skill 管理流程。
+用途：安装技能包（目录/zip/url），并刷新当前 runtime 可用技能索引。
+
+请求（设计）：
+
+```json
+{
+  "source_path": "/tmp/my-skill",
+  "source_url": "https://example.com/my-skill.zip",
+  "skill_name": "my_skill",
+  "force": false
+}
+```
+
+说明：
+- `source_path` / `source_url` 二选一；Web 上传目录时应先前端打包为 zip 再上传。
+- 安装完成后应触发 runtime 索引刷新（当前会话可立即可见）。
+
+响应（设计）：
+
+```json
+{
+  "ok": true,
+  "skill_id": "my_skill",
+  "installed_path": "/Users/you/.semibot/skills/my_skill",
+  "index_updated": true,
+  "registered_in_runtime": true
+}
+```
+
+相关详细设计见：`skills-index-and-installation.md`。
 
 说明：
 - 网关会额外写入一条 `approval.action` 事件（`approval_action_event_id`），用于审批行为审计与回放。

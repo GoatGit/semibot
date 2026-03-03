@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Search, Plus, RefreshCw, AlertCircle, Package, Loader2, Trash2, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -35,6 +35,15 @@ export default function SkillDefinitionsPage() {
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [createFile, setCreateFile] = useState<File | null>(null)
   const [createUploadError, setCreateUploadError] = useState('')
+  const [directoryFiles, setDirectoryFiles] = useState<File[]>([])
+  const [directoryName, setDirectoryName] = useState<string>('')
+  const directoryInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (!directoryInputRef.current) return
+    directoryInputRef.current.setAttribute('webkitdirectory', '')
+    directoryInputRef.current.setAttribute('directory', '')
+  }, [showCreateDialog])
 
   const loadDefinitions = useCallback(async () => {
     try {
@@ -59,21 +68,41 @@ export default function SkillDefinitionsPage() {
   }, [loadDefinitions])
 
   const handleCreate = async () => {
-    if (!createFile) return
+    if (!createFile && directoryFiles.length === 0) return
 
     try {
       setActionLoading(true)
       setError(null)
 
-      const formData = new FormData()
-      formData.append('file', createFile)
-      formData.append('enableRetry', 'true')
+      let uploadFile = createFile
+      if (!uploadFile && directoryFiles.length > 0) {
+        const JSZip = (await import('jszip')).default
+        const zip = new JSZip()
+        for (const file of directoryFiles) {
+          const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+          zip.file(relativePath, file)
+        }
+        const blob = await zip.generateAsync({ type: 'blob' })
+        const name = directoryName ? `${directoryName}.zip` : 'skill-directory.zip'
+        uploadFile = new File([blob], name, { type: 'application/zip' })
+      }
+      if (!uploadFile) {
+        setCreateUploadError('请选择 zip 包或目录')
+        return
+      }
 
-      await apiClient.upload('/skill-definitions/upload-create', formData)
+      const formData = new FormData()
+      formData.append('file', uploadFile)
+      formData.append('force', 'false')
+
+      await apiClient.upload('/runtime/skills/install/upload', formData)
+      await apiClient.post('/runtime/skills/refresh-runtime', {})
 
       setShowCreateDialog(false)
       setCreateFile(null)
       setCreateUploadError('')
+      setDirectoryFiles([])
+      setDirectoryName('')
       await loadDefinitions()
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: { message?: string } } }; message?: string }
@@ -411,13 +440,61 @@ export default function SkillDefinitionsPage() {
                   disabled={actionLoading}
                 />
               </div>
+
+              <div className="rounded-lg border border-border-subtle p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-text-secondary">或上传技能目录</div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    onClick={() => directoryInputRef.current?.click()}
+                    disabled={actionLoading}
+                  >
+                    选择目录
+                  </Button>
+                </div>
+                <input
+                  ref={directoryInputRef}
+                  type="file"
+                  className="hidden"
+                  multiple
+                  onChange={(event) => {
+                    const files = event.target.files ? Array.from(event.target.files) : []
+                    setDirectoryFiles(files)
+                    const first = files[0] as (File & { webkitRelativePath?: string }) | undefined
+                    const root = first?.webkitRelativePath?.split('/')[0] || ''
+                    setDirectoryName(root)
+                    if (files.length > 0) {
+                      setCreateFile(null)
+                      setCreateUploadError('')
+                    }
+                    event.currentTarget.value = ''
+                  }}
+                />
+                {directoryFiles.length > 0 && (
+                  <div className="mt-2 text-xs text-text-tertiary">
+                    已选择目录 {directoryName || '(未命名)'}，共 {directoryFiles.length} 个文件（提交时自动打包为 zip）
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="p-6 border-t border-border-subtle flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => { setShowCreateDialog(false); setCreateFile(null); setCreateUploadError('') }} disabled={actionLoading}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowCreateDialog(false)
+                  setCreateFile(null)
+                  setCreateUploadError('')
+                  setDirectoryFiles([])
+                  setDirectoryName('')
+                }}
+                disabled={actionLoading}
+              >
                 {t('common.cancel')}
               </Button>
-              <Button onClick={handleCreate} loading={actionLoading} disabled={!createFile}>
+              <Button onClick={handleCreate} loading={actionLoading} disabled={!createFile && directoryFiles.length === 0}>
                 {t('skillsPage.uploadAndCreate')}
               </Button>
             </div>
