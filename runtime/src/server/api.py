@@ -237,9 +237,52 @@ def create_app(
 
     engine.bus.subscribe(_gateway_event_sink)
 
+    def _sync_cron_scheduler_from_store() -> None:
+        """Keep in-memory scheduler aligned with persisted cron jobs."""
+        persisted = config_store.list_cron_jobs(active_only=True)
+        persisted_map = {
+            str(item.get("name") or "").strip(): item
+            for item in persisted
+            if str(item.get("name") or "").strip()
+        }
+
+        runtime_jobs = engine.list_cron_jobs()
+        runtime_map = {
+            str(item.get("name") or "").strip(): item
+            for item in runtime_jobs
+            if str(item.get("name") or "").strip()
+        }
+        persisted_names = set(persisted_map.keys())
+        runtime_names = set(runtime_map.keys())
+
+        for stale_name in runtime_names - persisted_names:
+            engine.remove_cron_job(stale_name)
+
+        # Only upsert when missing or changed; avoid resetting running timers every sync cycle.
+        for name, job in persisted_map.items():
+            current = runtime_map.get(name)
+            if not current:
+                engine.upsert_cron_job(job)
+                continue
+            if (
+                str(current.get("schedule") or "") != str(job.get("schedule") or "")
+                or str(current.get("event_type") or "") != str(job.get("event_type") or "")
+                or str(current.get("source") or "") != str(job.get("source") or "")
+                or str(current.get("subject") or "") != str(job.get("subject") or "")
+                or (current.get("payload") if isinstance(current.get("payload"), dict) else {})
+                != (job.get("payload") if isinstance(job.get("payload"), dict) else {})
+            ):
+                engine.upsert_cron_job(job)
+
+    async def _cron_sync_loop() -> None:
+        while True:
+            _sync_cron_scheduler_from_store()
+            await asyncio.sleep(2.0)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         engine.start_rule_watch(poll_interval=1.0)
+        cron_sync_task = asyncio.create_task(_cron_sync_loop())
         if heartbeat_interval_seconds and heartbeat_interval_seconds > 0:
             engine.start_heartbeat(interval_seconds=heartbeat_interval_seconds)
         persisted_cron_jobs = config_store.list_cron_jobs(active_only=True)
@@ -256,6 +299,8 @@ def create_app(
         try:
             yield
         finally:
+            cron_sync_task.cancel()
+            await asyncio.gather(cron_sync_task, return_exceptions=True)
             await engine.stop_triggers()
             await engine.stop_rule_watch()
 
@@ -277,20 +322,6 @@ def create_app(
             }
         payload = queue_events[0].payload
         return payload if isinstance(payload, dict) else {}
-
-    def _sync_cron_scheduler_from_store() -> None:
-        """Keep in-memory scheduler aligned with persisted cron jobs."""
-        persisted = config_store.list_cron_jobs(active_only=True)
-        persisted_names = {str(item.get("name") or "").strip() for item in persisted if str(item.get("name") or "").strip()}
-
-        runtime_jobs = engine.list_cron_jobs()
-        runtime_names = {str(item.get("name") or "").strip() for item in runtime_jobs if str(item.get("name") or "").strip()}
-
-        for stale_name in runtime_names - persisted_names:
-            engine.remove_cron_job(stale_name)
-
-        for job in persisted:
-            engine.upsert_cron_job(job)
 
     def _serialize_approval(item: Any) -> dict[str, Any]:
         context = item.context if isinstance(getattr(item, "context", None), dict) else {}
