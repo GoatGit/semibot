@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
-import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon, ArrowLeft, ShieldAlert, Check } from 'lucide-react'
+import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon, ArrowLeft, ShieldAlert, Check, CircleHelp } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
 import { CitationList } from '@/components/agent2ui/text/CitationList'
 import { ProcessCard } from '@/components/agent2ui/process/ProcessCard'
@@ -796,6 +798,11 @@ export default function ChatSessionPage() {
             >
               {sessionMeta?.status || 'active'}
             </span>
+            <Link href="/help" className="inline-flex">
+              <Button size="xs" variant="tertiary" leftIcon={<CircleHelp size={12} />}>
+                {t('nav.helpCenter')}
+              </Button>
+            </Link>
           </div>
         </div>
       </div>
@@ -880,6 +887,17 @@ export default function ChatSessionPage() {
       {/* 输入区 */}
       <div className="flex-shrink-0 border-t border-border-subtle bg-bg-surface">
         <div className="max-w-3xl mx-auto p-4">
+          <div className="mb-3">
+            <div className="rounded-xl border border-primary-500/20 bg-gradient-to-r from-primary-500/10 via-bg-surface to-bg-surface px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-text-secondary">{t('help.nav.sessions')}</p>
+                <Link href="/help" className="inline-flex">
+                  <Button size="xs" variant="tertiary">{t('nav.helpCenter')}</Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+
           {pendingApprovals.length > 0 && (
             <div className="mb-3 rounded-xl border border-primary-500/30 bg-primary-500/5 px-3 py-3">
               <div className="flex items-center justify-between gap-2">
@@ -1035,6 +1053,12 @@ export default function ChatSessionPage() {
                 </button>
               </div>
             )}
+          {approvalError && pendingApprovals.length === 0 && (
+            <InlineErrorAlert className="mb-3 px-3 py-2 text-xs" message={approvalError} />
+          )}
+          {uploadError && (
+            <InlineErrorAlert className="mb-3 px-3 py-2 text-xs" message={uploadError} />
+          )}
 
           <div
             className={clsx(
@@ -1067,11 +1091,6 @@ export default function ChatSessionPage() {
                   </div>
                 ))}
               </div>
-            )}
-
-            {/* 上传错误提示 */}
-            {uploadError && (
-              <div className="px-3 pt-2 text-xs text-error-400">{uploadError}</div>
             )}
 
             <div className="flex items-end gap-3 p-3">

@@ -20,3 +20,7 @@ export type {
   CardContentProps,
   CardFooterProps
 } from './Card'
+
+export { PageHelpStrip } from './PageHelpStrip'
+export { InlineErrorAlert } from './InlineErrorAlert'
+export { EmptyStateActions } from './EmptyStateActions'

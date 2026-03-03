@@ -1,11 +1,15 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ShieldCheck, RefreshCw, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
+import Link from 'next/link'
+import { ShieldCheck, RefreshCw, CheckCircle2, XCircle, AlertCircle, CircleHelp, ExternalLink } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Select } from '@/components/ui/Select'
+import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { useApprovals } from '@/hooks/useApprovals'
 import type { ApprovalRecord } from '@/types'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -171,33 +175,42 @@ export default function ApprovalsPage() {
                   {t('approvals.pending')} {stats.pending} / {t('approvals.total')} {stats.total}
                 </p>
               </div>
-              <Button
-                variant="secondary"
-                leftIcon={<RefreshCw size={16} />}
-                onClick={() => void loadApprovals({ status, limit: 100 })}
-                disabled={isLoading}
-              >
-                {t('common.refresh')}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => void handleBulkResolve('approve')}
-                disabled={pendingIds.length === 0 || !!resolvingId || !!bulkAction}
-                loading={bulkAction === 'approve'}
-              >
-                {t('chatSession.approveAll')}
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => void handleBulkResolve('reject')}
-                disabled={pendingIds.length === 0 || !!resolvingId || !!bulkAction}
-                loading={bulkAction === 'reject'}
-              >
-                {t('chatSession.rejectAll')}
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <Link href="/help" className="inline-flex">
+                  <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
+                    {t('nav.helpCenter')}
+                  </Button>
+                </Link>
+                <Button
+                  variant="secondary"
+                  leftIcon={<RefreshCw size={16} />}
+                  onClick={() => void loadApprovals({ status, limit: 100 })}
+                  disabled={isLoading}
+                >
+                  {t('common.refresh')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleBulkResolve('approve')}
+                  disabled={pendingIds.length === 0 || !!resolvingId || !!bulkAction}
+                  loading={bulkAction === 'approve'}
+                >
+                  {t('chatSession.approveAll')}
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => void handleBulkResolve('reject')}
+                  disabled={pendingIds.length === 0 || !!resolvingId || !!bulkAction}
+                  loading={bulkAction === 'reject'}
+                >
+                  {t('chatSession.rejectAll')}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
+
+        <PageHelpStrip text={t('help.nav.approvals')} ctaLabel={t('nav.helpCenter')} />
 
         <Card className="border-border-default">
           <CardContent className="p-4">
@@ -277,10 +290,7 @@ export default function ApprovalsPage() {
         )}
 
         {(error || actionError) && (
-          <div className="rounded-lg border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-500 flex items-center gap-2">
-            <AlertCircle size={16} />
-            {actionError || error}
-          </div>
+          <InlineErrorAlert message={actionError || error || ''} />
         )}
 
         <div className="space-y-3">
@@ -355,8 +365,16 @@ export default function ApprovalsPage() {
             })
           ) : (
             <Card className="border-border-subtle">
-              <CardContent className="p-8 text-center text-sm text-text-secondary">
-                {t('approvals.empty')}
+              <CardContent className="p-8">
+                <EmptyStateActions
+                  className="text-center"
+                  message={t('approvals.empty')}
+                  actions={(
+                    <Link href="/help" className="inline-flex">
+                      <Button size="sm" variant="tertiary">{t('nav.helpCenter')}</Button>
+                    </Link>
+                  )}
+                />
               </CardContent>
             </Card>
           )}

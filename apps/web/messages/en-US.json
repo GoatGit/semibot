@@ -187,11 +187,14 @@
   "config": {
     "header": {
       "title": "Configuration",
-      "subtitle": "Manage LLM, tools, gateways, API keys and webhooks in one place."
+      "subtitle": "Manage LLM, tools, gateways, API keys and webhooks in one place.",
+      "helpHint": "Need setup guidance or troubleshooting? Open Help Center for walkthroughs and FAQ.",
+      "openHelpCenter": "Open Help Center"
     },
     "loading": "Loading configuration...",
     "common": {
       "notSet": "Not set",
+      "customValue": "Custom",
       "riskLevels": {
         "low": "Low",
         "medium": "Medium",
@@ -269,6 +272,12 @@
     "tools": {
       "activeCount": "Active {count}",
       "configTitle": "Tool configuration (toggle & params only)",
+      "quickTips": {
+        "title": "Quick Tips",
+        "fields": "Read and edit values by field name to avoid config mistakes.",
+        "scope": "For high-risk tools, keep approval scope at session or session_action.",
+        "domains": "Domain allow/block lists are comma-separated and apply to subdomains."
+      },
       "loading": "Loading tools...",
       "empty": "No tool config data (V2 does not support add/delete tools)",
       "risk": "Risk",
@@ -277,6 +286,8 @@
       "on": "On",
       "off": "Off",
       "builtIn": "Built-in",
+      "toolCardHint": "Configure risk, approval strategy, and runtime params here.",
+      "toolCardHintAria": "Tool config help",
       "configure": "Configure",
       "disable": "Disable",
       "enable": "Enable",
@@ -355,7 +366,9 @@
       "tool": {
         "title": "Tool configuration",
         "description": "V2 only supports built-in tool params and enable/disable; rename/type change and add/delete are not supported.",
+        "nameLabel": "Field: name",
         "namePlaceholder": "Tool name",
+        "typeLabel": "Field: type",
         "typePlaceholder": "Tool type",
         "timeoutLabel": "Timeout",
         "timeoutDefault": "Use default timeout",
@@ -379,17 +392,27 @@
           "tool": "Group by tool",
           "call": "Per call"
         },
+        "apiEndpointLabel": "Field: apiEndpoint",
         "apiEndpointPlaceholder": "API endpoint (optional)",
+        "apiKeyLabel": "Field: apiKey",
         "apiKeyPlaceholder": "API key (leave empty to keep unchanged)",
         "noApiNeeded": "{tool} does not require API endpoint / API key.",
+        "rootPathLabel": "Field: rootPath",
         "rootPathPlaceholder": "Root path (optional, e.g. /Users/xxx)",
+        "maxReadBytesLabel": "Field: maxReadBytes",
+        "maxReadBytesDefault": "Use default maxReadBytes",
         "maxReadBytesPlaceholder": "maxReadBytes (optional, positive integer)",
         "http": {
           "allowLocalhost": "Allow localhost / internal network access",
+          "allowedDomainsLabel": "Field: allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. api.example.com)",
+          "blockedDomainsLabel": "Field: blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxResponseCharsLabel": "Field: maxResponseChars",
+          "maxResponseCharsDefault": "Use default maxResponseChars",
           "maxResponseCharsPlaceholder": "maxResponseChars (optional, 100-500000)",
           "authType": "Default auth type",
+          "authHeaderLabel": "Field: authHeader",
           "authHeaderPlaceholder": "authHeader (e.g. X-API-Key)",
           "authTypes": {
             "none": "No auth",
@@ -399,10 +422,17 @@
           }
         },
         "sql": {
+          "maxRowsLabel": "Field: maxRows",
+          "maxRowsDefault": "Use default maxRows",
           "maxRowsPlaceholder": "maxRows (optional, 1-5000)",
+          "defaultDatabaseLabel": "Field: defaultDatabase",
+          "defaultDatabaseDefault": "Use runtime default database",
           "defaultDatabasePlaceholder": "defaultDatabase (optional, default DB alias)",
+          "allowedDatabasesLabel": "Field: allowedDatabases",
           "allowedDatabasesPlaceholder": "allowedDatabases (optional, comma-separated)",
           "connectionsLabel": "connections (database alias map)",
+          "connectionAliasLabel": "Field: alias",
+          "connectionDsnLabel": "Field: dsn",
           "addConnection": "Add connection",
           "connectionAliasPlaceholder": "Alias (e.g. main)",
           "connectionDsnPlaceholder": "DSN (e.g. postgresql://... or sqlite:///...)",
@@ -412,8 +442,12 @@
           "headless": "Run browser in headless mode",
           "allowLocalhost": "Allow localhost / internal network access",
           "browserType": "Browser type",
+          "allowedDomainsLabel": "Field: allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. example.com,news.ycombinator.com)",
+          "blockedDomainsLabel": "Field: blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxTextLengthLabel": "Field: maxTextLength",
+          "maxTextLengthDefault": "Use default maxTextLength",
           "maxTextLengthPlaceholder": "maxTextLength (optional, 100-500000)",
           "browserTypes": {
             "chromium": "Chromium",
@@ -1356,6 +1390,14 @@
       "hover": "Hover Guidance",
       "gateway": "Gateway Tutorial",
       "quickStart": "Quick Start"
+    },
+    "searchPlaceholder": "Search guides, module pages, and troubleshooting...",
+    "searchNoResults": "No matching guides found. Try broader keywords.",
+    "sections": {
+      "feature-guide": "Feature Guide",
+      "hover-tips": "Hover Tips",
+      "gateway-tutorial": "Gateway Tutorial",
+      "provider-guides": "Provider Guides"
     },
     "featureGuide": {
       "title": "Feature Navigation Guide",

@@ -1,14 +1,18 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { Workflow, RefreshCw, Plus, AlertCircle, Pencil, Power, Trash2 } from 'lucide-react'
+import { Workflow, RefreshCw, Plus, AlertCircle, Pencil, Power, Trash2, CircleHelp, ExternalLink } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
+import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { useRules } from '@/hooks/useRules'
 import { apiClient } from '@/lib/api'
 import type { RuleActionMode, RuleActionType, RiskLevel } from '@/types'
@@ -576,8 +580,8 @@ export default function RulesPage() {
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
         <Card className="border-border-default">
           <CardContent className="p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
                 <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
                   <Workflow size={22} className="text-primary-400" />
                   {t('rules.title')}
@@ -588,11 +592,16 @@ export default function RulesPage() {
                 <p className="mt-2 text-xs text-text-tertiary">
                   {t('rules.enabled')} {activeStats.active} / {activeStats.total}
                 </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  leftIcon={<RefreshCw size={16} />}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link href="/help" className="inline-flex">
+                    <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
+                      {t('nav.helpCenter')}
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="secondary"
+                    leftIcon={<RefreshCw size={16} />}
                   onClick={() => void loadRules()}
                   disabled={isLoading}
                 >
@@ -610,6 +619,8 @@ export default function RulesPage() {
           </CardContent>
         </Card>
 
+        <PageHelpStrip text={t('help.nav.rules')} ctaLabel={t('nav.helpCenter')} />
+
         {!apiAvailable && (
           <div className="rounded-lg border border-warning-500/30 bg-warning-500/10 px-4 py-3 text-sm text-warning-500">
             {t('rules.apiUnavailable')}
@@ -617,10 +628,7 @@ export default function RulesPage() {
         )}
 
         {(error || actionError) && (
-          <div className="rounded-lg border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-500 flex items-center gap-2">
-            <AlertCircle size={16} />
-            {actionError || error}
-          </div>
+          <InlineErrorAlert message={actionError || error || ''} />
         )}
 
         <div className="space-y-3">
@@ -698,8 +706,21 @@ export default function RulesPage() {
             ))
           ) : (
             <Card className="border-border-subtle">
-              <CardContent className="p-8 text-center text-sm text-text-secondary">
-                {t('rules.empty')}
+              <CardContent className="p-8">
+                <EmptyStateActions
+                  className="text-center"
+                  message={t('rules.empty')}
+                  actions={(
+                    <>
+                      <Button size="sm" onClick={openCreateEditor} disabled={!apiAvailable}>
+                        {t('rules.new')}
+                      </Button>
+                      <Link href="/help" className="inline-flex">
+                        <Button size="sm" variant="tertiary">{t('nav.helpCenter')}</Button>
+                      </Link>
+                    </>
+                  )}
+                />
               </CardContent>
             </Card>
           )}

@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useMemo, useState } from 'react'
 import { BookOpen, CircleHelp, ExternalLink, MessageSquare, ShieldCheck, Send, Wrench } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -37,9 +38,31 @@ const GATEWAY_STEPS = [
 const GATEWAY_FAQ = ['noResponse', 'notInAllowedChatIds', 'tokenInvalid', 'approvalStuck'] as const
 const FEISHU_GUIDE_KEYS = ['credentials', 'events', 'cardActions', 'testAndObserve'] as const
 const TELEGRAM_GUIDE_KEYS = ['credentials', 'setWebhook', 'privacyAndChatId', 'testAndObserve'] as const
+const HELP_SECTION_ANCHORS = [
+  { id: 'feature-guide', icon: BookOpen, fallback: 'Feature Guide' },
+  { id: 'hover-tips', icon: MessageSquare, fallback: 'Hover Tips' },
+  { id: 'gateway-tutorial', icon: Wrench, fallback: 'Gateway Tutorial' },
+  { id: 'provider-guides', icon: Send, fallback: 'Provider Guides' },
+] as const
 
 export default function HelpCenterPage() {
   const { t } = useLocale()
+  const [query, setQuery] = useState('')
+  const tSafe = (key: string, fallback: string) => {
+    const value = t(key)
+    return value === key ? fallback : value
+  }
+
+  const filteredNavItems = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return HELP_NAV_ITEMS
+    return HELP_NAV_ITEMS.filter((item) => {
+      const navKey = item.key === 'chat' ? 'sessions' : item.key === 'mcp' ? 'mcpServers' : item.key
+      const title = t(`nav.${navKey}`).toLowerCase()
+      const desc = t(`help.nav.${navKey}`).toLowerCase()
+      return title.includes(normalized) || desc.includes(normalized)
+    })
+  }, [query, t])
 
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
@@ -60,13 +83,36 @@ export default function HelpCenterPage() {
                   <Badge variant="outline">{t('helpCenter.badges.gateway')}</Badge>
                   <Badge variant="outline">{t('helpCenter.badges.quickStart')}</Badge>
                 </div>
+                <div className="grid grid-cols-1 gap-3 pt-1 md:grid-cols-[1fr_auto]">
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={tSafe('helpCenter.searchPlaceholder', 'Search guides, modules, and troubleshooting...')}
+                    className="w-full rounded-lg border border-border-subtle bg-bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary-500/60 focus:outline-none"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    {HELP_SECTION_ANCHORS.map((section) => {
+                      const Icon = section.icon
+                      return (
+                        <a
+                          key={section.id}
+                          href={`#${section.id}`}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-surface/70 px-2.5 py-1.5 text-xs text-text-secondary hover:text-text-primary"
+                        >
+                          <Icon size={12} />
+                          {tSafe(`helpCenter.sections.${section.id}`, section.fallback)}
+                        </a>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <Card className="lg:col-span-2 border-border-subtle bg-bg-surface/60 shadow-xs">
+          <Card id="feature-guide" className="lg:col-span-2 border-border-subtle bg-bg-surface/60 shadow-xs">
             <CardContent className="p-5 space-y-3.5">
               <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <BookOpen size={18} className="text-primary-400" />
@@ -74,7 +120,7 @@ export default function HelpCenterPage() {
               </h2>
               <p className="text-sm text-text-secondary/90">{t('helpCenter.featureGuide.subtitle')}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {HELP_NAV_ITEMS.map((item) => {
+                {filteredNavItems.map((item) => {
                   const title = t(`nav.${item.key === 'chat' ? 'sessions' : item.key === 'mcp' ? 'mcpServers' : item.key}`)
                   const description = t(`help.nav.${item.key === 'chat' ? 'sessions' : item.key === 'mcp' ? 'mcpServers' : item.key}`)
                   return (
@@ -93,10 +139,15 @@ export default function HelpCenterPage() {
                   )
                 })}
               </div>
+              {filteredNavItems.length === 0 ? (
+                <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-2 text-sm text-text-secondary">
+                  {tSafe('helpCenter.searchNoResults', 'No matching guides found. Try broader keywords.')}
+                </p>
+              ) : null}
             </CardContent>
           </Card>
 
-          <Card className="border-border-subtle bg-bg-surface/60 shadow-xs">
+          <Card id="hover-tips" className="border-border-subtle bg-bg-surface/60 shadow-xs">
             <CardContent className="p-5 space-y-3">
               <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <MessageSquare size={18} className="text-primary-400" />
@@ -114,7 +165,7 @@ export default function HelpCenterPage() {
           </Card>
         </div>
 
-        <Card className="border-border-subtle bg-bg-surface/60 shadow-xs">
+        <Card id="gateway-tutorial" className="border-border-subtle bg-bg-surface/60 shadow-xs">
           <CardContent className="p-5 space-y-4.5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
@@ -156,18 +207,20 @@ export default function HelpCenterPage() {
             <div className="space-y-2">
               <p className="text-sm font-medium text-text-primary">{t('helpCenter.gatewayFaq.title')}</p>
               <div className="space-y-2">
-                {GATEWAY_FAQ.map((faqKey) => (
-                  <div key={faqKey} className="rounded-lg border border-border-subtle/80 bg-bg-surface/70 px-4 py-3">
-                    <p className="text-sm font-medium text-text-primary">{t(`helpCenter.gatewayFaq.items.${faqKey}.q`)}</p>
-                    <p className="text-sm text-text-secondary/90 mt-1 leading-relaxed">{t(`helpCenter.gatewayFaq.items.${faqKey}.a`)}</p>
-                  </div>
+                {GATEWAY_FAQ.map((faqKey, idx) => (
+                  <details key={faqKey} className="rounded-lg border border-border-subtle/80 bg-bg-surface/70 px-4 py-3" open={idx === 0}>
+                    <summary className="cursor-pointer text-sm font-medium text-text-primary">
+                      {t(`helpCenter.gatewayFaq.items.${faqKey}.q`)}
+                    </summary>
+                    <p className="text-sm text-text-secondary/90 mt-2 leading-relaxed">{t(`helpCenter.gatewayFaq.items.${faqKey}.a`)}</p>
+                  </details>
                 ))}
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div id="provider-guides" className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <Card className="border-border-subtle bg-bg-surface/60 shadow-xs">
             <CardContent className="p-5 space-y-3.5">
               <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">

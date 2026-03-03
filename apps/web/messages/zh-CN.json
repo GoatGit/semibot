@@ -187,11 +187,14 @@
   "config": {
     "header": {
       "title": "配置管理",
-      "subtitle": "统一管理 LLM、Tools、Gateway、API Key、Webhook。"
+      "subtitle": "统一管理 LLM、Tools、Gateway、API Key、Webhook。",
+      "helpHint": "需要配置说明或排障指引？打开帮助中心查看教程与 FAQ。",
+      "openHelpCenter": "打开帮助中心"
     },
     "loading": "加载配置中...",
     "common": {
       "notSet": "未设置",
+      "customValue": "自定义",
       "riskLevels": {
         "low": "低",
         "medium": "中",
@@ -269,6 +272,12 @@
     "tools": {
       "activeCount": "活跃 {count}",
       "configTitle": "工具配置（仅启停与参数）",
+      "quickTips": {
+        "title": "快速提示",
+        "fields": "配置时优先按字段名理解参数，避免误填。",
+        "scope": "高风险工具建议优先使用 session / session_action 聚合审批。",
+        "domains": "域名白名单和黑名单使用逗号分隔，并会匹配子域名。"
+      },
       "loading": "正在加载工具列表...",
       "empty": "暂无工具配置数据（V2 不支持新增/删除 Tool）",
       "risk": "风险",
@@ -277,6 +286,8 @@
       "on": "开启",
       "off": "关闭",
       "builtIn": "内置",
+      "toolCardHint": "在这里可以设置风险、审批策略和运行参数。",
+      "toolCardHintAria": "工具配置帮助",
       "configure": "配置",
       "disable": "停用",
       "enable": "启用",
@@ -355,7 +366,9 @@
       "tool": {
         "title": "工具配置",
         "description": "V2 仅支持配置内建工具参数与启停，不支持修改工具名称/类型，不支持新增或删除。",
+        "nameLabel": "字段名：name",
         "namePlaceholder": "工具名称",
+        "typeLabel": "字段名：type",
         "typePlaceholder": "工具类型",
         "timeoutLabel": "超时时间",
         "timeoutDefault": "使用默认超时",
@@ -379,17 +392,27 @@
           "tool": "按工具聚合",
           "call": "按每次调用"
         },
+        "apiEndpointLabel": "字段名：apiEndpoint",
         "apiEndpointPlaceholder": "API Endpoint（可选）",
+        "apiKeyLabel": "字段名：apiKey",
         "apiKeyPlaceholder": "API Key（留空不修改）",
         "noApiNeeded": "{tool} 无需配置 API Endpoint / API Key。",
+        "rootPathLabel": "字段名：rootPath",
         "rootPathPlaceholder": "根目录（可选，如 /Users/xxx）",
+        "maxReadBytesLabel": "字段名：maxReadBytes",
+        "maxReadBytesDefault": "使用默认 maxReadBytes",
         "maxReadBytesPlaceholder": "maxReadBytes（可选，正整数）",
         "http": {
           "allowLocalhost": "允许访问 localhost / 内网地址",
+          "allowedDomainsLabel": "字段名：allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains（可选，逗号分隔，如 api.example.com）",
+          "blockedDomainsLabel": "字段名：blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains（可选，逗号分隔）",
+          "maxResponseCharsLabel": "字段名：maxResponseChars",
+          "maxResponseCharsDefault": "使用默认 maxResponseChars",
           "maxResponseCharsPlaceholder": "maxResponseChars（可选，100-500000）",
           "authType": "默认鉴权类型",
+          "authHeaderLabel": "字段名：authHeader",
           "authHeaderPlaceholder": "authHeader（例如 X-API-Key）",
           "authTypes": {
             "none": "不鉴权",
@@ -399,10 +422,17 @@
           }
         },
         "sql": {
+          "maxRowsLabel": "字段名：maxRows",
+          "maxRowsDefault": "使用默认 maxRows",
           "maxRowsPlaceholder": "maxRows（可选，1-5000）",
+          "defaultDatabaseLabel": "字段名：defaultDatabase",
+          "defaultDatabaseDefault": "使用运行时默认数据库",
           "defaultDatabasePlaceholder": "defaultDatabase（可选，默认数据库别名）",
+          "allowedDatabasesLabel": "字段名：allowedDatabases",
           "allowedDatabasesPlaceholder": "allowedDatabases（可选，逗号分隔）",
           "connectionsLabel": "connections（数据库别名映射）",
+          "connectionAliasLabel": "字段名：alias",
+          "connectionDsnLabel": "字段名：dsn",
           "addConnection": "新增连接",
           "connectionAliasPlaceholder": "别名（例如 main）",
           "connectionDsnPlaceholder": "DSN（例如 postgresql://... 或 sqlite:///...）",
@@ -412,8 +442,12 @@
           "headless": "使用无头模式运行浏览器",
           "allowLocalhost": "允许访问 localhost / 内网地址",
           "browserType": "浏览器类型",
+          "allowedDomainsLabel": "字段名：allowedDomains",
           "allowedDomainsPlaceholder": "allowedDomains（可选，逗号分隔，如 example.com,news.ycombinator.com）",
+          "blockedDomainsLabel": "字段名：blockedDomains",
           "blockedDomainsPlaceholder": "blockedDomains（可选，逗号分隔）",
+          "maxTextLengthLabel": "字段名：maxTextLength",
+          "maxTextLengthDefault": "使用默认 maxTextLength",
           "maxTextLengthPlaceholder": "maxTextLength（可选，100-500000）",
           "browserTypes": {
             "chromium": "Chromium",
@@ -1356,6 +1390,14 @@
       "hover": "全站 Hover 说明",
       "gateway": "Gateway 配置教程",
       "quickStart": "快速上手"
+    },
+    "searchPlaceholder": "搜索功能说明、模块入口和排障问题...",
+    "searchNoResults": "未找到匹配内容，请尝试更宽泛的关键词。",
+    "sections": {
+      "feature-guide": "功能导航",
+      "hover-tips": "悬停提示",
+      "gateway-tutorial": "网关教程",
+      "provider-guides": "平台指引"
     },
     "featureGuide": {
       "title": "功能导航速览",
