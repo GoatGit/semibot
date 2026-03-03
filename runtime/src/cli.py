@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import re
@@ -3253,6 +3254,25 @@ def _ui_pm2_process_names(name_prefix: str) -> dict[str, str]:
     }
 
 
+def _ui_default_instance_suffix(project_root: Path) -> str:
+    normalized = str(project_root.resolve()).encode("utf-8")
+    return hashlib.sha1(normalized).hexdigest()[:8]
+
+
+def _resolve_ui_name_prefix(project_root: Path, raw_value: str | None) -> str:
+    value = (raw_value or "").strip()
+    if value:
+        return value
+    return f"semibot-ui-{_ui_default_instance_suffix(project_root)}"
+
+
+def _resolve_ui_runtime_name(project_root: Path, raw_value: str | None) -> str:
+    value = (raw_value or "").strip()
+    if value:
+        return value
+    return f"semibot-runtime-{_ui_default_instance_suffix(project_root)}"
+
+
 def _ui_pm2_start_command(
     *,
     service: str,
@@ -3306,6 +3326,8 @@ def _ui_pm2_process_summary(name: str) -> dict[str, Any]:
 def cmd_ui(args: argparse.Namespace) -> int:
     action = str(args.ui_action)
     project_root = _repo_root_from_cli()
+    name_prefix = _resolve_ui_name_prefix(project_root, getattr(args, "name_prefix", None))
+    runtime_name = _resolve_ui_runtime_name(project_root, getattr(args, "runtime_name", None))
     pm2_error = _ensure_pm2()
     if pm2_error:
         return _ui_pm2_action_error(action, pm2_error)
@@ -3328,10 +3350,9 @@ def cmd_ui(args: argparse.Namespace) -> int:
         )
         return EXIT_NOT_FOUND
 
-    names = _ui_pm2_process_names(args.name_prefix)
+    names = _ui_pm2_process_names(name_prefix)
     steps: list[dict[str, Any]] = []
     port_cleanup: list[dict[str, Any]] = []
-    runtime_name = str(getattr(args, "runtime_name", "semibot-runtime"))
     with_runtime = bool(getattr(args, "with_runtime", True))
     api_port = int(getattr(args, "api_port", _default_api_port()))
     web_port = int(getattr(args, "web_port", _default_web_port()))
@@ -3467,7 +3488,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
             "action": action,
             "ok": True,
             "project_root": str(project_root),
-            "pm2_name_prefix": args.name_prefix,
+            "pm2_name_prefix": name_prefix,
             "runtime": {
                 "enabled": with_runtime,
                 "pm2_name": runtime_args.name,
@@ -5813,10 +5834,18 @@ def build_parser() -> argparse.ArgumentParser:
     ui_subparsers = ui_parser.add_subparsers(dest="ui_action", required=True)
 
     ui_start_parser = ui_subparsers.add_parser("start", help="Start runtime/UI/API services in background")
-    ui_start_parser.add_argument("--name-prefix", default="semibot-ui", help="PM2 process name prefix")
+    ui_start_parser.add_argument(
+        "--name-prefix",
+        default=None,
+        help="PM2 process name prefix (default: project-isolated)",
+    )
     ui_start_parser.add_argument("--api-port", type=int, default=_default_api_port(), help="API port")
     ui_start_parser.add_argument("--web-port", type=int, default=_default_web_port(), help="Web port")
-    ui_start_parser.add_argument("--runtime-name", default="semibot-runtime", help="Runtime PM2 process name")
+    ui_start_parser.add_argument(
+        "--runtime-name",
+        default=None,
+        help="Runtime PM2 process name (default: project-isolated)",
+    )
     ui_start_parser.add_argument("--runtime-host", default="127.0.0.1", help="Runtime bind host")
     ui_start_parser.add_argument("--runtime-port", type=int, default=8765, help="Runtime bind port")
     ui_start_parser.add_argument("--runtime-db-path", default=_default_db_path(), help="Runtime SQLite DB path")
@@ -5842,10 +5871,18 @@ def build_parser() -> argparse.ArgumentParser:
     ui_start_parser.set_defaults(func=cmd_ui)
 
     ui_stop_parser = ui_subparsers.add_parser("stop", help="Stop runtime/UI/API services")
-    ui_stop_parser.add_argument("--name-prefix", default="semibot-ui", help="PM2 process name prefix")
+    ui_stop_parser.add_argument(
+        "--name-prefix",
+        default=None,
+        help="PM2 process name prefix (default: project-isolated)",
+    )
     ui_stop_parser.add_argument("--api-port", type=int, default=_default_api_port(), help="API port")
     ui_stop_parser.add_argument("--web-port", type=int, default=_default_web_port(), help="Web port")
-    ui_stop_parser.add_argument("--runtime-name", default="semibot-runtime", help="Runtime PM2 process name")
+    ui_stop_parser.add_argument(
+        "--runtime-name",
+        default=None,
+        help="Runtime PM2 process name (default: project-isolated)",
+    )
     ui_stop_parser.add_argument("--runtime-port", type=int, default=8765, help="Runtime bind port")
     ui_stop_parser.add_argument(
         "--no-runtime",
@@ -5857,10 +5894,18 @@ def build_parser() -> argparse.ArgumentParser:
     ui_stop_parser.set_defaults(func=cmd_ui)
 
     ui_restart_parser = ui_subparsers.add_parser("restart", help="Restart runtime/UI/API services")
-    ui_restart_parser.add_argument("--name-prefix", default="semibot-ui", help="PM2 process name prefix")
+    ui_restart_parser.add_argument(
+        "--name-prefix",
+        default=None,
+        help="PM2 process name prefix (default: project-isolated)",
+    )
     ui_restart_parser.add_argument("--api-port", type=int, default=_default_api_port(), help="API port")
     ui_restart_parser.add_argument("--web-port", type=int, default=_default_web_port(), help="Web port")
-    ui_restart_parser.add_argument("--runtime-name", default="semibot-runtime", help="Runtime PM2 process name")
+    ui_restart_parser.add_argument(
+        "--runtime-name",
+        default=None,
+        help="Runtime PM2 process name (default: project-isolated)",
+    )
     ui_restart_parser.add_argument("--runtime-host", default="127.0.0.1", help="Runtime bind host")
     ui_restart_parser.add_argument("--runtime-port", type=int, default=8765, help="Runtime bind port")
     ui_restart_parser.add_argument("--runtime-db-path", default=_default_db_path(), help="Runtime SQLite DB path")
