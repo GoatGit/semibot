@@ -168,6 +168,18 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       maxRows: 200,
     },
   },
+  skill_installer: {
+    description: '内建技能安装工具（从本地目录/zip安装并刷新运行时技能索引）',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 30,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['source_path', 'skill_name'],
+    },
+  },
 }
 
 function getBuiltinTemplate(toolName: string): { description: string; type: string; config: ToolConfig } {
@@ -193,7 +205,8 @@ function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig |
     toolName === 'browser_automation' ||
     toolName === 'json_transform' ||
     toolName === 'csv_xlsx' ||
-    toolName === 'pdf_report'
+    toolName === 'pdf_report' ||
+    toolName === 'skill_installer'
   ) {
     delete sanitized.apiEndpoint
     delete sanitized.apiKey

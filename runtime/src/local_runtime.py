@@ -487,6 +487,7 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
             "csv_xlsx",
             "sql_query_readonly",
             "rule_authoring",
+            "skill_installer",
         }:
             risk_level = "high"
         else:
@@ -501,6 +502,7 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
                 "csv_xlsx",
                 "sql_query_readonly",
                 "rule_authoring",
+                "skill_installer",
             },
         )
         raw_approval_scope = str(cfg.get("approvalScope") or "").strip().lower()

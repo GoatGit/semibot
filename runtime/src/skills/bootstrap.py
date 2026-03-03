@@ -10,9 +10,11 @@ from src.skills.file_io import FileIOTool
 from src.skills.http_client import HttpClientTool
 from src.skills.json_transform import JsonTransformTool
 from src.skills.pdf_report import PdfReportTool
+from src.skills.package_loader import register_installed_package_tools
 from src.skills.registry import SkillRegistry
 from src.skills.rule_authoring import RuleAuthoringTool
 from src.skills.search import SearchTool
+from src.skills.skill_installer import SkillInstallerTool
 from src.skills.sql_query_readonly import SqlQueryReadonlyTool
 from src.skills.web_fetch import WebFetchTool
 from src.skills.web_search import WebSearchTool
@@ -41,6 +43,7 @@ def create_default_registry() -> SkillRegistry:
     registry.register_tool(PdfReportTool())
     registry.register_tool(SqlQueryReadonlyTool())
     registry.register_tool(RuleAuthoringTool())
+    registry.register_tool(SkillInstallerTool(registry))
     logger.info(
         "Registered core builtin tools",
         extra={
@@ -55,6 +58,7 @@ def create_default_registry() -> SkillRegistry:
                 "pdf_report",
                 "sql_query_readonly",
                 "rule_authoring",
+                "skill_installer",
             ]
         },
     )
@@ -74,6 +78,14 @@ def create_default_registry() -> SkillRegistry:
         logger.info("Registered WebSearchTool (serpapi)")
     else:
         logger.info("WebSearchTool not registered (no API key configured)")
+
+    # Load package skills installed under ~/.semibot/skills and expose them as tools.
+    load_result = register_installed_package_tools(registry, skills_root=os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"))
+    if load_result.get("registered"):
+        logger.info(
+            "Loaded installed package skills",
+            extra={"registered": load_result.get("registered", [])},
+        )
 
     logger.info(
         "Registry bootstrap complete",
