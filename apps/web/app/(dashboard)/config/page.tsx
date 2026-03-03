@@ -1948,6 +1948,18 @@ export default function ConfigPage() {
     return map
   }, [llmProviders])
 
+  const visibleProviderEntries = useMemo(() => {
+    const entries = Object.entries(llmConfig?.providers || {}) as Array<[ProviderKey, LlmProviderConfigEntry]>
+    return entries.filter(([providerKey, cfg]) => {
+      const status = llmStatusMap.get(providerKey)
+      const isBuiltinProvider = !providerKey.includes(':')
+      if (isBuiltinProvider) {
+        return Boolean(status?.available || cfg.apiKeyConfigured)
+      }
+      return Boolean(cfg.apiKeyConfigured || cfg.baseUrl?.trim())
+    })
+  }, [llmConfig, llmStatusMap])
+
   const availableModelOptions = useMemo(() => {
     const unique = Array.from(new Set(llmProviders.flatMap((item) => item.models || []))).sort((a, b) =>
       a.localeCompare(b)
@@ -2174,10 +2186,10 @@ export default function ConfigPage() {
                         {tSafe('config.llm.addProviderInstance', '新增 Provider 实例')}
                       </Button>
                     </div>
-                    {(Object.keys(llmConfig?.providers || {}) as ProviderKey[]).map((providerKey) => {
-                      const cfg = llmConfig?.providers[providerKey]
+                    {visibleProviderEntries.map(([providerKey, cfg]) => {
                       const status = llmStatusMap.get(providerKey)
                       if (!cfg) return null
+                      const providerId = providerKey.includes(':') ? providerKey.split(':').slice(1).join(':') : ''
 
                       return (
                         <div
@@ -2206,6 +2218,11 @@ export default function ConfigPage() {
                             {tSafe('config.llm.apiKeyLabel', 'API Key')}:{' '}
                             {cfg.apiKeyConfigured ? (cfg.apiKeyPreview || t('config.status.configured')) : t('config.status.notConfigured')}
                           </p>
+                          {providerId ? (
+                            <p className="mt-1 text-xs text-text-tertiary">
+                              {tSafe('config.llm.providerIdLabel', 'Provider ID')}: {providerId}
+                            </p>
+                          ) : null}
                           <p className="mt-1 truncate text-xs text-text-tertiary">
                             {tSafe('config.llm.endpointLabel', 'Endpoint')}: {cfg.baseUrl || t('config.common.notSet')}
                           </p>
@@ -2227,6 +2244,11 @@ export default function ConfigPage() {
                         </div>
                       )
                     })}
+                    {visibleProviderEntries.length === 0 && (
+                      <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
+                        {tSafe('config.llm.noConfiguredProviders', '暂无已配置的 Provider，请先新增 Provider 实例或配置 API Key。')}
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               </div>
