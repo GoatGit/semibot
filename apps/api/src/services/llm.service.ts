@@ -19,6 +19,7 @@ import {
   clearProviders,
   getProvider,
   getAvailableProviders,
+  getAllProviders,
 } from './llm/index'
 import { OpenAIProvider } from './llm/openai.provider'
 import { AnthropicProvider } from './llm/anthropic.provider'
@@ -33,6 +34,40 @@ const llmLogger = createLogger('llm')
 // ═══════════════════════════════════════════════════════════════
 
 let isInitialized = false
+
+type CustomProviderEnvConfig = {
+  id: string
+  displayName?: string
+  apiKey?: string
+  baseUrl?: string
+}
+
+function parseCustomProvidersFromEnv(): CustomProviderEnvConfig[] {
+  const raw = process.env.CUSTOM_LLM_PROVIDERS
+  if (!raw) return []
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const items: CustomProviderEnvConfig[] = []
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      const id = String(row.id || '').trim()
+      if (!id) continue
+      items.push({
+        id,
+        displayName: String(row.displayName || '').trim() || undefined,
+        apiKey: String(row.apiKey || '').trim() || undefined,
+        baseUrl: String(row.baseUrl || '').trim() || undefined,
+      })
+    }
+    return items
+  } catch {
+    llmLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
+    return []
+  }
+}
 
 function initializeProviders(): void {
   if (isInitialized) return
@@ -50,8 +85,19 @@ function initializeProviders(): void {
   registerProvider(google)
 
   // 注册 Custom Provider (兼容 OpenAI API 的第三方服务)
-  const custom = new CustomProvider()
+  const custom = new CustomProvider({ name: 'custom', displayName: '自定义模型' })
   registerProvider(custom)
+
+  for (const item of parseCustomProvidersFromEnv()) {
+    const providerName = `custom:${item.id}`
+    const customProvider = new CustomProvider({
+      name: providerName,
+      displayName: item.displayName || item.id,
+      apiKey: item.apiKey,
+      baseUrl: item.baseUrl,
+    })
+    registerProvider(customProvider)
+  }
 
   isInitialized = true
   llmLogger.info('Providers 初始化完成')
@@ -200,16 +246,12 @@ export async function getAvailableModels(): Promise<string[]> {
  */
 export async function getProviderStatus(): Promise<Array<{
   name: string
+  displayName?: string
   available: boolean
   models: string[]
   modelInfos: LLMModelInfo[]
 }>> {
   initializeProviders()
-
-  const openai = getProvider('openai')
-  const anthropic = getProvider('anthropic')
-  const google = getProvider('google')
-  const custom = getProvider('custom')
 
   const loadProviderModels = async (
     provider?: LLMProvider
@@ -233,37 +275,29 @@ export async function getProviderStatus(): Promise<Array<{
     }
   }
 
-  const openaiModels = await loadProviderModels(openai)
-  const anthropicModels = await loadProviderModels(anthropic)
-  const googleModels = await loadProviderModels(google)
-  const customModels = await loadProviderModels(custom)
+  const defaultOrder = ['openai', 'anthropic', 'google', 'custom']
+  const providers = getAllProviders()
+  const providerNames = Array.from(
+    new Set([
+      ...defaultOrder,
+      ...providers.map((provider) => provider.name),
+    ])
+  )
 
-  return [
-    {
-      name: 'openai',
-      available: openai?.isAvailable() ?? false,
-      models: openaiModels.models,
-      modelInfos: openaiModels.modelInfos,
-    },
-    {
-      name: 'anthropic',
-      available: anthropic?.isAvailable() ?? false,
-      models: anthropicModels.models,
-      modelInfos: anthropicModels.modelInfos,
-    },
-    {
-      name: 'google',
-      available: google?.isAvailable() ?? false,
-      models: googleModels.models,
-      modelInfos: googleModels.modelInfos,
-    },
-    {
-      name: 'custom',
-      available: custom?.isAvailable() ?? false,
-      models: customModels.models,
-      modelInfos: customModels.modelInfos,
-    },
-  ]
+  const statuses = await Promise.all(providerNames.map(async (name) => {
+    const provider = getProvider(name)
+    const loaded = await loadProviderModels(provider)
+    const withDisplayName = provider as LLMProvider & { displayName?: string }
+    return {
+      name,
+      displayName: withDisplayName?.displayName,
+      available: provider?.isAvailable() ?? false,
+      models: loaded.models,
+      modelInfos: loaded.modelInfos,
+    }
+  }))
+
+  return statuses
 }
 
 // 导出类型

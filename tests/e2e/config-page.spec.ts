@@ -3,12 +3,7 @@ import { test, expect, type Page, type Route } from '@playwright/test'
 type LlmConfigPayload = {
   defaultModel: string
   fallbackModel: string
-  providers: {
-    openai: { apiKeyConfigured: boolean; apiKeyPreview: string | null; baseUrl: string }
-    anthropic: { apiKeyConfigured: boolean; apiKeyPreview: string | null; baseUrl: string }
-    google: { apiKeyConfigured: boolean; apiKeyPreview: string | null; baseUrl: string }
-    custom: { apiKeyConfigured: boolean; apiKeyPreview: string | null; baseUrl: string }
-  }
+  providers: Record<string, { apiKeyConfigured: boolean; apiKeyPreview: string | null; baseUrl: string }>
 }
 
 async function json(route: Route, body: unknown, status = 200) {
@@ -455,11 +450,11 @@ test.describe('Config Page', () => {
     await expect(page.getByRole('heading', { name: /配置管理|Configuration|設定/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: /模型路由默认值|Model routing defaults|モデルルーティング/ })).toBeVisible()
 
-    await expect(page.getByTestId('llm-default-model-input')).toHaveValue('gpt-4o')
+    await expect(page.getByTestId('llm-default-model-select')).toContainText('gpt-4o')
     await expect(page.getByTestId('llm-fallback-model-input')).toHaveValue('gpt-3.5-turbo')
     await expect(page.getByText(/组织配置|Organization/)).toHaveCount(0)
 
-    await page.getByRole('button', { name: 'Tools' }).click()
+    await page.getByRole('button', { name: /Tools|工具|ツール/ }).click()
     await expect(page.getByText('工具配置（仅启停与参数）')).toBeVisible()
     await expect(page.getByText('search')).toBeVisible()
     await expect(page.getByText('code_executor')).toBeVisible()
@@ -476,13 +471,14 @@ test.describe('Config Page', () => {
     })
     await page.goto('/config')
 
-    await page.getByTestId('llm-default-model-input').fill('gpt-4.1')
+    await page.getByTestId('llm-default-model-select').click()
+    await page.getByRole('option', { name: 'gpt-4.1-mini' }).click()
     await page.getByTestId('llm-fallback-model-input').fill('gpt-4.1-mini')
     await page.getByTestId('llm-save-routing-button').click()
 
     await expect.poll(() => capturedPayload).not.toBeNull()
     expect(capturedPayload).toMatchObject({
-      defaultModel: 'gpt-4.1',
+      defaultModel: 'gpt-4.1-mini',
       fallbackModel: 'gpt-4.1-mini',
     })
   })
@@ -505,6 +501,30 @@ test.describe('Config Page', () => {
         openai: {
           apiKey: 'sk-test-new-key',
           baseUrl: 'https://api.openai.com/v1',
+          clearApiKey: false,
+        },
+      },
+    })
+  })
+
+  test('should create custom provider config with custom:id key', async ({ page }) => {
+    const payloads: any[] = []
+    await setupConfigPageMocks(page, (payload) => payloads.push(payload))
+    await page.goto('/config')
+
+    await page.getByRole('button', { name: /新增自定义 Provider|Add custom provider/i }).click()
+    await expect(page.getByRole('dialog', { name: /LLM Provider|LLM プロバイダ|LLM Provider/ })).toBeVisible()
+    await page.getByTestId('provider-custom-id-input').fill('deepseek')
+    await page.getByTestId('provider-api-key-input').fill('sk-deepseek-123')
+    await page.getByTestId('provider-endpoint-input').fill('https://api.deepseek.com/v1')
+    await page.getByTestId('provider-save-button').click()
+
+    await expect.poll(() => payloads.length).toBeGreaterThan(0)
+    expect(payloads[payloads.length - 1]).toMatchObject({
+      providers: {
+        'custom:deepseek': {
+          apiKey: 'sk-deepseek-123',
+          baseUrl: 'https://api.deepseek.com/v1',
           clearApiKey: false,
         },
       },

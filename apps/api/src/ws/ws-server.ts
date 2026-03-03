@@ -68,12 +68,7 @@ interface RuntimeProviderConfig {
 interface RuntimeLLMConfigPayload {
   default_model: string
   fallback_model: string
-  providers: {
-    openai: RuntimeProviderConfig
-    anthropic: RuntimeProviderConfig
-    google: RuntimeProviderConfig
-    custom: RuntimeProviderConfig
-  }
+  providers: Record<string, RuntimeProviderConfig>
 }
 
 interface WSRequestMessage {
@@ -295,27 +290,65 @@ export class WSServer {
     if (process.env.ANTHROPIC_API_KEY) apiKeys.anthropic = this.encryptSecret(process.env.ANTHROPIC_API_KEY, vmToken)
     if (process.env.GOOGLE_AI_API_KEY) apiKeys.google = this.encryptSecret(process.env.GOOGLE_AI_API_KEY, vmToken)
     if (process.env.CUSTOM_LLM_API_KEY) apiKeys.custom = this.encryptSecret(process.env.CUSTOM_LLM_API_KEY, vmToken)
+    const customProvidersRaw = process.env.CUSTOM_LLM_PROVIDERS
+    if (customProvidersRaw) {
+      try {
+        const parsed = JSON.parse(customProvidersRaw) as unknown
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (!item || typeof item !== 'object') continue
+            const row = item as Record<string, unknown>
+            const id = String(row.id || '').trim()
+            const apiKey = String(row.apiKey || '').trim()
+            if (!id || !apiKey) continue
+            apiKeys[`custom:${id}`] = this.encryptSecret(apiKey, vmToken)
+          }
+        }
+      } catch {
+        wsLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，忽略自定义 API Key 注入')
+      }
+    }
     return apiKeys
   }
 
   private getRuntimeLLMConfig(): RuntimeLLMConfigPayload {
+    const providers: Record<string, RuntimeProviderConfig> = {
+      openai: {
+        base_url: process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1',
+      },
+      anthropic: {
+        base_url: process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com/v1',
+      },
+      google: {
+        base_url: process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+      },
+      custom: {
+        base_url: process.env.CUSTOM_LLM_API_BASE_URL || '',
+      },
+    }
+    const customProvidersRaw = process.env.CUSTOM_LLM_PROVIDERS
+    if (customProvidersRaw) {
+      try {
+        const parsed = JSON.parse(customProvidersRaw) as unknown
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (!item || typeof item !== 'object') continue
+            const row = item as Record<string, unknown>
+            const id = String(row.id || '').trim()
+            const baseUrl = String(row.baseUrl || '').trim()
+            if (!id) continue
+            providers[`custom:${id}`] = { base_url: baseUrl }
+          }
+        }
+      } catch {
+        wsLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，忽略自定义 Provider 配置注入')
+      }
+    }
+
     return {
       default_model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
       fallback_model: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
-      providers: {
-        openai: {
-          base_url: process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1',
-        },
-        anthropic: {
-          base_url: process.env.ANTHROPIC_API_BASE_URL || 'https://api.anthropic.com/v1',
-        },
-        google: {
-          base_url: process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
-        },
-        custom: {
-          base_url: process.env.CUSTOM_LLM_API_BASE_URL || '',
-        },
-      },
+      providers,
     }
   }
 

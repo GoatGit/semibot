@@ -47,15 +47,15 @@ const providerConfigSchema = z.object({
 const updateLlmConfigSchema = z.object({
   defaultModel: z.string().optional(),
   fallbackModel: z.string().optional(),
-  providers: z
-    .object({
-      openai: providerConfigSchema.optional(),
-      anthropic: providerConfigSchema.optional(),
-      google: providerConfigSchema.optional(),
-      custom: providerConfigSchema.optional(),
-    })
-    .optional(),
+  providers: z.record(providerConfigSchema).optional(),
 })
+
+type CustomProviderConfig = {
+  id: string
+  displayName?: string
+  apiKey?: string
+  baseUrl?: string
+}
 
 function keyPreview(value?: string): string | null {
   if (!value) return null
@@ -110,63 +110,132 @@ function applyProcessEnvUpdates(updates: Record<string, string | null>): void {
   }
 }
 
+function parseCustomProvidersFromEnv(): CustomProviderConfig[] {
+  const raw = process.env.CUSTOM_LLM_PROVIDERS
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const items: CustomProviderConfig[] = []
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      const id = String(row.id || '').trim()
+      if (!id) continue
+      items.push({
+        id,
+        displayName: String(row.displayName || '').trim() || undefined,
+        apiKey: String(row.apiKey || '').trim() || undefined,
+        baseUrl: String(row.baseUrl || '').trim() || undefined,
+      })
+    }
+    return items
+  } catch {
+    llmProviderRouteLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
+    return []
+  }
+}
+
+function getProviderDisplayName(providerName: string, displayName?: string): string {
+  if (displayName) return displayName
+  if (PROVIDER_DISPLAY_NAMES[providerName]) return PROVIDER_DISPLAY_NAMES[providerName]
+  if (providerName.startsWith('custom:')) {
+    return providerName.replace(/^custom:/, '')
+  }
+  return providerName
+}
+
 function buildProviderConfig() {
+  const customProviders = parseCustomProvidersFromEnv()
+  const providers: Record<string, {
+    apiKeyConfigured: boolean
+    apiKeyPreview: string | null
+    baseUrl: string
+    displayName?: string
+  }> = {
+    openai: {
+      apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
+      apiKeyPreview: keyPreview(process.env.OPENAI_API_KEY),
+      baseUrl: process.env.OPENAI_API_BASE_URL || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
+      displayName: PROVIDER_DISPLAY_NAMES.openai,
+    },
+    anthropic: {
+      apiKeyConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+      apiKeyPreview: keyPreview(process.env.ANTHROPIC_API_KEY),
+      baseUrl: process.env.ANTHROPIC_API_BASE_URL || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
+      displayName: PROVIDER_DISPLAY_NAMES.anthropic,
+    },
+    google: {
+      apiKeyConfigured: Boolean(process.env.GOOGLE_AI_API_KEY),
+      apiKeyPreview: keyPreview(process.env.GOOGLE_AI_API_KEY),
+      baseUrl: process.env.GOOGLE_AI_API_BASE_URL || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
+      displayName: PROVIDER_DISPLAY_NAMES.google,
+    },
+    custom: {
+      apiKeyConfigured: Boolean(process.env.CUSTOM_LLM_API_KEY),
+      apiKeyPreview: keyPreview(process.env.CUSTOM_LLM_API_KEY),
+      baseUrl: process.env.CUSTOM_LLM_API_BASE_URL || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
+      displayName: PROVIDER_DISPLAY_NAMES.custom,
+    },
+  }
+
+  for (const custom of customProviders) {
+    const key = `custom:${custom.id}`
+    providers[key] = {
+      apiKeyConfigured: Boolean(custom.apiKey),
+      apiKeyPreview: keyPreview(custom.apiKey),
+      baseUrl: custom.baseUrl || '',
+      displayName: custom.displayName || custom.id,
+    }
+  }
+
   return {
     defaultModel: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
     fallbackModel: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
-    providers: {
-      openai: {
-        apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
-        apiKeyPreview: keyPreview(process.env.OPENAI_API_KEY),
-        baseUrl: process.env.OPENAI_API_BASE_URL || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
-      },
-      anthropic: {
-        apiKeyConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
-        apiKeyPreview: keyPreview(process.env.ANTHROPIC_API_KEY),
-        baseUrl: process.env.ANTHROPIC_API_BASE_URL || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
-      },
-      google: {
-        apiKeyConfigured: Boolean(process.env.GOOGLE_AI_API_KEY),
-        apiKeyPreview: keyPreview(process.env.GOOGLE_AI_API_KEY),
-        baseUrl: process.env.GOOGLE_AI_API_BASE_URL || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
-      },
-      custom: {
-        apiKeyConfigured: Boolean(process.env.CUSTOM_LLM_API_KEY),
-        apiKeyPreview: keyPreview(process.env.CUSTOM_LLM_API_KEY),
-        baseUrl: process.env.CUSTOM_LLM_API_BASE_URL || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
-      },
-    },
+    providers,
   }
 }
 
 function buildRuntimeLlmConfigPayload() {
+  const providers: Record<string, { base_url: string }> = {
+    openai: {
+      base_url: process.env.OPENAI_API_BASE_URL || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
+    },
+    anthropic: {
+      base_url: process.env.ANTHROPIC_API_BASE_URL || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
+    },
+    google: {
+      base_url: process.env.GOOGLE_AI_API_BASE_URL || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
+    },
+    custom: {
+      base_url: process.env.CUSTOM_LLM_API_BASE_URL || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
+    },
+  }
+
+  for (const item of parseCustomProvidersFromEnv()) {
+    providers[`custom:${item.id}`] = {
+      base_url: item.baseUrl || '',
+    }
+  }
+
   return {
     default_model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
     fallback_model: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
-    providers: {
-      openai: {
-        base_url: process.env.OPENAI_API_BASE_URL || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
-      },
-      anthropic: {
-        base_url: process.env.ANTHROPIC_API_BASE_URL || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
-      },
-      google: {
-        base_url: process.env.GOOGLE_AI_API_BASE_URL || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
-      },
-      custom: {
-        base_url: process.env.CUSTOM_LLM_API_BASE_URL || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
-      },
-    },
+    providers,
   }
 }
 
 function buildRuntimeApiKeysPayload(): Record<string, string> {
-  return {
+  const payload: Record<string, string> = {
     openai: process.env.OPENAI_API_KEY ?? '',
     anthropic: process.env.ANTHROPIC_API_KEY ?? '',
     google: process.env.GOOGLE_AI_API_KEY ?? '',
     custom: process.env.CUSTOM_LLM_API_KEY ?? '',
   }
+  for (const item of parseCustomProvidersFromEnv()) {
+    payload[`custom:${item.id}`] = item.apiKey || ''
+  }
+  return payload
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -187,7 +256,7 @@ router.get(
       .filter((p) => p.available)
       .map((p) => ({
         name: p.name,
-        displayName: PROVIDER_DISPLAY_NAMES[p.name] || p.name,
+        displayName: getProviderDisplayName(p.name, p.displayName),
         available: p.available,
         models: p.models,
       }))
@@ -227,7 +296,7 @@ router.get(
           modelId,
           displayName,
           displayNameSource: modelInfo.displayName ? 'provider' : 'fallback',
-          providerName: PROVIDER_DISPLAY_NAMES[provider.name] || provider.name,
+          providerName: getProviderDisplayName(provider.name, provider.displayName),
           providerType: provider.name,
         })
       }
@@ -252,7 +321,7 @@ router.get(
 
     const data = providers.map((p) => ({
       name: p.name,
-      displayName: PROVIDER_DISPLAY_NAMES[p.name] || p.name,
+      displayName: getProviderDisplayName(p.name, p.displayName),
       available: p.available,
       models: p.models,
     }))
@@ -327,6 +396,49 @@ router.put(
     mapProvider(body.providers?.anthropic, 'ANTHROPIC_API_KEY', 'ANTHROPIC_API_BASE_URL')
     mapProvider(body.providers?.google, 'GOOGLE_AI_API_KEY', 'GOOGLE_AI_API_BASE_URL')
     mapProvider(body.providers?.custom, 'CUSTOM_LLM_API_KEY', 'CUSTOM_LLM_API_BASE_URL')
+
+    const nextCustomProviders = parseCustomProvidersFromEnv()
+    const customProviderById = new Map(nextCustomProviders.map((item) => [item.id, item] as const))
+    let hasCustomDynamicProviderUpdates = false
+    for (const [providerKey, providerConfig] of Object.entries(body.providers || {})) {
+      if (!providerKey.startsWith('custom:') || providerKey === 'custom') continue
+      hasCustomDynamicProviderUpdates = true
+      const id = providerKey.replace(/^custom:/, '').trim()
+      if (!id) continue
+      const current = customProviderById.get(id) || { id }
+
+      if (providerConfig.clearApiKey) {
+        delete current.apiKey
+      } else if (providerConfig.apiKey !== undefined) {
+        const apiKey = providerConfig.apiKey.trim()
+        if (apiKey) current.apiKey = apiKey
+        else delete current.apiKey
+      }
+
+      if (providerConfig.baseUrl !== undefined) {
+        const baseUrl = providerConfig.baseUrl.trim()
+        if (baseUrl) current.baseUrl = baseUrl
+        else delete current.baseUrl
+      }
+
+      if (!current.displayName) current.displayName = id
+      customProviderById.set(id, current)
+    }
+
+    if (hasCustomDynamicProviderUpdates) {
+      const customProvidersForEnv = Array.from(customProviderById.values())
+        .map((item) => ({
+          id: item.id,
+          ...(item.displayName ? { displayName: item.displayName } : {}),
+          ...(item.apiKey ? { apiKey: item.apiKey } : {}),
+          ...(item.baseUrl ? { baseUrl: item.baseUrl } : {}),
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id))
+
+      updates.CUSTOM_LLM_PROVIDERS = customProvidersForEnv.length > 0
+        ? JSON.stringify(customProvidersForEnv)
+        : null
+    }
 
     if (Object.keys(updates).length > 0) {
       await applyEnvUpdates(updates)

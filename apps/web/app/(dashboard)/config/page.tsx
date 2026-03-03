@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
+import { Select } from '@/components/ui/Select'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
@@ -75,17 +76,13 @@ interface LlmProviderConfigEntry {
   apiKeyConfigured: boolean
   apiKeyPreview: string | null
   baseUrl: string
+  displayName?: string
 }
 
 interface LlmConfigData {
   defaultModel: string
   fallbackModel: string
-  providers: {
-    openai: LlmProviderConfigEntry
-    anthropic: LlmProviderConfigEntry
-    google: LlmProviderConfigEntry
-    custom: LlmProviderConfigEntry
-  }
+  providers: Record<string, LlmProviderConfigEntry>
 }
 
 interface ToolItem {
@@ -142,7 +139,7 @@ type EvolutionCapabilityType = 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
 
 type ConfigTab = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
 type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
-type ProviderKey = keyof LlmConfigData['providers']
+type ProviderKey = string
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram'
 type GatewayFilter = 'all' | GatewayProvider
@@ -543,6 +540,7 @@ export default function ConfigPage() {
   const [providerConfigSaving, setProviderConfigSaving] = useState(false)
   const [providerConfigForm, setProviderConfigForm] = useState({
     provider: 'openai' as ProviderKey,
+    customProviderId: '',
     apiKey: '',
     baseUrl: '',
     clearApiKey: false,
@@ -954,6 +952,7 @@ export default function ConfigPage() {
     const cfg = llmConfig?.providers[provider]
     setProviderConfigForm({
       provider,
+      customProviderId: provider.startsWith('custom:') ? provider.replace(/^custom:/, '') : '',
       apiKey: '',
       baseUrl: cfg?.baseUrl || '',
       clearApiKey: false,
@@ -961,7 +960,28 @@ export default function ConfigPage() {
     setShowProviderConfigModal(true)
   }
 
+  const openCreateCustomProviderDialog = () => {
+    setProviderConfigForm({
+      provider: 'custom:new',
+      customProviderId: '',
+      apiKey: '',
+      baseUrl: '',
+      clearApiKey: false,
+    })
+    setShowProviderConfigModal(true)
+  }
+
   const saveProviderConfig = async () => {
+    const isCreateCustomProvider = providerConfigForm.provider === 'custom:new'
+    const targetProvider =
+      isCreateCustomProvider
+        ? `custom:${providerConfigForm.customProviderId.trim()}`
+        : providerConfigForm.provider
+    if (!targetProvider || targetProvider === 'custom:' || targetProvider === 'custom:new') {
+      setError(tSafe('config.errors.providerIdRequired', '请填写自定义 Provider ID'))
+      return
+    }
+
     const payloadProvider = {
       baseUrl: providerConfigForm.baseUrl.trim(),
       clearApiKey: providerConfigForm.clearApiKey,
@@ -973,7 +993,7 @@ export default function ConfigPage() {
       setError(null)
       await apiClient.put('/llm-providers/config', {
         providers: {
-          [providerConfigForm.provider]: payloadProvider,
+          [targetProvider]: payloadProvider,
         },
       })
       setShowProviderConfigModal(false)
@@ -1917,6 +1937,22 @@ export default function ConfigPage() {
     return map
   }, [llmProviders])
 
+  const availableModelOptions = useMemo(() => {
+    const unique = Array.from(new Set(llmProviders.flatMap((item) => item.models || []))).sort((a, b) =>
+      a.localeCompare(b)
+    )
+    return unique.map((model) => ({ value: model, label: model }))
+  }, [llmProviders])
+
+  const isDefaultModelCustom = useMemo(
+    () => Boolean(modelDefaults.defaultModel) && !availableModelOptions.some((opt) => opt.value === modelDefaults.defaultModel),
+    [availableModelOptions, modelDefaults.defaultModel]
+  )
+  const isFallbackModelCustom = useMemo(
+    () => Boolean(modelDefaults.fallbackModel) && !availableModelOptions.some((opt) => opt.value === modelDefaults.fallbackModel),
+    [availableModelOptions, modelDefaults.fallbackModel]
+  )
+
   const activeToolsCount = useMemo(
     () => tools.filter((tool) => tool.isActive).length,
     [tools]
@@ -2049,22 +2085,66 @@ export default function ConfigPage() {
                     {sectionErrors.llm && (
                       <p className="text-xs text-warning-500">{sectionErrors.llm}</p>
                     )}
-                    <Input
-                      data-testid="llm-default-model-input"
-                      placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
-                      value={modelDefaults.defaultModel}
-                      onChange={(e) =>
-                        setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
-                      }
-                    />
-                    <Input
-                      data-testid="llm-fallback-model-input"
-                      placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
-                      value={modelDefaults.fallbackModel}
-                      onChange={(e) =>
-                        setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
-                      }
-                    />
+                    <div className="space-y-2">
+                      <p className="text-xs text-text-secondary">
+                        {tSafe('config.llm.defaultModelLabel', '默认模型')}
+                      </p>
+                      <Select
+                        data-testid="llm-default-model-select"
+                        value={isDefaultModelCustom ? '__custom__' : modelDefaults.defaultModel}
+                        onChange={(value) =>
+                          setModelDefaults((prev) => ({
+                            ...prev,
+                            defaultModel: value === '__custom__' ? prev.defaultModel : value,
+                          }))
+                        }
+                        options={[
+                          ...availableModelOptions,
+                          { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
+                        ]}
+                        placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
+                      />
+                      {(isDefaultModelCustom || modelDefaults.defaultModel === '') && (
+                        <Input
+                          data-testid="llm-default-model-input"
+                          placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
+                          value={modelDefaults.defaultModel}
+                          onChange={(e) =>
+                            setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
+                          }
+                        />
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs text-text-secondary">
+                        {tSafe('config.llm.fallbackModelLabel', '回退模型')}
+                      </p>
+                      <Select
+                        data-testid="llm-fallback-model-select"
+                        value={isFallbackModelCustom ? '__custom__' : modelDefaults.fallbackModel}
+                        onChange={(value) =>
+                          setModelDefaults((prev) => ({
+                            ...prev,
+                            fallbackModel: value === '__custom__' ? prev.fallbackModel : value,
+                          }))
+                        }
+                        options={[
+                          ...availableModelOptions,
+                          { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
+                        ]}
+                        placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
+                      />
+                      {(isFallbackModelCustom || modelDefaults.fallbackModel === '') && (
+                        <Input
+                          data-testid="llm-fallback-model-input"
+                          placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
+                          value={modelDefaults.fallbackModel}
+                          onChange={(e) =>
+                            setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
+                          }
+                        />
+                      )}
+                    </div>
                     <Button
                       data-testid="llm-save-routing-button"
                       onClick={saveModelConfig}
@@ -2077,7 +2157,12 @@ export default function ConfigPage() {
 
                 <Card className="border-border-default">
                   <CardContent className="p-5 space-y-3">
-                    <h2 className="text-lg font-semibold text-text-primary">{t('config.llm.providerConfig')}</h2>
+                    <div className="flex items-center justify-between gap-2">
+                      <h2 className="text-lg font-semibold text-text-primary">{t('config.llm.providerConfig')}</h2>
+                      <Button size="xs" variant="tertiary" leftIcon={<Plus size={12} />} onClick={openCreateCustomProviderDialog}>
+                        {tSafe('config.llm.addCustomProvider', '新增自定义 Provider')}
+                      </Button>
+                    </div>
                     {(Object.keys(llmConfig?.providers || {}) as ProviderKey[]).map((providerKey) => {
                       const cfg = llmConfig?.providers[providerKey]
                       const status = llmStatusMap.get(providerKey)
@@ -2090,7 +2175,7 @@ export default function ConfigPage() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-sm font-medium text-text-primary">
-                              {status?.displayName || providerKey}
+                              {cfg.displayName || status?.displayName || providerKey}
                             </p>
                             <div className="flex items-center gap-2">
                               <Badge variant={status?.available ? 'success' : 'outline'}>
@@ -2848,7 +2933,7 @@ export default function ConfigPage() {
         open={showProviderConfigModal}
         onClose={() => setShowProviderConfigModal(false)}
         title={t('config.modals.provider.title')}
-        description={providerConfigForm.provider}
+        description={providerConfigForm.provider === 'custom:new' ? 'custom:<provider-id>' : providerConfigForm.provider}
         maxWidth="lg"
         footer={
           <>
@@ -2866,6 +2951,14 @@ export default function ConfigPage() {
         }
       >
         <div className="space-y-4">
+          {providerConfigForm.provider === 'custom:new' && (
+            <Input
+              data-testid="provider-custom-id-input"
+              placeholder={tSafe('config.modals.provider.customIdPlaceholder', '自定义 Provider ID（示例: deepseek）')}
+              value={providerConfigForm.customProviderId}
+              onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, customProviderId: e.target.value }))}
+            />
+          )}
           <Input
             data-testid="provider-api-key-input"
             type="password"
