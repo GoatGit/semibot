@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Plus, Search, Settings, Trash2, Loader2, Power } from 'lucide-react'
+import { Bot, Plus, Search, Settings, Trash2, Loader2, Power, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -526,6 +526,12 @@ interface AgentFormModalProps {
   onCancel: () => void
 }
 
+interface AgentDraftResponse {
+  name: string
+  description: string
+  systemPrompt: string
+}
+
 function AgentFormModal({
   mode,
   values,
@@ -538,7 +544,10 @@ function AgentFormModal({
   onSave,
   onCancel,
 }: AgentFormModalProps) {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
+  const [showAIGenerateModal, setShowAIGenerateModal] = useState(false)
+  const [generateGoal, setGenerateGoal] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
   // 按 Provider 分组模型
   const groupedModels = models.reduce<Record<string, LLMModel[]>>((acc, model) => {
     const provider = model.providerName || 'Other'
@@ -556,23 +565,78 @@ function AgentFormModal({
       label: model.displayName,
     })),
   }))
-  return (
-    <Modal
-      open={true}
-      onClose={onCancel}
-      title={mode === 'create' ? (t('agents.modal.createTitle')) : (t('agents.modal.editTitle'))}
-      footer={
-        <>
-          <Button variant="secondary" type="button" onClick={onCancel} disabled={isSubmitting}>
-            {t('common.cancel')}
-          </Button>
-          <Button type="button" onClick={onSave} loading={isSubmitting}>
-            {mode === 'create' ? (t('common.create')) : (t('common.save'))}
-          </Button>
-        </>
+
+  const handleGenerateDraft = async () => {
+    const goal = generateGoal.trim()
+    if (!goal) {
+      toast.error(t('agents.modal.aiGoalRequired'))
+      return
+    }
+    try {
+      setIsGenerating(true)
+      const response = await apiClient.post<ApiResponse<AgentDraftResponse>>('/agents/generate-draft', {
+        goal,
+        model: values.model || undefined,
+        locale,
+      })
+      if (!response.success || !response.data) {
+        throw new Error(t('agents.modal.aiGenerateFailed'))
       }
-    >
-      <div className="space-y-4">
+      onChange((prev) => ({
+        ...prev,
+        name: response.data!.name || prev.name,
+        description: response.data!.description || prev.description,
+        systemPrompt: response.data!.systemPrompt || prev.systemPrompt,
+      }))
+      setShowAIGenerateModal(false)
+      setGenerateGoal('')
+      toast.success(t('agents.modal.aiGenerated'))
+    } catch (err) {
+      console.error('[Agents] AI 生成失败:', err)
+      toast.error(t('agents.modal.aiGenerateFailed'))
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  return (
+    <>
+      <Modal
+        open={true}
+        onClose={() => {
+          if (showAIGenerateModal || isGenerating) return
+          onCancel()
+        }}
+        closeOnBackdrop={!showAIGenerateModal && !isGenerating}
+        closeOnEsc={!showAIGenerateModal && !isGenerating}
+        showCloseButton={!showAIGenerateModal && !isGenerating}
+        title={mode === 'create' ? (t('agents.modal.createTitle')) : (t('agents.modal.editTitle'))}
+        footer={
+          <>
+            <Button variant="secondary" type="button" onClick={onCancel} disabled={isSubmitting}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="button" onClick={onSave} loading={isSubmitting}>
+              {mode === 'create' ? (t('common.create')) : (t('common.save'))}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {mode === 'create' && (
+            <div className="flex items-center justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                leftIcon={<Sparkles size={14} />}
+                onClick={() => setShowAIGenerateModal(true)}
+                disabled={isSubmitting}
+              >
+                {t('agents.modal.aiGenerate')}
+              </Button>
+            </div>
+          )}
         <div>
           <label
             htmlFor="agent-name"
@@ -666,8 +730,61 @@ function AgentFormModal({
             )}
           />
         </div>
-      </div>
-    </Modal>
+        </div>
+      </Modal>
+
+      {showAIGenerateModal && (
+        <Modal
+          open={true}
+          onClose={() => !isGenerating && setShowAIGenerateModal(false)}
+          title={t('agents.modal.aiGenerateTitle')}
+          description={t('agents.modal.aiGenerateDescription')}
+          maxWidth="md"
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => setShowAIGenerateModal(false)}
+                disabled={isGenerating}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button
+                type="button"
+                onClick={handleGenerateDraft}
+                loading={isGenerating}
+              >
+                {t('agents.modal.aiGenerateAction')}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-2">
+            <label
+              htmlFor="agent-ai-goal"
+              className="block text-sm font-medium text-text-secondary"
+            >
+              {t('agents.modal.aiGoalLabel')}
+            </label>
+            <textarea
+              id="agent-ai-goal"
+              placeholder={t('agents.modal.aiGoalPlaceholder')}
+              value={generateGoal}
+              onChange={(e) => setGenerateGoal(e.target.value)}
+              disabled={isGenerating}
+              className={clsx(
+                'w-full h-32 px-3 py-2 rounded-md resize-none',
+                'bg-bg-surface border border-border-default',
+                'text-text-primary placeholder:text-text-tertiary',
+                'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
+                'transition-all duration-fast'
+              )}
+            />
+          </div>
+        </Modal>
+      )}
+    </>
   )
 }
 

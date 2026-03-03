@@ -805,7 +805,16 @@
       "modelsLoadFailed": "Failed to load models, please check backend APIs",
       "noModels": "No model available, check LLM Provider config",
       "selectModel": "Select a model",
-      "systemPromptPlaceholder": "System prompt"
+      "systemPromptPlaceholder": "System prompt",
+      "aiGenerate": "Generate with AI",
+      "aiGenerateTitle": "Generate Agent Draft with AI",
+      "aiGenerateDescription": "Describe your goal and AI will generate name, description, and system prompt. You can edit afterwards.",
+      "aiGoalLabel": "Goal",
+      "aiGoalPlaceholder": "e.g. Build a weekly e-commerce ops report that summarizes sales, ads, and inventory anomalies with next-week actions.",
+      "aiGenerateAction": "Generate and Fill",
+      "aiGoalRequired": "Please enter a goal first",
+      "aiGenerateFailed": "AI generation failed, please retry",
+      "aiGenerated": "Draft generated and filled"
     },
     "deleteModal": {
       "title": "Delete Agent",

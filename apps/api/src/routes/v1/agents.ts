@@ -69,6 +69,12 @@ const listAgentsQuerySchema = z.object({
   search: z.string().max(100).optional(),
 })
 
+const generateDraftSchema = z.object({
+  goal: z.string().min(3).max(4000),
+  model: z.string().min(1).max(200).optional(),
+  locale: z.string().min(2).max(20).optional(),
+})
+
 // ═══════════════════════════════════════════════════════════════
 // 路由
 // ═══════════════════════════════════════════════════════════════
@@ -121,6 +127,24 @@ router.get(
       success: true,
       data: result.data,
       meta: result.meta,
+    })
+  })
+)
+
+/**
+ * POST /agents/generate-draft - 通过 LLM 生成 Agent 草稿
+ */
+router.post(
+  '/generate-draft',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('agents:write'),
+  validate(generateDraftSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const draft = await agentService.generateAgentDraft(req.body)
+    res.json({
+      success: true,
+      data: draft,
     })
   })
 )

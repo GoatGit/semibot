@@ -805,7 +805,16 @@
       "modelsLoadFailed": "模型列表加载失败，请检查后端接口",
       "noModels": "暂无可用模型，请检查 LLM Provider 配置",
       "selectModel": "请选择模型",
-      "systemPromptPlaceholder": "系统提示"
+      "systemPromptPlaceholder": "系统提示",
+      "aiGenerate": "AI 一键生成",
+      "aiGenerateTitle": "AI 生成代理草稿",
+      "aiGenerateDescription": "输入目标，自动生成名称、描述和系统提示词，生成后可手动修改。",
+      "aiGoalLabel": "目标",
+      "aiGoalPlaceholder": "例如：帮我做电商运营周报，每周汇总销售、投放和库存异常，并给出下周行动建议。",
+      "aiGenerateAction": "生成并填入",
+      "aiGoalRequired": "请先输入目标",
+      "aiGenerateFailed": "AI 生成失败，请重试",
+      "aiGenerated": "已生成并填入草稿"
     },
     "deleteModal": {
       "title": "删除代理",

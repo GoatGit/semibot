@@ -17,8 +17,10 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Module-level FileManager instance, set by app lifespan
-_file_manager: FileManager | None = None
+# Module-level FileManager instance.
+# Keep a default instance so generated files are persisted in production even
+# when app startup does not explicitly inject one.
+_file_manager: FileManager | None = FileManager()
 
 
 def set_file_manager(fm: FileManager) -> None:

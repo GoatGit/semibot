@@ -14,7 +14,7 @@ import {
 } from '../constants/errorCodes'
 import { MAX_AGENTS_PER_ORG } from '../constants/config'
 import * as agentRepository from '../repositories/agent.repository'
-import { getAvailableModels } from './llm.service'
+import { generate, getAvailableModels } from './llm.service'
 import * as mcpService from './mcp.service'
 import { buildSkillIndex } from './skill-prompt-builder'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
@@ -95,6 +95,18 @@ export interface PaginatedResult<T> {
     limit: number
     totalPages: number
   }
+}
+
+export interface GenerateAgentDraftInput {
+  goal: string
+  model?: string
+  locale?: string
+}
+
+export interface AgentDraft {
+  name: string
+  description: string
+  systemPrompt: string
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -331,6 +343,85 @@ export async function updateAgent(
   }
 
   return rowToAgent(row)
+}
+
+function extractJsonObject(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fenced?.[1]) {
+    return fenced[1].trim()
+  }
+  const first = raw.indexOf('{')
+  const last = raw.lastIndexOf('}')
+  if (first >= 0 && last > first) {
+    return raw.slice(first, last + 1)
+  }
+  return raw.trim()
+}
+
+function sanitizeDraft(input: Partial<AgentDraft>, goal: string): AgentDraft {
+  const normalizedName = String(input.name || '').trim().slice(0, 100)
+  const normalizedDescription = String(input.description || '').trim().slice(0, 1000)
+  const normalizedSystemPrompt = String(input.systemPrompt || '').trim().slice(0, 10000)
+
+  const fallbackName = `Agent - ${goal.trim().slice(0, 30) || 'Assistant'}`
+  const fallbackDescription = `负责完成目标：${goal.trim().slice(0, 200)}`
+  const fallbackPrompt = `你是一个专注的 AI 代理。\n你的目标：${goal.trim()}\n请优先给出可执行、清晰、稳健的结果。`
+
+  return {
+    name: normalizedName || fallbackName,
+    description: normalizedDescription || fallbackDescription,
+    systemPrompt: normalizedSystemPrompt || fallbackPrompt,
+  }
+}
+
+export async function generateAgentDraft(input: GenerateAgentDraftInput): Promise<AgentDraft> {
+  const goal = input.goal.trim()
+  if (!goal) {
+    throw new Error('goal is required')
+  }
+
+  const localeHint = input.locale || 'zh-CN'
+  try {
+    const response = await generate(
+      [
+        {
+          role: 'system',
+          content: [
+            'You are an expert AI agent designer.',
+            'Generate a compact draft for a new agent.',
+            'Return JSON only, no markdown, no extra text.',
+            'JSON schema:',
+            '{"name":"string","description":"string","systemPrompt":"string"}',
+            'Constraints:',
+            '- name <= 100 chars',
+            '- description <= 300 chars',
+            '- systemPrompt <= 2000 chars',
+            '- practical, action-oriented, and safe',
+            `- prefer language consistent with locale: ${localeHint}`,
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: `Goal:\n${goal}`,
+        },
+      ],
+      {
+        model: input.model || DEFAULT_AGENT_CONFIG.model,
+        temperature: 0.4,
+        maxTokens: 900,
+      }
+    )
+
+    const raw = extractJsonObject(response.content || '')
+    const parsed = JSON.parse(raw) as Partial<AgentDraft>
+    return sanitizeDraft(parsed, goal)
+  } catch (error) {
+    agentLogger.warn('Agent draft generation failed, using fallback', {
+      model: input.model || DEFAULT_AGENT_CONFIG.model,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return sanitizeDraft({}, goal)
+  }
 }
 
 /**

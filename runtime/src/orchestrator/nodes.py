@@ -114,6 +114,24 @@ _RECOVERABLE_REPLAN_ERROR_MARKERS = (
     "INVALID_CRON_SCHEDULE",
 )
 
+_RULE_AUTHORING_INTENT_KEYWORDS = (
+    "规则",
+    "cron",
+    "定时",
+    "提醒",
+    "schedule",
+    "scheduled",
+    "每分钟",
+    "每小时",
+    "每天",
+    "every minute",
+    "every hour",
+    "every day",
+    "rule",
+    "create_rule",
+    "update_rule",
+)
+
 
 def _delegation_available(runtime_context: Any, plan: ExecutionPlan | None) -> bool:
     """Check whether current plan can delegate in this runtime context."""
@@ -132,6 +150,32 @@ def _delegation_available(runtime_context: Any, plan: ExecutionPlan | None) -> b
 
     delegate_to = str(plan.delegate_to)
     return any(getattr(sa, "id", None) == delegate_to for sa in sub_agents)
+
+
+def _is_rule_authoring_intent(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    if any(keyword in lower for keyword in _RULE_AUTHORING_INTENT_KEYWORDS):
+        return True
+    # Relative reminder patterns.
+    if _re.search(r"\b\d{1,3}\s*minutes?\s*(later|after)\b", lower):
+        return True
+    if _re.search(r"\d{1,3}\s*分钟\s*后", text):
+        return True
+    return False
+
+
+def _filter_rule_authoring_by_intent(available_schemas: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
+    if _is_rule_authoring_intent(user_text):
+        return available_schemas
+    filtered: list[dict[str, Any]] = []
+    for schema in available_schemas:
+        function_name = str((schema.get("function") or {}).get("name") or "")
+        if function_name == "rule_authoring":
+            continue
+        filtered.append(schema)
+    return filtered
 
 
 def _is_latest_intent(text: str) -> bool:
@@ -837,6 +881,18 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
     # Extract state data
     messages = list(state["messages"])
     memory_context = state["memory_context"]
+    latest_user_text = str(messages[-1].get("content") or "") if messages else ""
+    before_rule_filter = len(available_skills)
+    available_skills = _filter_rule_authoring_by_intent(available_skills, latest_user_text)
+    if len(available_skills) != before_rule_filter:
+        logger.info(
+            "planner_capability_filtered_by_intent",
+            extra={
+                "session_id": state["session_id"],
+                "removed": before_rule_filter - len(available_skills),
+                "reason": "rule_authoring_non_intent",
+            },
+        )
 
     # On replan: inject previous tool errors so LLM can learn from failures
     tool_results = state.get("tool_results", [])

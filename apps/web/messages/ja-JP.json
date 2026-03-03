@@ -805,7 +805,16 @@
       "modelsLoadFailed": "モデルの読み込みに失敗しました。バックエンド API を確認してください",
       "noModels": "利用可能なモデルがありません。LLM Provider 設定を確認してください",
       "selectModel": "モデルを選択",
-      "systemPromptPlaceholder": "システムプロンプト"
+      "systemPromptPlaceholder": "システムプロンプト",
+      "aiGenerate": "AI で自動生成",
+      "aiGenerateTitle": "AI でエージェント下書きを生成",
+      "aiGenerateDescription": "目的を入力すると、名前・説明・システムプロンプトを自動生成します。生成後に編集できます。",
+      "aiGoalLabel": "目的",
+      "aiGoalPlaceholder": "例：EC運用の週次レポートを作成し、売上・広告・在庫異常を要約して来週のアクションを提案する。",
+      "aiGenerateAction": "生成して反映",
+      "aiGoalRequired": "先に目的を入力してください",
+      "aiGenerateFailed": "AI 生成に失敗しました。再試行してください",
+      "aiGenerated": "下書きを生成して反映しました"
     },
     "deleteModal": {
       "title": "エージェント削除",
