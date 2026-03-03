@@ -107,6 +107,13 @@ _FINANCE_NOISE_DOMAIN_PATTERNS = (
     "zhuanlan.zhihu.com",
 )
 
+_RECOVERABLE_REPLAN_ERROR_MARKERS = (
+    "RULE_NAME_CONFLICT",
+    "INVALID_NOTIFY_TARGET",
+    "INVALID_ACTION_MODE",
+    "INVALID_CRON_SCHEDULE",
+)
+
 
 def _delegation_available(runtime_context: Any, plan: ExecutionPlan | None) -> bool:
     """Check whether current plan can delegate in this runtime context."""
@@ -236,6 +243,38 @@ def _enhance_time_series_search_query(query: str, years: int, now: datetime) -> 
         "每个年份至少包含1条数值记录，优先官方统计来源（政府/国际组织）并附来源链接。"
     )
     return f"{base}。{constraints}"
+
+
+def _tool_result_error_text(result: ToolCallResult | dict[str, Any]) -> str:
+    """Extract a normalized error text from a tool result object/dict."""
+    if isinstance(result, dict):
+        parts = [str(result.get("error") or "")]
+        result_payload = result.get("result")
+        if isinstance(result_payload, dict):
+            parts.append(str(result_payload.get("error") or ""))
+            parts.append(str(result_payload.get("code") or ""))
+            parts.append(str(result_payload.get("error_code") or ""))
+        return " ".join(p for p in parts if p).strip()
+
+    parts = [str(getattr(result, "error", "") or "")]
+    result_payload = getattr(result, "result", None)
+    if isinstance(result_payload, dict):
+        parts.append(str(result_payload.get("error") or ""))
+        parts.append(str(result_payload.get("code") or ""))
+        parts.append(str(result_payload.get("error_code") or ""))
+    return " ".join(p for p in parts if p).strip()
+
+
+def _has_recoverable_replan_error(tool_results: list[ToolCallResult | dict[str, Any]]) -> bool:
+    """Return True if failed tool results contain deterministic recoverable errors."""
+    for result in tool_results:
+        success = bool(result.get("success")) if isinstance(result, dict) else bool(result.success)
+        if success:
+            continue
+        error_text = _tool_result_error_text(result)
+        if any(marker in error_text for marker in _RECOVERABLE_REPLAN_ERROR_MARKERS):
+            return True
+    return False
 
 
 def _is_finance_research_intent(text: str) -> bool:
@@ -1359,8 +1398,18 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
 
     # Analyze results
     tool_results = state["tool_results"]
-    has_errors = any(not r.success for r in tool_results)
-    all_failed = all(not r.success for r in tool_results) if tool_results else False
+    has_errors = any(
+        not (bool(r.get("success")) if isinstance(r, dict) else bool(r.success))
+        for r in tool_results
+    )
+    all_failed = (
+        all(
+            not (bool(r.get("success")) if isinstance(r, dict) else bool(r.success))
+            for r in tool_results
+        )
+        if tool_results
+        else False
+    )
 
     # If all failed, try replanning
     if all_failed and current_iteration < MAX_REPLAN_ATTEMPTS:
@@ -1374,10 +1423,60 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             "current_step": "plan",
         }
 
+    # If there are recoverable deterministic errors, force one replan path.
+    if (
+        has_errors
+        and current_iteration < MAX_REPLAN_ATTEMPTS
+        and _has_recoverable_replan_error(tool_results)
+    ):
+        error_summaries: list[str] = []
+        for r in tool_results:
+            success = bool(r.get("success")) if isinstance(r, dict) else bool(r.success)
+            if success:
+                continue
+            tool_name = str(r.get("tool_name") or "unknown") if isinstance(r, dict) else str(r.tool_name or "unknown")
+            error_text = _tool_result_error_text(r)
+            if error_text:
+                error_summaries.append(f"- {tool_name}: {error_text}")
+
+        logger.info(
+            "replan_recoverable_error",
+            extra={
+                "session_id": state["session_id"],
+                "error_count": len(error_summaries),
+                "iteration": current_iteration,
+            },
+        )
+        context_msg = Message(
+            role="user",
+            content=(
+                "[SYSTEM] REPLAN — deterministic recoverable errors detected in executed steps.\n"
+                "Please generate an alternative plan that avoids repeating the same invalid parameters.\n\n"
+                "Detected errors:\n"
+                + ("\n".join(error_summaries) if error_summaries else "- unknown error")
+                + "\n\nGuidance:\n"
+                "- If rule creation fails due to name conflict, generate a unique rule name/id.\n"
+                "- For cron + notify actions, ensure params.gateway_id is set from current gateway context.\n"
+                "- Use action_mode from {ask,suggest,auto,skip}; default to auto unless user explicitly asks otherwise."
+            ),
+            name=None,
+            tool_call_id=None,
+        )
+        return {
+            "iteration": current_iteration,
+            "messages": [context_msg],
+            "current_step": "plan",
+        }
+
     # Check if there are more pending steps in the plan
     plan = state["plan"]
     if plan and plan.steps and plan.current_step_index < len(plan.steps) - 1:
-        successful_results = [r for r in tool_results if r.success and r.result]
+        successful_results = [
+            r
+            for r in tool_results
+            if (bool(r.get("success")) if isinstance(r, dict) else bool(r.success))
+            and (r.get("result") if isinstance(r, dict) else r.result)
+        ]
         remaining_steps = plan.steps[plan.current_step_index + 1:]
 
         # If we have successful results and remaining steps, ask LLM whether
@@ -1413,10 +1512,12 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                 # Build replan context message with completed results
                 results_summary = []
                 for r in successful_results:
-                    result_str = r.result if isinstance(r.result, str) else str(r.result)
+                    payload = r.get("result") if isinstance(r, dict) else r.result
+                    tool_name = str(r.get("tool_name") or "unknown") if isinstance(r, dict) else str(r.tool_name or "unknown")
+                    result_str = payload if isinstance(payload, str) else str(payload)
                     if len(result_str) > REPLAN_RESULT_MAX_CHARS:
                         result_str = result_str[:REPLAN_RESULT_MAX_CHARS] + "...(truncated)"
-                    results_summary.append(f"[{r.tool_name}] result:\n{result_str}")
+                    results_summary.append(f"[{tool_name}] result:\n{result_str}")
 
                 completed_titles = [
                     f"- {s.title} (tool: {s.tool})"

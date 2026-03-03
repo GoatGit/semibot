@@ -68,7 +68,7 @@ def test_rule_service_cron_upsert_and_validation(tmp_path: Path) -> None:
             "name": "workday_digest",
             "event_type": "cron.job.tick",
             "action_mode": "suggest",
-            "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+            "actions": [{"action_type": "notify", "params": {"channel": "chat", "gateway_id": "telegram:bot:chat"}}],
             "risk_level": "low",
             "cron": {
                 "upsert": True,
@@ -89,9 +89,58 @@ def test_rule_service_cron_upsert_and_validation(tmp_path: Path) -> None:
                 "name": "bad_cron",
                 "event_type": "cron.job.tick",
                 "action_mode": "suggest",
-                "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+                "actions": [{"action_type": "notify", "params": {"channel": "chat", "gateway_id": "telegram:bot:chat"}}],
                 "risk_level": "low",
                 "cron": {"upsert": True, "name": "bad_cron", "schedule": "bad cron"},
             }
         )
     assert excinfo.value.code == "INVALID_CRON_SCHEDULE"
+
+
+def test_rule_service_cron_notify_requires_gateway_id(tmp_path: Path) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    service = RuleService(rules_path=str(rules_dir), db_path=str(db_path))
+    with pytest.raises(RuleServiceError) as excinfo:
+        service.create_rule(
+            {
+                "name": "cron_notify_no_gateway",
+                "event_type": "cron.job.tick",
+                "action_mode": "auto",
+                "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+                "risk_level": "low",
+                "cron": {"upsert": True, "name": "cron_notify_no_gateway", "schedule": "*/5 * * * *"},
+            }
+        )
+    assert excinfo.value.code == "INVALID_NOTIFY_TARGET"
+
+
+def test_rule_service_cron_notify_auto_uses_single_active_gateway(tmp_path: Path) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    service = RuleService(rules_path=str(rules_dir), db_path=str(db_path))
+    gw = service.config_store.create_gateway_instance(
+        {
+            "provider": "telegram",
+            "display_name": "tg-main",
+            "is_active": True,
+            "is_default": True,
+            "config": {
+                "botToken": "8646880953:abc",
+                "defaultChatId": "-5223952677",
+            },
+        }
+    )
+    assert gw["is_active"] is True
+
+    created = service.create_rule(
+        {
+            "name": "cron_notify_auto_gateway",
+            "event_type": "cron.job.tick",
+            "action_mode": "auto",
+            "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+            "risk_level": "low",
+            "cron": {"upsert": True, "name": "cron_notify_auto_gateway", "schedule": "*/5 * * * *"},
+        }
+    )
+    assert created["actions"][0]["params"]["gateway_id"] == "telegram:8646880953:-5223952677"

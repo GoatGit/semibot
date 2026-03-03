@@ -132,6 +132,41 @@ async def test_observe_node_replans_on_all_failures(mock_context, base_state):
 
 
 @pytest.mark.asyncio
+async def test_observe_node_replans_on_recoverable_error(mock_context, base_state):
+    """Recoverable deterministic tool errors should trigger replan."""
+    base_state["plan"] = ExecutionPlan(
+        goal="test goal",
+        steps=[
+            PlanStep(id="1", title="create rule", tool="rule_authoring", params={}),
+            PlanStep(id="2", title="notify", tool="notify", params={}),
+        ],
+        current_step_index=0,
+        requires_delegation=False,
+        delegate_to=None,
+    )
+    base_state["tool_results"] = [
+        {
+            "tool_name": "search",
+            "success": True,
+            "error": None,
+            "result": "ok",
+        },
+        {
+            "tool_name": "rule_authoring",
+            "success": False,
+            "error": "RULE_NAME_CONFLICT: rule id or name already exists",
+            "result": None,
+        }
+    ]
+    base_state["iteration"] = 0
+
+    result = await observe_node(base_state, mock_context)
+
+    assert result["current_step"] == "plan"
+    assert result.get("messages")
+
+
+@pytest.mark.asyncio
 async def test_reflect_node_generates_final_response(mock_context, base_state):
     """Test reflect_node generates final response."""
     base_state["plan"] = ExecutionPlan(

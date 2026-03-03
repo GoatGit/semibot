@@ -78,10 +78,45 @@ class RuleService:
     def list_rules(self) -> list[dict[str, Any]]:
         return rules_to_json(load_rules(self.rules_path))
 
-    def _validate_actions(self, actions: Any) -> list[dict[str, Any]]:
+    @staticmethod
+    def _gateway_id_from_instance(item: dict[str, Any]) -> str | None:
+        provider = str(item.get("provider") or "").strip().lower()
+        config = item.get("config") if isinstance(item.get("config"), dict) else {}
+        if provider == "telegram":
+            token = str(config.get("botToken") or "").strip()
+            bot_id = token.split(":", 1)[0].strip() if ":" in token else ""
+            chat_id = str(config.get("defaultChatId") or "").strip()
+            if bot_id and chat_id:
+                return f"telegram:{bot_id}:{chat_id}"
+            if bot_id:
+                return f"telegram:{bot_id}"
+            return None
+        if provider == "feishu":
+            app_id = str(
+                config.get("appId")
+                or config.get("app_id")
+                or config.get("cli_aid")
+                or ""
+            ).strip()
+            chat_id = str(config.get("defaultChatId") or config.get("default_chat_id") or "").strip()
+            if app_id and chat_id:
+                return f"feishu:{app_id}:{chat_id}"
+            if app_id:
+                return f"feishu:{app_id}"
+            return None
+        return None
+
+    def _resolve_single_active_gateway_id(self) -> str | None:
+        instances = [item for item in self.config_store.list_gateway_instances() if bool(item.get("is_active"))]
+        if len(instances) != 1:
+            return None
+        return self._gateway_id_from_instance(instances[0])
+
+    def _validate_actions(self, actions: Any, *, event_type: str | None = None) -> list[dict[str, Any]]:
         if not isinstance(actions, list) or not actions:
             raise RuleServiceError("INVALID_ACTION_PARAMS", "actions must be a non-empty array")
         normalized: list[dict[str, Any]] = []
+        is_cron_rule = isinstance(event_type, str) and event_type.startswith("cron.")
         for item in actions:
             if not isinstance(item, dict):
                 raise RuleServiceError("INVALID_ACTION_PARAMS", "actions item must be object")
@@ -91,11 +126,25 @@ class RuleService:
             if action_type not in ALLOWED_RULE_ACTION_TYPES:
                 raise RuleServiceError("INVALID_ACTION_PARAMS", f"unsupported action_type: {action_type}")
             params = item.get("params")
+            params_map = params if isinstance(params, dict) else {}
+            if "gatewayId" in params_map and "gateway_id" not in params_map:
+                params_map = {**params_map, "gateway_id": params_map.get("gatewayId")}
+            if is_cron_rule and action_type == "notify":
+                gateway_id = str(params_map.get("gateway_id") or "").strip()
+                if not gateway_id:
+                    fallback_gateway_id = self._resolve_single_active_gateway_id()
+                    if fallback_gateway_id:
+                        params_map = {**params_map, "gateway_id": fallback_gateway_id}
+                    else:
+                        raise RuleServiceError(
+                            "INVALID_NOTIFY_TARGET",
+                            "cron notify action requires params.gateway_id",
+                        )
             normalized.append(
                 {
                     "action_type": action_type,
                     "target": item.get("target"),
-                    "params": params if isinstance(params, dict) else {},
+                    "params": params_map,
                 }
             )
         return normalized
@@ -132,7 +181,7 @@ class RuleService:
             out["risk_level"] = risk_level
 
         if "actions" in out or not is_update:
-            out["actions"] = self._validate_actions(out.get("actions"))
+            out["actions"] = self._validate_actions(out.get("actions"), event_type=out.get("event_type"))
 
         if "conditions" in out:
             if not isinstance(out.get("conditions"), dict):
@@ -198,6 +247,10 @@ class RuleService:
         cron_expr = TriggerScheduler.parse_cron_expression(schedule)
         if interval is None and cron_expr is None:
             raise RuleServiceError("INVALID_CRON_SCHEDULE", "unsupported cron schedule")
+        cron_payload = cron.get("payload") if isinstance(cron.get("payload"), dict) else {}
+        raw_one_shot = cron.get("one_shot", cron.get("oneShot", None))
+        if raw_one_shot is not None and "one_shot" not in cron_payload and "oneShot" not in cron_payload:
+            cron_payload = {**cron_payload, "one_shot": bool(raw_one_shot)}
         self.config_store.upsert_cron_job(
             {
                 "name": name,
@@ -205,7 +258,7 @@ class RuleService:
                 "event_type": str(cron.get("event_type") or event_type or "cron.job.tick"),
                 "source": str(cron.get("source") or "system.cron"),
                 "subject": cron.get("subject", "system"),
-                "payload": cron.get("payload") if isinstance(cron.get("payload"), dict) else {},
+                "payload": cron_payload,
                 "is_active": True,
             }
         )
@@ -244,6 +297,14 @@ class RuleService:
         if not safe_id:
             raise RuleServiceError("RULE_NOT_FOUND", "rule_id is required", 404)
         normalized = self._validate_core_rule_fields(patch, is_update=True)
+        if "actions" in normalized and "event_type" not in normalized:
+            existing = next((rule for rule in load_rules(self.rules_path) if rule.id == safe_id), None)
+            if existing is None:
+                raise RuleServiceError("RULE_NOT_FOUND", "rule not found", 404)
+            normalized["actions"] = self._validate_actions(
+                normalized.get("actions"),
+                event_type=str(existing.event_type),
+            )
         self._upsert_cron_if_requested(normalized, str(normalized.get("event_type") or "cron.job.tick"))
         try:
             updated = update_rule(self.rules_path, safe_id, normalized)
