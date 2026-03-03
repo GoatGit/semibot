@@ -2748,6 +2748,9 @@ export default function ConfigPage() {
                           setEvolutionCapabilityDrafts((prev) => ({ ...prev, [docType]: e.target.value }))
                         }
                       />
+                      <p className="text-[11px] text-text-tertiary">
+                        {tSafe('config.evolutionCapabilities.contentLabel', '能力内容')}
+                      </p>
                       {evolutionHistoryExpanded[docType] && (
                         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border-default bg-bg-surface px-3 py-2">
                           <span className="text-xs text-text-secondary">
@@ -2952,26 +2955,44 @@ export default function ConfigPage() {
       >
         <div className="space-y-4">
           {providerConfigForm.provider === 'custom:new' && (
-            <Input
-              data-testid="provider-custom-id-input"
-              placeholder={tSafe('config.modals.provider.customIdPlaceholder', '自定义 Provider ID（示例: deepseek）')}
-              value={providerConfigForm.customProviderId}
-              onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, customProviderId: e.target.value }))}
-            />
+            <div className="space-y-1">
+              <p className="text-xs text-text-tertiary">
+                {tSafe('config.modals.provider.customIdLabel', 'Provider ID')}
+              </p>
+              <Input
+                data-testid="provider-custom-id-input"
+                placeholder={tSafe('config.modals.provider.customIdPlaceholder', '自定义 Provider ID（示例: deepseek）')}
+                value={providerConfigForm.customProviderId}
+                onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, customProviderId: e.target.value }))}
+              />
+              <p className="text-xs text-text-secondary">
+                {tSafe('config.modals.provider.customIdHelp', '用于生成键名 custom:&lt;provider-id&gt;，建议使用小写字母、数字与连字符。')}
+              </p>
+            </div>
           )}
-          <Input
-            data-testid="provider-api-key-input"
-            type="password"
-            placeholder={t('config.modals.provider.apiKeyPlaceholder')}
-            value={providerConfigForm.apiKey}
-            onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, apiKey: e.target.value }))}
-          />
-          <Input
-            data-testid="provider-endpoint-input"
-            placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
-            value={providerConfigForm.baseUrl}
-            onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">
+              {tSafe('config.modals.provider.apiKeyLabel', 'API Key')}
+            </p>
+            <Input
+              data-testid="provider-api-key-input"
+              type="password"
+              placeholder={t('config.modals.provider.apiKeyPlaceholder')}
+              value={providerConfigForm.apiKey}
+              onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">
+              {tSafe('config.modals.provider.endpointLabel', 'Endpoint / Base URL')}
+            </p>
+            <Input
+              data-testid="provider-endpoint-input"
+              placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
+              value={providerConfigForm.baseUrl}
+              onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+            />
+          </div>
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"
@@ -3444,24 +3465,33 @@ export default function ConfigPage() {
       >
         <div className="space-y-3">
           {!gatewayForm.id && (
-            <Input
-              placeholder={t('config.modals.gateway.instanceKeyPlaceholder')}
-              value={gatewayForm.instanceKey}
-              onChange={(e) => setGatewayForm((prev) => ({ ...prev, instanceKey: e.target.value }))}
-            />
+            <div className="space-y-1">
+              <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.instanceKeyLabel', 'instanceKey')}</p>
+              <Input
+                placeholder={t('config.modals.gateway.instanceKeyPlaceholder')}
+                value={gatewayForm.instanceKey}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, instanceKey: e.target.value }))}
+              />
+            </div>
           )}
-          <Input
-            data-testid="gateway-display-name-input"
-            placeholder={t('config.modals.gateway.displayNamePlaceholder')}
-            value={gatewayForm.displayName}
-            onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
-          />
-          <Input
-            data-testid="gateway-agent-id-input"
-            placeholder={t('config.modals.gateway.agentIdPlaceholder')}
-            value={gatewayForm.agentId}
-            onChange={(e) => setGatewayForm((prev) => ({ ...prev, agentId: e.target.value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.displayNameLabel', 'displayName')}</p>
+            <Input
+              data-testid="gateway-display-name-input"
+              placeholder={t('config.modals.gateway.displayNamePlaceholder')}
+              value={gatewayForm.displayName}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, displayName: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.agentIdLabel', 'agentId')}</p>
+            <Input
+              data-testid="gateway-agent-id-input"
+              placeholder={t('config.modals.gateway.agentIdPlaceholder')}
+              value={gatewayForm.agentId}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, agentId: e.target.value }))}
+            />
+          </div>
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"
@@ -3480,13 +3510,16 @@ export default function ConfigPage() {
           </label>
           {gatewayForm.provider === 'telegram' ? (
             <>
-              <Input
-                data-testid="gateway-telegram-bot-token-input"
-                type="password"
-                placeholder={t('config.modals.gateway.telegram.botTokenPlaceholder')}
-                value={gatewayForm.botToken}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, botToken: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.botTokenLabel', 'botToken')}</p>
+                <Input
+                  data-testid="gateway-telegram-bot-token-input"
+                  type="password"
+                  placeholder={t('config.modals.gateway.telegram.botTokenPlaceholder')}
+                  value={gatewayForm.botToken}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, botToken: e.target.value }))}
+                />
+              </div>
               <label className="flex items-center gap-2 text-sm text-text-secondary">
                 <input
                   type="checkbox"
@@ -3500,12 +3533,15 @@ export default function ConfigPage() {
                 />
                 {t('config.modals.gateway.telegram.clearBotToken')}
               </label>
-              <Input
-                type="password"
-                placeholder={t('config.modals.gateway.telegram.webhookSecretPlaceholder')}
-                value={gatewayForm.webhookSecret}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookSecret: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.webhookSecretLabel', 'webhookSecret')}</p>
+                <Input
+                  type="password"
+                  placeholder={t('config.modals.gateway.telegram.webhookSecretPlaceholder')}
+                  value={gatewayForm.webhookSecret}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookSecret: e.target.value }))}
+                />
+              </div>
               <label className="flex items-center gap-2 text-sm text-text-secondary">
                 <input
                   type="checkbox"
@@ -3519,27 +3555,36 @@ export default function ConfigPage() {
                 />
                 {t('config.modals.gateway.telegram.clearWebhookSecret')}
               </label>
-              <Input
-                data-testid="gateway-telegram-default-chat-id-input"
-                placeholder={t('config.modals.gateway.telegram.defaultChatIdPlaceholder')}
-                value={gatewayForm.defaultChatId}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, defaultChatId: e.target.value }))}
-              />
-              <Input
-                data-testid="gateway-telegram-allowed-chat-ids-input"
-                placeholder={t('config.modals.gateway.telegram.allowedChatIdsPlaceholder')}
-                value={gatewayForm.allowedChatIds}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.defaultChatIdLabel', 'defaultChatId')}</p>
+                <Input
+                  data-testid="gateway-telegram-default-chat-id-input"
+                  placeholder={t('config.modals.gateway.telegram.defaultChatIdPlaceholder')}
+                  value={gatewayForm.defaultChatId}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, defaultChatId: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.telegram.allowedChatIdsLabel', 'allowedChatIds')}</p>
+                <Input
+                  data-testid="gateway-telegram-allowed-chat-ids-input"
+                  placeholder={t('config.modals.gateway.telegram.allowedChatIdsPlaceholder')}
+                  value={gatewayForm.allowedChatIds}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, allowedChatIds: e.target.value }))}
+                />
+              </div>
             </>
           ) : (
             <>
-              <Input
-                type="password"
-                placeholder={t('config.modals.gateway.feishu.verifyTokenPlaceholder')}
-                value={gatewayForm.verifyToken}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, verifyToken: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.feishu.verifyTokenLabel', 'verifyToken')}</p>
+                <Input
+                  type="password"
+                  placeholder={t('config.modals.gateway.feishu.verifyTokenPlaceholder')}
+                  value={gatewayForm.verifyToken}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, verifyToken: e.target.value }))}
+                />
+              </div>
               <label className="flex items-center gap-2 text-sm text-text-secondary">
                 <input
                   type="checkbox"
@@ -3553,11 +3598,14 @@ export default function ConfigPage() {
                 />
                 {t('config.modals.gateway.feishu.clearVerifyToken')}
               </label>
-              <Input
-                placeholder={t('config.modals.gateway.feishu.webhookUrlPlaceholder')}
-                value={gatewayForm.webhookUrl}
-                onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.feishu.webhookUrlLabel', 'webhookUrl')}</p>
+                <Input
+                  placeholder={t('config.modals.gateway.feishu.webhookUrlPlaceholder')}
+                  value={gatewayForm.webhookUrl}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
+                />
+              </div>
             </>
           )}
           <div className="space-y-2 rounded-md border border-border-default p-3">
@@ -3574,6 +3622,7 @@ export default function ConfigPage() {
               </Button>
             </div>
             <div className="space-y-2">
+              <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.importBindingsLabel', '导入绑定')}</p>
               <textarea
                 className="w-full rounded-lg border border-border-default bg-bg-surface px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
                 rows={3}
@@ -3594,6 +3643,11 @@ export default function ConfigPage() {
               <p className="text-xs text-text-secondary">{t('config.modals.gateway.chatBindingsEmpty')}</p>
             ) : (
               <div className="space-y-2">
+                <div className="hidden md:grid md:grid-cols-[1fr_1fr_auto] gap-2">
+                  <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.chatIdLabel', 'chatId')}</p>
+                  <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.chatBindingAgentLabel', 'agentId')}</p>
+                  <span />
+                </div>
                 {gatewayForm.chatBindings.map((row, index) => (
                   <div key={`chat-binding-${index}`} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
                     <Input
@@ -3622,12 +3676,15 @@ export default function ConfigPage() {
               </div>
             )}
           </div>
-          <Input
-            data-testid="gateway-notify-event-types-input"
-            placeholder={t('config.modals.gateway.notifyEventTypesPlaceholder')}
-            value={gatewayForm.notifyEventTypes}
-            onChange={(e) => setGatewayForm((prev) => ({ ...prev, notifyEventTypes: e.target.value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.notifyEventTypesLabel', 'notifyEventTypes')}</p>
+            <Input
+              data-testid="gateway-notify-event-types-input"
+              placeholder={t('config.modals.gateway.notifyEventTypesPlaceholder')}
+              value={gatewayForm.notifyEventTypes}
+              onChange={(e) => setGatewayForm((prev) => ({ ...prev, notifyEventTypes: e.target.value }))}
+            />
+          </div>
 
           <div className="space-y-2 rounded-md border border-border-default p-3">
             <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.addressing.title')}</p>
@@ -3673,23 +3730,29 @@ export default function ConfigPage() {
               />
               {t('config.modals.gateway.addressing.executeOnUnaddressed')}
             </label>
-            <Input
-              data-testid="gateway-command-prefixes-input"
-              placeholder={t('config.modals.gateway.addressing.commandPrefixesPlaceholder')}
-              value={gatewayForm.commandPrefixes}
-              onChange={(e) => setGatewayForm((prev) => ({ ...prev, commandPrefixes: e.target.value }))}
-            />
-            <Input
-              data-testid="gateway-session-window-input"
-              placeholder={t('config.modals.gateway.addressing.sessionContinuationWindowSecPlaceholder')}
-              value={gatewayForm.sessionContinuationWindowSec}
-              onChange={(e) =>
-                setGatewayForm((prev) => ({
-                  ...prev,
-                  sessionContinuationWindowSec: e.target.value,
-                }))
-              }
-            />
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.addressing.commandPrefixesLabel', 'commandPrefixes')}</p>
+              <Input
+                data-testid="gateway-command-prefixes-input"
+                placeholder={t('config.modals.gateway.addressing.commandPrefixesPlaceholder')}
+                value={gatewayForm.commandPrefixes}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, commandPrefixes: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.addressing.sessionContinuationWindowSecLabel', 'sessionContinuationWindowSec')}</p>
+              <Input
+                data-testid="gateway-session-window-input"
+                placeholder={t('config.modals.gateway.addressing.sessionContinuationWindowSecPlaceholder')}
+                value={gatewayForm.sessionContinuationWindowSec}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    sessionContinuationWindowSec: e.target.value,
+                  }))
+                }
+              />
+            </div>
           </div>
 
           <div className="space-y-2 rounded-md border border-border-default p-3">
@@ -3733,34 +3796,43 @@ export default function ConfigPage() {
 
           <div className="space-y-2 rounded-md border border-border-default p-3">
             <p className="text-sm font-medium text-text-primary">{t('config.modals.gateway.context.title')}</p>
-            <Input
-              data-testid="gateway-context-ttl-days-input"
-              placeholder={t('config.modals.gateway.context.ttlDaysPlaceholder')}
-              value={gatewayForm.contextTtlDays}
-              onChange={(e) => setGatewayForm((prev) => ({ ...prev, contextTtlDays: e.target.value }))}
-            />
-            <Input
-              data-testid="gateway-context-max-recent-input"
-              placeholder={t('config.modals.gateway.context.maxRecentMessagesPlaceholder')}
-              value={gatewayForm.contextMaxRecentMessages}
-              onChange={(e) =>
-                setGatewayForm((prev) => ({
-                  ...prev,
-                  contextMaxRecentMessages: e.target.value,
-                }))
-              }
-            />
-            <Input
-              data-testid="gateway-context-summarize-every-n-input"
-              placeholder={t('config.modals.gateway.context.summarizeEveryNMessagesPlaceholder')}
-              value={gatewayForm.contextSummarizeEveryNMessages}
-              onChange={(e) =>
-                setGatewayForm((prev) => ({
-                  ...prev,
-                  contextSummarizeEveryNMessages: e.target.value,
-                }))
-              }
-            />
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.ttlDaysLabel', 'ttlDays')}</p>
+              <Input
+                data-testid="gateway-context-ttl-days-input"
+                placeholder={t('config.modals.gateway.context.ttlDaysPlaceholder')}
+                value={gatewayForm.contextTtlDays}
+                onChange={(e) => setGatewayForm((prev) => ({ ...prev, contextTtlDays: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.maxRecentMessagesLabel', 'maxRecentMessages')}</p>
+              <Input
+                data-testid="gateway-context-max-recent-input"
+                placeholder={t('config.modals.gateway.context.maxRecentMessagesPlaceholder')}
+                value={gatewayForm.contextMaxRecentMessages}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    contextMaxRecentMessages: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.summarizeEveryNMessagesLabel', 'summarizeEveryNMessages')}</p>
+              <Input
+                data-testid="gateway-context-summarize-every-n-input"
+                placeholder={t('config.modals.gateway.context.summarizeEveryNMessagesPlaceholder')}
+                value={gatewayForm.contextSummarizeEveryNMessages}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    contextSummarizeEveryNMessages: e.target.value,
+                  }))
+                }
+              />
+            </div>
           </div>
         </div>
       </Modal>
@@ -3782,16 +3854,22 @@ export default function ConfigPage() {
         }
       >
         <div className="space-y-4">
-          <Input
-            placeholder={t('config.modals.apiKey.namePlaceholder')}
-            value={newKeyName}
-            onChange={(e) => setNewKeyName(e.target.value)}
-          />
-          <Input
-            type="datetime-local"
-            value={newKeyExpiresAt}
-            onChange={(e) => setNewKeyExpiresAt(e.target.value)}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.apiKey.nameLabel', 'Key Name')}</p>
+            <Input
+              placeholder={t('config.modals.apiKey.namePlaceholder')}
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.apiKey.expiresAtLabel', 'Expires At')}</p>
+            <Input
+              type="datetime-local"
+              value={newKeyExpiresAt}
+              onChange={(e) => setNewKeyExpiresAt(e.target.value)}
+            />
+          </div>
         </div>
       </Modal>
 
@@ -3817,21 +3895,30 @@ export default function ConfigPage() {
         maxWidth="lg"
       >
         <div className="space-y-4">
-          <Input
-            placeholder={t('config.modals.webhook.urlPlaceholder')}
-            value={webhookForm.url}
-            onChange={(e) => setWebhookForm((prev) => ({ ...prev, url: e.target.value }))}
-          />
-          <Input
-            placeholder={t('config.modals.webhook.secretPlaceholder')}
-            value={webhookForm.secret}
-            onChange={(e) => setWebhookForm((prev) => ({ ...prev, secret: e.target.value }))}
-          />
-          <Input
-            placeholder={t('config.modals.webhook.eventsPlaceholder')}
-            value={webhookForm.eventsText}
-            onChange={(e) => setWebhookForm((prev) => ({ ...prev, eventsText: e.target.value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.webhook.urlLabel', 'Webhook URL')}</p>
+            <Input
+              placeholder={t('config.modals.webhook.urlPlaceholder')}
+              value={webhookForm.url}
+              onChange={(e) => setWebhookForm((prev) => ({ ...prev, url: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.webhook.secretLabel', 'Secret')}</p>
+            <Input
+              placeholder={t('config.modals.webhook.secretPlaceholder')}
+              value={webhookForm.secret}
+              onChange={(e) => setWebhookForm((prev) => ({ ...prev, secret: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{tSafe('config.modals.webhook.eventsLabel', 'Events')}</p>
+            <Input
+              placeholder={t('config.modals.webhook.eventsPlaceholder')}
+              value={webhookForm.eventsText}
+              onChange={(e) => setWebhookForm((prev) => ({ ...prev, eventsText: e.target.value }))}
+            />
+          </div>
         </div>
       </Modal>
 

@@ -263,9 +263,12 @@
       "routingDefaults": "模型路由默认值",
       "saveRouting": "保存模型路由",
       "providerConfig": "Provider 配置",
+      "addCustomProvider": "新增自定义 Provider",
       "viewModels": "查看模型列表",
       "apiKeyLabel": "API Key",
       "endpointLabel": "Endpoint",
+      "defaultModelLabel": "默认模型",
+      "fallbackModelLabel": "回退模型",
       "defaultModelPlaceholder": "默认模型（例如 gpt-4o）",
       "fallbackModelPlaceholder": "回退模型（例如 gpt-4o-mini）"
     },
@@ -352,6 +355,7 @@
       "mind": "Mind（全局行为）",
       "version": "版本",
       "updatedAt": "更新时间",
+      "contentLabel": "能力内容",
       "placeholder": "输入能力内容...",
       "history": "历史版本",
       "rollbackTo": "切换到",
@@ -360,6 +364,11 @@
     "modals": {
       "provider": {
         "title": "编辑 LLM Provider",
+        "customIdLabel": "Provider ID",
+        "customIdPlaceholder": "自定义 Provider ID（示例: deepseek）",
+        "customIdHelp": "用于生成键名 custom:<provider-id>，建议使用小写字母、数字与连字符。",
+        "apiKeyLabel": "API Key",
+        "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "新 API Key（留空则不修改）",
         "clearApiKey": "清除已有 API Key"
       },
@@ -458,19 +467,26 @@
       },
       "gateway": {
         "title": "Gateway 配置",
+        "instanceKeyLabel": "字段名：instanceKey",
         "instanceKeyPlaceholder": "instanceKey（可选，建议唯一）",
+        "displayNameLabel": "字段名：displayName",
         "displayNamePlaceholder": "显示名称",
+        "agentIdLabel": "字段名：agentId",
         "agentIdPlaceholder": "Agent ID（默认 semibot）",
         "chatBindingsTitle": "会话绑定",
         "chatBindingsEmpty": "暂未设置 chat 绑定。可添加后把不同群/会话路由到不同 Agent。",
         "addChatBinding": "新增绑定",
         "removeChatBinding": "删除",
+        "importBindingsLabel": "导入绑定",
+        "chatIdLabel": "字段名：chatId",
+        "chatBindingAgentLabel": "字段名：agentId",
         "importBindingsPlaceholder": "粘贴多行：chatId=agentId（也支持只填 chatId，自动用默认 Agent）",
         "applyImportedBindings": "应用导入",
         "chatIdPlaceholder": "Chat ID",
         "chatBindingAgentPlaceholder": "Agent ID",
         "setDefault": "设为默认实例",
         "enabled": "启用此 Gateway",
+        "notifyEventTypesLabel": "字段名：notifyEventTypes",
         "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",
         "addressing": {
           "title": "Addressing 策略",
@@ -479,7 +495,9 @@
           "modeAllMessages": "群聊全量消息模式",
           "allowReplyToBot": "将“回复 Bot 消息”视为命中",
           "executeOnUnaddressed": "未命中时仍执行（谨慎开启）",
+          "commandPrefixesLabel": "字段名：commandPrefixes",
           "commandPrefixesPlaceholder": "commandPrefixes（可选，逗号分隔，如 /ask,/run,/approve,/reject）",
+          "sessionContinuationWindowSecLabel": "字段名：sessionContinuationWindowSec",
           "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec（正整数秒）"
         },
         "proactive": {
@@ -492,32 +510,46 @@
         },
         "context": {
           "title": "上下文保留策略",
+          "ttlDaysLabel": "字段名：ttlDays",
           "ttlDaysPlaceholder": "ttlDays（上下文保留天数）",
+          "maxRecentMessagesLabel": "字段名：maxRecentMessages",
           "maxRecentMessagesPlaceholder": "maxRecentMessages（最近消息条数上限）",
+          "summarizeEveryNMessagesLabel": "字段名：summarizeEveryNMessages",
           "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages（每 N 条触发摘要）"
         },
         "feishu": {
+          "verifyTokenLabel": "字段名：verifyToken",
           "verifyTokenPlaceholder": "Feishu Verify Token（留空可清空）",
+          "webhookUrlLabel": "字段名：webhookUrl",
           "webhookUrlPlaceholder": "Feishu Webhook URL（可选）",
           "clearVerifyToken": "清空已有 Verify Token"
         },
         "telegram": {
+          "botTokenLabel": "字段名：botToken",
           "botTokenPlaceholder": "Telegram Bot Token（留空可清空）",
           "clearBotToken": "清空已有 Bot Token",
+          "webhookSecretLabel": "字段名：webhookSecret",
           "webhookSecretPlaceholder": "Telegram Webhook Secret（可选）",
           "clearWebhookSecret": "清空已有 Webhook Secret",
+          "defaultChatIdLabel": "字段名：defaultChatId",
           "defaultChatIdPlaceholder": "默认 Chat ID（可选）",
+          "allowedChatIdsLabel": "字段名：allowedChatIds",
           "allowedChatIdsPlaceholder": "allowedChatIds（可选，逗号分隔）"
         }
       },
       "apiKey": {
         "title": "创建 API Key",
         "description": "完整密钥只会展示一次。",
+        "nameLabel": "字段名：name",
+        "expiresAtLabel": "过期时间（可选）",
         "namePlaceholder": "Key 名称"
       },
       "webhook": {
         "title": "创建 Webhook",
         "description": "events 用逗号分隔，最少一个事件。",
+        "urlLabel": "Webhook URL",
+        "secretLabel": "secret",
+        "eventsLabel": "events",
         "secretPlaceholder": "secret(至少16字符)",
         "urlPlaceholder": "https://example.com/webhook",
         "eventsPlaceholder": "event.a,event.b"

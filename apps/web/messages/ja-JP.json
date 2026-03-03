@@ -263,9 +263,12 @@
       "routingDefaults": "モデルルーティング既定値",
       "saveRouting": "ルーティング既定値を保存",
       "providerConfig": "プロバイダ設定",
+      "addCustomProvider": "カスタムプロバイダを追加",
       "viewModels": "モデルを表示",
       "apiKeyLabel": "API キー",
       "endpointLabel": "エンドポイント",
+      "defaultModelLabel": "デフォルトモデル",
+      "fallbackModelLabel": "フォールバックモデル",
       "defaultModelPlaceholder": "デフォルトモデル（例: gpt-4o）",
       "fallbackModelPlaceholder": "フォールバックモデル（例: gpt-4o-mini）"
     },
@@ -352,6 +355,7 @@
       "mind": "Mind（全体行動方針）",
       "version": "バージョン",
       "updatedAt": "更新日時",
+      "contentLabel": "能力内容",
       "placeholder": "能力内容を入力してください...",
       "history": "履歴",
       "rollbackTo": "切替先",
@@ -360,6 +364,11 @@
     "modals": {
       "provider": {
         "title": "LLM プロバイダを編集",
+        "customIdLabel": "Provider ID",
+        "customIdPlaceholder": "カスタム Provider ID（例: deepseek）",
+        "customIdHelp": "キー custom:<provider-id> の生成に使用します。小文字・数字・ハイフンを推奨します。",
+        "apiKeyLabel": "API キー",
+        "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "新しい API キー（空欄で変更なし）",
         "clearApiKey": "既存 API キーをクリア"
       },
@@ -458,19 +467,26 @@
       },
       "gateway": {
         "title": "ゲートウェイ設定",
+        "instanceKeyLabel": "フィールド: instanceKey",
         "instanceKeyPlaceholder": "instanceKey（任意、重複しない値推奨）",
+        "displayNameLabel": "フィールド: displayName",
         "displayNamePlaceholder": "表示名",
+        "agentIdLabel": "フィールド: agentId",
         "agentIdPlaceholder": "エージェント ID（既定: semibot）",
         "chatBindingsTitle": "Chat バインディング",
         "chatBindingsEmpty": "Chat バインディングがありません。追加してチャットごとにエージェントを振り分けます。",
         "addChatBinding": "バインディング追加",
         "removeChatBinding": "削除",
+        "importBindingsLabel": "バインディングをインポート",
+        "chatIdLabel": "フィールド: chatId",
+        "chatBindingAgentLabel": "フィールド: agentId",
         "importBindingsPlaceholder": "chatId=agentId 形式で貼り付け（chatId のみなら既定 agent を使用）",
         "applyImportedBindings": "インポート適用",
         "chatIdPlaceholder": "チャット ID",
         "chatBindingAgentPlaceholder": "エージェント ID",
         "setDefault": "デフォルトインスタンスとして設定",
         "enabled": "このゲートウェイを有効化",
+        "notifyEventTypesLabel": "フィールド: notifyEventTypes",
         "notifyEventTypesPlaceholder": "notifyEventTypes（任意、カンマ区切り）",
         "addressing": {
           "title": "アドレッシングポリシー",
@@ -479,7 +495,9 @@
           "modeAllMessages": "グループ内すべてのメッセージでトリガー",
           "allowReplyToBot": "Bot メッセージへの返信を addressed とみなす",
           "executeOnUnaddressed": "addressed でなくても実行（注意して使用）",
+          "commandPrefixesLabel": "フィールド: commandPrefixes",
           "commandPrefixesPlaceholder": "commandPrefixes（任意、カンマ区切り。例: /ask,/run,/approve,/reject）",
+          "sessionContinuationWindowSecLabel": "フィールド: sessionContinuationWindowSec",
           "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec（正の整数秒）"
         },
         "proactive": {
@@ -492,32 +510,46 @@
         },
         "context": {
           "title": "コンテキスト保持ポリシー",
+          "ttlDaysLabel": "フィールド: ttlDays",
           "ttlDaysPlaceholder": "ttlDays（保持日数）",
+          "maxRecentMessagesLabel": "フィールド: maxRecentMessages",
           "maxRecentMessagesPlaceholder": "maxRecentMessages（保持する最近メッセージ数）",
+          "summarizeEveryNMessagesLabel": "フィールド: summarizeEveryNMessages",
           "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages（N 件ごとに要約）"
         },
         "feishu": {
+          "verifyTokenLabel": "フィールド: verifyToken",
           "verifyTokenPlaceholder": "Feishu verify token（空欄でクリア）",
+          "webhookUrlLabel": "フィールド: webhookUrl",
           "webhookUrlPlaceholder": "Feishu webhook URL（任意）",
           "clearVerifyToken": "既存 verify token をクリア"
         },
         "telegram": {
+          "botTokenLabel": "フィールド: botToken",
           "botTokenPlaceholder": "Telegram bot token（空欄でクリア）",
           "clearBotToken": "既存 bot token をクリア",
+          "webhookSecretLabel": "フィールド: webhookSecret",
           "webhookSecretPlaceholder": "Telegram webhook secret（任意）",
           "clearWebhookSecret": "既存 webhook secret をクリア",
+          "defaultChatIdLabel": "フィールド: defaultChatId",
           "defaultChatIdPlaceholder": "デフォルト Chat ID（任意）",
+          "allowedChatIdsLabel": "フィールド: allowedChatIds",
           "allowedChatIdsPlaceholder": "allowedChatIds（任意、カンマ区切り）"
         }
       },
       "apiKey": {
         "title": "API キー作成",
         "description": "フルキーは一度だけ表示されます。",
+        "nameLabel": "フィールド: name",
+        "expiresAtLabel": "有効期限（任意）",
         "namePlaceholder": "キー名"
       },
       "webhook": {
         "title": "Webhook 作成",
         "description": "イベントはカンマ区切りで入力し、少なくとも1件必須です。",
+        "urlLabel": "Webhook URL",
+        "secretLabel": "secret",
+        "eventsLabel": "events",
         "secretPlaceholder": "secret（16 文字以上）",
         "urlPlaceholder": "https://example.com/webhook",
         "eventsPlaceholder": "event.a,event.b"

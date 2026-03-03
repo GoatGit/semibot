@@ -263,9 +263,12 @@
       "routingDefaults": "Model routing defaults",
       "saveRouting": "Save routing defaults",
       "providerConfig": "Provider configuration",
+      "addCustomProvider": "Add custom provider",
       "viewModels": "View models",
       "apiKeyLabel": "API Key",
       "endpointLabel": "Endpoint",
+      "defaultModelLabel": "Default model",
+      "fallbackModelLabel": "Fallback model",
       "defaultModelPlaceholder": "Default model (e.g. gpt-4o)",
       "fallbackModelPlaceholder": "Fallback model (e.g. gpt-4o-mini)"
     },
@@ -352,6 +355,7 @@
       "mind": "Mind (Global Behavior)",
       "version": "Version",
       "updatedAt": "Updated at",
+      "contentLabel": "Capability content",
       "placeholder": "Enter capability content...",
       "history": "History",
       "rollbackTo": "Switch to",
@@ -360,6 +364,11 @@
     "modals": {
       "provider": {
         "title": "Edit LLM provider",
+        "customIdLabel": "Provider ID",
+        "customIdPlaceholder": "Custom provider ID (e.g. deepseek)",
+        "customIdHelp": "Used to build key custom:<provider-id>; use lowercase letters, numbers, and hyphens.",
+        "apiKeyLabel": "API Key",
+        "endpointLabel": "Endpoint / Base URL",
         "apiKeyPlaceholder": "New API key (leave empty to keep unchanged)",
         "clearApiKey": "Clear existing API key"
       },
@@ -458,19 +467,26 @@
       },
       "gateway": {
         "title": "Gateway configuration",
+        "instanceKeyLabel": "Field: instanceKey",
         "instanceKeyPlaceholder": "instanceKey (optional, should be unique)",
+        "displayNameLabel": "Field: displayName",
         "displayNamePlaceholder": "Display name",
+        "agentIdLabel": "Field: agentId",
         "agentIdPlaceholder": "Agent ID (default: semibot)",
         "chatBindingsTitle": "Chat bindings",
         "chatBindingsEmpty": "No chat bindings. Add one to route different chats to different agents.",
         "addChatBinding": "Add binding",
         "removeChatBinding": "Remove",
+        "importBindingsLabel": "Import bindings",
+        "chatIdLabel": "Field: chatId",
+        "chatBindingAgentLabel": "Field: agentId",
         "importBindingsPlaceholder": "Paste lines: chatId=agentId (or only chatId to use default agent)",
         "applyImportedBindings": "Apply import",
         "chatIdPlaceholder": "Chat ID",
         "chatBindingAgentPlaceholder": "Agent ID",
         "setDefault": "Set as default instance",
         "enabled": "Enable this gateway",
+        "notifyEventTypesLabel": "Field: notifyEventTypes",
         "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",
         "addressing": {
           "title": "Addressing policy",
@@ -479,7 +495,9 @@
           "modeAllMessages": "All group messages mode",
           "allowReplyToBot": "Treat replies to bot messages as addressed",
           "executeOnUnaddressed": "Execute even when unaddressed (use carefully)",
+          "commandPrefixesLabel": "Field: commandPrefixes",
           "commandPrefixesPlaceholder": "commandPrefixes (optional, comma-separated, e.g. /ask,/run,/approve,/reject)",
+          "sessionContinuationWindowSecLabel": "Field: sessionContinuationWindowSec",
           "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec (positive integer seconds)"
         },
         "proactive": {
@@ -492,32 +510,46 @@
         },
         "context": {
           "title": "Context retention policy",
+          "ttlDaysLabel": "Field: ttlDays",
           "ttlDaysPlaceholder": "ttlDays (retention days)",
+          "maxRecentMessagesLabel": "Field: maxRecentMessages",
           "maxRecentMessagesPlaceholder": "maxRecentMessages (max recent messages)",
+          "summarizeEveryNMessagesLabel": "Field: summarizeEveryNMessages",
           "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages (summarize every N messages)"
         },
         "feishu": {
+          "verifyTokenLabel": "Field: verifyToken",
           "verifyTokenPlaceholder": "Feishu verify token (leave empty to clear)",
+          "webhookUrlLabel": "Field: webhookUrl",
           "webhookUrlPlaceholder": "Feishu webhook URL (optional)",
           "clearVerifyToken": "Clear existing verify token"
         },
         "telegram": {
+          "botTokenLabel": "Field: botToken",
           "botTokenPlaceholder": "Telegram bot token (leave empty to clear)",
           "clearBotToken": "Clear existing bot token",
+          "webhookSecretLabel": "Field: webhookSecret",
           "webhookSecretPlaceholder": "Telegram webhook secret (optional)",
           "clearWebhookSecret": "Clear existing webhook secret",
+          "defaultChatIdLabel": "Field: defaultChatId",
           "defaultChatIdPlaceholder": "Default chat ID (optional)",
+          "allowedChatIdsLabel": "Field: allowedChatIds",
           "allowedChatIdsPlaceholder": "allowedChatIds (optional, comma-separated)"
         }
       },
       "apiKey": {
         "title": "Create API key",
         "description": "The full key is shown only once.",
+        "nameLabel": "Field: name",
+        "expiresAtLabel": "Expires at (optional)",
         "namePlaceholder": "Key name"
       },
       "webhook": {
         "title": "Create webhook",
         "description": "Use comma-separated events, at least one event required.",
+        "urlLabel": "Webhook URL",
+        "secretLabel": "Secret",
+        "eventsLabel": "Events",
         "secretPlaceholder": "secret (at least 16 characters)",
         "urlPlaceholder": "https://example.com/webhook",
         "eventsPlaceholder": "event.a,event.b"
