@@ -122,6 +122,56 @@ class GatewayContextService:
         return "\n".join(lines)
 
     @staticmethod
+    def _format_plan_preview_message(steps: list[dict[str, Any]]) -> str:
+        if not steps:
+            return "已收到任务，正在开始执行。"
+        top = steps[:8]
+        lines = ["已收到任务，先给您执行计划：", ""]
+        for idx, step in enumerate(top, start=1):
+            title = str(step.get("title") or step.get("id") or f"步骤{idx}").strip()
+            tool = str(step.get("tool") or "").strip()
+            if tool:
+                lines.append(f"{idx}. {title}（{tool}）")
+            else:
+                lines.append(f"{idx}. {title}")
+        if len(steps) > len(top):
+            lines.append(f"... 共 {len(steps)} 步")
+        lines.extend(["", "我会按这个计划继续执行，完成后回复结果。"])
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_generated_files(runtime_result: dict[str, Any]) -> list[dict[str, Any]]:
+        rows = runtime_result.get("tool_results")
+        if not isinstance(rows, list):
+            return []
+        files: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            metadata = row.get("metadata")
+            meta = metadata if isinstance(metadata, dict) else {}
+            generated = meta.get("generated_files")
+            items = generated if isinstance(generated, list) else []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                path = str(item.get("path") or item.get("local_path") or "").strip()
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                files.append(
+                    {
+                        "local_path": path,
+                        "filename": str(item.get("filename") or "").strip(),
+                        "mime_type": str(item.get("mime_type") or "").strip(),
+                        "size": item.get("size"),
+                        "file_id": item.get("file_id"),
+                    }
+                )
+        return files
+
+    @staticmethod
     def _extract_pending_approval_ids(runtime_result: dict[str, Any]) -> list[str]:
         ids: list[str] = []
         seen: set[str] = set()
@@ -321,6 +371,45 @@ class GatewayContextService:
 
         async def _execute() -> None:
             self.store.update_task_run(run["id"], status="running")
+            plan_preview_sent = False
+
+            async def _runtime_event_callback(runtime_event: dict[str, Any]) -> None:
+                nonlocal plan_preview_sent
+                if plan_preview_sent or not on_result:
+                    return
+                if str(runtime_event.get("event") or "") != "plan_created":
+                    return
+                payload = runtime_event.get("data")
+                data = payload if isinstance(payload, dict) else {}
+                steps = data.get("steps")
+                steps_list = steps if isinstance(steps, list) else []
+                text_preview = self._format_plan_preview_message(
+                    [item for item in steps_list if isinstance(item, dict)]
+                )
+                ok = await on_result(
+                    text_preview,
+                    {
+                        "chat_id": chat_id,
+                        "conversation_id": conversation["id"],
+                        "task_run_id": run["id"],
+                        "runtime_session_id": runtime_session_id,
+                        "status": "planning",
+                    },
+                )
+                if ok:
+                    plan_preview_sent = True
+                    self.store.append_context_message(
+                        conversation_id=conversation["id"],
+                        role="assistant",
+                        content=text_preview,
+                        metadata={
+                            "provider": provider,
+                            "task_run_id": run["id"],
+                            "runtime_session_id": runtime_session_id,
+                            "minimal_writeback": True,
+                            "status": "planning",
+                        },
+                    )
             try:
                 runner_task = asyncio.create_task(
                     self.task_runner(
@@ -332,6 +421,7 @@ class GatewayContextService:
                         approval_scope_id=approval_scope_id,
                         model=None,
                         system_prompt=None,
+                        runtime_event_callback=_runtime_event_callback,
                     )
                 )
                 deadline = asyncio.get_running_loop().time() + float(self.task_timeout_seconds)
@@ -396,13 +486,17 @@ class GatewayContextService:
                 if not final_response:
                     error = str(runtime_result.get("error") or "").strip()
                     final_response = f"任务执行失败：{error}" if error else "任务已执行，但没有可返回结果。"
+                generated_files = self._extract_generated_files(runtime_result)
                 approval_ids = self._extract_pending_approval_ids(runtime_result)
                 final_response = self._append_approval_hints(final_response, approval_ids)
                 self.store.update_task_run(
                     run["id"],
                     status="done",
                     result_summary=final_response,
-                    result_metadata={"runtime_result": runtime_result},
+                    result_metadata={
+                        "runtime_result": runtime_result,
+                        "generated_files": generated_files,
+                    },
                 )
                 self.store.append_context_message(
                     conversation_id=conversation["id"],
@@ -413,6 +507,7 @@ class GatewayContextService:
                         "task_run_id": run["id"],
                         "runtime_session_id": runtime_session_id,
                         "minimal_writeback": True,
+                        "generated_files": generated_files,
                     },
                 )
                 if on_result:
@@ -421,6 +516,7 @@ class GatewayContextService:
                         "conversation_id": conversation["id"],
                         "task_run_id": run["id"],
                         "runtime_session_id": runtime_session_id,
+                        "files": generated_files,
                     })
             except TimeoutError:
                 msg = f"任务执行超时（>{self.task_timeout_seconds}s），请重试或缩小任务范围。"

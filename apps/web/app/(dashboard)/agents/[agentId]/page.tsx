@@ -292,7 +292,7 @@ export default function AgentDetailPage() {
                     onChange={() => setValues((prev) => ({ ...prev, runtimeType: 'semigraph' }))}
                     disabled
                     options={[
-                      { value: 'semigraph', label: 'Semigraph' },
+                      { value: 'semigraph', label: t('agentsDetail.runtimeTypeSemigraph') },
                     ]}
                   />
                 </div>

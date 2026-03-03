@@ -164,7 +164,7 @@ pnpm dev
 
 - **Web 前端**: http://localhost:3000
 - **API 服务**: http://localhost:3001
-- **API 文档**: http://localhost:3001/api-docs
+- **API 索引**: http://localhost:3001/api/v1/docs
 
 ### API 迁移提示（进化中心）
 

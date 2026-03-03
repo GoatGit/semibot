@@ -42,6 +42,35 @@ router.get('/health', (_req: Request, res: Response) => {
   })
 })
 
+// 轻量 API 文档索引（用于前端/脚本发现关键路由与迁移信息）
+router.get('/docs', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      version: 'v1',
+      endpoints: {
+        health: '/api/v1/health',
+        chat: '/api/v1/chat',
+        sessions: '/api/v1/sessions',
+        agents: '/api/v1/agents',
+        tools: '/api/v1/tools',
+        events: '/api/v1/events',
+        rules: '/api/v1/rules',
+        approvals: '/api/v1/approvals',
+        gateways: '/api/v1/gateways',
+        evolutionCapabilities: '/api/v1/evolution-capabilities',
+      },
+      deprecated: [
+        {
+          path: '/api/v1/context-policies',
+          successor: '/api/v1/evolution-capabilities',
+          sunset: 'Tue, 30 Jun 2026 00:00:00 GMT',
+        },
+      ],
+    },
+  })
+})
+
 // Auth 路由 (无需认证)
 router.use('/auth', authRouter)
 

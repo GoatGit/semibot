@@ -31,6 +31,7 @@ from src.gateway.adapters.telegram_adapter import (
 )
 from src.gateway.context_service import GatewayContextService
 from src.gateway.notifiers.feishu_notifier import FeishuNotifier, SendFn
+from src.gateway.notifiers.telegram_notifier import SendDocumentFn as TelegramSendDocumentFn
 from src.gateway.notifiers.telegram_notifier import SendFn as TelegramSendFn
 from src.gateway.notifiers.telegram_notifier import TelegramNotifier
 from src.gateway.parsers.approval_text import extract_message_text, parse_approval_text_command
@@ -60,6 +61,7 @@ class GatewayManager:
     telegram_webhook_secret: str | None = None
     telegram_notify_event_types: set[str] | None = None
     telegram_send_fn: TelegramSendFn | None = None
+    telegram_send_document_fn: TelegramSendDocumentFn | None = None
 
     @staticmethod
     def _to_bool(value: Any, default: bool = False) -> bool:
@@ -414,6 +416,7 @@ class GatewayManager:
             parse_mode=parse_mode or None,
             disable_link_preview=disable_link_preview,
             send_fn=self.telegram_send_fn,
+            send_document_fn=self.telegram_send_document_fn,
         )
 
     async def handle_runtime_notify_payload(self, payload: dict[str, Any]) -> None:
@@ -753,19 +756,29 @@ class GatewayManager:
             notifier = self.build_feishu_notifier(target_instance)
             if not notifier:
                 raise GatewayManagerError("feishu_not_configured")
-            sent = await notifier.send_markdown(
-                title=str(payload.get("title") or "Semibot Gateway Test"),
-                content=str(payload.get("content") or "Gateway connectivity test"),
-                channel=str(payload.get("channel") or "default"),
+            files = payload.get("files") if isinstance(payload.get("files"), list) else payload.get("attachments")
+            files_list = [item for item in files if isinstance(item, dict)] if isinstance(files, list) else []
+            sent = await notifier.send_notify_payload(
+                {
+                    "title": str(payload.get("title") or "Semibot Gateway Test"),
+                    "content": str(payload.get("content") or "Gateway connectivity test"),
+                    "channel": str(payload.get("channel") or "default"),
+                    "files": files_list,
+                }
             )
             return {"sent": sent}
         if provider == "telegram":
             notifier = self.build_telegram_notifier(target_instance)
             if not notifier:
                 raise GatewayManagerError("telegram_not_configured")
-            sent = await notifier.send_message(
-                text=str(payload.get("text") or "Semibot Gateway Test"),
-                chat_id=str(payload.get("chat_id") or payload.get("chatId") or "").strip() or None,
+            files = payload.get("files") if isinstance(payload.get("files"), list) else payload.get("attachments")
+            files_list = [item for item in files if isinstance(item, dict)] if isinstance(files, list) else []
+            sent = await notifier.send_notify_payload(
+                {
+                    "content": str(payload.get("text") or payload.get("content") or "Semibot Gateway Test"),
+                    "chat_id": str(payload.get("chat_id") or payload.get("chatId") or "").strip() or None,
+                    "files": files_list,
+                }
             )
             return {"sent": sent}
         raise GatewayManagerError("unsupported_gateway_provider")
@@ -1042,7 +1055,13 @@ class GatewayManager:
             if not notifier:
                 return False
             target_chat_id = str(ctx.get("chat_id") or "").strip() or chat_id
-            return await notifier.send_message(text=reply_text, chat_id=target_chat_id)
+            return await notifier.send_notify_payload(
+                {
+                    "content": reply_text,
+                    "chat_id": target_chat_id,
+                    "files": ctx.get("files") if isinstance(ctx, dict) else [],
+                }
+            )
 
         result = await self.gateway_context.ingest_message(
             provider="telegram",
@@ -1251,10 +1270,15 @@ class GatewayManager:
                 notifier = self.build_feishu_notifier(target_instance)
                 if not notifier:
                     return False
-                return await notifier.send_markdown(
-                    title="Semibot",
-                    content=reply_text,
-                    channel="default",
+                context_map = _context if isinstance(_context, dict) else {}
+                files = context_map.get("files")
+                return await notifier.send_notify_payload(
+                    {
+                        "title": "Semibot",
+                        "content": reply_text,
+                        "channel": "default",
+                        "files": files if isinstance(files, list) else [],
+                    }
                 )
 
             gateway_result = await self.gateway_context.ingest_message(
@@ -1506,7 +1530,13 @@ class GatewayManager:
                     if not notifier:
                         return False
                     target_chat_id = str(ctx.get("chat_id") or "").strip() or None
-                    return await notifier.send_message(text=reply_text, chat_id=target_chat_id)
+                    return await notifier.send_notify_payload(
+                        {
+                            "content": reply_text,
+                            "chat_id": target_chat_id,
+                            "files": ctx.get("files") if isinstance(ctx, dict) else [],
+                        }
+                    )
 
                 gateway_result = await self.gateway_context.ingest_message(
                     provider="telegram",

@@ -104,13 +104,16 @@
     "testAndSync": "Test & Sync",
     "transport": {
       "stdio": {
-        "description": "Local command process for locally installed MCP servers"
+        "description": "Local command process for locally installed MCP servers",
+        "label": "Stdio"
       },
       "sse": {
-        "description": "Connect remote MCP server via Server-Sent Events (legacy protocol)"
+        "description": "Connect remote MCP server via Server-Sent Events (legacy protocol)",
+        "label": "SSE"
       },
       "streamableHttp": {
-        "description": "Connect remote MCP server via Streamable HTTP (recommended)"
+        "description": "Connect remote MCP server via Streamable HTTP (recommended)",
+        "label": "Streamable HTTP"
       }
     },
     "form": {
@@ -122,7 +125,9 @@
       "optional": "(optional)",
       "systemMcp": "Set as system MCP (visible to all)",
       "endpointLabel": {
-        "command": "Command"
+        "command": "Command",
+        "sse": "SSE URL",
+        "http": "HTTP URL"
       },
       "endpointHint": {
         "command": "Enter full executable command with args, e.g. uvx mcp-server-time --local-timezone=Asia/Shanghai",
@@ -132,7 +137,9 @@
       "apiKeyHint": {
         "stdio": "Optional. Passed to subprocess via MCP_API_KEY env",
         "http": "Optional. Sent as Authorization: Bearer <key> header"
-      }
+      },
+      "apiKeyLabel": "API Key",
+      "apiKeyPlaceholder": "sk-..."
     },
     "status": {
       "connected": "Connected",
@@ -184,7 +191,13 @@
     },
     "loading": "Loading configuration...",
     "common": {
-      "notSet": "Not set"
+      "notSet": "Not set",
+      "riskLevels": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "critical": "Critical"
+      }
     },
     "status": {
       "available": "Available",
@@ -247,7 +260,11 @@
       "routingDefaults": "Model routing defaults",
       "saveRouting": "Save routing defaults",
       "providerConfig": "Provider configuration",
-      "viewModels": "View models"
+      "viewModels": "View models",
+      "apiKeyLabel": "API Key",
+      "endpointLabel": "Endpoint",
+      "defaultModelPlaceholder": "Default model (e.g. gpt-4o)",
+      "fallbackModelPlaceholder": "Fallback model (e.g. gpt-4o-mini)"
     },
     "tools": {
       "activeCount": "Active {count}",
@@ -262,7 +279,8 @@
       "builtIn": "Built-in",
       "configure": "Configure",
       "disable": "Disable",
-      "enable": "Enable"
+      "enable": "Enable",
+      "title": "Tools"
     },
     "gateways": {
       "title": "Gateways",
@@ -301,22 +319,26 @@
       "loading": "Loading API keys...",
       "empty": "No API keys",
       "lastUsed": "Last used",
-      "expires": "Expires"
+      "expires": "Expires",
+      "title": "API Keys"
     },
     "webhooks": {
       "newWebhook": "New Webhook",
       "loading": "Loading webhooks...",
       "empty": "No webhooks",
       "events": "Events",
-      "createdAt": "Created at"
+      "createdAt": "Created at",
+      "title": "Webhooks"
     },
     "evolutionCapabilities": {
       "tab": "Evolution",
       "title": "Evolution Center",
       "description": "Manage five evolution objects independently with version switch and rollback.",
-      "gene": "Hands (Execution Capability)",
-      "agents": "Reflex (Rule Template)",
-      "tools": "Guard (Tool Policy)",
+      "hands": "Hands (Execution Capability)",
+      "reflex": "Reflex (Rule Template)",
+      "spine": "Spine (Planner Guidance)",
+      "guard": "Guard (Tool Policy)",
+      "mind": "Mind (Global Behavior)",
       "version": "Version",
       "updatedAt": "Updated at",
       "placeholder": "Enter capability content...",
@@ -392,7 +414,12 @@
           "browserType": "Browser type",
           "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. example.com,news.ycombinator.com)",
           "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
-          "maxTextLengthPlaceholder": "maxTextLength (optional, 100-500000)"
+          "maxTextLengthPlaceholder": "maxTextLength (optional, 100-500000)",
+          "browserTypes": {
+            "chromium": "Chromium",
+            "firefox": "Firefox",
+            "webkit": "WebKit"
+          }
         }
       },
       "gateway": {
@@ -457,7 +484,9 @@
       "webhook": {
         "title": "Create webhook",
         "description": "Use comma-separated events, at least one event required.",
-        "secretPlaceholder": "secret (at least 16 characters)"
+        "secretPlaceholder": "secret (at least 16 characters)",
+        "urlPlaceholder": "https://example.com/webhook",
+        "eventsPlaceholder": "event.a,event.b"
       },
       "createdKey": {
         "title": "API key created",
@@ -465,6 +494,13 @@
         "saved": "Saved",
         "fullKey": "Full key"
       }
+    },
+    "tabs": {
+      "llm": "LLM",
+      "tools": "Tools",
+      "gateways": "Gateways",
+      "apiKeys": "API Keys",
+      "webhooks": "Webhooks"
     }
   },
   "events": {
@@ -567,9 +603,6 @@
     "error": {
       "action": "Approval action failed"
     },
-    "apiUnavailablePrefix": "Approval APIs are not connected yet. Please implement",
-    "and": "and",
-    "period": ".",
     "risk": "Risk",
     "detail": {
       "tool": "Tool {tool}",
@@ -587,7 +620,8 @@
       "low": "Low",
       "medium": "Medium",
       "high": "High"
-    }
+    },
+    "apiUnavailableMessage": "Approval APIs are not connected yet. Please implement {path1} and {path2}."
   },
   "toolsPage": {
     "title": "Tools Center",
@@ -681,7 +715,8 @@
       "priority": "priority",
       "dedupe": "dedupe(s)",
       "cooldown": "cooldown(s)",
-      "budgetPerDay": "budget/day"
+      "budgetPerDay": "budget/day",
+      "cronJobNamePlaceholder": "daily_digest"
     },
     "formHelp": {
       "priority": "priority: higher value means higher execution precedence.",
@@ -727,7 +762,8 @@
     "createdOn": "Created on",
     "header": {
       "prefix": "Manage your AI agents,",
-      "suffix": ""
+      "suffix": "",
+      "title": "Agents"
     },
     "filter": {
       "all": "All",
@@ -805,7 +841,8 @@
       "createFailed": "Create failed",
       "updateFailed": "Update failed",
       "save": "Save failed, please retry later"
-    }
+    },
+    "runtimeTypeSemigraph": "Semigraph"
   },
   "chatNew": {
     "title": "Start New Chat",
@@ -910,10 +947,12 @@
         "hint": "active {count}"
       },
       "mcp": {
-        "hint": "external integrations"
+        "hint": "external integrations",
+        "label": "MCP"
       },
       "skills": {
-        "hint": "skill definitions"
+        "hint": "skill definitions",
+        "label": "Skills"
       },
       "events": {
         "label": "Events",
@@ -1002,7 +1041,8 @@
     "error": {
       "coreData": "Failed to load dashboard core data. Please check API service.",
       "load": "Load failed"
-    }
+    },
+    "title": "Semibot - A semi bot"
   },
   "skillDefinitions": {
     "title": "Skill Management",
@@ -1026,7 +1066,13 @@
     "installModal": {
       "title": "Install Skill",
       "sourceType": "Source Type *",
-      "sourceUrl": "Source URL *"
+      "sourceUrl": "Source URL *",
+      "sourceOptions": {
+        "anthropic": "Anthropic",
+        "git": "Git",
+        "url": "URL"
+      },
+      "sourceUrlPlaceholder": "https://..."
     },
     "editModal": {
       "title": "Edit Skill Definition",

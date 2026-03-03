@@ -359,9 +359,9 @@ export default function SkillDefinitionsPage() {
               value={installSourceType}
               onChange={(val) => setInstallSourceType(val as typeof installSourceType)}
               options={[
-                { value: 'anthropic', label: 'Anthropic' },
-                { value: 'git', label: 'Git' },
-                { value: 'url', label: 'URL' },
+                { value: 'anthropic', label: t('skillDefinitions.installModal.sourceOptions.anthropic') },
+                { value: 'git', label: t('skillDefinitions.installModal.sourceOptions.git') },
+                { value: 'url', label: t('skillDefinitions.installModal.sourceOptions.url') },
               ]}
             />
           </div>
@@ -371,7 +371,7 @@ export default function SkillDefinitionsPage() {
               <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('skillDefinitions.installModal.sourceUrl')}</label>
               <Input
                 type="text"
-                placeholder="https://..."
+                placeholder={t('skillDefinitions.installModal.sourceUrlPlaceholder')}
                 value={installSourceUrl}
                 onChange={(e) => setInstallSourceUrl(e.target.value)}
               />

@@ -186,7 +186,7 @@ export default function AgentsPage() {
         <header className="border-b border-border-subtle pb-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-semibold text-text-primary">Agents</h1>
+              <h1 className="text-xl font-semibold text-text-primary">{t('agents.header.title')}</h1>
               <p className="text-sm text-text-secondary mt-1">
                 {t('agents.header.prefix')} {agents.length} {t('agents.header.suffix')}
               </p>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import time
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -38,6 +40,7 @@ from src.skills.bootstrap import create_default_registry
 from src.skills.registry import SkillRegistry
 from src.utils.logging import get_logger
 from src.ws.client import ControlPlaneClient
+from src.ws.event_emitter import EventEmitter
 
 DEFAULT_CONTROL_PLANE_WS = "ws://127.0.0.1:3001/ws/vm"
 logger = get_logger(__name__)
@@ -623,6 +626,7 @@ async def run_task_once(
     approval_scope_id: str | None = None,
     model: str | None = None,
     system_prompt: str | None = None,
+    runtime_event_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run one user task locally and return execution summary."""
     os.environ["SEMIBOT_EVENTS_DB_PATH"] = db_path
@@ -635,6 +639,9 @@ async def run_task_once(
 
     async def _runtime_event_sink(event: dict[str, Any]) -> None:
         runtime_events.append(event)
+        if runtime_event_callback:
+            with suppress(Exception):
+                await runtime_event_callback(event)
 
     _maybe_load_local_env_files()
     await _maybe_bootstrap_llm_from_control_plane()
@@ -765,9 +772,18 @@ async def run_task_once(
         event_emitter=event_engine,
     )
 
+    runtime_event_emitter = EventEmitter()
+
+    async def _drain_runtime_events() -> None:
+        async for event in runtime_event_emitter:
+            await _runtime_event_sink(event)
+
+    drain_task = asyncio.create_task(_drain_runtime_events())
+
     graph_context: dict[str, Any] = {
         "skill_registry": skill_registry,
         "unified_executor": unified_executor,
+        "event_emitter": runtime_event_emitter,
     }
     if llm_provider:
         graph_context["llm_provider"] = llm_provider
@@ -861,3 +877,8 @@ async def run_task_once(
             "runtime_events": runtime_events,
             "llm_configured": llm_provider is not None,
         }
+    finally:
+        with suppress(Exception):
+            await runtime_event_emitter.close()
+        with suppress(Exception):
+            await drain_task

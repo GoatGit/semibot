@@ -53,6 +53,7 @@ def _build_manager(
     db_path: Path,
     rules_path: Path,
     telegram_send_fn=None,
+    telegram_send_document_fn=None,
 ) -> GatewayManager:
     config_store = RuntimeConfigStore(db_path=str(db_path))
     engine = EventEngine(
@@ -85,6 +86,7 @@ def _build_manager(
         gateway_context=gateway_context,
         engine=engine,
         telegram_send_fn=telegram_send_fn,
+        telegram_send_document_fn=telegram_send_document_fn,
     )
 
 
@@ -160,6 +162,52 @@ async def test_gateway_manager_notify_routes_by_gateway_id_for_telegram(tmp_path
     assert len(sent) == 1
     assert sent[0]["payload"]["chat_id"] == "-200002"
     assert sent[0]["payload"]["text"] == "notify by gateway id"
+
+
+@pytest.mark.asyncio
+async def test_gateway_manager_test_gateway_telegram_with_files(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+    file_path = tmp_path / "demo.pdf"
+    file_path.write_bytes(b"%PDF-1.4 gateway test")
+
+    sent_json: list[dict[str, Any]] = []
+    sent_doc: list[dict[str, Any]] = []
+
+    async def _send_json(token: str, payload: dict[str, Any], timeout: float) -> None:
+        sent_json.append({"token": token, "payload": payload, "timeout": timeout})
+
+    async def _send_doc(token: str, data: dict[str, Any], file_upload, timeout: float) -> None:
+        sent_doc.append({"token": token, "data": data, "file_upload": file_upload, "timeout": timeout})
+
+    manager = _build_manager(
+        db_path=db_path,
+        rules_path=rules_path,
+        telegram_send_fn=_send_json,
+        telegram_send_document_fn=_send_doc,
+    )
+    manager.upsert_gateway_config(
+        "telegram",
+        {
+            "isActive": True,
+            "config": {
+                "botToken": "123456:abc",
+                "defaultChatId": "-100001",
+            },
+        },
+    )
+    result = await manager.test_gateway(
+        "telegram",
+        {
+            "text": "gateway file test",
+            "files": [{"local_path": str(file_path), "filename": "demo.pdf", "mime_type": "application/pdf"}],
+        },
+    )
+    assert result["sent"] is True
+    assert sent_json == []
+    assert len(sent_doc) == 1
+    assert sent_doc[0]["data"]["chat_id"] == "-100001"
 
 
 @pytest.mark.asyncio

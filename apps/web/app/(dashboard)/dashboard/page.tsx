@@ -288,14 +288,14 @@ export default function DashboardPage() {
       },
       {
         id: 'mcp',
-        label: 'MCP',
+        label: t('dashboard.cards.mcp.label'),
         value: stats.mcpTotal,
         icon: <Puzzle size={18} />,
         hint: t('dashboard.cards.mcp.hint'),
       },
       {
         id: 'skills',
-        label: 'Skills',
+        label: t('dashboard.cards.skills.label'),
         value: stats.skillsTotal,
         icon: <Sparkles size={18} />,
         hint: t('dashboard.cards.skills.hint'),
@@ -321,7 +321,7 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-3">
                   <h1 className="text-2xl md:text-3xl font-semibold text-text-primary">
-                    Semibot - A semi bot
+                    {t('dashboard.title')}
                   </h1>
                   <p className="text-text-secondary max-w-2xl">
                     {t('dashboard.subtitle')}

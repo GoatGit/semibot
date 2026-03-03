@@ -71,19 +71,19 @@ function getTransportOptions(t: Translate): {
   return [
     {
       value: 'stdio',
-      label: 'Stdio',
+      label: t('mcp.transport.stdio.label'),
       icon: <Terminal size={16} />,
       description: t('mcp.transport.stdio.description'),
     },
     {
       value: 'sse',
-      label: 'SSE',
+      label: t('mcp.transport.sse.label'),
       icon: <Radio size={16} />,
       description: t('mcp.transport.sse.description'),
     },
     {
       value: 'streamable_http',
-      label: 'Streamable HTTP',
+      label: t('mcp.transport.streamableHttp.label'),
       icon: <Globe size={16} />,
       description: t('mcp.transport.streamableHttp.description'),
     },
@@ -104,14 +104,14 @@ function getTransportHints(t: Translate): Record<
       apiKeyHint: t('mcp.form.apiKeyHint.stdio'),
     },
     sse: {
-      endpointLabel: 'SSE URL',
+      endpointLabel: t('mcp.form.endpointLabel.sse'),
       endpointPlaceholder: 'https://mcp-server.example.com/sse',
       endpointHint: t('mcp.form.endpointHint.sse'),
       showApiKey: true,
       apiKeyHint: t('mcp.form.apiKeyHint.http'),
     },
     streamable_http: {
-      endpointLabel: 'HTTP URL',
+      endpointLabel: t('mcp.form.endpointLabel.http'),
       endpointPlaceholder: 'https://mcp-server.example.com/mcp',
       endpointHint: t('mcp.form.endpointHint.streamableHttp'),
       showApiKey: true,
@@ -252,11 +252,11 @@ function ServerFormModal({
         {hints.showApiKey && (
           <div>
             <label className="block text-sm font-medium text-text-secondary mb-1.5">
-              API Key <span className="text-text-tertiary font-normal">{t('mcp.form.optional')}</span>
+              {t('mcp.form.apiKeyLabel')} <span className="text-text-tertiary font-normal">{t('mcp.form.optional')}</span>
             </label>
             <Input
               type="password"
-              placeholder="sk-..."
+              placeholder={t('mcp.form.apiKeyPlaceholder')}
               value={formState.apiKey}
               onChange={(e) => setFormState((s) => ({ ...s, apiKey: e.target.value }))}
               disabled={saving}

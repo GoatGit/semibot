@@ -69,6 +69,20 @@ class FeishuNotifier:
             or payload.get("message")
             or f"event_type={payload.get('event_type')}"
         )
+        files_raw = payload.get("files")
+        if not isinstance(files_raw, list):
+            files_raw = payload.get("attachments")
+        files = [item for item in files_raw if isinstance(item, dict)] if isinstance(files_raw, list) else []
+        if files:
+            file_lines = ["", "附件："]
+            for item in files[:10]:
+                name = str(item.get("filename") or item.get("name") or "unnamed").strip()
+                url = str(item.get("url") or item.get("file_url") or "").strip()
+                if url:
+                    file_lines.append(f"- [{name}]({url})")
+                else:
+                    file_lines.append(f"- {name}")
+            content = f"{content}\n" + "\n".join(file_lines)
         return await self.send_markdown(title=title, content=content, channel=channel)
 
     async def handle_event(self, event: Event) -> None:

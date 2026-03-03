@@ -483,59 +483,26 @@ export default function ConfigPage() {
     [t]
   )
   const evolutionUiText = useMemo(() => {
-    if (locale === 'ja-JP') {
-      return {
-        tab: '進化',
-        title: '進化センター',
-        description: '5つの進化オブジェクトを個別に編集・バージョン切替できます。保存すると自動採番されます。',
-        hands: 'Hands（実行能力）',
-        reflex: 'Reflex（ルールテンプレート）',
-        spine: 'Spine（Planner 規範）',
-        guard: 'Guard（ツールポリシー）',
-        mind: 'Mind（全体行動方針）',
-        version: 'バージョン',
-        updatedAt: '更新日時',
-        history: '履歴',
-        placeholder: '進化オブジェクトの内容を入力...',
-        rollbackTo: '切替先バージョン',
-        rollback: 'バージョン切替',
-      }
-    }
-    if (locale === 'en-US') {
-      return {
-        tab: 'Evolution',
-        title: 'Evolution Center',
-        description: 'Manage five evolution objects independently. Saving creates a new version automatically.',
-        hands: 'Hands (Execution Capability)',
-        reflex: 'Reflex (Rule Template)',
-        spine: 'Spine (Planner Guidance)',
-        guard: 'Guard (Tool Policy)',
-        mind: 'Mind (Global Behavior)',
-        version: 'Version',
-        updatedAt: 'Updated at',
-        history: 'History',
-        placeholder: 'Enter capability content...',
-        rollbackTo: 'Switch to',
-        rollback: 'Switch Version',
-      }
-    }
     return {
-      tab: '进化',
-      title: '进化中心',
-      description: '统一管理 5 类进化对象，可分别编辑与切换版本。保存后自动累加版本号。',
-      hands: 'Hands（执行能力）',
-      reflex: 'Reflex（规则模板）',
-      spine: 'Spine（规划规范）',
-      guard: 'Guard（工具策略）',
-      mind: 'Mind（全局行为）',
-      version: '版本',
-      updatedAt: '更新时间',
-      history: '历史版本',
-      placeholder: '输入能力内容...',
-      rollbackTo: '切换到',
-      rollback: '切换版本',
+      tab: tSafe('config.evolutionCapabilities.tab', '进化'),
+      title: tSafe('config.evolutionCapabilities.title', '进化中心'),
+      description: tSafe(
+        'config.evolutionCapabilities.description',
+        '统一管理 5 类进化对象，可分别编辑与切换版本。保存后自动累加版本号。'
+      ),
+      hands: tSafe('config.evolutionCapabilities.hands', 'Hands（执行能力）'),
+      reflex: tSafe('config.evolutionCapabilities.reflex', 'Reflex（规则模板）'),
+      spine: tSafe('config.evolutionCapabilities.spine', 'Spine（规划规范）'),
+      guard: tSafe('config.evolutionCapabilities.guard', 'Guard（工具策略）'),
+      mind: tSafe('config.evolutionCapabilities.mind', 'Mind（全局行为）'),
+      version: tSafe('config.evolutionCapabilities.version', '版本'),
+      updatedAt: tSafe('config.evolutionCapabilities.updatedAt', '更新时间'),
+      history: tSafe('config.evolutionCapabilities.history', '历史版本'),
+      placeholder: tSafe('config.evolutionCapabilities.placeholder', '输入能力内容...'),
+      rollbackTo: tSafe('config.evolutionCapabilities.rollbackTo', '切换到'),
+      rollback: tSafe('config.evolutionCapabilities.rollback', '切换版本'),
     }
-  }, [locale])
+  }, [tSafe])
   const [activeTab, setActiveTab] = useState<ConfigTab>('llm')
   const [loading, setLoading] = useState(true)
   const [refreshingAll, setRefreshingAll] = useState(false)
@@ -1948,20 +1915,20 @@ export default function ConfigPage() {
     () => [
       {
         id: 'llm' as const,
-        label: 'LLM',
+        label: tSafe('config.tabs.llm', 'LLM'),
         count: llmProviders.filter((item) => item.available).length,
       },
       {
         id: 'tools' as const,
-        label: 'Tools',
+        label: tSafe('config.tabs.tools', 'Tools'),
         count: tools.length,
       },
-      { id: 'gateways' as const, label: 'Gateways', count: gateways.length },
-      { id: 'apiKeys' as const, label: 'API Keys', count: apiKeys.length },
-      { id: 'webhooks' as const, label: 'Webhooks', count: webhooks.length },
+      { id: 'gateways' as const, label: tSafe('config.tabs.gateways', 'Gateways'), count: gateways.length },
+      { id: 'apiKeys' as const, label: tSafe('config.tabs.apiKeys', 'API Keys'), count: apiKeys.length },
+      { id: 'webhooks' as const, label: tSafe('config.tabs.webhooks', 'Webhooks'), count: webhooks.length },
       { id: 'evolutionCapabilities' as const, label: evolutionUiText.tab, count: 5 },
     ],
-    [apiKeys.length, evolutionUiText.tab, gateways.length, llmProviders, tools.length, webhooks.length]
+    [apiKeys.length, evolutionUiText.tab, gateways.length, llmProviders, tSafe, tools.length, webhooks.length]
   )
 
   const isAnySectionLoading = Object.values(sectionLoading).some(Boolean)
@@ -2042,7 +2009,7 @@ export default function ConfigPage() {
                     )}
                     <Input
                       data-testid="llm-default-model-input"
-                      placeholder="DEFAULT_LLM_MODEL"
+                      placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
                       value={modelDefaults.defaultModel}
                       onChange={(e) =>
                         setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
@@ -2050,7 +2017,7 @@ export default function ConfigPage() {
                     />
                     <Input
                       data-testid="llm-fallback-model-input"
-                      placeholder="FALLBACK_LLM_MODEL"
+                      placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
                       value={modelDefaults.fallbackModel}
                       onChange={(e) =>
                         setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
@@ -2098,10 +2065,11 @@ export default function ConfigPage() {
                             </div>
                           </div>
                           <p className="mt-1 text-xs text-text-tertiary">
-                            API Key: {cfg.apiKeyConfigured ? (cfg.apiKeyPreview || t('config.status.configured')) : t('config.status.notConfigured')}
+                            {tSafe('config.llm.apiKeyLabel', 'API Key')}:{' '}
+                            {cfg.apiKeyConfigured ? (cfg.apiKeyPreview || t('config.status.configured')) : t('config.status.notConfigured')}
                           </p>
                           <p className="mt-1 truncate text-xs text-text-tertiary">
-                            Endpoint: {cfg.baseUrl || t('config.common.notSet')}
+                            {tSafe('config.llm.endpointLabel', 'Endpoint')}: {cfg.baseUrl || t('config.common.notSet')}
                           </p>
                           <details className="mt-2">
                             <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary">
@@ -2132,7 +2100,7 @@ export default function ConfigPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Wrench size={18} className="text-primary-400" />
-                      <h2 className="text-lg font-semibold text-text-primary">Tools</h2>
+                      <h2 className="text-lg font-semibold text-text-primary">{tSafe('config.tools.title', 'Tools')}</h2>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-text-tertiary">{t('config.tools.activeCount', { count: activeToolsCount })}</span>
@@ -2672,7 +2640,7 @@ export default function ConfigPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <KeyRound size={18} className="text-primary-400" />
-                      <h2 className="text-lg font-semibold text-text-primary">API Keys</h2>
+                      <h2 className="text-lg font-semibold text-text-primary">{tSafe('config.apiKeys.title', 'API Keys')}</h2>
                     </div>
                     <div className="flex items-center gap-2">
                       <Button
@@ -2738,7 +2706,7 @@ export default function ConfigPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Webhook size={18} className="text-primary-400" />
-                      <h2 className="text-lg font-semibold text-text-primary">Webhooks</h2>
+                      <h2 className="text-lg font-semibold text-text-primary">{tSafe('config.webhooks.title', 'Webhooks')}</h2>
                     </div>
                     <div className="flex items-center gap-2">
                       <Button
@@ -2842,7 +2810,7 @@ export default function ConfigPage() {
           />
           <Input
             data-testid="provider-endpoint-input"
-            placeholder="API Endpoint"
+            placeholder={t('config.modals.tool.apiEndpointPlaceholder')}
             value={providerConfigForm.baseUrl}
             onChange={(e) => setProviderConfigForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
           />
@@ -2945,10 +2913,10 @@ export default function ConfigPage() {
                 }))
               }
             >
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="critical">critical</option>
+              <option value="low">{tSafe('config.common.riskLevels.low', 'low')}</option>
+              <option value="medium">{tSafe('config.common.riskLevels.medium', 'medium')}</option>
+              <option value="high">{tSafe('config.common.riskLevels.high', 'high')}</option>
+              <option value="critical">{tSafe('config.common.riskLevels.critical', 'critical')}</option>
             </select>
           </div>
           <div className="space-y-1">
@@ -3044,9 +3012,9 @@ export default function ConfigPage() {
                     }))
                   }
                 >
-                  <option value="chromium">chromium</option>
-                  <option value="firefox">firefox</option>
-                  <option value="webkit">webkit</option>
+                  <option value="chromium">{tSafe('config.modals.tool.browser.browserTypes.chromium', 'chromium')}</option>
+                  <option value="firefox">{tSafe('config.modals.tool.browser.browserTypes.firefox', 'firefox')}</option>
+                  <option value="webkit">{tSafe('config.modals.tool.browser.browserTypes.webkit', 'webkit')}</option>
                 </select>
               </div>
               <Input
@@ -3495,10 +3463,10 @@ export default function ConfigPage() {
                   }))
                 }
               >
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="critical">critical</option>
+                <option value="low">{tSafe('config.common.riskLevels.low', 'low')}</option>
+                <option value="medium">{tSafe('config.common.riskLevels.medium', 'medium')}</option>
+                <option value="high">{tSafe('config.common.riskLevels.high', 'high')}</option>
+                <option value="critical">{tSafe('config.common.riskLevels.critical', 'critical')}</option>
               </select>
             </div>
           </div>
@@ -3590,7 +3558,7 @@ export default function ConfigPage() {
       >
         <div className="space-y-4">
           <Input
-            placeholder="https://example.com/webhook"
+            placeholder={t('config.modals.webhook.urlPlaceholder')}
             value={webhookForm.url}
             onChange={(e) => setWebhookForm((prev) => ({ ...prev, url: e.target.value }))}
           />
@@ -3600,7 +3568,7 @@ export default function ConfigPage() {
             onChange={(e) => setWebhookForm((prev) => ({ ...prev, secret: e.target.value }))}
           />
           <Input
-            placeholder="event.a,event.b"
+            placeholder={t('config.modals.webhook.eventsPlaceholder')}
             value={webhookForm.eventsText}
             onChange={(e) => setWebhookForm((prev) => ({ ...prev, eventsText: e.target.value }))}
           />

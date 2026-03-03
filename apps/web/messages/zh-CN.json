@@ -104,13 +104,16 @@
     "testAndSync": "测试并同步",
     "transport": {
       "stdio": {
-        "description": "本地命令行进程，适用于本地安装的 MCP Server"
+        "description": "本地命令行进程，适用于本地安装的 MCP Server",
+        "label": "Stdio"
       },
       "sse": {
-        "description": "通过 Server-Sent Events 连接远程 MCP Server（旧版协议）"
+        "description": "通过 Server-Sent Events 连接远程 MCP Server（旧版协议）",
+        "label": "SSE"
       },
       "streamableHttp": {
-        "description": "通过 Streamable HTTP 连接远程 MCP Server（推荐）"
+        "description": "通过 Streamable HTTP 连接远程 MCP Server（推荐）",
+        "label": "Streamable HTTP"
       }
     },
     "form": {
@@ -122,7 +125,9 @@
       "optional": "（可选）",
       "systemMcp": "设为系统 MCP（所有组织可见）",
       "endpointLabel": {
-        "command": "命令"
+        "command": "命令",
+        "sse": "SSE URL",
+        "http": "HTTP URL"
       },
       "endpointHint": {
         "command": "输入完整的可执行命令。将 command 和 args 用空格拼接，例如：uvx mcp-server-time --local-timezone=Asia/Shanghai",
@@ -132,7 +137,9 @@
       "apiKeyHint": {
         "stdio": "可选。会通过 MCP_API_KEY 环境变量传递给子进程",
         "http": "可选。会通过 Authorization: Bearer <key> 请求头发送"
-      }
+      },
+      "apiKeyLabel": "API Key",
+      "apiKeyPlaceholder": "sk-..."
     },
     "status": {
       "connected": "已连接",
@@ -184,7 +191,13 @@
     },
     "loading": "加载配置中...",
     "common": {
-      "notSet": "未设置"
+      "notSet": "未设置",
+      "riskLevels": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "critical": "严重"
+      }
     },
     "status": {
       "available": "可用",
@@ -247,7 +260,11 @@
       "routingDefaults": "模型路由默认值",
       "saveRouting": "保存模型路由",
       "providerConfig": "Provider 配置",
-      "viewModels": "查看模型列表"
+      "viewModels": "查看模型列表",
+      "apiKeyLabel": "API Key",
+      "endpointLabel": "Endpoint",
+      "defaultModelPlaceholder": "默认模型（例如 gpt-4o）",
+      "fallbackModelPlaceholder": "回退模型（例如 gpt-4o-mini）"
     },
     "tools": {
       "activeCount": "活跃 {count}",
@@ -262,7 +279,8 @@
       "builtIn": "内置",
       "configure": "配置",
       "disable": "停用",
-      "enable": "启用"
+      "enable": "启用",
+      "title": "工具"
     },
     "gateways": {
       "title": "Gateways",
@@ -301,22 +319,26 @@
       "loading": "正在加载 API Key...",
       "empty": "暂无 API Key",
       "lastUsed": "最近使用",
-      "expires": "过期"
+      "expires": "过期",
+      "title": "API Keys"
     },
     "webhooks": {
       "newWebhook": "新建 Webhook",
       "loading": "正在加载 Webhook...",
       "empty": "暂无 Webhook",
       "events": "事件",
-      "createdAt": "创建时间"
+      "createdAt": "创建时间",
+      "title": "Webhooks"
     },
     "evolutionCapabilities": {
       "tab": "进化",
       "title": "进化中心",
       "description": "统一管理 5 类进化对象，可分别编辑、切换版本与回退。",
-      "gene": "Hands（执行能力）",
-      "agents": "Reflex（规则模板）",
-      "tools": "Guard（工具策略）",
+      "hands": "Hands（执行能力）",
+      "reflex": "Reflex（规则模板）",
+      "spine": "Spine（规划规范）",
+      "guard": "Guard（工具策略）",
+      "mind": "Mind（全局行为）",
       "version": "版本",
       "updatedAt": "更新时间",
       "placeholder": "输入能力内容...",
@@ -392,7 +414,12 @@
           "browserType": "浏览器类型",
           "allowedDomainsPlaceholder": "allowedDomains（可选，逗号分隔，如 example.com,news.ycombinator.com）",
           "blockedDomainsPlaceholder": "blockedDomains（可选，逗号分隔）",
-          "maxTextLengthPlaceholder": "maxTextLength（可选，100-500000）"
+          "maxTextLengthPlaceholder": "maxTextLength（可选，100-500000）",
+          "browserTypes": {
+            "chromium": "Chromium",
+            "firefox": "Firefox",
+            "webkit": "WebKit"
+          }
         }
       },
       "gateway": {
@@ -457,7 +484,9 @@
       "webhook": {
         "title": "创建 Webhook",
         "description": "events 用逗号分隔，最少一个事件。",
-        "secretPlaceholder": "secret(至少16字符)"
+        "secretPlaceholder": "secret(至少16字符)",
+        "urlPlaceholder": "https://example.com/webhook",
+        "eventsPlaceholder": "event.a,event.b"
       },
       "createdKey": {
         "title": "API Key 已创建",
@@ -465,6 +494,13 @@
         "saved": "我已保存",
         "fullKey": "完整密钥"
       }
+    },
+    "tabs": {
+      "llm": "LLM",
+      "tools": "工具",
+      "gateways": "Gateways",
+      "apiKeys": "API Keys",
+      "webhooks": "Webhooks"
     }
   },
   "events": {
@@ -567,9 +603,6 @@
     "error": {
       "action": "审批操作失败"
     },
-    "apiUnavailablePrefix": "审批 API 尚未接入，请先实现",
-    "and": "与",
-    "period": "。",
     "risk": "风险",
     "detail": {
       "tool": "工具 {tool}",
@@ -587,7 +620,8 @@
       "low": "低",
       "medium": "中",
       "high": "高"
-    }
+    },
+    "apiUnavailableMessage": "审批 API 尚未接入，请先实现 {path1} 与 {path2}。"
   },
   "toolsPage": {
     "title": "工具中心",
@@ -681,7 +715,8 @@
       "priority": "priority",
       "dedupe": "dedupe(s)",
       "cooldown": "cooldown(s)",
-      "budgetPerDay": "budget/day"
+      "budgetPerDay": "budget/day",
+      "cronJobNamePlaceholder": "daily_digest"
     },
     "formHelp": {
       "priority": "priority：优先级（越大越先处理）。",
@@ -727,7 +762,8 @@
     "createdOn": "创建于",
     "header": {
       "prefix": "管理您的 AI Agent，共",
-      "suffix": "个"
+      "suffix": "个",
+      "title": "智能体"
     },
     "filter": {
       "all": "全部",
@@ -805,7 +841,8 @@
       "createFailed": "创建失败",
       "updateFailed": "更新失败",
       "save": "保存失败，请稍后重试"
-    }
+    },
+    "runtimeTypeSemigraph": "Semigraph"
   },
   "chatNew": {
     "title": "开始新会话",
@@ -910,10 +947,12 @@
         "hint": "进行中 {count}"
       },
       "mcp": {
-        "hint": "外部工具连接"
+        "hint": "外部工具连接",
+        "label": "MCP"
       },
       "skills": {
-        "hint": "技能定义"
+        "hint": "技能定义",
+        "label": "技能"
       },
       "events": {
         "label": "事件",
@@ -1002,7 +1041,8 @@
     "error": {
       "coreData": "无法加载仪表盘核心数据，请检查 API 服务状态",
       "load": "加载失败"
-    }
+    },
+    "title": "Semibot - 半自动智能体平台"
   },
   "skillDefinitions": {
     "title": "技能管理",
@@ -1026,7 +1066,13 @@
     "installModal": {
       "title": "安装技能",
       "sourceType": "来源类型 *",
-      "sourceUrl": "来源 URL *"
+      "sourceUrl": "来源 URL *",
+      "sourceOptions": {
+        "anthropic": "Anthropic",
+        "git": "Git",
+        "url": "URL"
+      },
+      "sourceUrlPlaceholder": "https://..."
     },
     "editModal": {
       "title": "编辑技能定义",

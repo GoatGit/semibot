@@ -268,10 +268,10 @@ export default function ApprovalsPage() {
         {!apiAvailable && (
           <div className="rounded-lg border border-warning-500/30 bg-warning-500/10 px-4 py-3 text-sm text-warning-500">
             <>
-              {t('approvals.apiUnavailablePrefix')}{' '}
-              <code>/v1/approvals</code> {t('approvals.and')}{' '}
-              <code>/v1/approvals/{'{id}'}/approve|reject</code>
-              {t('approvals.period')}
+              {t('approvals.apiUnavailableMessage', {
+                path1: '/v1/approvals',
+                path2: "/v1/approvals/{id}/approve|reject",
+              })}
             </>
           </div>
         )}

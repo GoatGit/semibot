@@ -104,13 +104,16 @@
     "testAndSync": "テスト & 同期",
     "transport": {
       "stdio": {
-        "description": "ローカルにインストールされた MCP サーバーをローカルコマンドで起動します"
+        "description": "ローカルにインストールされた MCP サーバーをローカルコマンドで起動します",
+        "label": "Stdio"
       },
       "sse": {
-        "description": "Server-Sent Events（旧プロトコル）でリモート MCP サーバーに接続します"
+        "description": "Server-Sent Events（旧プロトコル）でリモート MCP サーバーに接続します",
+        "label": "SSE"
       },
       "streamableHttp": {
-        "description": "Streamable HTTP（推奨）でリモート MCP サーバーに接続します"
+        "description": "Streamable HTTP（推奨）でリモート MCP サーバーに接続します",
+        "label": "Streamable HTTP"
       }
     },
     "form": {
@@ -122,7 +125,9 @@
       "optional": "（任意）",
       "systemMcp": "システム MCP として設定（全組織で表示）",
       "endpointLabel": {
-        "command": "コマンド"
+        "command": "コマンド",
+        "sse": "SSE URL",
+        "http": "HTTP URL"
       },
       "endpointHint": {
         "command": "実行コマンドを引数込みで入力（例: uvx mcp-server-time --local-timezone=Asia/Tokyo）",
@@ -132,7 +137,9 @@
       "apiKeyHint": {
         "stdio": "任意。サブプロセスへ MCP_API_KEY 環境変数として渡します",
         "http": "任意。Authorization: Bearer <key> ヘッダーとして送信します"
-      }
+      },
+      "apiKeyLabel": "API キー",
+      "apiKeyPlaceholder": "sk-..."
     },
     "status": {
       "connected": "接続済み",
@@ -184,7 +191,13 @@
     },
     "loading": "設定を読み込み中…",
     "common": {
-      "notSet": "未設定"
+      "notSet": "未設定",
+      "riskLevels": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "critical": "重大"
+      }
     },
     "status": {
       "available": "利用可能",
@@ -247,7 +260,11 @@
       "routingDefaults": "モデルルーティング既定値",
       "saveRouting": "ルーティング既定値を保存",
       "providerConfig": "プロバイダ設定",
-      "viewModels": "モデルを表示"
+      "viewModels": "モデルを表示",
+      "apiKeyLabel": "API キー",
+      "endpointLabel": "エンドポイント",
+      "defaultModelPlaceholder": "デフォルトモデル（例: gpt-4o）",
+      "fallbackModelPlaceholder": "フォールバックモデル（例: gpt-4o-mini）"
     },
     "tools": {
       "activeCount": "有効 {count}",
@@ -262,7 +279,8 @@
       "builtIn": "内蔵",
       "configure": "設定",
       "disable": "無効化",
-      "enable": "有効化"
+      "enable": "有効化",
+      "title": "ツール"
     },
     "gateways": {
       "title": "ゲートウェイ",
@@ -301,22 +319,26 @@
       "loading": "API キーを読み込み中…",
       "empty": "API キーがありません",
       "lastUsed": "最終使用",
-      "expires": "有効期限"
+      "expires": "有効期限",
+      "title": "API キー"
     },
     "webhooks": {
       "newWebhook": "新しい Webhook",
       "loading": "Webhook を読み込み中…",
       "empty": "Webhook がありません",
       "events": "イベント",
-      "createdAt": "作成日時"
+      "createdAt": "作成日時",
+      "title": "Webhook"
     },
     "evolutionCapabilities": {
       "tab": "進化",
       "title": "進化センター",
       "description": "5つの進化オブジェクトを個別に編集し、バージョン切替・ロールバックできます。",
-      "gene": "Hands（実行能力）",
-      "agents": "Reflex（ルールテンプレート）",
-      "tools": "Guard（ツールポリシー）",
+      "hands": "Hands（実行能力）",
+      "reflex": "Reflex（ルールテンプレート）",
+      "spine": "Spine（Planner ガイド）",
+      "guard": "Guard（ツールポリシー）",
+      "mind": "Mind（全体行動方針）",
       "version": "バージョン",
       "updatedAt": "更新日時",
       "placeholder": "能力内容を入力してください...",
@@ -392,7 +414,12 @@
           "browserType": "ブラウザ種類",
           "allowedDomainsPlaceholder": "allowedDomains（任意、カンマ区切り。例: example.com,news.ycombinator.com）",
           "blockedDomainsPlaceholder": "blockedDomains（任意、カンマ区切り）",
-          "maxTextLengthPlaceholder": "maxTextLength（任意、100-500000）"
+          "maxTextLengthPlaceholder": "maxTextLength（任意、100-500000）",
+          "browserTypes": {
+            "chromium": "Chromium",
+            "firefox": "Firefox",
+            "webkit": "WebKit"
+          }
         }
       },
       "gateway": {
@@ -457,7 +484,9 @@
       "webhook": {
         "title": "Webhook 作成",
         "description": "イベントはカンマ区切りで入力し、少なくとも1件必須です。",
-        "secretPlaceholder": "secret（16 文字以上）"
+        "secretPlaceholder": "secret（16 文字以上）",
+        "urlPlaceholder": "https://example.com/webhook",
+        "eventsPlaceholder": "event.a,event.b"
       },
       "createdKey": {
         "title": "API キーを作成しました",
@@ -465,6 +494,13 @@
         "saved": "保存済み",
         "fullKey": "フルキー"
       }
+    },
+    "tabs": {
+      "llm": "LLM",
+      "tools": "ツール",
+      "gateways": "ゲートウェイ",
+      "apiKeys": "API キー",
+      "webhooks": "Webhook"
     }
   },
   "events": {
@@ -567,9 +603,6 @@
     "error": {
       "action": "承認操作に失敗しました"
     },
-    "apiUnavailablePrefix": "承認APIがまだ接続されていません。実装してください",
-    "and": "と",
-    "period": "。",
     "risk": "リスク",
     "detail": {
       "tool": "ツール {tool}",
@@ -587,7 +620,8 @@
       "low": "低",
       "medium": "中",
       "high": "高"
-    }
+    },
+    "apiUnavailableMessage": "承認 API がまだ接続されていません。先に {path1} と {path2} を実装してください。"
   },
   "toolsPage": {
     "title": "ツールセンター",
@@ -681,7 +715,8 @@
       "priority": "優先度",
       "dedupe": "重複排除（秒）",
       "cooldown": "クールダウン（秒）",
-      "budgetPerDay": "日次上限"
+      "budgetPerDay": "日次上限",
+      "cronJobNamePlaceholder": "daily_digest"
     },
     "formHelp": {
       "priority": "priority: 値が高いほど実行優先度が高くなります。",
@@ -727,7 +762,8 @@
     "createdOn": "作成日",
     "header": {
       "prefix": "AI エージェントを管理、",
-      "suffix": ""
+      "suffix": "",
+      "title": "エージェント"
     },
     "filter": {
       "all": "すべて",
@@ -805,7 +841,8 @@
       "createFailed": "作成に失敗しました",
       "updateFailed": "更新に失敗しました",
       "save": "保存に失敗しました。後で再試行してください"
-    }
+    },
+    "runtimeTypeSemigraph": "Semigraph"
   },
   "chatNew": {
     "title": "新しい会話を開始",
@@ -910,10 +947,12 @@
         "hint": "稼働中 {count}"
       },
       "mcp": {
-        "hint": "外部との連携"
+        "hint": "外部との連携",
+        "label": "MCP"
       },
       "skills": {
-        "hint": "スキル定義"
+        "hint": "スキル定義",
+        "label": "スキル"
       },
       "events": {
         "label": "イベント",
@@ -1002,7 +1041,8 @@
     "error": {
       "coreData": "ダッシュボードの主要データを読み込めませんでした。API サービスを確認してください。",
       "load": "読み込みに失敗しました"
-    }
+    },
+    "title": "Semibot - セミ自律ボット"
   },
   "skillDefinitions": {
     "title": "スキル管理",
@@ -1026,7 +1066,13 @@
     "installModal": {
       "title": "スキルをインストール",
       "sourceType": "ソースタイプ *",
-      "sourceUrl": "ソース URL *"
+      "sourceUrl": "ソース URL *",
+      "sourceOptions": {
+        "anthropic": "Anthropic",
+        "git": "Git",
+        "url": "URL"
+      },
+      "sourceUrlPlaceholder": "https://..."
     },
     "editModal": {
       "title": "スキル定義を編集",

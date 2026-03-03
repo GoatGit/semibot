@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -10,12 +11,27 @@ import httpx
 from src.events.models import Event
 
 SendFn = Callable[[str, dict[str, Any], float], Awaitable[None]]
+SendDocumentFn = Callable[[str, dict[str, Any], Any | None, float], Awaitable[None]]
 
 
 async def default_send_json(token: str, payload: dict[str, Any], timeout: float) -> None:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     async with httpx.AsyncClient(timeout=timeout) as client:
         await client.post(url, json=payload)
+
+
+async def default_send_document(
+    token: str,
+    data: dict[str, Any],
+    file_upload: dict[str, Any] | None,
+    timeout: float,
+) -> None:
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if file_upload:
+            await client.post(url, data=data, files={"document": file_upload})
+        else:
+            await client.post(url, data=data)
 
 
 class TelegramNotifier:
@@ -31,11 +47,13 @@ class TelegramNotifier:
         subscribed_event_types: set[str] | None = None,
         parse_mode: str | None = None,
         disable_link_preview: bool = False,
+        send_document_fn: SendDocumentFn | None = None,
     ):
         self.bot_token = bot_token
         self.default_chat_id = default_chat_id
         self.timeout = timeout
         self.send_fn = send_fn or default_send_json
+        self.send_document_fn = send_document_fn or default_send_document
         self.subscribed_event_types = subscribed_event_types or {
             "approval.requested",
             "task.completed",
@@ -89,7 +107,58 @@ class TelegramNotifier:
             or f"event_type={payload.get('event_type')}"
         )
         chat_id = str(payload.get("chat_id")) if payload.get("chat_id") else None
-        return await self.send_message(text=text, chat_id=chat_id)
+        files_raw = payload.get("files")
+        if not isinstance(files_raw, list):
+            files_raw = payload.get("attachments")
+        files = [item for item in files_raw if isinstance(item, dict)] if isinstance(files_raw, list) else []
+        if not files:
+            return await self.send_message(text=text, chat_id=chat_id)
+
+        token = self.bot_token
+        target_chat_id = chat_id or self.default_chat_id
+        if not token or not target_chat_id:
+            return False
+
+        sent_any = False
+        caption_text = text.strip()
+        for idx, file_item in enumerate(files):
+            local_path = str(
+                file_item.get("local_path")
+                or file_item.get("path")
+                or ""
+            ).strip()
+            file_url = str(file_item.get("url") or file_item.get("file_url") or "").strip()
+            filename = str(file_item.get("filename") or file_item.get("name") or "").strip()
+            mime_type = str(file_item.get("mime_type") or "application/octet-stream").strip()
+
+            data: dict[str, Any] = {"chat_id": target_chat_id}
+            if caption_text and idx == 0:
+                data["caption"] = caption_text[:900]
+                if self.parse_mode:
+                    data["parse_mode"] = self.parse_mode
+
+            if local_path:
+                path = Path(local_path)
+                if path.is_file():
+                    with path.open("rb") as fh:
+                        upload_name = filename or path.name
+                        await self.send_document_fn(
+                            token,
+                            data,
+                            (upload_name, fh, mime_type),
+                            self.timeout,
+                        )
+                        sent_any = True
+                    continue
+
+            if file_url:
+                data["document"] = file_url
+                await self.send_document_fn(token, data, None, self.timeout)
+                sent_any = True
+
+        if not sent_any:
+            return await self.send_message(text=text, chat_id=target_chat_id)
+        return True
 
     async def handle_event(self, event: Event) -> None:
         if event.event_type not in self.subscribed_event_types:

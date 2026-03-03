@@ -760,7 +760,7 @@ export default function RulesPage() {
                     <Input
                       value={form.cronJobName}
                       onChange={(e) => setForm((prev) => ({ ...prev, cronJobName: e.target.value }))}
-                      placeholder="daily_digest"
+                      placeholder={t('rules.form.cronJobNamePlaceholder')}
                     />
                   </div>
                   <div className="space-y-1">
