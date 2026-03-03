@@ -507,12 +507,38 @@ test.describe('Config Page', () => {
     })
   })
 
-  test('should create custom provider config with custom:id key', async ({ page }) => {
+  test('should create provider instance with openai:id key', async ({ page }) => {
     const payloads: any[] = []
     await setupConfigPageMocks(page, (payload) => payloads.push(payload))
     await page.goto('/config')
 
-    await page.getByRole('button', { name: /新增自定义 Provider|Add custom provider/i }).click()
+    await page.getByRole('button', { name: /新增 Provider 实例|Add provider instance|プロバイダインスタンスを追加/i }).click()
+    await expect(page.getByRole('dialog', { name: /LLM Provider|LLM プロバイダ|LLM Provider/ })).toBeVisible()
+    await page.getByTestId('provider-type-select').click()
+    await page.getByRole('option', { name: 'OpenAI' }).click()
+    await page.getByTestId('provider-custom-id-input').fill('primary')
+    await page.getByTestId('provider-api-key-input').fill('sk-openai-primary')
+    await page.getByTestId('provider-endpoint-input').fill('https://api.openai.com/v1')
+    await page.getByTestId('provider-save-button').click()
+
+    await expect.poll(() => payloads.length).toBeGreaterThan(0)
+    expect(payloads[payloads.length - 1]).toMatchObject({
+      providers: {
+        'openai:primary': {
+          apiKey: 'sk-openai-primary',
+          baseUrl: 'https://api.openai.com/v1',
+          clearApiKey: false,
+        },
+      },
+    })
+  })
+
+  test('should create provider instance with custom:id key', async ({ page }) => {
+    const payloads: any[] = []
+    await setupConfigPageMocks(page, (payload) => payloads.push(payload))
+    await page.goto('/config')
+
+    await page.getByRole('button', { name: /新增 Provider 实例|Add provider instance|プロバイダインスタンスを追加/i }).click()
     await expect(page.getByRole('dialog', { name: /LLM Provider|LLM プロバイダ|LLM Provider/ })).toBeVisible()
     await page.getByTestId('provider-custom-id-input').fill('deepseek')
     await page.getByTestId('provider-api-key-input').fill('sk-deepseek-123')

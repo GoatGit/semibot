@@ -2972,6 +2972,7 @@ export default function ConfigPage() {
                   {tSafe('config.modals.provider.providerTypeLabel', 'Provider 类型')}
                 </p>
                 <Select
+                  data-testid="provider-type-select"
                   value={providerConfigForm.providerType}
                   onChange={(value) =>
                     setProviderConfigForm((prev) => ({ ...prev, providerType: value as ProviderType }))
