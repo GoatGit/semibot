@@ -278,6 +278,20 @@ def create_app(
         payload = queue_events[0].payload
         return payload if isinstance(payload, dict) else {}
 
+    def _sync_cron_scheduler_from_store() -> None:
+        """Keep in-memory scheduler aligned with persisted cron jobs."""
+        persisted = config_store.list_cron_jobs(active_only=True)
+        persisted_names = {str(item.get("name") or "").strip() for item in persisted if str(item.get("name") or "").strip()}
+
+        runtime_jobs = engine.list_cron_jobs()
+        runtime_names = {str(item.get("name") or "").strip() for item in runtime_jobs if str(item.get("name") or "").strip()}
+
+        for stale_name in runtime_names - persisted_names:
+            engine.remove_cron_job(stale_name)
+
+        for job in persisted:
+            engine.upsert_cron_job(job)
+
     def _serialize_approval(item: Any) -> dict[str, Any]:
         context = item.context if isinstance(getattr(item, "context", None), dict) else {}
         return {
@@ -930,6 +944,7 @@ def create_app(
         except RuleServiceError as exc:
             raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
         engine.reload_rules()
+        _sync_cron_scheduler_from_store()
         return created
 
     @app.put("/v1/rules/{rule_id}")
@@ -942,6 +957,7 @@ def create_app(
         except RuleServiceError as exc:
             raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
         engine.reload_rules()
+        _sync_cron_scheduler_from_store()
         return updated
 
     @app.delete("/v1/rules/{rule_id}")
@@ -951,6 +967,7 @@ def create_app(
         except RuleServiceError as exc:
             raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
         engine.reload_rules()
+        _sync_cron_scheduler_from_store()
         return deleted
 
     @app.post("/v1/rules/simulate")
