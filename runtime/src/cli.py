@@ -3258,7 +3258,37 @@ def _ui_pm2_start_command(
     service: str,
     process_name: str,
     project_root: Path,
+    api_port: int,
+    web_port: int,
+    runtime_host: str,
+    runtime_port: int,
 ) -> list[str]:
+    def _shell_single_quote(value: str) -> str:
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+
+    def _loopback_host(host: str) -> str:
+        candidate = str(host or "").strip()
+        if candidate in {"", "0.0.0.0", "::"}:
+            return "127.0.0.1"
+        return candidate
+
+    runtime_base = f"http://{_loopback_host(runtime_host)}:{runtime_port}"
+    api_base = f"http://127.0.0.1:{api_port}"
+    env_overrides: dict[str, str] = {
+        "API_PORT": str(api_port),
+        "WEB_PORT": str(web_port),
+    }
+    if service == "api":
+        env_overrides["RUNTIME_PORT"] = str(runtime_port)
+        env_overrides["RUNTIME_URL"] = runtime_base
+    elif service == "web":
+        env_overrides["API_INTERNAL_URL"] = api_base
+        env_overrides["NEXT_PUBLIC_API_URL"] = f"{api_base}/api/v1"
+
+    env_override_script = "".join(
+        f"export {key}={_shell_single_quote(value)}; "
+        for key, value in env_overrides.items()
+    )
     env_bootstrap = (
         "set -a; "
         "if [ -f .env.local ]; then source .env.local; "
@@ -3272,7 +3302,7 @@ def _ui_pm2_start_command(
         run_command = "pnpm --filter @semibot/web dev"
     else:
         raise RuntimeError(f"unsupported ui service: {service}")
-    shell_command = f"{env_bootstrap}{run_command}"
+    shell_command = f"{env_bootstrap}{env_override_script}{run_command}"
     return [
         "pm2",
         "start",
@@ -3364,7 +3394,15 @@ def cmd_ui(args: argparse.Namespace) -> int:
 
     def _start_one(service: str, name: str) -> tuple[bool, dict[str, Any]]:
         try:
-            command = _ui_pm2_start_command(service=service, process_name=name, project_root=project_root)
+            command = _ui_pm2_start_command(
+                service=service,
+                process_name=name,
+                project_root=project_root,
+                api_port=api_port,
+                web_port=web_port,
+                runtime_host=runtime_args.host,
+                runtime_port=runtime_args.port,
+            )
         except RuntimeError as exc:
             return False, {"message": str(exc)}
         result = _run_pm2_command(command)

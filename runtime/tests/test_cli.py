@@ -458,7 +458,20 @@ def test_ui_start_uses_pm2(monkeypatch, capsys, tmp_path) -> None:
     monkeypatch.setattr("src.cli._pm2_find_process", lambda name: state.get(name))
 
     parser = build_parser()
-    args = parser.parse_args(["ui", "start", "--name-prefix", "semibot-ui"])
+    args = parser.parse_args(
+        [
+            "ui",
+            "start",
+            "--name-prefix",
+            "semibot-ui",
+            "--api-port",
+            "4001",
+            "--web-port",
+            "4000",
+            "--runtime-port",
+            "9765",
+        ]
+    )
     exit_code = args.func(args)
 
     assert exit_code == 0
@@ -472,6 +485,29 @@ def test_ui_start_uses_pm2(monkeypatch, capsys, tmp_path) -> None:
     assert payload["pm2_name_prefix"] == "semibot-ui"
     assert payload["runtime"]["enabled"] is True
     assert payload["runtime"]["pm2_name"] == "semibot-runtime"
+    assert payload["runtime"]["port"] == 9765
+
+    api_start_cmd = next(
+        cmd
+        for cmd in calls
+        if cmd[:2] == ["pm2", "start"] and "--name" in cmd and cmd[cmd.index("--name") + 1] == "semibot-ui-api"
+    )
+    web_start_cmd = next(
+        cmd
+        for cmd in calls
+        if cmd[:2] == ["pm2", "start"] and "--name" in cmd and cmd[cmd.index("--name") + 1] == "semibot-ui-web"
+    )
+    api_shell = api_start_cmd[-1]
+    web_shell = web_start_cmd[-1]
+
+    assert "export API_PORT='4001';" in api_shell
+    assert "export WEB_PORT='4000';" in api_shell
+    assert "export RUNTIME_PORT='9765';" in api_shell
+    assert "export RUNTIME_URL='http://127.0.0.1:9765';" in api_shell
+    assert "export API_PORT='4001';" in web_shell
+    assert "export WEB_PORT='4000';" in web_shell
+    assert "export API_INTERNAL_URL='http://127.0.0.1:4001';" in web_shell
+    assert "export NEXT_PUBLIC_API_URL='http://127.0.0.1:4001/api/v1';" in web_shell
 
 
 def test_ui_restart_runs_stop_then_start_pm2(monkeypatch, capsys, tmp_path) -> None:
