@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import clsx from 'clsx'
 import {
   LayoutDashboard,
@@ -104,8 +105,8 @@ export function NavBar() {
     >
       <div className={clsx('px-3 py-3', 'border-b border-border-subtle')}>
         <div className={clsx('flex items-center', isExpanded ? 'gap-2 px-1' : 'justify-center')}>
-          <div className="w-8 h-8 rounded-lg bg-primary-500 flex items-center justify-center">
-            <Bot size={18} className="text-neutral-950" />
+          <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center">
+            <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} priority />
           </div>
           {isExpanded && (
             <span className="font-display font-semibold text-lg text-text-primary whitespace-nowrap">

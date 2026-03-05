@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
 import { FileUpload } from '@/components/ui/FileUpload'
+import { Modal } from '@/components/ui/Modal'
 import { apiClient } from '@/lib/api'
 import type { SkillDefinition } from '@semibot/shared-types'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -22,6 +23,18 @@ interface ApiResponse<T> {
   }
 }
 
+interface RuntimeSkillsResponse {
+  success: boolean
+  data?: {
+    available?: boolean
+    tools?: string[]
+    skills?: string[]
+    metadata?: Array<Record<string, unknown>>
+    source?: string
+    error?: string
+  }
+}
+
 export default function SkillDefinitionsPage() {
   const { t } = useLocale()
   const [definitions, setDefinitions] = useState<SkillDefinition[]>([])
@@ -29,6 +42,8 @@ export default function SkillDefinitionsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+  const [uploadLoading, setUploadLoading] = useState(false)
+  const [skillsCliLoading, setSkillsCliLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   // 创建表单状态
@@ -37,6 +52,10 @@ export default function SkillDefinitionsPage() {
   const [createUploadError, setCreateUploadError] = useState('')
   const [directoryFiles, setDirectoryFiles] = useState<File[]>([])
   const [directoryName, setDirectoryName] = useState<string>('')
+  const [skillsCliQuery, setSkillsCliQuery] = useState('')
+  const [skillsCliSkill, setSkillsCliSkill] = useState('')
+  const [skillsCliOutput, setSkillsCliOutput] = useState('')
+  const [skillsCliCandidates, setSkillsCliCandidates] = useState<string[]>([])
   const directoryInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -49,12 +68,73 @@ export default function SkillDefinitionsPage() {
     try {
       setLoading(true)
       setError(null)
-      const response = await apiClient.get<ApiResponse<SkillDefinition[]>>('/skill-definitions', {
-        params: { page: 1, limit: 100 },
-      })
-      if (response.success) {
-        setDefinitions(response.data || [])
+      const runtime = await apiClient.get<RuntimeSkillsResponse>('/runtime/skills')
+      const runtimeData = runtime.data
+      if (runtime.success && runtimeData?.available) {
+        const metadataRows = Array.isArray(runtimeData.metadata) ? runtimeData.metadata : []
+        const nowIso = new Date().toISOString()
+        const fromMetadata: SkillDefinition[] = metadataRows
+          .filter((row) => String(row.status || 'active') === 'active')
+          .map((row, idx) => {
+          const skillId = String(row.skill_id || row.name || `skill_${idx}`)
+          const name = String(row.name || skillId)
+          const description = String(row.description || '')
+          const tags = Array.isArray(row.tags) ? row.tags.map((tag) => String(tag)) : []
+          const status = String(row.status || 'active')
+          const createdAt = String(row.installed_at || nowIso)
+          const updatedAt = String(row.indexed_at || nowIso)
+          return {
+            id: `runtime:${skillId}`,
+            skillId,
+            name,
+            description,
+            triggerKeywords: [],
+            category: String(row.source || 'package'),
+            tags,
+            isActive: status === 'active',
+            isPublic: false,
+            createdAt,
+            updatedAt,
+          }
+        })
+
+        const builtinSkillNames = Array.isArray(runtimeData.skills) ? runtimeData.skills : []
+        const builtinSkillLike = builtinSkillNames
+          .filter((name) => name === 'pdf' || name === 'xlsx')
+          .map<SkillDefinition>((name) => ({
+            id: `builtin:${name}`,
+            skillId: name,
+            name,
+            description: '',
+            triggerKeywords: [],
+            category: 'builtin',
+            tags: ['builtin'],
+            isActive: true,
+            isPublic: false,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          }))
+
+        const merged = [...fromMetadata, ...builtinSkillLike]
+        const dedup = new Map<string, SkillDefinition>()
+        for (const item of merged) {
+          if (!dedup.has(item.skillId)) {
+            dedup.set(item.skillId, item)
+          }
+        }
+        const next = Array.from(dedup.values())
+        setDefinitions((prev) => {
+          // Avoid temporary fallback to only builtin skills while runtime index is refreshing.
+          const prevHasCustom = prev.some((item) => item.category !== 'builtin')
+          const nextHasCustom = next.some((item) => item.category !== 'builtin')
+          if (prevHasCustom && !nextHasCustom) {
+            return prev
+          }
+          return next
+        })
+        return
       }
+      // Runtime temporarily unavailable: keep existing list to avoid UI flashing back to legacy data source.
     } catch (err) {
       console.error('[SkillDefinitions] 加载失败:', err)
       setError(t('skillsPage.error.load'))
@@ -71,7 +151,7 @@ export default function SkillDefinitionsPage() {
     if (!createFile && directoryFiles.length === 0) return
 
     try {
-      setActionLoading(true)
+      setUploadLoading(true)
       setError(null)
 
       let uploadFile = createFile
@@ -108,11 +188,61 @@ export default function SkillDefinitionsPage() {
       const error = err as { response?: { data?: { error?: { message?: string } } }; message?: string }
       setError(error.response?.data?.error?.message || error.message || t('skillsPage.error.create'))
     } finally {
-      setActionLoading(false)
+      setUploadLoading(false)
+    }
+  }
+
+  const handleSkillsCliAction = async (action: 'init' | 'update' | 'find' | 'add') => {
+    try {
+      setSkillsCliLoading(true)
+      setError(null)
+      setSkillsCliOutput('')
+      const payload: Record<string, unknown> = { action }
+      if (action === 'find') {
+        payload.query = skillsCliQuery.trim()
+      }
+      if (action === 'add') {
+        payload.skill = skillsCliSkill.trim()
+      }
+      const response = await apiClient.post<{ success?: boolean; data?: { stdout?: string; stderr?: string; syncedSkills?: string[] } }>(
+        '/runtime/skills/skills-cli',
+        payload
+      )
+      const data = response?.data
+      const lines = [
+        data?.stdout || '',
+        data?.stderr || '',
+        Array.isArray(data?.syncedSkills) && data?.syncedSkills.length > 0
+          ? `synced: ${data?.syncedSkills.join(', ')}`
+          : '',
+      ]
+      const output = lines.filter(Boolean).join('\n').trim()
+      setSkillsCliOutput(output)
+      if (action === 'find') {
+        const packagePattern = /([a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]*)/gi
+        const matches = output.match(packagePattern) || []
+        const candidates = Array.from(new Set(matches.map((item) => item.trim()).filter(Boolean)))
+        setSkillsCliCandidates(candidates)
+      } else {
+        setSkillsCliCandidates([])
+      }
+      if (action === 'add' || action === 'update' || action === 'init') {
+        await loadDefinitions()
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: { message?: string } } }; message?: string }
+      setError(error.response?.data?.error?.message || error.message || 'skills cli failed')
+      setSkillsCliCandidates([])
+    } finally {
+      setSkillsCliLoading(false)
     }
   }
 
   const handleToggleActive = async (definition: SkillDefinition) => {
+    if (definition.id.startsWith('runtime:') || definition.id.startsWith('builtin:')) {
+      setError('当前版本暂不支持在此页面启停 runtime 技能，请通过技能目录或配置管理调整。')
+      return
+    }
     try {
       setActionLoading(true)
       setError(null)
@@ -132,6 +262,10 @@ export default function SkillDefinitionsPage() {
   }
 
   const handleDelete = async (definition: SkillDefinition) => {
+    if (definition.id.startsWith('runtime:') || definition.id.startsWith('builtin:')) {
+      setError('当前版本暂不支持在此页面删除 runtime 技能，请从 ~/.semibot/skills 删除后刷新。')
+      return
+    }
     if (!confirm(t('skillsPage.confirm.delete', { name: definition.name }))) return
 
     try {
@@ -160,6 +294,7 @@ export default function SkillDefinitionsPage() {
   const filteredIds = useMemo(() => filteredDefinitions.map((def) => def.id), [filteredDefinitions])
   const selectedCount = selectedIds.length
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id))
+  const modalBusy = uploadLoading || skillsCliLoading
 
   useEffect(() => {
     const validIds = new Set(definitions.map((def) => def.id))
@@ -251,7 +386,7 @@ export default function SkillDefinitionsPage() {
               </p>
             </div>
             <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreateDialog(true)}>
-              {t('skillsPage.create')}
+              {t('skillsPage.install')}
             </Button>
           </div>
 
@@ -414,93 +549,148 @@ export default function SkillDefinitionsPage() {
         </div>
       </div>
 
-      {/* 创建技能对话框 */}
-      {showCreateDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-bg-surface border border-border-default rounded-lg max-w-lg w-full">
-            <div className="p-6 border-b border-border-subtle">
-              <h2 className="text-lg font-semibold text-text-primary">{t('skillsPage.create')}</h2>
-              <p className="text-sm text-text-secondary mt-1">
-                {t('skillsPage.createDescription')}
-              </p>
+      <Modal
+        open={showCreateDialog}
+        onClose={() => {
+          setShowCreateDialog(false)
+          setCreateFile(null)
+          setCreateUploadError('')
+          setDirectoryFiles([])
+          setDirectoryName('')
+          setSkillsCliOutput('')
+          setSkillsCliCandidates([])
+        }}
+        title={t('skillsPage.install')}
+        description={t('skillsPage.createDescription')}
+        maxWidth="xl"
+        footer={
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setShowCreateDialog(false)
+              setCreateFile(null)
+              setCreateUploadError('')
+              setDirectoryFiles([])
+              setDirectoryName('')
+              setSkillsCliOutput('')
+              setSkillsCliCandidates([])
+            }}
+            disabled={modalBusy}
+          >
+            {t('common.close')}
+          </Button>
+        }
+      >
+        <div className="space-y-6">
+          <section className="rounded-lg border border-border-subtle p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-text-primary">安装包安装</h3>
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('skillsPage.packageLabel')}</label>
+              <FileUpload
+                accept=".zip,.tar.gz,.tgz"
+                allowedExtensions={['.zip', '.tar.gz', '.tgz']}
+                maxSize={100 * 1024 * 1024}
+                value={createFile}
+                onFileSelect={setCreateFile}
+                error={createUploadError}
+                onError={setCreateUploadError}
+                hint={t('skillsPage.packageHint')}
+                disabled={modalBusy}
+              />
             </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-text-secondary mb-1.5">{t('skillsPage.packageLabel')}</label>
-                <FileUpload
-                  accept=".zip,.tar.gz,.tgz"
-                  allowedExtensions={['.zip', '.tar.gz', '.tgz']}
-                  maxSize={100 * 1024 * 1024}
-                  value={createFile}
-                  onFileSelect={setCreateFile}
-                  error={createUploadError}
-                  onError={setCreateUploadError}
-                  hint={t('skillsPage.packageHint')}
-                  disabled={actionLoading}
-                />
+            <div className="rounded-lg border border-border-subtle p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-text-secondary">或上传技能目录</div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  type="button"
+                  onClick={() => directoryInputRef.current?.click()}
+                  disabled={modalBusy}
+                >
+                  选择目录
+                </Button>
               </div>
-
-              <div className="rounded-lg border border-border-subtle p-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-text-secondary">或上传技能目录</div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    type="button"
-                    onClick={() => directoryInputRef.current?.click()}
-                    disabled={actionLoading}
-                  >
-                    选择目录
-                  </Button>
+              <input
+                ref={directoryInputRef}
+                type="file"
+                className="hidden"
+                multiple
+                onChange={(event) => {
+                  const files = event.target.files ? Array.from(event.target.files) : []
+                  setDirectoryFiles(files)
+                  const first = files[0] as (File & { webkitRelativePath?: string }) | undefined
+                  const root = first?.webkitRelativePath?.split('/')[0] || ''
+                  setDirectoryName(root)
+                  if (files.length > 0) {
+                    setCreateFile(null)
+                    setCreateUploadError('')
+                  }
+                  event.currentTarget.value = ''
+                }}
+              />
+              {directoryFiles.length > 0 && (
+                <div className="mt-2 text-xs text-text-tertiary">
+                  已选择目录 {directoryName || '(未命名)'}，共 {directoryFiles.length} 个文件（提交时自动打包为 zip）
                 </div>
-                <input
-                  ref={directoryInputRef}
-                  type="file"
-                  className="hidden"
-                  multiple
-                  onChange={(event) => {
-                    const files = event.target.files ? Array.from(event.target.files) : []
-                    setDirectoryFiles(files)
-                    const first = files[0] as (File & { webkitRelativePath?: string }) | undefined
-                    const root = first?.webkitRelativePath?.split('/')[0] || ''
-                    setDirectoryName(root)
-                    if (files.length > 0) {
-                      setCreateFile(null)
-                      setCreateUploadError('')
-                    }
-                    event.currentTarget.value = ''
-                  }}
-                />
-                {directoryFiles.length > 0 && (
-                  <div className="mt-2 text-xs text-text-tertiary">
-                    已选择目录 {directoryName || '(未命名)'}，共 {directoryFiles.length} 个文件（提交时自动打包为 zip）
+              )}
+            </div>
+            <div className="pt-1">
+              <Button onClick={handleCreate} loading={uploadLoading} disabled={modalBusy || (!createFile && directoryFiles.length === 0)}>
+                {t('skillsPage.uploadAndInstall')}
+              </Button>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-border-subtle p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-text-primary">Skills.sh 安装</h3>
+            <p className="text-xs text-text-tertiary">
+              使用 npx skills 管理并同步 ~/.agents/skills 到 ~/.semibot/skills
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" size="sm" type="button" disabled={modalBusy} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('init')}>
+                初始化技能库
+              </Button>
+              <Button variant="secondary" size="sm" type="button" disabled={modalBusy} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('update')}>
+                更新技能库
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+              <Input placeholder="输入关键词搜索（例如 deep research）" value={skillsCliQuery} onChange={(e) => setSkillsCliQuery(e.target.value)} disabled={modalBusy} />
+              <Button variant="secondary" size="sm" type="button" disabled={modalBusy || !skillsCliQuery.trim()} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('find')}>
+                搜索技能
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+              <Input placeholder="输入技能包名（例如 owner/repo@skill-id）" value={skillsCliSkill} onChange={(e) => setSkillsCliSkill(e.target.value)} disabled={modalBusy} />
+              <Button size="sm" type="button" disabled={modalBusy || !skillsCliSkill.trim()} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('add')}>
+                安装该技能
+              </Button>
+            </div>
+            {skillsCliOutput && (
+              <div className="space-y-2">
+                {skillsCliCandidates.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {skillsCliCandidates.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        className="rounded border border-border-default px-2 py-1 text-xs text-text-primary hover:border-primary-500 hover:text-primary-500"
+                        onClick={() => setSkillsCliSkill(name)}
+                      >
+                        {name}
+                      </button>
+                    ))}
                   </div>
                 )}
+                <pre className="max-h-64 overflow-auto rounded bg-bg-muted p-2 text-xs text-text-secondary whitespace-pre-wrap">
+                  {skillsCliOutput}
+                </pre>
               </div>
-            </div>
-
-            <div className="p-6 border-t border-border-subtle flex justify-end gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setShowCreateDialog(false)
-                  setCreateFile(null)
-                  setCreateUploadError('')
-                  setDirectoryFiles([])
-                  setDirectoryName('')
-                }}
-                disabled={actionLoading}
-              >
-                {t('common.cancel')}
-              </Button>
-              <Button onClick={handleCreate} loading={actionLoading} disabled={!createFile && directoryFiles.length === 0}>
-                {t('skillsPage.uploadAndCreate')}
-              </Button>
-            </div>
-          </div>
+            )}
+          </section>
         </div>
-      )}
+      </Modal>
     </div>
   )
 }

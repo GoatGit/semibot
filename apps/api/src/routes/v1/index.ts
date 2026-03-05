@@ -24,7 +24,7 @@ import runtimeRouter from './runtime'
 import eventsRouter from './events'
 import rulesRouter from './rules'
 import approvalsRouter from './approvals'
-import gatewaysRouter from './gateways'
+import channelsRouter from './channels'
 import contextPoliciesRouter from './context-policies'
 import evolutionCapabilitiesRouter from './evolution-capabilities'
 
@@ -57,7 +57,7 @@ router.get('/docs', (_req: Request, res: Response) => {
         events: '/api/v1/events',
         rules: '/api/v1/rules',
         approvals: '/api/v1/approvals',
-        gateways: '/api/v1/gateways',
+        channels: '/api/v1/channels',
         evolutionCapabilities: '/api/v1/evolution-capabilities',
       },
       deprecated: [
@@ -95,7 +95,7 @@ router.use('/runtime', runtimeRouter)
 router.use('/events', eventsRouter)
 router.use('/rules', rulesRouter)
 router.use('/approvals', approvalsRouter)
-router.use('/gateways', gatewaysRouter)
+router.use('/channels', channelsRouter)
 router.use('/context-policies', contextPoliciesRouter)
 router.use('/evolution-capabilities', evolutionCapabilitiesRouter)
 

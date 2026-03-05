@@ -2,36 +2,74 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.bootstrap import default_skills_path
 from src.events.trigger_scheduler import TriggerScheduler
+from src.server.config_store import RuntimeConfigStore
 from src.services.rule_service import RuleService, RuleServiceError
 from src.skills.base import BaseTool, ToolResult
+from src.skills.index_manager import SkillsIndexManager
+from src.skills.package_loader import register_installed_package_tools
+from src.skills.registry import SkillRegistry
+from src.skills.skill_installer import install_or_refresh_skill
 
 
 class RuleAuthoringTool(BaseTool):
     """Create/update/simulate/enable/disable/delete event rules."""
 
-    def __init__(self) -> None:
+    WRITE_ACTIONS = {
+        "create_rule",
+        "update_rule",
+        "enable_rule",
+        "disable_rule",
+        "delete_rule",
+    }
+
+    def __init__(
+        self,
+        *,
+        tool_name: str = "control_plane",
+        legacy_alias: bool = False,
+        registry: SkillRegistry | None = None,
+    ) -> None:
         self.rules_path = os.getenv("SEMIBOT_RULES_PATH") or str(Path("~/.semibot/rules").expanduser())
         self.db_path = os.getenv("SEMIBOT_EVENTS_DB_PATH")
+        self._tool_name = tool_name.strip() or "control_plane"
+        self._legacy_alias = bool(legacy_alias)
+        self._registry = registry
+        self._api_version = str(os.getenv("SEMIBOT_CONTROL_PLANE_API_VERSION", "2.0")).strip() or "2.0"
+        self._capability_version = (
+            str(os.getenv("SEMIBOT_CONTROL_PLANE_CAPABILITY_VERSION", self._api_version)).strip() or self._api_version
+        )
 
     def _get_service(self) -> RuleService:
         return RuleService(rules_path=self.rules_path, db_path=self.db_path)
 
+    def _get_config_store(self) -> RuntimeConfigStore:
+        return RuntimeConfigStore(db_path=self.db_path or None)
+
     @property
     def name(self) -> str:
-        return "rule_authoring"
+        return self._tool_name
 
     @property
     def description(self) -> str:
+        alias_note = (
+            "Legacy alias for control_plane. Prefer using control_plane.\n\n"
+            if self._legacy_alias
+            else ""
+        )
         return (
-            "Author Semibot rules with full lifecycle operations: "
+            alias_note
+            + "Author Semibot rules with full lifecycle operations: "
             "create_rule, update_rule, enable_rule, disable_rule, delete_rule, simulate_rule, list_rules. "
             "Use action + payload. Supports cron linkage (payload.cron.upsert=true) when event_type=cron.job.tick.\n\n"
             "Minimal examples:\n"
@@ -49,12 +87,332 @@ class RuleAuthoringTool(BaseTool):
             '{"action":"list_rules","payload":{}}'
         )
 
+    def _resolve_action_from_domain(self, domain: str, action: str) -> str:
+        domain_value = domain.strip().lower()
+        action_value = action.strip().lower()
+        legacy_generic_action = action_value[:-5] if action_value.endswith("_rule") else action_value
+        if not domain_value:
+            return action
+        if domain_value in {"channels", "mcp", "skills", "config", "agents"}:
+            return legacy_generic_action
+        if domain_value != "rules":
+            return "__unsupported_domain__"
+        mapping = {
+            "create": "create_rule",
+            "update": "update_rule",
+            "enable": "enable_rule",
+            "disable": "disable_rule",
+            "delete": "delete_rule",
+            "simulate": "simulate_rule",
+            "list": "list_rules",
+            "get": "list_rules",
+        }
+        return mapping.get(action_value, action)
+
+    @staticmethod
+    def _skill_state_path(skills_root: Path) -> Path:
+        return skills_root / ".state.json"
+
+    @classmethod
+    def _read_disabled_skills(cls, skills_root: Path) -> set[str]:
+        path = cls._skill_state_path(skills_root)
+        if not path.exists():
+            return set()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return set()
+        rows = payload.get("disabled")
+        if not isinstance(rows, list):
+            return set()
+        return {str(item).strip() for item in rows if isinstance(item, str) and str(item).strip()}
+
+    @classmethod
+    def _write_disabled_skills(cls, skills_root: Path, values: set[str]) -> None:
+        path = cls._skill_state_path(skills_root)
+        path.write_text(json.dumps({"disabled": sorted(values)}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _execute_channels_action(self, action_name: str, payload_obj: dict[str, Any]) -> ToolResult:
+        store = self._get_config_store()
+        provider = str(payload_obj.get("provider") or "").strip() or None
+        if action_name == "list":
+            items = store.list_gateway_instances(provider=provider)
+            return ToolResult.success_result({"ok": True, "domain": "channels", "action": action_name, "items": items})
+        if action_name == "get":
+            instance_id = str(payload_obj.get("instance_id") or payload_obj.get("id") or "").strip()
+            if not instance_id:
+                return ToolResult.error_result("instance_id is required", error_code="INVALID_CHANNEL_INSTANCE_ID")
+            item = store.get_gateway_instance(instance_id)
+            if not item:
+                return ToolResult.error_result("channel instance not found", error_code="CHANNEL_INSTANCE_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "channels", "action": action_name, "item": item})
+        if action_name == "create":
+            item = store.create_gateway_instance(payload_obj)
+            return ToolResult.success_result({"ok": True, "domain": "channels", "action": action_name, "item": item})
+        if action_name == "update":
+            instance_id = str(payload_obj.get("instance_id") or payload_obj.get("id") or "").strip()
+            if not instance_id:
+                return ToolResult.error_result("instance_id is required", error_code="INVALID_CHANNEL_INSTANCE_ID")
+            patch = payload_obj.get("patch")
+            if not isinstance(patch, dict):
+                patch = {k: v for k, v in payload_obj.items() if k not in {"instance_id", "id", "patch"}}
+            item = store.update_gateway_instance(instance_id, patch)
+            if not item:
+                return ToolResult.error_result("channel instance not found", error_code="CHANNEL_INSTANCE_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "channels", "action": action_name, "item": item})
+        if action_name == "delete":
+            instance_id = str(payload_obj.get("instance_id") or payload_obj.get("id") or "").strip()
+            if not instance_id:
+                return ToolResult.error_result("instance_id is required", error_code="INVALID_CHANNEL_INSTANCE_ID")
+            deleted = store.soft_delete_gateway_instance(instance_id)
+            if not deleted:
+                return ToolResult.error_result("channel instance not found", error_code="CHANNEL_INSTANCE_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "channels", "action": action_name, "deleted": True})
+        if action_name in {"enable", "disable"}:
+            instance_id = str(payload_obj.get("instance_id") or payload_obj.get("id") or "").strip()
+            if not instance_id:
+                return ToolResult.error_result("instance_id is required", error_code="INVALID_CHANNEL_INSTANCE_ID")
+            item = store.update_gateway_instance(instance_id, {"is_active": action_name == "enable"})
+            if not item:
+                return ToolResult.error_result("channel instance not found", error_code="CHANNEL_INSTANCE_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "channels", "action": action_name, "item": item})
+        return ToolResult.error_result(
+            f"unsupported channels action: {action_name}",
+            error_code="UNSUPPORTED_CONTROL_ACTION",
+        )
+
+    def _execute_mcp_action(self, action_name: str, payload_obj: dict[str, Any]) -> ToolResult:
+        store = self._get_config_store()
+        if action_name == "list":
+            page = int(payload_obj.get("page") or 1)
+            limit = int(payload_obj.get("limit") or 100)
+            data = store.list_mcp_servers(page=page, limit=limit, only_active=False)
+            return ToolResult.success_result({"ok": True, "domain": "mcp", "action": action_name, **data})
+        if action_name == "get":
+            server_id = str(payload_obj.get("server_id") or payload_obj.get("id") or "").strip()
+            if not server_id:
+                return ToolResult.error_result("server_id is required", error_code="INVALID_MCP_SERVER_ID")
+            item = store.get_mcp_server(server_id)
+            if not item:
+                return ToolResult.error_result("mcp server not found", error_code="MCP_SERVER_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "mcp", "action": action_name, "item": item})
+        if action_name == "create":
+            item = store.create_mcp_server(payload_obj)
+            return ToolResult.success_result({"ok": True, "domain": "mcp", "action": action_name, "item": item})
+        if action_name == "update":
+            server_id = str(payload_obj.get("server_id") or payload_obj.get("id") or "").strip()
+            if not server_id:
+                return ToolResult.error_result("server_id is required", error_code="INVALID_MCP_SERVER_ID")
+            patch = payload_obj.get("patch")
+            if not isinstance(patch, dict):
+                patch = {k: v for k, v in payload_obj.items() if k not in {"server_id", "id", "patch"}}
+            item = store.update_mcp_server(server_id, patch)
+            if not item:
+                return ToolResult.error_result("mcp server not found", error_code="MCP_SERVER_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "mcp", "action": action_name, "item": item})
+        if action_name == "delete":
+            server_id = str(payload_obj.get("server_id") or payload_obj.get("id") or "").strip()
+            if not server_id:
+                return ToolResult.error_result("server_id is required", error_code="INVALID_MCP_SERVER_ID")
+            deleted = store.soft_delete_mcp_server(server_id)
+            if not deleted:
+                return ToolResult.error_result("mcp server not found", error_code="MCP_SERVER_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "mcp", "action": action_name, "deleted": True})
+        if action_name in {"bind", "unbind"}:
+            agent_id = str(payload_obj.get("agent_id") or "").strip()
+            if not agent_id:
+                return ToolResult.error_result("agent_id is required", error_code="INVALID_AGENT_ID")
+            current = set(store.get_agent_mcp_server_ids(agent_id))
+            ids = payload_obj.get("mcp_server_ids")
+            if isinstance(ids, list):
+                server_ids = {str(item).strip() for item in ids if str(item).strip()}
+            else:
+                one = str(payload_obj.get("mcp_server_id") or payload_obj.get("server_id") or "").strip()
+                server_ids = {one} if one else set()
+            if not server_ids:
+                return ToolResult.error_result("mcp_server_ids is required", error_code="INVALID_MCP_SERVER_ID")
+            next_ids = (current | server_ids) if action_name == "bind" else (current - server_ids)
+            store.set_agent_mcp_servers(agent_id, sorted(next_ids))
+            return ToolResult.success_result(
+                {"ok": True, "domain": "mcp", "action": action_name, "agent_id": agent_id, "mcp_server_ids": sorted(next_ids)}
+            )
+        return ToolResult.error_result(
+            f"unsupported mcp action: {action_name}",
+            error_code="UNSUPPORTED_CONTROL_ACTION",
+        )
+
+    def _execute_skills_action(self, action_name: str, payload_obj: dict[str, Any]) -> ToolResult:
+        skills_root = default_skills_path()
+        index = SkillsIndexManager(skills_root)
+        if action_name == "list":
+            rows = index.list_records()
+            return ToolResult.success_result({"ok": True, "domain": "skills", "action": action_name, "items": rows})
+        if action_name == "get":
+            skill_id = str(payload_obj.get("skill_id") or payload_obj.get("name") or "").strip()
+            if not skill_id:
+                return ToolResult.error_result("skill_id is required", error_code="INVALID_SKILL_ID")
+            rows = index.list_records()
+            item = next((row for row in rows if str(row.get("skill_id") or "") == skill_id), None)
+            if not item:
+                return ToolResult.error_result("skill not found", error_code="SKILL_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "skills", "action": action_name, "item": item})
+        if action_name == "install":
+            if self._registry is None:
+                return ToolResult.error_result("skill registry unavailable", error_code="REGISTRY_UNAVAILABLE")
+            result = install_or_refresh_skill(
+                registry=self._registry,
+                source_path=str(payload_obj.get("source_path") or "") or None,
+                source_url=str(payload_obj.get("source_url") or "") or None,
+                skill_name=str(payload_obj.get("skill_name") or "") or None,
+                force=bool(payload_obj.get("force", False)),
+                refresh_only=False,
+                skills_root=skills_root,
+            )
+            return ToolResult.success_result({"ok": True, "domain": "skills", "action": action_name, **result})
+        if action_name == "uninstall":
+            skill_id = str(payload_obj.get("skill_id") or payload_obj.get("name") or "").strip()
+            if not skill_id:
+                return ToolResult.error_result("skill_id is required", error_code="INVALID_SKILL_ID")
+            target = skills_root / skill_id
+            if not target.exists():
+                return ToolResult.error_result("skill not found", error_code="SKILL_NOT_FOUND")
+            disabled = self._read_disabled_skills(skills_root)
+            disabled.add(skill_id)
+            self._write_disabled_skills(skills_root, disabled)
+            shutil.rmtree(target, ignore_errors=True)
+            reindex = index.reindex(scope="incremental")
+            if self._registry is not None:
+                register_installed_package_tools(self._registry, skills_root=skills_root)
+            return ToolResult.success_result(
+                {"ok": True, "domain": "skills", "action": action_name, "skill_id": skill_id, "reindex": reindex}
+            )
+        if action_name == "refresh":
+            reindex = index.reindex(scope="incremental")
+            if self._registry is not None:
+                summary = register_installed_package_tools(self._registry, skills_root=skills_root)
+            else:
+                summary = {"registered": [], "skipped": [], "index_total": len(index.list_records())}
+            return ToolResult.success_result({"ok": True, "domain": "skills", "action": action_name, "reindex": reindex, "refresh": summary})
+        return ToolResult.error_result(
+            f"unsupported skills action: {action_name}",
+            error_code="UNSUPPORTED_CONTROL_ACTION",
+        )
+
+    def _execute_config_action(self, action_name: str, payload_obj: dict[str, Any]) -> ToolResult:
+        store = self._get_config_store()
+        namespace = str(payload_obj.get("namespace") or "").strip().lower()
+        if action_name not in {"get", "update", "list"}:
+            return ToolResult.error_result(
+                f"unsupported config action: {action_name}",
+                error_code="UNSUPPORTED_CONTROL_ACTION",
+            )
+        if not namespace and action_name in {"get", "update"}:
+            return ToolResult.error_result("namespace is required", error_code="INVALID_CONFIG_NAMESPACE")
+        if action_name == "list":
+            return ToolResult.success_result(
+                {
+                    "ok": True,
+                    "domain": "config",
+                    "action": action_name,
+                    "namespaces": ["tools", "channels", "mcp", "runtime"],
+                }
+            )
+        if namespace == "tools":
+            if action_name == "get":
+                include_builtin = bool(payload_obj.get("include_builtin", True))
+                page = int(payload_obj.get("page") or 1)
+                limit = int(payload_obj.get("limit") or 100)
+                result = store.list_tools(include_builtin=include_builtin, page=page, limit=limit)
+                return ToolResult.success_result({"ok": True, "domain": "config", "action": action_name, **result})
+            tool_name = str(payload_obj.get("tool_name") or "").strip()
+            if not tool_name:
+                return ToolResult.error_result("tool_name is required", error_code="INVALID_TOOL_NAME")
+            patch = payload_obj.get("patch")
+            if not isinstance(patch, dict):
+                patch = payload_obj.get("config") if isinstance(payload_obj.get("config"), dict) else {}
+                patch = {"config": patch}
+            item = store.upsert_tool_by_name(tool_name, patch)
+            return ToolResult.success_result({"ok": True, "domain": "config", "action": action_name, "item": item})
+        if namespace == "channels":
+            if action_name == "get":
+                provider = str(payload_obj.get("provider") or "").strip() or None
+                items = store.list_gateway_instances(provider=provider)
+                return ToolResult.success_result({"ok": True, "domain": "config", "action": action_name, "items": items})
+            provider = str(payload_obj.get("provider") or "").strip()
+            if not provider:
+                return ToolResult.error_result("provider is required", error_code="INVALID_CHANNEL_PROVIDER")
+            patch = payload_obj.get("patch")
+            if not isinstance(patch, dict):
+                patch = {k: v for k, v in payload_obj.items() if k not in {"namespace", "provider", "patch"}}
+            item = store.upsert_gateway_config(provider, patch)
+            return ToolResult.success_result({"ok": True, "domain": "config", "action": action_name, "item": item})
+        if namespace == "mcp":
+            if action_name == "get":
+                result = store.list_mcp_servers(page=int(payload_obj.get("page") or 1), limit=int(payload_obj.get("limit") or 100), only_active=False)
+                return ToolResult.success_result({"ok": True, "domain": "config", "action": action_name, **result})
+            return ToolResult.error_result("config namespace mcp is read-only here", error_code="UNSUPPORTED_CONTROL_ACTION")
+        if namespace == "runtime":
+            return ToolResult.success_result(
+                {
+                    "ok": True,
+                    "domain": "config",
+                    "action": action_name,
+                    "runtime": {
+                        "db_path": self.db_path,
+                        "rules_path": self.rules_path,
+                        "timezone": os.getenv("TZ") or "system",
+                    },
+                }
+            )
+        if namespace == "llm":
+            return ToolResult.error_result(
+                "llm namespace is read-only for control_plane in V2 policy",
+                error_code="LLM_CONFIG_WRITE_BLOCKED",
+            )
+        return ToolResult.error_result(
+            f"unsupported config namespace: {namespace}",
+            error_code="INVALID_CONFIG_NAMESPACE",
+        )
+
+    def _assert_version_compatible_for_write(self, action_name: str) -> str | None:
+        if action_name not in self.WRITE_ACTIONS:
+            return None
+        if self._api_version == self._capability_version:
+            return None
+        return (
+            "CONTROL_PLANE_VERSION_MISMATCH: "
+            f"capability={self._capability_version}, api={self._api_version}"
+        )
+
+    @staticmethod
+    def _assert_no_self_action(payload_obj: dict[str, Any], *, action_name: str) -> str | None:
+        if action_name not in {"create_rule", "update_rule"}:
+            return None
+        actions = payload_obj.get("actions")
+        if not isinstance(actions, list):
+            return None
+        for idx, item in enumerate(actions):
+            if not isinstance(item, dict):
+                continue
+            action_type = str(item.get("action_type") or item.get("actionType") or "").strip().lower()
+            if action_type in {"control_plane", "rule_authoring"}:
+                return (
+                    "TOOL_RECURSION_BLOCKED: "
+                    f"actions[{idx}].action_type={action_type} is not allowed"
+                )
+        return None
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "additionalProperties": True,
             "properties": {
+                "domain": {
+                    "type": "string",
+                    "enum": ["rules", "skills", "mcp", "channels", "agents", "config"],
+                    "description": "Control domain. Implemented now: rules/channels/mcp/skills/config. agents is reserved.",
+                },
                 "action": {
                     "type": "string",
                     "enum": [
@@ -483,6 +841,7 @@ class RuleAuthoringTool(BaseTool):
 
     async def execute(
         self,
+        domain: str | None = None,
         action: str | None = None,
         payload: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
@@ -509,7 +868,15 @@ class RuleAuthoringTool(BaseTool):
             payload_obj = nested
 
         dry_run = bool((options or {}).get("dry_run")) if isinstance(options, dict) else False
+        domain_value = str(domain or "").strip().lower()
         action_name = self._normalize_action((action or "").strip())
+        action_name = self._resolve_action_from_domain(domain_value, action_name)
+        if action_name == "__unsupported_domain__":
+            return ToolResult.error_result(
+                "unsupported domain for current implementation: only domain=rules is available",
+                error_code="UNSUPPORTED_CONTROL_DOMAIN",
+                domain=str(domain or ""),
+            )
         if not action_name:
             action_name = self._infer_action(payload_obj)
         elif self._is_legacy_create_intent(action_name, payload_obj):
@@ -531,6 +898,47 @@ class RuleAuthoringTool(BaseTool):
 
         action_name, payload_obj = self._normalize_legacy_payload(action_name, payload_obj)
         payload_obj = self._apply_one_shot_hint_for_cron(payload_obj)
+
+        if domain_value and domain_value != "rules":
+            if dry_run:
+                return ToolResult.success_result(
+                    {
+                        "ok": True,
+                        "domain": domain_value,
+                        "action": action_name,
+                        "dry_run": True,
+                        "validated_payload": payload_obj,
+                    }
+                )
+            if domain_value == "channels":
+                return self._execute_channels_action(action_name, payload_obj)
+            if domain_value == "mcp":
+                return self._execute_mcp_action(action_name, payload_obj)
+            if domain_value == "skills":
+                return self._execute_skills_action(action_name, payload_obj)
+            if domain_value == "config":
+                return self._execute_config_action(action_name, payload_obj)
+            if domain_value == "agents":
+                return ToolResult.error_result(
+                    "agents domain not implemented in current phase",
+                    error_code="UNSUPPORTED_CONTROL_DOMAIN",
+                )
+            return ToolResult.error_result(
+                f"unsupported domain: {domain_value}",
+                error_code="UNSUPPORTED_CONTROL_DOMAIN",
+            )
+        self_call_error = self._assert_no_self_action(payload_obj, action_name=action_name)
+        if self_call_error:
+            return ToolResult.error_result(self_call_error, error_code="TOOL_RECURSION_BLOCKED", action=action_name)
+        version_error = self._assert_version_compatible_for_write(action_name)
+        if version_error:
+            return ToolResult.error_result(
+                version_error,
+                error_code="CONTROL_PLANE_VERSION_MISMATCH",
+                action=action_name,
+                capability_version=self._capability_version,
+                api_version=self._api_version,
+            )
 
         if dry_run:
             return ToolResult.success_result(

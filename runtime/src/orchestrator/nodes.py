@@ -174,7 +174,7 @@ def _filter_rule_authoring_by_intent(available_schemas: list[dict[str, Any]], us
     filtered: list[dict[str, Any]] = []
     for schema in available_schemas:
         function_name = str((schema.get("function") or {}).get("name") or "")
-        if function_name == "rule_authoring":
+        if function_name in {"rule_authoring", "control_plane"}:
             continue
         filtered.append(schema)
     return filtered

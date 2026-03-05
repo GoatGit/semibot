@@ -1,0 +1,51 @@
+{
+  "id": "control-plane-channel-gateway-phase1",
+  "title": "Control Plane 与 Channel/Gateway 语义收敛（Phase 1）",
+  "description": "将对外接口统一为 channels，并把 rule_authoring 升级为 control_plane 的兼容形态：支持 domain=rules 路由、版本对齐校验、递归调用阻断；同时保留 rule_authoring 兼容别名。",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "API v1 不再暴露 /gateways 对外入口，仅保留 /channels",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "Runtime 聚合路由统一为 /runtime/channels/conversations*",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "内建工具注册包含 control_plane 与 rule_authoring（兼容别名）",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "control_plane 支持 domain=rules + action(create/update/enable/disable/delete/list/get/simulate) 映射",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "control_plane 写操作执行前校验 capability/api 版本一致，不一致时报 CONTROL_PLANE_VERSION_MISMATCH",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "阻断递归：rules.actions 中出现 control_plane/rule_authoring 动作时报 TOOL_RECURSION_BLOCKED",
+      "passes": true
+    },
+    {
+      "id": "AC-7",
+      "description": "Planner 非规则意图时同时隐藏 rule_authoring 与 control_plane",
+      "passes": true
+    },
+    {
+      "id": "AC-8",
+      "description": "新增/更新单元测试覆盖上述能力",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["control-plane", "channels", "gateway", "runtime", "tooling", "compatibility"]
+}

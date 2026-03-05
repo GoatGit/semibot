@@ -216,7 +216,6 @@
       "runtimeToolsLoad": "Runtime 内蔵ツールの読み取りに失敗しました",
       "toolsConfigLoad": "ツール設定の読み込みに失敗しました（Runtime ツールを表示中）",
       "toolsLoad": "ツール一覧の読み込みに失敗しました",
-      "gatewaysLoad": "ゲートウェイの読み込みに失敗しました",
       "apiKeysLoad": "API キー一覧の読み込みに失敗しました",
       "webhooksLoad": "Webhook 一覧の読み込みに失敗しました",
       "saveDefaultModel": "デフォルトモデル設定の保存に失敗しました",
@@ -249,7 +248,8 @@
       "testWebhook": "Webhook テストに失敗しました",
       "deleteWebhook": "Webhook 削除に失敗しました",
       "evolutionCapabilitiesLoad": "進化能力設定の読み込みに失敗しました",
-      "evolutionCapabilitiesSave": "進化能力設定の保存に失敗しました"
+      "evolutionCapabilitiesSave": "進化能力設定の保存に失敗しました",
+      "channelsLoad": "ゲートウェイの読み込みに失敗しました"
     },
     "confirm": {
       "deleteApiKey": "この API キーを削除しますか？この操作は元に戻せません。",
@@ -297,38 +297,6 @@
       "disable": "無効化",
       "enable": "有効化",
       "title": "ツール"
-    },
-    "gateways": {
-      "title": "ゲートウェイ",
-      "activeCount": "有効 {count}",
-      "newTelegram": "Telegram を追加",
-      "newFeishu": "Feishu を追加",
-      "filterAll": "すべて",
-      "filterTelegram": "Telegram",
-      "filterFeishu": "Feishu",
-      "selectAllVisible": "表示中をすべて選択",
-      "selectedCount": "{count} 件選択中",
-      "batchEnable": "一括有効化",
-      "batchDisable": "一括無効化",
-      "batchTest": "一括テスト",
-      "batchDelete": "一括削除",
-      "batchSelectHint": "先に1件以上のゲートウェイを選択してください。",
-      "batchNoDeletable": "デフォルトインスタンスのみ選択されています。一括削除できません。",
-      "batchPartialFailed": "一括操作は一部失敗しました: 成功 {success}、失敗 {failed}。",
-      "batchTestPartialFailed": "一括テストは一部失敗しました: 成功 {success}、失敗 {failed}。",
-      "defaultTag": "デフォルト",
-      "loading": "ゲートウェイを読み込み中…",
-      "empty": "ゲートウェイがありません",
-      "chatBindingsSummary": "Chat バインディング: {count}",
-      "chatBindingsNone": "Chat バインディングなし",
-      "chatBindingsMore": "+{count} 件",
-      "quickEditBindings": "クイック編集",
-      "quickSaveBindings": "バインディングを保存",
-      "importBindingsPlaceholder": "chatId=agentId 形式で貼り付け（chatId のみならデフォルト agent）",
-      "applyImportedBindings": "インポートを適用",
-      "agent": "エージェント",
-      "updatedAt": "更新日時",
-      "test": "テスト"
     },
     "apiKeys": {
       "newKey": "新しいキー",
@@ -567,9 +535,41 @@
     "tabs": {
       "llm": "LLM",
       "tools": "ツール",
-      "gateways": "ゲートウェイ",
       "apiKeys": "API キー",
-      "webhooks": "Webhook"
+      "webhooks": "Webhook",
+      "channels": "ゲートウェイ"
+    },
+    "channels": {
+      "title": "ゲートウェイ",
+      "activeCount": "有効 {count}",
+      "newTelegram": "Telegram を追加",
+      "newFeishu": "Feishu を追加",
+      "filterAll": "すべて",
+      "filterTelegram": "Telegram",
+      "filterFeishu": "Feishu",
+      "selectAllVisible": "表示中をすべて選択",
+      "selectedCount": "{count} 件選択中",
+      "batchEnable": "一括有効化",
+      "batchDisable": "一括無効化",
+      "batchTest": "一括テスト",
+      "batchDelete": "一括削除",
+      "batchSelectHint": "先に1件以上のゲートウェイを選択してください。",
+      "batchNoDeletable": "デフォルトインスタンスのみ選択されています。一括削除できません。",
+      "batchPartialFailed": "一括操作は一部失敗しました: 成功 {success}、失敗 {failed}。",
+      "batchTestPartialFailed": "一括テストは一部失敗しました: 成功 {success}、失敗 {failed}。",
+      "defaultTag": "デフォルト",
+      "loading": "ゲートウェイを読み込み中…",
+      "empty": "ゲートウェイがありません",
+      "chatBindingsSummary": "Chat バインディング: {count}",
+      "chatBindingsNone": "Chat バインディングなし",
+      "chatBindingsMore": "+{count} 件",
+      "quickEditBindings": "クイック編集",
+      "quickSaveBindings": "バインディングを保存",
+      "importBindingsPlaceholder": "chatId=agentId 形式で貼り付け（chatId のみならデフォルト agent）",
+      "applyImportedBindings": "インポートを適用",
+      "agent": "エージェント",
+      "updatedAt": "更新日時",
+      "test": "テスト"
     }
   },
   "events": {
@@ -1045,7 +1045,8 @@
         "web": "ウェブ",
         "telegram": "Telegram",
         "feishu": "Feishu",
-        "gateway": "ゲートウェイ"
+        "gateway": "ゲートウェイ",
+        "channel": "チャンネル"
       }
     },
     "quickLinks": {
@@ -1091,7 +1092,12 @@
       "open": "イベントセンターを開く",
       "empty": "イベントがありません"
     },
-    "gatewayList": {
+    "error": {
+      "coreData": "ダッシュボードの主要データを読み込めませんでした。API サービスを確認してください。",
+      "load": "読み込みに失敗しました"
+    },
+    "title": "Semibot - セミ自律ボット",
+    "channelList": {
       "title": "ゲートウェイ会話",
       "subtitle": "ソースと Chat ID でグループ化されたすべてのゲートウェイ会話と最近の実行を参照。",
       "searchPlaceholder": "Chat ID、会話 ID、要約、または Run ID を検索",
@@ -1105,7 +1111,7 @@
       "unknownChat": "不明なチャット",
       "empty": "一致するゲートウェイ会話がありません"
     },
-    "gatewayDetail": {
+    "channelDetail": {
       "title": "ゲートウェイ会話",
       "subtitle": "Telegram / Feishu 会話の実行履歴とコンテキストを確認します。",
       "back": "ダッシュボードに戻る",
@@ -1115,25 +1121,20 @@
       "context": "コンテキストメッセージ",
       "emptyRuns": "実行履歴がありません",
       "emptyContext": "コンテキストメッセージがありません"
-    },
-    "error": {
-      "coreData": "ダッシュボードの主要データを読み込めませんでした。API サービスを確認してください。",
-      "load": "読み込みに失敗しました"
-    },
-    "title": "Semibot - セミ自律ボット"
+    }
   },
   "skillDefinitions": {
     "title": "スキル管理",
     "subtitlePrefix": "スキル定義を管理、",
     "subtitleSuffix": "",
     "create": "スキル作成",
+    "install": "インストール",
     "searchPlaceholder": "スキル名、ID、説明で検索…",
     "builtin": "内蔵",
     "enabled": "有効",
     "disabled": "無効",
     "noDescription": "説明がありません",
     "category": "カテゴリ:",
-    "install": "インストール",
     "empty": {
       "filteredTitle": "一致するスキルが見つかりません",
       "filteredDescription": "検索条件を調整してください",
@@ -1169,6 +1170,7 @@
     "subtitlePrefix": "スキル定義を管理、",
     "subtitleSuffix": "",
     "create": "スキル作成",
+    "install": "スキルをインストール",
     "searchPlaceholder": "スキル名、ID、説明で検索…",
     "emptyTitle": "一致するスキルが見つかりません",
     "emptyDescription": "検索条件を調整してください",
@@ -1181,6 +1183,7 @@
     "packageLabel": "パッケージファイル *",
     "packageHint": "対応形式: .zip/.tar.gz/.tgz（最大 100MB）。パッケージには SKILL.md が必要です。",
     "uploadAndCreate": "アップロードして作成",
+    "uploadAndInstall": "アップロードしてインストール",
     "batch": {
       "selectAllVisible": "現在の一覧を選択",
       "selectedCount": "{count} 件のスキルを選択中",
@@ -1431,8 +1434,8 @@
     "sections": {
       "feature-guide": "機能ガイド",
       "hover-tips": "ホバー説明",
-      "gateway-tutorial": "Gateway チュートリアル",
-      "provider-guides": "プロバイダ別ガイド"
+      "provider-guides": "プロバイダ別ガイド",
+      "channel-tutorial": "Gateway チュートリアル"
     },
     "featureGuide": {
       "title": "機能ナビゲーションガイド",
@@ -1447,7 +1450,7 @@
         "3": "設定入口: 推奨設定順序と注意点を確認できます。"
       }
     },
-    "gatewayTutorial": {
+    "channelTutorial": {
       "title": "Gateway 設定チュートリアル（重要）",
       "subtitle": "Telegram / Feishu 連携向け。以下の順番で実施してください。",
       "openConfig": "設定センターを開く",
@@ -1481,7 +1484,7 @@
         }
       }
     },
-    "gatewayFaq": {
+    "channelFaq": {
       "title": "Gateway よくある質問",
       "items": {
         "noResponse": {
@@ -1502,7 +1505,7 @@
         }
       }
     },
-    "gatewayProviders": {
+    "channelProviders": {
       "feishu": {
         "title": "Feishu Gateway 詳細設定ガイド",
         "subtitle": "Feishu Bot のイベント連携とカードアクションのコールバック設定向けです。",

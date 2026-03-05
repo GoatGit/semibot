@@ -32,9 +32,39 @@ def _read_description(skill_dir: Path, fallback_name: str) -> str:
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         return f"Execute installed package skill: {fallback_name}"
-    for raw in skill_md.read_text(encoding="utf-8", errors="ignore").splitlines():
+    lines = skill_md.read_text(encoding="utf-8", errors="ignore").splitlines()
+    frontmatter_lines: list[str] = []
+    body_start = 0
+    if lines and lines[0].strip() == "---":
+        for idx in range(1, len(lines)):
+            row = lines[idx].strip()
+            if row == "---":
+                body_start = idx + 1
+                break
+            frontmatter_lines.append(row)
+
+    # Prefer explicit YAML frontmatter description when present.
+    for row in frontmatter_lines:
+        if ":" not in row:
+            continue
+        key, value = row.split(":", 1)
+        if key.strip().lower() != "description":
+            continue
+        desc = value.strip().strip('"').strip("'")
+        if desc:
+            return desc
+
+    in_code_block = False
+    for raw in lines[body_start:]:
         line = raw.strip()
         if not line:
+            continue
+        if line.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if line in {"---", "***", "___"}:
             continue
         if line.startswith("#"):
             line = line.lstrip("#").strip()
@@ -108,6 +138,22 @@ def resolve_skill_dir(candidate: Path) -> Path | None:
         if not child.is_dir():
             continue
         nested = child / "scripts" / "main.py"
+        if nested.exists():
+            return child
+    return None
+
+
+def resolve_skill_md_dir(candidate: Path) -> Path | None:
+    """Resolve to a directory that contains SKILL.md."""
+    if not candidate.exists() or candidate.is_file():
+        return None
+    direct = candidate / "SKILL.md"
+    if direct.exists():
+        return candidate
+    for child in candidate.iterdir():
+        if not child.is_dir():
+            continue
+        nested = child / "SKILL.md"
         if nested.exists():
             return child
     return None
@@ -219,29 +265,42 @@ class SkillsIndexManager:
             previous = current_map.get(skill_id)
             resolved = resolve_skill_dir(item)
             if resolved is None:
+                skill_md_dir = resolve_skill_md_dir(item)
+                if skill_md_dir is None:
+                    invalid += 1
+                    # Non-skill directories are ignored.
+                    continue
                 now = _iso_now()
-                invalid += 1
+                current_hash = _content_hash(skill_md_dir)
+                mtime = int(skill_md_dir.stat().st_mtime)
+                hash_unchanged = str(previous.get("hash") or "") == current_hash if isinstance(previous, dict) else False
+                mtime_unchanged = int(previous.get("mtime") or 0) == mtime if isinstance(previous, dict) else False
+                changed = mode == "full" or not (hash_unchanged and mtime_unchanged)
                 next_rows.append(
                     {
                         "skill_id": skill_id,
-                        "name": str(previous.get("name") if isinstance(previous, dict) else skill_id),
-                        "description": "Invalid package: scripts/main.py missing",
+                        "name": str(previous.get("name") if isinstance(previous, dict) and previous.get("name") else skill_id),
+                        "description": _read_description(skill_md_dir, skill_id),
                         "version": str(previous.get("version") if isinstance(previous, dict) and previous.get("version") else "0.0.0-local"),
                         "source": str(previous.get("source") if isinstance(previous, dict) and previous.get("source") else "manual"),
-                        "installed_path": str(item),
-                        "entry_script": "scripts/main.py",
+                        "installed_path": str(skill_md_dir),
+                        "entry_script": "",
                         "skill_md_path": "SKILL.md",
                         "tags": previous.get("tags") if isinstance(previous, dict) and isinstance(previous.get("tags"), list) else [],
                         "requires": previous.get("requires") if isinstance(previous, dict) and isinstance(previous.get("requires"), dict) else {"binaries": [], "env_vars": [], "python": []},
                         "enabled": bool(previous.get("enabled", True)) if isinstance(previous, dict) else True,
-                        "status": "invalid",
-                        "hash": str(previous.get("hash") if isinstance(previous, dict) else ""),
-                        "mtime": int(item.stat().st_mtime),
+                        "status": "active",
+                        "kind": "instruction",
+                        "hash": current_hash,
+                        "mtime": mtime,
                         "created_at": str(previous.get("created_at") if isinstance(previous, dict) and previous.get("created_at") else now),
-                        "updated_at": now,
-                        "error": "scripts/main.py missing",
+                        "updated_at": now if changed else str(previous.get("updated_at") if isinstance(previous, dict) and previous.get("updated_at") else now),
                     }
                 )
+                if previous is None:
+                    added += 1
+                elif changed:
+                    updated += 1
                 continue
 
             record, changed = self._build_record(
@@ -251,6 +310,7 @@ class SkillsIndexManager:
                 previous=previous,
                 force=(mode == "full"),
             )
+            record["kind"] = "package"
             next_rows.append(record)
             if previous is None:
                 added += 1

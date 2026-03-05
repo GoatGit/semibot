@@ -72,7 +72,7 @@ interface RuntimeLLMConfigPayload {
 }
 
 type ProviderInstanceEnvConfig = {
-  type: 'openai' | 'anthropic' | 'google' | 'custom'
+  type: 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom'
   id: string
   apiKey?: string
   baseUrl?: string
@@ -89,11 +89,11 @@ function parseProviderInstancesFromEnv(): ProviderInstanceEnvConfig[] {
           if (!item || typeof item !== 'object') continue
           const row = item as Record<string, unknown>
           const typeValue = String(row.type || '').trim()
-          if (!['openai', 'anthropic', 'google', 'custom'].includes(typeValue)) continue
+          if (!['openai', 'anthropic', 'google', 'kimi', 'qwen', 'minimax', 'xai', 'custom'].includes(typeValue)) continue
           const id = String(row.id || '').trim()
           if (!id) continue
           items.push({
-            type: typeValue as 'openai' | 'anthropic' | 'google' | 'custom',
+            type: typeValue as 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom',
             id,
             apiKey: String(row.apiKey || '').trim() || undefined,
             baseUrl: String(row.baseUrl || '').trim() || undefined,
@@ -347,6 +347,10 @@ export class WSServer {
     if (process.env.OPENAI_API_KEY) apiKeys.openai = this.encryptSecret(process.env.OPENAI_API_KEY, vmToken)
     if (process.env.ANTHROPIC_API_KEY) apiKeys.anthropic = this.encryptSecret(process.env.ANTHROPIC_API_KEY, vmToken)
     if (process.env.GOOGLE_AI_API_KEY) apiKeys.google = this.encryptSecret(process.env.GOOGLE_AI_API_KEY, vmToken)
+    if (process.env.KIMI_API_KEY) apiKeys.kimi = this.encryptSecret(process.env.KIMI_API_KEY, vmToken)
+    if (process.env.QWEN_API_KEY) apiKeys.qwen = this.encryptSecret(process.env.QWEN_API_KEY, vmToken)
+    if (process.env.MINIMAX_API_KEY) apiKeys.minimax = this.encryptSecret(process.env.MINIMAX_API_KEY, vmToken)
+    if (process.env.XAI_API_KEY) apiKeys.xai = this.encryptSecret(process.env.XAI_API_KEY, vmToken)
     if (process.env.CUSTOM_LLM_API_KEY) apiKeys.custom = this.encryptSecret(process.env.CUSTOM_LLM_API_KEY, vmToken)
     for (const item of parseProviderInstancesFromEnv()) {
       if (!item.apiKey) continue
@@ -365,6 +369,18 @@ export class WSServer {
       },
       google: {
         base_url: process.env.GOOGLE_AI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+      },
+      kimi: {
+        base_url: process.env.KIMI_API_BASE_URL || 'https://api.moonshot.cn/v1',
+      },
+      qwen: {
+        base_url: process.env.QWEN_API_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      },
+      minimax: {
+        base_url: process.env.MINIMAX_API_BASE_URL || 'https://api.minimax.chat/v1',
+      },
+      xai: {
+        base_url: process.env.XAI_API_BASE_URL || 'https://api.x.ai/v1',
       },
       custom: {
         base_url: process.env.CUSTOM_LLM_API_BASE_URL || '',

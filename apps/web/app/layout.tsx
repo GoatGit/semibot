@@ -7,6 +7,11 @@ import { LocaleProvider } from '@/components/providers/LocaleProvider'
 export const metadata: Metadata = {
   title: 'Semibot - Agent Orchestration Platform',
   description: 'Professional AI Agent orchestration platform for developers and enterprises',
+  icons: {
+    icon: '/semibot-logo.png',
+    shortcut: '/semibot-logo.png',
+    apple: '/semibot-logo.png',
+  },
 }
 
 interface RootLayoutProps {

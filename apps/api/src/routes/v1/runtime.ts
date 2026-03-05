@@ -11,6 +11,9 @@ import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
 import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
 import fs from 'fs-extra'
+import os from 'os'
+import path from 'path'
+import { spawn } from 'child_process'
 
 const router: Router = Router()
 
@@ -110,6 +113,125 @@ const runtimeSkillInstallSchema = z.object({
 const runtimeReindexSchema = z.object({
   scope: z.enum(['incremental', 'full']).optional(),
 })
+
+const runtimeSkillsCliSchema = z.object({
+  action: z.enum(['init', 'update', 'find', 'add']),
+  query: z.string().min(1).max(200).optional(),
+  skill: z.string().min(1).max(200).optional(),
+})
+
+const SKILLS_CLI_TIMEOUT_MS = 120_000
+
+function listSubdirs(root: string): Set<string> {
+  if (!fs.existsSync(root)) return new Set()
+  const names = fs
+    .readdirSync(root)
+    .filter((name) => !name.startsWith('.'))
+    .filter((name) => {
+      try {
+        return fs.statSync(path.join(root, name)).isDirectory()
+      } catch {
+        return false
+      }
+    })
+  return new Set(names)
+}
+
+function sanitizeSkillName(raw: string): string {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  if (!/^[a-zA-Z0-9._/@-]+$/.test(text)) return ''
+  return text
+}
+
+function runSkillsCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn('npx', ['skills', ...args], {
+      // Run under HOME so skills cli writes into ~/.agents/skills rather than project-local .agents.
+      cwd: os.homedir(),
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      resolve({ code: 124, stdout, stderr: `${stderr}\nskills cli timeout` })
+    }, SKILLS_CLI_TIMEOUT_MS)
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    // Best-effort auto-confirm for interactive prompts in skills cli.
+    const autoInput = ['\n', 'a\n', '\n']
+    for (let i = 0; i < autoInput.length; i += 1) {
+      setTimeout(() => {
+        try {
+          child.stdin.write(autoInput[i] || '')
+        } catch {
+          // ignore
+        }
+      }, 250 * (i + 1))
+    }
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code: typeof code === 'number' ? code : 1, stdout, stderr })
+    })
+    child.on('error', (err) => {
+      clearTimeout(timer)
+      resolve({ code: 1, stdout, stderr: `${stderr}\n${String(err)}` })
+    })
+  })
+}
+
+function candidateAgentsSkillsRoots(): string[] {
+  const roots = [
+    path.join(os.homedir(), '.agents', 'skills'),
+    path.join(process.cwd(), '.agents', 'skills'),
+    path.join(process.cwd(), 'apps', 'api', '.agents', 'skills'),
+  ]
+  return Array.from(new Set(roots))
+}
+
+function sanitizeCliText(raw: string): string {
+  const text = String(raw || '')
+  return text
+    // Real ANSI escape codes
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    // Broken color fragments without ESC (e.g. "[38;5;145m")
+    .replace(/\[[0-9;]{1,20}m/g, '')
+    .replace(/\[0m/g, '')
+    .trim()
+}
+
+async function postRuntimeJson(baseUrls: string[], endpoint: string, payload: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  const errors: string[] = []
+  for (const baseUrl of baseUrls) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 20000)
+    try {
+      const response = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+      const data = await response.json()
+      if (!response.ok) {
+        errors.push(`${baseUrl}: ${(data as { detail?: string }).detail || `runtime returned ${response.status}`}`)
+        continue
+      }
+      return { ok: true, data }
+    } catch (error) {
+      clearTimeout(timeout)
+      errors.push(`${baseUrl}: ${stringifyError(error)}`)
+    }
+  }
+  return { ok: false, error: errors.join('; ') || 'runtime unreachable' }
+}
 
 function normalizeBaseUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '')
@@ -391,11 +513,129 @@ router.post(
 )
 
 /**
- * GET /runtime/gateway/conversations
- * 聚合 runtime gateway conversations（telegram/feishu 等）
+ * POST /runtime/skills/skills-cli
+ * 通过 `npx skills` 安装技能，并同步到 ~/.semibot/skills
+ */
+router.post(
+  '/skills/skills-cli',
+  authenticate,
+  combinedRateLimit,
+  validate(runtimeSkillsCliSchema),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const body = req.body as z.infer<typeof runtimeSkillsCliSchema>
+    const action = body.action
+    const agentsSkillsRoots = candidateAgentsSkillsRoots()
+    const semibotSkillsRoot = path.join(os.homedir(), '.semibot', 'skills')
+    for (const root of agentsSkillsRoots) {
+      await fs.ensureDir(root)
+    }
+    await fs.ensureDir(semibotSkillsRoot)
+
+    const before = new Set<string>()
+    for (const root of agentsSkillsRoots) {
+      for (const name of listSubdirs(root)) before.add(name)
+    }
+    let commandArgs: string[] = []
+    if (action === 'init') {
+      commandArgs = ['init', '--yes']
+    } else if (action === 'update') {
+      commandArgs = ['update', '--yes']
+    } else if (action === 'find') {
+      if (!body.query) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'query is required for find' } })
+        return
+      }
+      commandArgs = ['find', body.query]
+    } else if (action === 'add') {
+      const skill = sanitizeSkillName(body.skill || '')
+      if (!skill) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'skill is required for add' } })
+        return
+      }
+      commandArgs = ['add', skill, '--yes']
+    }
+
+    let run = await runSkillsCli(commandArgs)
+    if (
+      run.code !== 0 &&
+      /unknown option|unknown argument|invalid option|Unknown option/i.test(`${run.stderr}\n${run.stdout}`) &&
+      commandArgs.includes('--yes')
+    ) {
+      run = await runSkillsCli(commandArgs.filter((arg) => arg !== '--yes'))
+    }
+    if (run.code !== 0) {
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'SKILLS_CLI_FAILED',
+          message: sanitizeCliText(run.stderr || run.stdout) || `skills cli failed: ${run.code}`,
+        },
+        data: { code: run.code, stdout: sanitizeCliText(run.stdout), stderr: sanitizeCliText(run.stderr) },
+      })
+      return
+    }
+
+    let synced: string[] = []
+    if (action === 'add' || action === 'update' || action === 'init') {
+      const rootsAfter = agentsSkillsRoots.map((root) => ({ root, names: listSubdirs(root) }))
+      const after = new Set<string>()
+      for (const bucket of rootsAfter) {
+        for (const name of bucket.names) after.add(name)
+      }
+      const candidates = new Set<string>()
+      for (const name of after) {
+        if (!before.has(name) || action !== 'add') {
+          candidates.add(name)
+        }
+      }
+      if (action === 'add' && body.skill) {
+        const skill = sanitizeSkillName(body.skill)
+        if (skill && after.has(skill)) {
+          candidates.add(skill)
+        }
+      }
+      for (const name of candidates) {
+        let src = ''
+        for (const bucket of rootsAfter) {
+          const candidate = path.join(bucket.root, name)
+          if (bucket.names.has(name) && fs.existsSync(candidate)) {
+            src = candidate
+            break
+          }
+        }
+        if (!src) continue
+        const dst = path.join(semibotSkillsRoot, name)
+        await fs.copy(src, dst, { overwrite: true, errorOnExist: false })
+        synced.push(name)
+      }
+    }
+
+    const baseUrls = getRuntimeBaseUrls()
+    const reindex = await postRuntimeJson(baseUrls, '/v1/skills/reindex', { scope: 'incremental' })
+    const refresh = await postRuntimeJson(baseUrls, '/v1/skills/refresh-runtime', {})
+
+    res.json({
+      success: true,
+      data: {
+        action,
+        command: ['npx', 'skills', ...commandArgs],
+        stdout: sanitizeCliText(run.stdout),
+        stderr: sanitizeCliText(run.stderr),
+        agentsSkillsRoots,
+        syncedSkills: synced,
+        reindex,
+        refresh,
+      },
+    })
+  })
+)
+
+/**
+ * GET /runtime/channels/conversations
+ * 聚合 runtime channel conversations（telegram/feishu 等）
  */
 router.get(
-  '/gateway/conversations',
+  '/channels/conversations',
   authenticate,
   combinedRateLimit,
   validate(listGatewayConversationsSchema, 'query'),
@@ -433,7 +673,7 @@ router.get(
             conversations: items
               .map((item) => ({
                 conversationId: item.conversation_id || '',
-                provider: item.provider || 'gateway',
+                provider: item.provider || 'channel',
                 gatewayKey: item.gateway_key || '',
                 status: item.status || 'active',
                 updatedAt: item.updated_at || new Date().toISOString(),
@@ -463,11 +703,11 @@ router.get(
 )
 
 /**
- * GET /runtime/gateway/conversations/:conversationId/runs
+ * GET /runtime/channels/conversations/:conversationId/runs
  * 代理 runtime 会话运行记录
  */
 router.get(
-  '/gateway/conversations/:conversationId/runs',
+  '/channels/conversations/:conversationId/runs',
   authenticate,
   combinedRateLimit,
   validate(listGatewayRunsSchema, 'query'),
@@ -536,11 +776,11 @@ router.get(
 )
 
 /**
- * GET /runtime/gateway/conversations/:conversationId/context
+ * GET /runtime/channels/conversations/:conversationId/context
  * 代理 runtime 会话上下文消息
  */
 router.get(
-  '/gateway/conversations/:conversationId/context',
+  '/channels/conversations/:conversationId/context',
   authenticate,
   combinedRateLimit,
   validate(listGatewayContextSchema, 'query'),

@@ -187,7 +187,7 @@
   "config": {
     "header": {
       "title": "配置管理",
-      "subtitle": "统一管理 LLM、Tools、Gateway、API Key、Webhook。",
+      "subtitle": "统一管理 LLM、Tools、Channel、API Key、Webhook。",
       "helpHint": "需要配置说明或排障指引？打开帮助中心查看教程与 FAQ。",
       "openHelpCenter": "打开帮助中心"
     },
@@ -216,7 +216,6 @@
       "runtimeToolsLoad": "Runtime 内置工具读取失败",
       "toolsConfigLoad": "Tools 配置读取失败（Runtime 工具清单已显示）",
       "toolsLoad": "Tools 列表加载失败",
-      "gatewaysLoad": "Gateway 列表加载失败",
       "apiKeysLoad": "API Key 列表加载失败",
       "webhooksLoad": "Webhook 列表加载失败",
       "saveDefaultModel": "保存模型默认配置失败",
@@ -234,9 +233,9 @@
       "missingToolId": "缺少工具 ID，无法保存",
       "updateToolConfig": "更新工具配置失败",
       "updateToolStatus": "更新工具状态失败",
-      "updateGateway": "更新 Gateway 配置失败",
-      "deleteGateway": "删除 Gateway 实例失败",
-      "testGateway": "Gateway 连通性测试失败",
+      "updateGateway": "更新 Channel 配置失败",
+      "deleteGateway": "删除 Channel 实例失败",
+      "testGateway": "Channel 连通性测试失败",
       "gatewayBindingsImportInvalid": "导入失败：有 {count} 行格式无效。",
       "gatewayBindingsPartial": "会话绑定中有 {count} 行未填写完整。",
       "createApiKey": "创建 API Key 失败",
@@ -249,13 +248,14 @@
       "testWebhook": "测试 Webhook 失败",
       "deleteWebhook": "删除 Webhook 失败",
       "evolutionCapabilitiesLoad": "加载进化能力配置失败",
-      "evolutionCapabilitiesSave": "保存进化能力配置失败"
+      "evolutionCapabilitiesSave": "保存进化能力配置失败",
+      "channelsLoad": "Channel 列表加载失败"
     },
     "confirm": {
       "deleteApiKey": "确认删除这个 API Key 吗？删除后无法恢复。",
       "deleteWebhook": "确认删除这个 Webhook 吗？删除后无法恢复。",
-      "deleteGateway": "确认删除这个 Gateway 实例吗？删除后无法恢复。",
-      "deleteGateways": "确认删除选中的 {count} 个 Gateway 实例吗？删除后无法恢复。",
+      "deleteGateway": "确认删除这个 Channel 实例吗？删除后无法恢复。",
+      "deleteGateways": "确认删除选中的 {count} 个 Channel 实例吗？删除后无法恢复。",
       "gatewayBindingsDuplicate": "发现 {count} 个重复 chatId。将仅保留每个 chatId 的最后一条绑定，是否继续？",
       "gatewayBindingsOutsideAllowed": "有 {count} 条绑定不在 allowedChatIds 中，可能不会生效，是否继续？"
     },
@@ -297,38 +297,6 @@
       "disable": "停用",
       "enable": "启用",
       "title": "工具"
-    },
-    "gateways": {
-      "title": "Gateways",
-      "activeCount": "启用 {count}",
-      "newTelegram": "新建 Telegram",
-      "newFeishu": "新建 Feishu",
-      "filterAll": "全部",
-      "filterTelegram": "Telegram",
-      "filterFeishu": "Feishu",
-      "selectAllVisible": "全选当前列表",
-      "selectedCount": "已选择 {count} 项",
-      "batchEnable": "批量启用",
-      "batchDisable": "批量停用",
-      "batchTest": "批量测试",
-      "batchDelete": "批量删除",
-      "batchSelectHint": "请先勾选至少一个 Gateway 实例。",
-      "batchNoDeletable": "选中的实例均为默认实例，无法批量删除。",
-      "batchPartialFailed": "批量操作部分失败：成功 {success}，失败 {failed}。",
-      "batchTestPartialFailed": "批量测试部分失败：成功 {success}，失败 {failed}。",
-      "defaultTag": "默认",
-      "loading": "正在加载 Gateway...",
-      "empty": "暂无 Gateway 配置",
-      "chatBindingsSummary": "会话绑定：{count}",
-      "chatBindingsNone": "暂无会话绑定",
-      "chatBindingsMore": "另有 {count} 项",
-      "quickEditBindings": "快速编辑",
-      "quickSaveBindings": "保存绑定",
-      "importBindingsPlaceholder": "粘贴多行：chatId=agentId（也支持只填 chatId，自动用默认 Agent）",
-      "applyImportedBindings": "应用导入",
-      "agent": "绑定 Agent",
-      "updatedAt": "更新时间",
-      "test": "测试"
     },
     "apiKeys": {
       "newKey": "新建 Key",
@@ -469,7 +437,7 @@
         }
       },
       "gateway": {
-        "title": "Gateway 配置",
+        "title": "Channel 配置",
         "instanceKeyLabel": "字段名：instanceKey",
         "instanceKeyPlaceholder": "instanceKey（可选，建议唯一）",
         "displayNameLabel": "字段名：displayName",
@@ -488,7 +456,7 @@
         "chatIdPlaceholder": "Chat ID",
         "chatBindingAgentPlaceholder": "Agent ID",
         "setDefault": "设为默认实例",
-        "enabled": "启用此 Gateway",
+        "enabled": "启用此 Channel",
         "notifyEventTypesLabel": "字段名：notifyEventTypes",
         "notifyEventTypesPlaceholder": "notifyEventTypes（可选，逗号分隔）",
         "addressing": {
@@ -567,9 +535,41 @@
     "tabs": {
       "llm": "LLM",
       "tools": "工具",
-      "gateways": "Gateways",
       "apiKeys": "API Keys",
-      "webhooks": "Webhooks"
+      "webhooks": "Webhooks",
+      "channels": "Channels"
+    },
+    "channels": {
+      "title": "Channels",
+      "activeCount": "启用 {count}",
+      "newTelegram": "新建 Telegram",
+      "newFeishu": "新建 Feishu",
+      "filterAll": "全部",
+      "filterTelegram": "Telegram",
+      "filterFeishu": "Feishu",
+      "selectAllVisible": "全选当前列表",
+      "selectedCount": "已选择 {count} 项",
+      "batchEnable": "批量启用",
+      "batchDisable": "批量停用",
+      "batchTest": "批量测试",
+      "batchDelete": "批量删除",
+      "batchSelectHint": "请先勾选至少一个 Channel 实例。",
+      "batchNoDeletable": "选中的实例均为默认实例，无法批量删除。",
+      "batchPartialFailed": "批量操作部分失败：成功 {success}，失败 {failed}。",
+      "batchTestPartialFailed": "批量测试部分失败：成功 {success}，失败 {failed}。",
+      "defaultTag": "默认",
+      "loading": "正在加载 Channel...",
+      "empty": "暂无 Channel 配置",
+      "chatBindingsSummary": "会话绑定：{count}",
+      "chatBindingsNone": "暂无会话绑定",
+      "chatBindingsMore": "另有 {count} 项",
+      "quickEditBindings": "快速编辑",
+      "quickSaveBindings": "保存绑定",
+      "importBindingsPlaceholder": "粘贴多行：chatId=agentId（也支持只填 chatId，自动用默认 Agent）",
+      "applyImportedBindings": "应用导入",
+      "agent": "绑定 Agent",
+      "updatedAt": "更新时间",
+      "test": "测试"
     }
   },
   "events": {
@@ -613,7 +613,7 @@
       "rule": "规则",
       "approval": "审批",
       "chat": "会话",
-      "gateway": "网关",
+      "gateway": "通道",
       "memory": "记忆",
       "scheduler": "调度",
       "replay": "回放",
@@ -778,7 +778,7 @@
         "chat": "Chat",
         "tool": "Tool",
         "approval": "Approval",
-        "gateway": "Gateway",
+        "gateway": "Channel",
         "system": "System"
       },
       "priority": "priority",
@@ -1045,7 +1045,8 @@
         "web": "Web",
         "telegram": "Telegram",
         "feishu": "Feishu",
-        "gateway": "Gateway"
+        "gateway": "Channel",
+        "channel": "Channel"
       }
     },
     "quickLinks": {
@@ -1091,9 +1092,14 @@
       "open": "进入事件中心",
       "empty": "暂无事件数据"
     },
-    "gatewayList": {
-      "title": "网关会话总览",
-      "subtitle": "按来源与 Chat ID 分组查看全部网关会话和最近执行记录。",
+    "error": {
+      "coreData": "无法加载仪表盘核心数据，请检查 API 服务状态",
+      "load": "加载失败"
+    },
+    "title": "Semibot - 半自动智能体平台",
+    "channelList": {
+      "title": "通道会话总览",
+      "subtitle": "按来源与 Chat ID 分组查看全部通道会话和最近执行记录。",
       "searchPlaceholder": "搜索 Chat ID、会话ID、运行摘要或 Run ID",
       "filterAll": "全部来源",
       "conversations": "会话 {count}",
@@ -1101,13 +1107,13 @@
       "latest": "最近更新 {time}",
       "openLatest": "查看最新详情",
       "showingRuns": "展示最近 {shown} / 共 {total} 条运行",
-      "runFallbackTitle": "网关会话运行",
+      "runFallbackTitle": "通道会话运行",
       "unknownChat": "未知 Chat",
-      "empty": "暂无匹配的网关会话"
+      "empty": "暂无匹配的通道会话"
     },
-    "gatewayDetail": {
-      "title": "网关会话详情",
-      "subtitle": "查看 Telegram/Feishu 网关会话的执行记录与上下文。",
+    "channelDetail": {
+      "title": "通道会话详情",
+      "subtitle": "查看 Telegram/Feishu 通道会话的执行记录与上下文。",
       "back": "返回仪表盘",
       "conversationId": "会话ID",
       "chatId": "Chat ID",
@@ -1115,25 +1121,20 @@
       "context": "上下文消息",
       "emptyRuns": "暂无执行记录",
       "emptyContext": "暂无上下文消息"
-    },
-    "error": {
-      "coreData": "无法加载仪表盘核心数据，请检查 API 服务状态",
-      "load": "加载失败"
-    },
-    "title": "Semibot - 半自动智能体平台"
+    }
   },
   "skillDefinitions": {
     "title": "技能管理",
     "subtitlePrefix": "管理平台技能定义，共",
     "subtitleSuffix": "个",
     "create": "创建技能",
+    "install": "安装",
     "searchPlaceholder": "搜索技能名称、ID 或描述...",
     "builtin": "内置",
     "enabled": "已启用",
     "disabled": "已禁用",
     "noDescription": "暂无描述",
     "category": "分类:",
-    "install": "安装",
     "empty": {
       "filteredTitle": "未找到匹配的技能",
       "filteredDescription": "尝试调整搜索条件",
@@ -1169,6 +1170,7 @@
     "subtitlePrefix": "管理平台技能定义，共",
     "subtitleSuffix": "个",
     "create": "创建技能",
+    "install": "安装技能",
     "searchPlaceholder": "搜索技能名称、ID 或描述...",
     "emptyTitle": "没有找到技能定义",
     "emptyDescription": "尝试调整搜索条件",
@@ -1181,6 +1183,7 @@
     "packageLabel": "安装包文件 *",
     "packageHint": "支持 .zip、.tar.gz、.tgz 格式，最大 100MB。包内需包含 SKILL.md 文件",
     "uploadAndCreate": "上传并创建",
+    "uploadAndInstall": "上传并安装",
     "batch": {
       "selectAllVisible": "选择当前列表",
       "selectedCount": "已选择 {count} 个技能",
@@ -1414,16 +1417,16 @@
       "skills": "维护技能模板与技能版本，扩展智能体能力。",
       "mcpServers": "配置 MCP 服务连接，为智能体接入外部工具与资源。",
       "tools": "查看和管理内建工具开关、风险与参数配置。",
-      "config": "统一管理 LLM、Gateway、API Key 与 Webhook 配置。",
+      "config": "统一管理 LLM、Channel、API Key 与 Webhook 配置。",
       "helpCenter": "查看功能说明、配置教程与常见问题排障指南。"
     }
   },
   "helpCenter": {
     "title": "帮助中心",
-    "subtitle": "在一个页面里快速掌握系统功能、hover 提示规则，以及 Gateway 关键配置教程。",
+    "subtitle": "在一个页面里快速掌握系统功能、hover 提示规则，以及 Channel 关键配置教程。",
     "badges": {
       "hover": "全站 Hover 说明",
-      "gateway": "Gateway 配置教程",
+      "gateway": "Channel 配置教程",
       "quickStart": "快速上手"
     },
     "searchPlaceholder": "搜索功能说明、模块入口和排障问题...",
@@ -1431,8 +1434,8 @@
     "sections": {
       "feature-guide": "功能导航",
       "hover-tips": "悬停提示",
-      "gateway-tutorial": "网关教程",
-      "provider-guides": "平台指引"
+      "provider-guides": "平台指引",
+      "channel-tutorial": "通道教程"
     },
     "featureGuide": {
       "title": "功能导航速览",
@@ -1447,11 +1450,11 @@
         "3": "配置项入口：悬停可查看推荐配置顺序与风险提示。"
       }
     },
-    "gatewayTutorial": {
-      "title": "Gateway 配置详细教程（重点）",
-      "subtitle": "适用于 Telegram / Feishu 网关接入，建议按顺序完成以下步骤。",
+    "channelTutorial": {
+      "title": "Channel 配置详细教程（重点）",
+      "subtitle": "适用于 Telegram / Feishu 通道接入，建议按顺序完成以下步骤。",
       "openConfig": "打开配置中心",
-      "openConfigTip": "前往配置中心的 Gateway 区域进行新增、测试与启停。",
+      "openConfigTip": "前往配置中心的 Channel 区域进行新增、测试与启停。",
       "securityTitle": "安全建议",
       "securityBody": "生产环境建议启用审批策略、限制 allowedChatIds、并定期轮换 token/secret。",
       "steps": {
@@ -1460,7 +1463,7 @@
           "description": "提前准备 bot token、webhook 回调地址、默认 agent 以及允许接入的 chatId 清单。"
         },
         "create": {
-          "title": "新建 Gateway 实例",
+          "title": "新建 Channel 实例",
           "description": "在配置中心选择 Telegram 或 Feishu，填写基础连接参数并保存实例。"
         },
         "policy": {
@@ -1477,12 +1480,12 @@
         },
         "observe": {
           "title": "在事件中心与会话页验证",
-          "description": "发送真实消息后，在事件中心确认已入站，在网关会话详情查看执行与回传结果。"
+          "description": "发送真实消息后，在事件中心确认已入站，在通道会话详情查看执行与回传结果。"
         }
       }
     },
-    "gatewayFaq": {
-      "title": "Gateway 常见问题",
+    "channelFaq": {
+      "title": "Channel 常见问题",
       "items": {
         "noResponse": {
           "q": "群里发消息后机器人无响应怎么办？",
@@ -1494,7 +1497,7 @@
         },
         "tokenInvalid": {
           "q": "提示 token/secret 无效怎么办？",
-          "a": "重新签发凭据后更新 Gateway 配置，并执行一次连通性测试。"
+          "a": "重新签发凭据后更新 Channel 配置，并执行一次连通性测试。"
         },
         "approvalStuck": {
           "q": "任务一直等待审批如何处理？",
@@ -1502,14 +1505,14 @@
         }
       }
     },
-    "gatewayProviders": {
+    "channelProviders": {
       "feishu": {
-        "title": "Feishu 网关详细配置",
+        "title": "Feishu 通道详细配置",
         "subtitle": "适用于飞书机器人事件接入与卡片审批回调。",
         "items": {
           "credentials": {
             "title": "准备飞书应用参数",
-            "description": "在飞书开放平台获取 App ID、App Secret，并在 Gateway 中填写 verifyToken / webhookSecret / bot token。"
+            "description": "在飞书开放平台获取 App ID、App Secret，并在 Channel 中填写 verifyToken / webhookSecret / bot token。"
           },
           "events": {
             "title": "配置事件订阅回调地址",
@@ -1521,12 +1524,12 @@
           },
           "testAndObserve": {
             "title": "联调与观察",
-            "description": "保存后先做 Gateway 测试，再在飞书群发消息，确认事件中心出现入站事件并在会话详情看到执行记录。"
+            "description": "保存后先做 Channel 测试，再在飞书群发消息，确认事件中心出现入站事件并在会话详情看到执行记录。"
           }
         }
       },
       "telegram": {
-        "title": "Telegram 网关详细配置",
+        "title": "Telegram 通道详细配置",
         "subtitle": "适用于 Telegram Bot webhook 接入与群聊会话路由。",
         "items": {
           "credentials": {
@@ -1539,11 +1542,11 @@
           },
           "privacyAndChatId": {
             "title": "检查隐私模式与 chatId",
-            "description": "群内不响应时，先检查 Bot 隐私模式、群 chat_id 是否在允许列表，并确认网关实例已启用。"
+            "description": "群内不响应时，先检查 Bot 隐私模式、群 chat_id 是否在允许列表，并确认通道实例已启用。"
           },
           "testAndObserve": {
             "title": "联调与回归验证",
-            "description": "发送测试消息后，在事件中心确认 chat.message.received，在网关会话详情确认工具调用与回传结果。"
+            "description": "发送测试消息后，在事件中心确认 chat.message.received，在通道会话详情确认工具调用与回传结果。"
           }
         }
       }

@@ -36,7 +36,7 @@ const llmLogger = createLogger('llm')
 let isInitialized = false
 
 type ProviderInstanceEnvConfig = {
-  type: 'openai' | 'anthropic' | 'google' | 'custom'
+  type: 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom'
   id: string
   displayName?: string
   apiKey?: string
@@ -54,11 +54,11 @@ function parseProviderInstancesFromEnv(): ProviderInstanceEnvConfig[] {
           if (!item || typeof item !== 'object') continue
           const row = item as Record<string, unknown>
           const typeValue = String(row.type || '').trim()
-          if (!['openai', 'anthropic', 'google', 'custom'].includes(typeValue)) continue
+          if (!['openai', 'anthropic', 'google', 'kimi', 'qwen', 'minimax', 'xai', 'custom'].includes(typeValue)) continue
           const id = String(row.id || '').trim()
           if (!id) continue
           items.push({
-            type: typeValue as 'openai' | 'anthropic' | 'google' | 'custom',
+            type: typeValue as 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom',
             id,
             displayName: String(row.displayName || '').trim() || undefined,
             apiKey: String(row.apiKey || '').trim() || undefined,
@@ -113,6 +113,32 @@ function initializeProviders(): void {
   const google = new GoogleAIProvider({ name: 'google', displayName: 'Google AI' })
   registerProvider(google)
 
+  // 注册 Kimi / Qwen / MiniMax / xAI Provider（采用官方 OpenAI 兼容端点）
+  registerProvider(new CustomProvider({
+    name: 'kimi',
+    displayName: 'Kimi',
+    apiKey: process.env.KIMI_API_KEY,
+    baseUrl: process.env.KIMI_API_BASE_URL || 'https://api.moonshot.cn/v1',
+  }))
+  registerProvider(new CustomProvider({
+    name: 'qwen',
+    displayName: 'Qwen',
+    apiKey: process.env.QWEN_API_KEY,
+    baseUrl: process.env.QWEN_API_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  }))
+  registerProvider(new CustomProvider({
+    name: 'minimax',
+    displayName: 'MiniMax',
+    apiKey: process.env.MINIMAX_API_KEY,
+    baseUrl: process.env.MINIMAX_API_BASE_URL || 'https://api.minimax.chat/v1',
+  }))
+  registerProvider(new CustomProvider({
+    name: 'xai',
+    displayName: 'xAI',
+    apiKey: process.env.XAI_API_KEY,
+    baseUrl: process.env.XAI_API_BASE_URL || 'https://api.x.ai/v1',
+  }))
+
   // 注册 Custom Provider (兼容 OpenAI API 的第三方服务)
   const custom = new CustomProvider({ name: 'custom', displayName: '自定义模型' })
   registerProvider(custom)
@@ -143,6 +169,42 @@ function initializeProviders(): void {
         displayName: item.displayName || item.id,
         apiKey: item.apiKey,
         baseUrl: item.baseUrl,
+      }))
+      continue
+    }
+    if (item.type === 'kimi') {
+      registerProvider(new CustomProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl || 'https://api.moonshot.cn/v1',
+      }))
+      continue
+    }
+    if (item.type === 'qwen') {
+      registerProvider(new CustomProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      }))
+      continue
+    }
+    if (item.type === 'minimax') {
+      registerProvider(new CustomProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl || 'https://api.minimax.chat/v1',
+      }))
+      continue
+    }
+    if (item.type === 'xai') {
+      registerProvider(new CustomProvider({
+        name: providerName,
+        displayName: item.displayName || item.id,
+        apiKey: item.apiKey,
+        baseUrl: item.baseUrl || 'https://api.x.ai/v1',
       }))
       continue
     }
@@ -330,7 +392,7 @@ export async function getProviderStatus(): Promise<Array<{
     }
   }
 
-  const defaultOrder = ['openai', 'anthropic', 'google', 'custom']
+  const defaultOrder = ['openai', 'anthropic', 'google', 'kimi', 'qwen', 'minimax', 'xai', 'custom']
   const providers = getAllProviders()
   const providerNames = Array.from(
     new Set([

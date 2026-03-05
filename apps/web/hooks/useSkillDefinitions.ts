@@ -35,6 +35,15 @@ interface InstallPackageInput {
   enableRetry?: boolean
 }
 
+interface RuntimeSkillsResponse {
+  success: boolean
+  data?: {
+    available?: boolean
+    skills?: string[]
+    metadata?: Array<Record<string, unknown>>
+  }
+}
+
 export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
   const [definitions, setDefinitions] = useState<SkillDefinition[]>([])
   const [loading, setLoading] = useState(false)
@@ -49,6 +58,70 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
       setLoading(true)
       setError(null)
 
+      const runtime = await apiClient.get<RuntimeSkillsResponse>('/runtime/skills')
+      const runtimeData = runtime.data
+      if (runtime.success && runtimeData?.available) {
+        const metadataRows = Array.isArray(runtimeData.metadata) ? runtimeData.metadata : []
+        const nowIso = new Date().toISOString()
+        const fromMetadata: SkillDefinition[] = metadataRows
+          .filter((row) => String(row.status || 'active') === 'active')
+          .map((row, idx) => {
+            const skillId = String(row.skill_id || row.name || `skill_${idx}`)
+            const name = String(row.name || skillId)
+            const description = String(row.description || '')
+            const tags = Array.isArray(row.tags) ? row.tags.map((tag) => String(tag)) : []
+            const status = String(row.status || 'active')
+            const createdAt = String(row.installed_at || nowIso)
+            const updatedAt = String(row.indexed_at || nowIso)
+            return {
+              id: `runtime:${skillId}`,
+              skillId,
+              name,
+              description,
+              triggerKeywords: [],
+              category: String(row.source || 'package'),
+              tags,
+              isActive: status === 'active',
+              isPublic: false,
+              createdAt,
+              updatedAt,
+            }
+          })
+
+        const builtinSkillNames = Array.isArray(runtimeData.skills) ? runtimeData.skills : []
+        const builtinSkillLike = builtinSkillNames
+          .filter((name) => name === 'pdf' || name === 'xlsx')
+          .map<SkillDefinition>((name) => ({
+            id: `builtin:${name}`,
+            skillId: name,
+            name,
+            description: '',
+            triggerKeywords: [],
+            category: 'builtin',
+            tags: ['builtin'],
+            isActive: true,
+            isPublic: false,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          }))
+
+        const merged = [...fromMetadata, ...builtinSkillLike]
+        const dedup = new Map<string, SkillDefinition>()
+        for (const item of merged) {
+          if (!dedup.has(item.skillId)) dedup.set(item.skillId, item)
+        }
+        const rows = Array.from(dedup.values())
+        setDefinitions(rows)
+        setMeta({
+          total: rows.length,
+          page: 1,
+          limit: rows.length,
+          totalPages: 1,
+        })
+        return
+      }
+
+      // Fallback for compatibility when runtime is unavailable.
       const response = await apiClient.get<ApiResponse<SkillDefinition[]>>('/skill-definitions', {
         params: {
           page: options.page || 1,

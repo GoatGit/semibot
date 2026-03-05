@@ -216,7 +216,6 @@
       "runtimeToolsLoad": "Failed to read runtime built-in tools",
       "toolsConfigLoad": "Failed to load tool config (runtime tools are shown)",
       "toolsLoad": "Failed to load tools list",
-      "gatewaysLoad": "Failed to load gateways",
       "apiKeysLoad": "Failed to load API key list",
       "webhooksLoad": "Failed to load webhook list",
       "saveDefaultModel": "Failed to save default model config",
@@ -234,9 +233,9 @@
       "missingToolId": "Missing tool ID, unable to save",
       "updateToolConfig": "Failed to update tool config",
       "updateToolStatus": "Failed to update tool status",
-      "updateGateway": "Failed to update gateway config",
-      "deleteGateway": "Failed to delete gateway instance",
-      "testGateway": "Failed to test gateway connectivity",
+      "updateGateway": "Failed to update channel config",
+      "deleteGateway": "Failed to delete channel instance",
+      "testGateway": "Failed to test channel connectivity",
       "gatewayBindingsImportInvalid": "Import failed: {count} lines have invalid format.",
       "gatewayBindingsPartial": "Chat bindings contain {count} incomplete rows.",
       "createApiKey": "Failed to create API key",
@@ -249,13 +248,14 @@
       "testWebhook": "Failed to test webhook",
       "deleteWebhook": "Failed to delete webhook",
       "evolutionCapabilitiesLoad": "Failed to load evolution capabilities",
-      "evolutionCapabilitiesSave": "Failed to save evolution capability"
+      "evolutionCapabilitiesSave": "Failed to save evolution capability",
+      "channelsLoad": "Failed to load gateways"
     },
     "confirm": {
       "deleteApiKey": "Delete this API key? This action cannot be undone.",
       "deleteWebhook": "Delete this webhook? This action cannot be undone.",
-      "deleteGateway": "Delete this gateway instance? This action cannot be undone.",
-      "deleteGateways": "Delete the selected {count} gateway instances? This action cannot be undone.",
+      "deleteGateway": "Delete this channel instance? This action cannot be undone.",
+      "deleteGateways": "Delete the selected {count} channel instances? This action cannot be undone.",
       "gatewayBindingsDuplicate": "{count} duplicate chat IDs found. Keep only the last one for each chat ID and continue?",
       "gatewayBindingsOutsideAllowed": "{count} bindings are outside allowedChatIds and may not take effect. Continue?"
     },
@@ -297,38 +297,6 @@
       "disable": "Disable",
       "enable": "Enable",
       "title": "Tools"
-    },
-    "gateways": {
-      "title": "Gateways",
-      "activeCount": "Active {count}",
-      "newTelegram": "New Telegram",
-      "newFeishu": "New Feishu",
-      "filterAll": "All",
-      "filterTelegram": "Telegram",
-      "filterFeishu": "Feishu",
-      "selectAllVisible": "Select all visible",
-      "selectedCount": "{count} selected",
-      "batchEnable": "Batch enable",
-      "batchDisable": "Batch disable",
-      "batchTest": "Batch test",
-      "batchDelete": "Batch delete",
-      "batchSelectHint": "Select at least one gateway instance first.",
-      "batchNoDeletable": "Only default instances are selected. They cannot be deleted in batch.",
-      "batchPartialFailed": "Batch action partially failed: {success} succeeded, {failed} failed.",
-      "batchTestPartialFailed": "Batch test partially failed: {success} succeeded, {failed} failed.",
-      "defaultTag": "Default",
-      "loading": "Loading gateways...",
-      "empty": "No gateways",
-      "chatBindingsSummary": "Chat bindings: {count}",
-      "chatBindingsNone": "No chat bindings",
-      "chatBindingsMore": "+{count} more",
-      "quickEditBindings": "Quick edit",
-      "quickSaveBindings": "Save bindings",
-      "importBindingsPlaceholder": "Paste lines: chatId=agentId (or only chatId to use default agent)",
-      "applyImportedBindings": "Apply import",
-      "agent": "Agent",
-      "updatedAt": "Updated at",
-      "test": "Test"
     },
     "apiKeys": {
       "newKey": "New Key",
@@ -469,7 +437,7 @@
         }
       },
       "gateway": {
-        "title": "Gateway configuration",
+        "title": "Channel configuration",
         "instanceKeyLabel": "Field: instanceKey",
         "instanceKeyPlaceholder": "instanceKey (optional, should be unique)",
         "displayNameLabel": "Field: displayName",
@@ -567,9 +535,41 @@
     "tabs": {
       "llm": "LLM",
       "tools": "Tools",
-      "gateways": "Gateways",
       "apiKeys": "API Keys",
-      "webhooks": "Webhooks"
+      "webhooks": "Webhooks",
+      "channels": "Channels"
+    },
+    "channels": {
+      "title": "Channels",
+      "activeCount": "Active {count}",
+      "newTelegram": "New Telegram",
+      "newFeishu": "New Feishu",
+      "filterAll": "All",
+      "filterTelegram": "Telegram",
+      "filterFeishu": "Feishu",
+      "selectAllVisible": "Select all visible",
+      "selectedCount": "{count} selected",
+      "batchEnable": "Batch enable",
+      "batchDisable": "Batch disable",
+      "batchTest": "Batch test",
+      "batchDelete": "Batch delete",
+      "batchSelectHint": "Select at least one gateway instance first.",
+      "batchNoDeletable": "Only default instances are selected. They cannot be deleted in batch.",
+      "batchPartialFailed": "Batch action partially failed: {success} succeeded, {failed} failed.",
+      "batchTestPartialFailed": "Batch test partially failed: {success} succeeded, {failed} failed.",
+      "defaultTag": "Default",
+      "loading": "Loading gateways...",
+      "empty": "No gateways",
+      "chatBindingsSummary": "Chat bindings: {count}",
+      "chatBindingsNone": "No chat bindings",
+      "chatBindingsMore": "+{count} more",
+      "quickEditBindings": "Quick edit",
+      "quickSaveBindings": "Save bindings",
+      "importBindingsPlaceholder": "Paste lines: chatId=agentId (or only chatId to use default agent)",
+      "applyImportedBindings": "Apply import",
+      "agent": "Agent",
+      "updatedAt": "Updated at",
+      "test": "Test"
     }
   },
   "events": {
@@ -613,7 +613,7 @@
       "rule": "Rule",
       "approval": "Approval",
       "chat": "Chat",
-      "gateway": "Gateway",
+      "gateway": "Channel",
       "memory": "Memory",
       "scheduler": "Scheduler",
       "replay": "Replay",
@@ -778,7 +778,7 @@
         "chat": "Chat",
         "tool": "Tool",
         "approval": "Approval",
-        "gateway": "Gateway",
+        "gateway": "Channel",
         "system": "System"
       },
       "priority": "priority",
@@ -1045,7 +1045,8 @@
         "web": "Web",
         "telegram": "Telegram",
         "feishu": "Feishu",
-        "gateway": "Gateway"
+        "gateway": "Channel",
+        "channel": "Channel"
       }
     },
     "quickLinks": {
@@ -1091,8 +1092,13 @@
       "open": "Open Event Center",
       "empty": "No events yet"
     },
-    "gatewayList": {
-      "title": "Gateway Conversations",
+    "error": {
+      "coreData": "Failed to load dashboard core data. Please check API service.",
+      "load": "Load failed"
+    },
+    "title": "Semibot - A semi bot",
+    "channelList": {
+      "title": "Channel Conversations",
       "subtitle": "Browse all gateway sessions grouped by source and Chat ID with recent runs.",
       "searchPlaceholder": "Search Chat ID, conversation ID, run summary, or Run ID",
       "filterAll": "All sources",
@@ -1101,12 +1107,12 @@
       "latest": "Last update {time}",
       "openLatest": "Open latest details",
       "showingRuns": "Showing latest {shown} of {total} runs",
-      "runFallbackTitle": "Gateway conversation run",
+      "runFallbackTitle": "Channel conversation run",
       "unknownChat": "Unknown chat",
       "empty": "No matching gateway conversations"
     },
-    "gatewayDetail": {
-      "title": "Gateway Conversation",
+    "channelDetail": {
+      "title": "Channel Conversation",
       "subtitle": "Inspect Telegram/Feishu conversation runs and context messages.",
       "back": "Back to Dashboard",
       "conversationId": "Conversation ID",
@@ -1115,25 +1121,20 @@
       "context": "Context Messages",
       "emptyRuns": "No runs found",
       "emptyContext": "No context messages"
-    },
-    "error": {
-      "coreData": "Failed to load dashboard core data. Please check API service.",
-      "load": "Load failed"
-    },
-    "title": "Semibot - A semi bot"
+    }
   },
   "skillDefinitions": {
     "title": "Skill Management",
     "subtitlePrefix": "Manage skill definitions,",
     "subtitleSuffix": "",
     "create": "Create Skill",
+    "install": "Install",
     "searchPlaceholder": "Search by skill name, ID, or description...",
     "builtin": "Built-in",
     "enabled": "Enabled",
     "disabled": "Disabled",
     "noDescription": "No description",
     "category": "Category:",
-    "install": "Install",
     "empty": {
       "filteredTitle": "No matching skills found",
       "filteredDescription": "Try adjusting your search query",
@@ -1169,6 +1170,7 @@
     "subtitlePrefix": "Manage skill definitions,",
     "subtitleSuffix": "",
     "create": "Create Skill",
+    "install": "Install Skill",
     "searchPlaceholder": "Search skill name, ID or description...",
     "emptyTitle": "No matching skills found",
     "emptyDescription": "Try adjusting the search query",
@@ -1181,6 +1183,7 @@
     "packageLabel": "Package file *",
     "packageHint": "Supports .zip, .tar.gz, .tgz up to 100MB. Package must include SKILL.md.",
     "uploadAndCreate": "Upload & Create",
+    "uploadAndInstall": "Upload & Install",
     "batch": {
       "selectAllVisible": "Select current list",
       "selectedCount": "{count} skills selected",
@@ -1420,10 +1423,10 @@
   },
   "helpCenter": {
     "title": "Help Center",
-    "subtitle": "Learn feature usage, hover hints, and critical Gateway setup in one place.",
+    "subtitle": "Learn feature usage, hover hints, and critical Channel setup in one place.",
     "badges": {
       "hover": "Hover Guidance",
-      "gateway": "Gateway Tutorial",
+      "gateway": "Channel Tutorial",
       "quickStart": "Quick Start"
     },
     "searchPlaceholder": "Search guides, module pages, and troubleshooting...",
@@ -1431,8 +1434,8 @@
     "sections": {
       "feature-guide": "Feature Guide",
       "hover-tips": "Hover Tips",
-      "gateway-tutorial": "Gateway Tutorial",
-      "provider-guides": "Provider Guides"
+      "provider-guides": "Provider Guides",
+      "channel-tutorial": "Channel Tutorial"
     },
     "featureGuide": {
       "title": "Feature Navigation Guide",
@@ -1447,11 +1450,11 @@
         "3": "Configuration entries: hover to learn suggested setup order and risks."
       }
     },
-    "gatewayTutorial": {
-      "title": "Gateway Setup Tutorial (Critical)",
+    "channelTutorial": {
+      "title": "Channel Setup Tutorial (Critical)",
       "subtitle": "For Telegram / Feishu integrations, follow the steps in order.",
       "openConfig": "Open Config Center",
-      "openConfigTip": "Go to Config > Gateway for create, test, and enable/disable operations.",
+      "openConfigTip": "Go to Config > Channel for create, test, and enable/disable operations.",
       "securityTitle": "Security Recommendation",
       "securityBody": "For production, enable approvals, restrict allowedChatIds, and rotate token/secret regularly.",
       "steps": {
@@ -1460,7 +1463,7 @@
           "description": "Collect bot token, webhook callback URL, default agent, and allowed chatId list."
         },
         "create": {
-          "title": "Create a Gateway instance",
+          "title": "Create a Channel instance",
           "description": "Choose Telegram or Feishu in Config, fill base connectivity fields, then save."
         },
         "policy": {
@@ -1481,8 +1484,8 @@
         }
       }
     },
-    "gatewayFaq": {
-      "title": "Gateway FAQ",
+    "channelFaq": {
+      "title": "Channel FAQ",
       "items": {
         "noResponse": {
           "q": "No bot response after sending message in group. What to check?",
@@ -1502,14 +1505,14 @@
         }
       }
     },
-    "gatewayProviders": {
+    "channelProviders": {
       "feishu": {
-        "title": "Feishu Gateway Detailed Setup",
+        "title": "Feishu Channel Detailed Setup",
         "subtitle": "For Feishu bot event integration and card-action callbacks.",
         "items": {
           "credentials": {
             "title": "Prepare Feishu app credentials",
-            "description": "Get App ID/App Secret from Feishu platform and fill verifyToken / webhookSecret / bot token in Gateway config."
+            "description": "Get App ID/App Secret from Feishu platform and fill verifyToken / webhookSecret / bot token in Channel config."
           },
           "events": {
             "title": "Configure event callback URL",
@@ -1521,12 +1524,12 @@
           },
           "testAndObserve": {
             "title": "Test and observe",
-            "description": "After saving, run Gateway test first, then send messages in Feishu group and verify inbound events plus execution traces."
+            "description": "After saving, run Channel test first, then send messages in Feishu group and verify inbound events plus execution traces."
           }
         }
       },
       "telegram": {
-        "title": "Telegram Gateway Detailed Setup",
+        "title": "Telegram Channel Detailed Setup",
         "subtitle": "For Telegram bot webhook integration and group conversation routing.",
         "items": {
           "credentials": {

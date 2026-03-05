@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import { Send, Paperclip, Mic, StopCircle, Bot, User, RefreshCw, AlertCircle, X, FileText, Image as ImageIcon, ArrowLeft, ShieldAlert, Check, CircleHelp } from 'lucide-react'
@@ -813,8 +814,8 @@ export default function ChatSessionPage() {
           {/* 欢迎消息 */}
           {orderedMessages.length === 0 && (
             <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0">
-                <Bot size={16} className="text-primary-400" />
+              <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0">
+                <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} />
               </div>
               <div className="bg-bg-elevated rounded-xl rounded-bl-sm px-4 py-3 border border-border-subtle">
                 <p className="text-sm text-text-primary">
@@ -1199,13 +1200,13 @@ function MessageBubble({ message, locale }: MessageBubbleProps) {
       <div
         className={clsx(
           'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0',
-          isUser ? 'bg-primary-500' : 'bg-primary-500/20'
+          isUser ? 'bg-primary-500' : ''
         )}
       >
         {isUser ? (
           <User size={16} className="text-neutral-950" />
         ) : (
-          <Bot size={16} className="text-primary-400" />
+          <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} className="rounded-full" />
         )}
       </div>
 

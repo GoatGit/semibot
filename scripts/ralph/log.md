@@ -563,3 +563,19 @@
   - `pnpm --filter @semibot/api exec tsc --noEmit`
   - `pnpm --filter @semibot/api exec vitest --run src/__tests__/ws.server.request-fireforget.test.ts src/__tests__/vm-scheduler.test.ts src/__tests__/chat-ws.integration.test.ts src/__tests__/ws.server.handshake.test.ts`
   - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/session/test_semigraph_adapter_ws.py tests/session/test_session_manager_requirements.py tests/ws/test_client_reconnect.py tests/agents/test_delegator.py`
+
+### 2026-03-04 迭代 V2-Control-Plane-Phase1 — Channel/Gateway + 控制面工具收敛
+1. API v1 删除对外 `/gateways` 路由挂载与 docs 暴露，统一对外为 `/channels/*`
+2. Runtime 聚合 API 改名为 `/runtime/channels/conversations*`
+3. Dashboard/会话页改为请求 `/runtime/channels/*`，source fallback 从 `gateway` 调整为 `channel`
+4. `rule_authoring` 工具升级为可配置名称，新增 `control_plane` 主名称与 `rule_authoring` 兼容别名
+5. `control_plane` 支持 `domain=rules` 动作映射（create/update/enable/disable/delete/list/get/simulate）
+6. 新增控制面版本对齐校验（capability/api 不一致时阻断写操作，返回 `CONTROL_PLANE_VERSION_MISMATCH`）
+7. 新增递归阻断：创建/更新规则时禁止动作类型 `control_plane/rule_authoring`（`TOOL_RECURSION_BLOCKED`）
+8. Planner 非规则意图时同时过滤 `rule_authoring` 与 `control_plane`
+9. 新增 user story：`docs/user-stories/control-plane-channel-gateway-phase1.json`
+10. 新增/更新测试覆盖：bootstrap、intent filter、rule_authoring/control_plane、local_runtime guard
+- 验证通过：
+  - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/skills/test_rule_authoring.py tests/skills/test_bootstrap_tools.py tests/orchestrator/test_rule_authoring_intent_filter.py tests/test_local_runtime.py`
+  - `pnpm -C apps/api exec tsc --noEmit`
+  - `pnpm -C apps/web exec tsc --noEmit`

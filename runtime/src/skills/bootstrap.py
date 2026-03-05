@@ -42,7 +42,8 @@ def create_default_registry() -> SkillRegistry:
     registry.register_tool(CsvXlsxTool())
     registry.register_tool(PdfReportTool())
     registry.register_tool(SqlQueryReadonlyTool())
-    registry.register_tool(RuleAuthoringTool())
+    registry.register_tool(RuleAuthoringTool(tool_name="control_plane", registry=registry))
+    registry.register_tool(RuleAuthoringTool(tool_name="rule_authoring", legacy_alias=True, registry=registry))
     registry.register_tool(SkillInstallerTool(registry))
     logger.info(
         "Registered core builtin tools",
@@ -57,6 +58,7 @@ def create_default_registry() -> SkillRegistry:
                 "csv_xlsx",
                 "pdf_report",
                 "sql_query_readonly",
+                "control_plane",
                 "rule_authoring",
                 "skill_installer",
             ]

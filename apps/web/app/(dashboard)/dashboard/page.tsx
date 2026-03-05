@@ -82,7 +82,7 @@ interface DashboardStats {
     title: string
     createdAt: string
     href?: string
-    source: 'web' | 'telegram' | 'feishu' | 'gateway'
+    source: 'web' | 'telegram' | 'feishu' | 'channel'
   }>
   recentEvents: Array<{
     id: string
@@ -142,7 +142,7 @@ export default function DashboardPage() {
         apiClient.get<ListResponse<unknown>>('/skill-definitions', { params: { page: 1, limit: 1 } }),
         apiClient.get<{ items?: unknown[] }>('/events', { params: { limit: 5 } }),
         apiClient.get<{ items?: Array<{ status?: string }> }>('/approvals', { params: { status: 'pending', limit: 50 } }),
-        apiClient.get<RuntimeGatewayConversationsResponse>('/runtime/gateway/conversations', { params: { limit: 10 } }),
+        apiClient.get<RuntimeGatewayConversationsResponse>('/runtime/channels/conversations', { params: { limit: 10 } }),
       ])
 
       const agents = agentsRes.status === 'fulfilled' ? agentsRes.value : null
@@ -164,7 +164,7 @@ export default function DashboardPage() {
       const gatewayRunsRes = await Promise.allSettled(
         gatewayConversations.slice(0, 10).map((item) => (
           apiClient.get<RuntimeGatewayConversationRunsResponse>(
-            `/runtime/gateway/conversations/${encodeURIComponent(item.conversationId)}/runs`,
+            `/runtime/channels/conversations/${encodeURIComponent(item.conversationId)}/runs`,
             { params: { limit: 6 } }
           )
         ))
@@ -190,8 +190,8 @@ export default function DashboardPage() {
             ? 'telegram'
             : provider === 'feishu'
               ? 'feishu'
-              : 'gateway'
-        ) as 'telegram' | 'feishu' | 'gateway'
+              : 'channel'
+        ) as 'telegram' | 'feishu' | 'channel'
         const chatId = parseGatewayChatId(item.gatewayKey)
         const sourceLabel = t(`dashboard.recentSessions.sources.${source}`)
         const runsPayload =
@@ -205,7 +205,7 @@ export default function DashboardPage() {
             title: chatId ? `${sourceLabel} · ${chatId}` : `${sourceLabel} · ${item.conversationId.slice(0, 8)}`,
             createdAt: item.updatedAt,
             source,
-            href: `/gateway-conversations/${encodeURIComponent(item.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}`,
+            href: `/channel-conversations/${encodeURIComponent(item.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}`,
           }]
         }
 
@@ -219,7 +219,7 @@ export default function DashboardPage() {
             title,
             createdAt: run.updatedAt,
             source,
-            href: `/gateway-conversations/${encodeURIComponent(item.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}&runId=${encodeURIComponent(run.runId)}`,
+            href: `/channel-conversations/${encodeURIComponent(item.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}&runId=${encodeURIComponent(run.runId)}`,
           }
         })
       })
@@ -384,7 +384,7 @@ export default function DashboardPage() {
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.recentSessions.title')}</h2>
-                <Link href="/gateway-conversations" className="text-sm text-primary-400 hover:text-primary-300">
+                <Link href="/channel-conversations" className="text-sm text-primary-400 hover:text-primary-300">
                   {t('dashboard.recentSessions.viewAll')}
                 </Link>
               </div>

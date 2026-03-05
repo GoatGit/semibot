@@ -137,10 +137,31 @@ interface EvolutionCapabilityDoc {
 }
 type EvolutionCapabilityType = 'hands' | 'reflex' | 'spine' | 'guard' | 'mind'
 
-type ConfigTab = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
-type SectionKey = 'llm' | 'tools' | 'gateways' | 'apiKeys' | 'webhooks' | 'evolutionCapabilities'
+interface EnvVarItem {
+  name: string
+  value: string
+  isSensitive: boolean
+  hasValue: boolean
+}
+
+type ConfigTab =
+  | 'llm'
+  | 'tools'
+  | 'channels'
+  | 'apiKeys'
+  | 'webhooks'
+  | 'envVars'
+  | 'evolutionCapabilities'
+type SectionKey =
+  | 'llm'
+  | 'tools'
+  | 'channels'
+  | 'apiKeys'
+  | 'webhooks'
+  | 'envVars'
+  | 'evolutionCapabilities'
 type ProviderKey = string
-type ProviderType = 'openai' | 'anthropic' | 'google' | 'custom'
+type ProviderType = 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom'
 type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram'
 type GatewayFilter = 'all' | GatewayProvider
@@ -268,6 +289,7 @@ type ToolForm = {
 
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
 const MIN_WEBHOOK_SECRET_LENGTH = 16
+const REDACTED_VALUE = '__SEMIBOT_REDACTED__'
 const MIN_BUILTIN_TOOLS = [
   'search',
   'code_executor',
@@ -318,6 +340,10 @@ const PROVIDER_TYPE_OPTIONS: Array<{ value: ProviderType; label: string }> = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'google', label: 'Google AI' },
+  { value: 'kimi', label: 'Kimi' },
+  { value: 'qwen', label: 'Qwen' },
+  { value: 'minimax', label: 'MiniMax' },
+  { value: 'xai', label: 'xAI' },
   { value: 'custom', label: 'Custom' },
 ]
 const TOOL_APPROVAL_DEDUPE_OPTIONS: Record<string, string[]> = {
@@ -525,17 +551,19 @@ export default function ConfigPage() {
   const [sectionLoading, setSectionLoading] = useState<Record<SectionKey, boolean>>({
     llm: false,
     tools: false,
-    gateways: false,
+    channels: false,
     apiKeys: false,
     webhooks: false,
+    envVars: false,
     evolutionCapabilities: false,
   })
   const [sectionErrors, setSectionErrors] = useState<Record<SectionKey, string | null>>({
     llm: null,
     tools: null,
-    gateways: null,
+    channels: null,
     apiKeys: null,
     webhooks: null,
+    envVars: null,
     evolutionCapabilities: null,
   })
 
@@ -642,6 +670,16 @@ export default function ConfigPage() {
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null)
 
   const [webhooks, setWebhooks] = useState<WebhookItem[]>([])
+  const [envVars, setEnvVars] = useState<EnvVarItem[]>([])
+  const [envVarForm, setEnvVarForm] = useState({
+    name: '',
+    value: '',
+    isSensitive: false,
+    clearValue: false,
+    editingName: '',
+  })
+  const [showEnvVarModal, setShowEnvVarModal] = useState(false)
+  const [savingEnvVar, setSavingEnvVar] = useState(false)
   const [showCreateWebhook, setShowCreateWebhook] = useState(false)
   const [creatingWebhook, setCreatingWebhook] = useState(false)
   const [testingWebhookId, setTestingWebhookId] = useState<string | null>(null)
@@ -807,6 +845,26 @@ export default function ConfigPage() {
     }
   }, [setSectionLoadingFlag, t])
 
+  const loadEnvVars = useCallback(async () => {
+    setSectionLoadingFlag('envVars', true)
+    try {
+      const response = await apiClient.get<ApiResponse<EnvVarItem[]>>('/llm-providers/env-vars')
+      if (!response.success) {
+        throw new Error(tSafe('config.errors.envVarsLoad', '环境变量加载失败'))
+      }
+      setEnvVars(response.data || [])
+      setSectionErrors((prev) => ({ ...prev, envVars: null }))
+    } catch (err) {
+      setEnvVars([])
+      setSectionErrors((prev) => ({
+        ...prev,
+        envVars: getErrorMessage(err, tSafe('config.errors.envVarsLoad', '环境变量加载失败')),
+      }))
+    } finally {
+      setSectionLoadingFlag('envVars', false)
+    }
+  }, [setSectionLoadingFlag, tSafe])
+
   const loadEvolutionCapabilities = useCallback(async () => {
     setSectionLoadingFlag('evolutionCapabilities', true)
     try {
@@ -867,22 +925,22 @@ export default function ConfigPage() {
   }, [t])
 
   const loadGateways = useCallback(async () => {
-    setSectionLoadingFlag('gateways', true)
+    setSectionLoadingFlag('channels', true)
     try {
-      const response = await apiClient.get<ApiResponse<GatewayItem[]>>('/gateways/instances')
+      const response = await apiClient.get<ApiResponse<GatewayItem[]>>('/channels/instances')
       if (!response.success) {
-        throw new Error(t('config.errors.gatewaysLoad'))
+        throw new Error(t('config.errors.channelsLoad'))
       }
       setGateways(response.data || [])
-      setSectionErrors((prev) => ({ ...prev, gateways: null }))
+      setSectionErrors((prev) => ({ ...prev, channels: null }))
     } catch (err) {
       setGateways([])
       setSectionErrors((prev) => ({
         ...prev,
-        gateways: getErrorMessage(err, t('config.errors.gatewaysLoad')),
+        channels: getErrorMessage(err, t('config.errors.channelsLoad')),
       }))
     } finally {
-      setSectionLoadingFlag('gateways', false)
+      setSectionLoadingFlag('channels', false)
     }
   }, [setSectionLoadingFlag, t])
 
@@ -958,7 +1016,7 @@ export default function ConfigPage() {
 
   const openProviderConfigDialog = (provider: ProviderKey) => {
     const cfg = llmConfig?.providers[provider]
-    const matched = provider.match(/^(openai|anthropic|google|custom):(.+)$/)
+    const matched = provider.match(/^(openai|anthropic|google|kimi|qwen|minimax|xai|custom):(.+)$/)
     setProviderConfigForm({
       provider,
       providerType: (matched?.[1] as ProviderType | undefined) || 'custom',
@@ -988,7 +1046,7 @@ export default function ConfigPage() {
       isCreateProviderInstance
         ? `${providerConfigForm.providerType}:${providerConfigForm.providerId.trim()}`
         : providerConfigForm.provider
-    if (!targetProvider || targetProvider === 'new' || /^(openai|anthropic|google|custom):\s*$/.test(targetProvider)) {
+    if (!targetProvider || targetProvider === 'new' || /^(openai|anthropic|google|kimi|qwen|minimax|xai|custom):\s*$/.test(targetProvider)) {
       setError(tSafe('config.errors.providerIdRequired', '请填写 Provider 实例 ID'))
       return
     }
@@ -1596,9 +1654,9 @@ export default function ConfigPage() {
       setSavingGateway(true)
       setError(null)
       if (gatewayForm.id) {
-        await apiClient.put(`/gateways/instances/${gatewayForm.id}`, payload)
+        await apiClient.put(`/channels/instances/${gatewayForm.id}`, payload)
       } else {
-        await apiClient.post('/gateways/instances', {
+        await apiClient.post('/channels/instances', {
           provider: gatewayForm.provider,
           instanceKey: gatewayForm.instanceKey.trim() || undefined,
           ...payload,
@@ -1690,7 +1748,7 @@ export default function ConfigPage() {
       const payload = isTelegram
         ? { text: 'Semibot gateway test' }
         : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
-      await apiClient.post(`/gateways/instances/${gateway.id}/test`, payload)
+      await apiClient.post(`/channels/instances/${gateway.id}/test`, payload)
     } catch (err) {
       setError(getErrorMessage(err, t('config.errors.testGateway')))
     } finally {
@@ -1702,7 +1760,7 @@ export default function ConfigPage() {
     if (!window.confirm(t('config.confirm.deleteGateway'))) return
     try {
       setError(null)
-      await apiClient.delete(`/gateways/instances/${gateway.id}`)
+      await apiClient.delete(`/channels/instances/${gateway.id}`)
       await loadGateways()
     } catch (err) {
       setError(getErrorMessage(err, t('config.errors.deleteGateway')))
@@ -1793,7 +1851,7 @@ export default function ConfigPage() {
             }
           }
         }
-        await apiClient.put(`/gateways/instances/${gatewayId}`, {
+        await apiClient.put(`/channels/instances/${gatewayId}`, {
           config: {
             chatBindings: normalized.normalized,
           },
@@ -1845,7 +1903,7 @@ export default function ConfigPage() {
   const runGatewayBatchAction = useCallback(
     async (action: 'enable' | 'disable' | 'delete') => {
       if (selectedGatewayItems.length === 0) {
-        setError(t('config.gateways.batchSelectHint'))
+        setError(t('config.channels.batchSelectHint'))
         return
       }
 
@@ -1853,7 +1911,7 @@ export default function ConfigPage() {
       if (action === 'delete') {
         targets = selectedGatewayItems.filter((item) => !item.isDefault)
         if (targets.length === 0) {
-          setError(t('config.gateways.batchNoDeletable'))
+          setError(t('config.channels.batchNoDeletable'))
           return
         }
         if (!window.confirm(t('config.confirm.deleteGateways', { count: targets.length }))) {
@@ -1864,7 +1922,7 @@ export default function ConfigPage() {
       try {
         setGatewayBatchLoading(true)
         setError(null)
-        const response = await apiClient.post<ApiResponse<GatewayBatchResult>>('/gateways/instances/batch', {
+        const response = await apiClient.post<ApiResponse<GatewayBatchResult>>('/channels/instances/batch', {
           action,
           instanceIds: targets.map((item) => item.id),
           ignoreMissing: true,
@@ -1875,7 +1933,7 @@ export default function ConfigPage() {
         const failed = (response.data.failed?.length || 0) + (response.data.blocked?.length || 0)
         if (failed > 0) {
           setError(
-            t('config.gateways.batchPartialFailed', {
+            t('config.channels.batchPartialFailed', {
               success: response.data.changed?.length || 0,
               failed,
             })
@@ -1897,7 +1955,7 @@ export default function ConfigPage() {
 
   const runGatewayBatchTest = useCallback(async () => {
     if (selectedGatewayItems.length === 0) {
-      setError(t('config.gateways.batchSelectHint'))
+      setError(t('config.channels.batchSelectHint'))
       return
     }
     try {
@@ -1909,13 +1967,13 @@ export default function ConfigPage() {
             item.provider === 'telegram'
               ? { text: 'Semibot gateway test' }
               : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
-          return apiClient.post(`/gateways/instances/${item.id}/test`, payload)
+          return apiClient.post(`/channels/instances/${item.id}/test`, payload)
         })
       )
       const failed = settled.filter((result) => result.status === 'rejected').length
       if (failed > 0) {
         setError(
-          t('config.gateways.batchTestPartialFailed', {
+          t('config.channels.batchTestPartialFailed', {
             success: selectedGatewayItems.length - failed,
             failed,
           })
@@ -1950,15 +2008,11 @@ export default function ConfigPage() {
 
   const visibleProviderEntries = useMemo(() => {
     const entries = Object.entries(llmConfig?.providers || {}) as Array<[ProviderKey, LlmProviderConfigEntry]>
-    return entries.filter(([providerKey, cfg]) => {
-      const status = llmStatusMap.get(providerKey)
-      const isBuiltinProvider = !providerKey.includes(':')
-      if (isBuiltinProvider) {
-        return Boolean(status?.available || cfg.apiKeyConfigured)
-      }
-      return Boolean(cfg.apiKeyConfigured || cfg.baseUrl?.trim())
-    })
-  }, [llmConfig, llmStatusMap])
+    // V2 policy: provider list only shows user-created provider instances (type:id).
+    // Built-in preset keys (openai/anthropic/google/...) are hidden until an instance is created.
+    // Backward compatibility: keep legacy `custom` entry visible when it was already configured.
+    return entries.filter(([providerKey, cfg]) => providerKey.includes(':') || (providerKey === 'custom' && cfg.apiKeyConfigured))
+  }, [llmConfig])
 
   const availableModelOptions = useMemo(() => {
     const unique = Array.from(new Set(llmProviders.flatMap((item) => item.models || []))).sort((a, b) =>
@@ -1995,19 +2049,19 @@ export default function ConfigPage() {
       {
         id: 'llm' as const,
         label: tSafe('config.tabs.llm', 'LLM'),
-        count: llmProviders.filter((item) => item.available).length,
+        count: visibleProviderEntries.length,
       },
       {
         id: 'tools' as const,
         label: tSafe('config.tabs.tools', 'Tools'),
         count: tools.length,
       },
-      { id: 'gateways' as const, label: tSafe('config.tabs.gateways', 'Gateways'), count: gateways.length },
+      { id: 'channels' as const, label: tSafe('config.tabs.channels', 'Channels'), count: gateways.length },
       { id: 'apiKeys' as const, label: tSafe('config.tabs.apiKeys', 'API Keys'), count: apiKeys.length },
       { id: 'webhooks' as const, label: tSafe('config.tabs.webhooks', 'Webhooks'), count: webhooks.length },
       { id: 'evolutionCapabilities' as const, label: evolutionUiText.tab, count: 5 },
     ],
-    [apiKeys.length, evolutionUiText.tab, gateways.length, llmProviders, tSafe, tools.length, webhooks.length]
+    [apiKeys.length, evolutionUiText.tab, gateways.length, tSafe, tools.length, visibleProviderEntries.length, webhooks.length]
   )
 
   const toolsQuickTips = useMemo(
@@ -2246,7 +2300,7 @@ export default function ConfigPage() {
                     })}
                     {visibleProviderEntries.length === 0 && (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
-                        {tSafe('config.llm.noConfiguredProviders', '暂无已配置的 Provider，请先新增 Provider 实例或配置 API Key。')}
+                        {tSafe('config.llm.noConfiguredProviders', '暂无 Provider 实例，请先新增 Provider 实例。')}
                       </p>
                     )}
                   </CardContent>
@@ -2367,17 +2421,17 @@ export default function ConfigPage() {
               </Card>
             )}
 
-            {activeTab === 'gateways' && (
+            {activeTab === 'channels' && (
               <Card className="border-border-default">
                 <CardContent className="p-5 space-y-4">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <MessageSquare size={18} className="text-primary-400" />
-                      <h2 className="text-lg font-semibold text-text-primary">{t('config.gateways.title')}</h2>
+                      <h2 className="text-lg font-semibold text-text-primary">{t('config.channels.title')}</h2>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-text-tertiary">
-                        {t('config.gateways.activeCount', { count: activeGatewaysCount })}
+                        {t('config.channels.activeCount', { count: activeGatewaysCount })}
                       </span>
                       <Button
                         size="xs"
@@ -2385,7 +2439,7 @@ export default function ConfigPage() {
                         leftIcon={<Plus size={13} />}
                         onClick={() => openCreateGatewayDialog('telegram')}
                       >
-                        {t('config.gateways.newTelegram')}
+                        {t('config.channels.newTelegram')}
                       </Button>
                       <Button
                         size="xs"
@@ -2393,12 +2447,12 @@ export default function ConfigPage() {
                         leftIcon={<Plus size={13} />}
                         onClick={() => openCreateGatewayDialog('feishu')}
                       >
-                        {t('config.gateways.newFeishu')}
+                        {t('config.channels.newFeishu')}
                       </Button>
                       <Button
                         size="xs"
                         variant="tertiary"
-                        leftIcon={<RefreshCw size={13} className={sectionLoading.gateways ? 'animate-spin' : ''} />}
+                        leftIcon={<RefreshCw size={13} className={sectionLoading.channels ? 'animate-spin' : ''} />}
                         onClick={loadGateways}
                         disabled={gatewayBatchLoading}
                       >
@@ -2406,8 +2460,8 @@ export default function ConfigPage() {
                       </Button>
                     </div>
                   </div>
-                  {sectionErrors.gateways && (
-                    <p className="text-xs text-warning-500">{sectionErrors.gateways}</p>
+                  {sectionErrors.channels && (
+                    <p className="text-xs text-warning-500">{sectionErrors.channels}</p>
                   )}
                   <div className="flex items-center gap-2">
                     <button
@@ -2422,7 +2476,7 @@ export default function ConfigPage() {
                       onClick={() => setGatewayFilter('all')}
                       disabled={gatewayBatchLoading}
                     >
-                      {t('config.gateways.filterAll')}
+                      {t('config.channels.filterAll')}
                     </button>
                     <button
                       data-testid="gateways-filter-telegram"
@@ -2436,7 +2490,7 @@ export default function ConfigPage() {
                       onClick={() => setGatewayFilter('telegram')}
                       disabled={gatewayBatchLoading}
                     >
-                      {t('config.gateways.filterTelegram')}
+                      {t('config.channels.filterTelegram')}
                     </button>
                     <button
                       data-testid="gateways-filter-feishu"
@@ -2450,7 +2504,7 @@ export default function ConfigPage() {
                       onClick={() => setGatewayFilter('feishu')}
                       disabled={gatewayBatchLoading}
                     >
-                      {t('config.gateways.filterFeishu')}
+                      {t('config.channels.filterFeishu')}
                     </button>
                   </div>
                   {filteredGateways.length > 0 && (
@@ -2463,13 +2517,13 @@ export default function ConfigPage() {
                         onChange={toggleSelectAllGateways}
                         disabled={gatewayBatchLoading}
                       />
-                      {t('config.gateways.selectAllVisible')}
+                      {t('config.channels.selectAllVisible')}
                     </label>
                   )}
                   {selectedGatewayCount > 0 && (
                     <div className="rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
                       <span className="text-sm text-text-primary">
-                        {t('config.gateways.selectedCount', { count: selectedGatewayCount })}
+                        {t('config.channels.selectedCount', { count: selectedGatewayCount })}
                       </span>
                       <Button
                         data-testid="gateways-batch-enable"
@@ -2478,7 +2532,7 @@ export default function ConfigPage() {
                         disabled={gatewayBatchLoading}
                         onClick={() => void runGatewayBatchAction('enable')}
                       >
-                        {t('config.gateways.batchEnable')}
+                        {t('config.channels.batchEnable')}
                       </Button>
                       <Button
                         data-testid="gateways-batch-disable"
@@ -2487,7 +2541,7 @@ export default function ConfigPage() {
                         disabled={gatewayBatchLoading}
                         onClick={() => void runGatewayBatchAction('disable')}
                       >
-                        {t('config.gateways.batchDisable')}
+                        {t('config.channels.batchDisable')}
                       </Button>
                       <Button
                         data-testid="gateways-batch-test"
@@ -2496,7 +2550,7 @@ export default function ConfigPage() {
                         disabled={gatewayBatchLoading}
                         onClick={() => void runGatewayBatchTest()}
                       >
-                        {t('config.gateways.batchTest')}
+                        {t('config.channels.batchTest')}
                       </Button>
                       <Button
                         data-testid="gateways-batch-delete"
@@ -2505,18 +2559,18 @@ export default function ConfigPage() {
                         disabled={gatewayBatchLoading}
                         onClick={() => void runGatewayBatchAction('delete')}
                       >
-                        {t('config.gateways.batchDelete')}
+                        {t('config.channels.batchDelete')}
                       </Button>
                     </div>
                   )}
                   <div className="space-y-2">
-                    {sectionLoading.gateways && gateways.length === 0 ? (
+                    {sectionLoading.channels && gateways.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
-                        {t('config.gateways.loading')}
+                        {t('config.channels.loading')}
                       </p>
                     ) : filteredGateways.length === 0 ? (
                       <p className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3 text-sm text-text-secondary">
-                        {t('config.gateways.empty')}
+                        {t('config.channels.empty')}
                       </p>
                     ) : (
                       filteredGateways.map((item) => {
@@ -2543,13 +2597,13 @@ export default function ConfigPage() {
                                   <p className="mt-1 text-xs text-text-tertiary">
                                     {item.provider}
                                     {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
-                                    {t('config.gateways.agent')}: {defaultAgentId} · {t('config.gateways.updatedAt')}:{' '}
+                                    {t('config.channels.agent')}: {defaultAgentId} · {t('config.channels.updatedAt')}:{' '}
                                     {formatDate(item.updatedAt, locale, t)}
                                   </p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
-                                {item.isDefault && <Badge variant="outline">{t('config.gateways.defaultTag')}</Badge>}
+                                {item.isDefault && <Badge variant="outline">{t('config.channels.defaultTag')}</Badge>}
                                 <Badge variant={item.isActive ? 'success' : 'outline'}>
                                   {item.isActive ? t('config.status.enabled') : t('config.status.disabled')}
                                 </Badge>
@@ -2568,7 +2622,7 @@ export default function ConfigPage() {
                                   onClick={() => testGateway(item)}
                                   disabled={testingGateway === item.id || gatewayBatchLoading || quickBindingsSavingId === item.id}
                                 >
-                                  {t('config.gateways.test')}
+                                  {t('config.channels.test')}
                                 </Button>
                                 {!item.isDefault && (
                                   <Button
@@ -2587,7 +2641,7 @@ export default function ConfigPage() {
                             <div className="mt-3 rounded-md border border-border-subtle px-3 py-2">
                               <div className="flex items-center justify-between gap-2">
                                 <p className="text-xs text-text-secondary">
-                                  {t('config.gateways.chatBindingsSummary', { count: itemBindings.length })}
+                                  {t('config.channels.chatBindingsSummary', { count: itemBindings.length })}
                                 </p>
                                 {!isQuickEditing ? (
                                   <Button
@@ -2597,7 +2651,7 @@ export default function ConfigPage() {
                                     onClick={() => startQuickBindingsEdit(item)}
                                     disabled={gatewayBatchLoading || quickBindingsSavingId === item.id}
                                   >
-                                    {t('config.gateways.quickEditBindings')}
+                                    {t('config.channels.quickEditBindings')}
                                   </Button>
                                 ) : null}
                               </div>
@@ -2606,10 +2660,10 @@ export default function ConfigPage() {
                                   {itemBindings.length > 0 ? (
                                     <>
                                       {previewText}
-                                      {hasMorePreview ? ` · ${t('config.gateways.chatBindingsMore', { count: itemBindings.length - previewBindings.length })}` : ''}
+                                      {hasMorePreview ? ` · ${t('config.channels.chatBindingsMore', { count: itemBindings.length - previewBindings.length })}` : ''}
                                     </>
                                   ) : (
-                                    t('config.gateways.chatBindingsNone')
+                                    t('config.channels.chatBindingsNone')
                                   )}
                                 </p>
                               ) : (
@@ -2619,7 +2673,7 @@ export default function ConfigPage() {
                                       data-testid={`gateway-quick-import-${item.id}`}
                                       className="w-full rounded-lg border border-border-default bg-bg-surface px-3 py-2 text-xs text-text-primary outline-none transition placeholder:text-text-tertiary focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
                                       rows={3}
-                                      placeholder={t('config.gateways.importBindingsPlaceholder')}
+                                      placeholder={t('config.channels.importBindingsPlaceholder')}
                                       value={quickBindingsImportText}
                                       onChange={(e) => setQuickBindingsImportText(e.target.value)}
                                     />
@@ -2630,7 +2684,7 @@ export default function ConfigPage() {
                                       onClick={() => applyQuickBindingsImport(defaultAgentId)}
                                       disabled={quickBindingsSavingId === item.id}
                                     >
-                                      {t('config.gateways.applyImportedBindings')}
+                                      {t('config.channels.applyImportedBindings')}
                                     </Button>
                                   </div>
                                   {quickBindingsDraft.map((row, index) => (
@@ -2675,7 +2729,7 @@ export default function ConfigPage() {
                                       onClick={() => void saveQuickBindings(item.id)}
                                       disabled={quickBindingsSavingId === item.id}
                                     >
-                                      {t('config.gateways.quickSaveBindings')}
+                                      {t('config.channels.quickSaveBindings')}
                                     </Button>
                                     <Button
                                       size="xs"

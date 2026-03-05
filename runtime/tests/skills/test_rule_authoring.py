@@ -381,3 +381,166 @@ async def test_rule_authoring_tool_new_schema_periodic_cron_keeps_recurring(
     assert cron is not None
     cron_payload = cron.get("payload") if isinstance(cron.get("payload"), dict) else {}
     assert cron_payload.get("one_shot") is not True
+
+
+@pytest.mark.asyncio
+async def test_control_plane_domain_rules_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    result = await tool.execute(
+        domain="rules",
+        action="create",
+        payload={
+            "name": "domain_rules_create",
+            "event_type": "chat.message.received",
+            "action_mode": "auto",
+            "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+            "risk_level": "low",
+        },
+    )
+    assert result.success is True
+    assert result.result.get("action") == "create_rule"
+
+
+@pytest.mark.asyncio
+async def test_control_plane_blocks_unsupported_domain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    result = await tool.execute(domain="agents", action="list", payload={})
+    assert result.success is False
+    assert result.metadata.get("error_code") == "UNSUPPORTED_CONTROL_DOMAIN"
+
+
+@pytest.mark.asyncio
+async def test_control_plane_blocks_self_action(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    result = await tool.execute(
+        action="create_rule",
+        payload={
+            "name": "self_action_block",
+            "event_type": "chat.message.received",
+            "action_mode": "auto",
+            "actions": [{"action_type": "control_plane"}],
+            "risk_level": "low",
+        },
+    )
+    assert result.success is False
+    assert result.metadata.get("error_code") == "TOOL_RECURSION_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_control_plane_blocks_write_when_version_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    monkeypatch.setenv("SEMIBOT_CONTROL_PLANE_API_VERSION", "2.1")
+    monkeypatch.setenv("SEMIBOT_CONTROL_PLANE_CAPABILITY_VERSION", "2.0")
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    result = await tool.execute(
+        action="create_rule",
+        payload={
+            "name": "blocked_by_version",
+            "event_type": "chat.message.received",
+            "action_mode": "auto",
+            "actions": [{"action_type": "notify", "params": {"channel": "chat"}}],
+            "risk_level": "low",
+        },
+    )
+    assert result.success is False
+    assert result.metadata.get("error_code") == "CONTROL_PLANE_VERSION_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_control_plane_channels_crud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    created = await tool.execute(
+        domain="channels",
+        action="create",
+        payload={"provider": "telegram", "display_name": "TG1", "is_active": True, "config": {"defaultChatId": "-1"}},
+    )
+    assert created.success is True
+    item = created.result.get("item") or {}
+    instance_id = str(item.get("id") or "")
+    assert instance_id
+
+    listed = await tool.execute(domain="channels", action="list", payload={})
+    assert listed.success is True
+    items = listed.result.get("items") or []
+    assert any(str(row.get("id") or "") == instance_id for row in items)
+
+    updated = await tool.execute(domain="channels", action="update", payload={"instance_id": instance_id, "display_name": "TG2"})
+    assert updated.success is True
+    assert (updated.result.get("item") or {}).get("display_name") == "TG2"
+
+    deleted = await tool.execute(domain="channels", action="delete", payload={"instance_id": instance_id})
+    assert deleted.success is True
+    assert deleted.result.get("deleted") is True
+
+
+@pytest.mark.asyncio
+async def test_control_plane_mcp_create_bind_and_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    created = await tool.execute(
+        domain="mcp",
+        action="create",
+        payload={"name": "mcp-a", "endpoint": "http://localhost:9100"},
+    )
+    assert created.success is True
+    server_id = str((created.result.get("item") or {}).get("id") or "")
+    assert server_id
+
+    bound = await tool.execute(
+        domain="mcp",
+        action="bind",
+        payload={"agent_id": "semibot", "mcp_server_id": server_id},
+    )
+    assert bound.success is True
+    assert server_id in (bound.result.get("mcp_server_ids") or [])
+
+    deleted = await tool.execute(domain="mcp", action="delete", payload={"server_id": server_id})
+    assert deleted.success is True
+    assert deleted.result.get("deleted") is True
+
+
+@pytest.mark.asyncio
+async def test_control_plane_config_llm_write_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    result = await tool.execute(
+        domain="config",
+        action="update",
+        payload={"namespace": "llm", "patch": {"defaultModel": "gpt-4o"}},
+    )
+    assert result.success is False
+    assert result.metadata.get("error_code") == "LLM_CONFIG_WRITE_BLOCKED"

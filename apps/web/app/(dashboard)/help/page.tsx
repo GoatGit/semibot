@@ -1,8 +1,9 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { useMemo, useState } from 'react'
-import { BookOpen, CircleHelp, ExternalLink, MessageSquare, ShieldCheck, Send, Wrench } from 'lucide-react'
+import { BookOpen, ExternalLink, MessageSquare, ShieldCheck, Send, Wrench } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -41,7 +42,7 @@ const TELEGRAM_GUIDE_KEYS = ['credentials', 'setWebhook', 'privacyAndChatId', 't
 const HELP_SECTION_ANCHORS = [
   { id: 'feature-guide', icon: BookOpen, fallback: 'Feature Guide' },
   { id: 'hover-tips', icon: MessageSquare, fallback: 'Hover Tips' },
-  { id: 'gateway-tutorial', icon: Wrench, fallback: 'Gateway Tutorial' },
+  { id: 'channel-tutorial', icon: Wrench, fallback: 'Gateway Tutorial' },
   { id: 'provider-guides', icon: Send, fallback: 'Provider Guides' },
 ] as const
 
@@ -72,7 +73,7 @@ export default function HelpCenterPage() {
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-3">
                 <h1 className="text-2xl md:text-3xl font-semibold text-text-primary flex items-center gap-2">
-                  <CircleHelp size={24} className="text-primary-400" />
+                  <Image src="/semibot-logo.png" alt="Semibot logo" width={30} height={30} className="rounded" />
                   {t('helpCenter.title')}
                 </h1>
                 <p className="text-sm md:text-base text-text-secondary/90 max-w-3xl">
@@ -170,27 +171,27 @@ export default function HelpCenterPage() {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <Wrench size={18} className="text-primary-400" />
-                {t('helpCenter.gatewayTutorial.title')}
+                {t('helpCenter.channelTutorial.title')}
               </h2>
               <Link
                 href="/config"
                 className="inline-flex items-center gap-1 text-sm text-primary-400 hover:text-primary-300"
-                title={t('helpCenter.gatewayTutorial.openConfigTip')}
+                title={t('helpCenter.channelTutorial.openConfigTip')}
               >
-                {t('helpCenter.gatewayTutorial.openConfig')}
+                {t('helpCenter.channelTutorial.openConfig')}
                 <ExternalLink size={14} />
               </Link>
             </div>
-            <p className="text-sm text-text-secondary/90">{t('helpCenter.gatewayTutorial.subtitle')}</p>
+            <p className="text-sm text-text-secondary/90">{t('helpCenter.channelTutorial.subtitle')}</p>
 
             <div className="space-y-3">
               {GATEWAY_STEPS.map((stepKey, index) => (
                 <div key={stepKey} className="rounded-lg border border-border-subtle/80 bg-bg-surface/70 p-4">
                   <p className="text-sm font-medium text-text-primary">
-                    {index + 1}. {t(`helpCenter.gatewayTutorial.steps.${stepKey}.title`)}
+                    {index + 1}. {t(`helpCenter.channelTutorial.steps.${stepKey}.title`)}
                   </p>
                   <p className="text-sm text-text-secondary/90 mt-1 leading-relaxed">
-                    {t(`helpCenter.gatewayTutorial.steps.${stepKey}.description`)}
+                    {t(`helpCenter.channelTutorial.steps.${stepKey}.description`)}
                   </p>
                 </div>
               ))}
@@ -199,20 +200,20 @@ export default function HelpCenterPage() {
             <div className="rounded-lg border border-border-subtle/80 bg-bg-elevated/45 p-4">
               <p className="text-sm font-medium text-text-primary flex items-center gap-2">
                 <ShieldCheck size={16} className="text-success-500" />
-                {t('helpCenter.gatewayTutorial.securityTitle')}
+                {t('helpCenter.channelTutorial.securityTitle')}
               </p>
-              <p className="text-sm text-text-secondary/90 mt-1 leading-relaxed">{t('helpCenter.gatewayTutorial.securityBody')}</p>
+              <p className="text-sm text-text-secondary/90 mt-1 leading-relaxed">{t('helpCenter.channelTutorial.securityBody')}</p>
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-text-primary">{t('helpCenter.gatewayFaq.title')}</p>
+              <p className="text-sm font-medium text-text-primary">{t('helpCenter.channelFaq.title')}</p>
               <div className="space-y-2">
                 {GATEWAY_FAQ.map((faqKey, idx) => (
                   <details key={faqKey} className="rounded-lg border border-border-subtle/80 bg-bg-surface/70 px-4 py-3" open={idx === 0}>
                     <summary className="cursor-pointer text-sm font-medium text-text-primary">
-                      {t(`helpCenter.gatewayFaq.items.${faqKey}.q`)}
+                      {t(`helpCenter.channelFaq.items.${faqKey}.q`)}
                     </summary>
-                    <p className="text-sm text-text-secondary/90 mt-2 leading-relaxed">{t(`helpCenter.gatewayFaq.items.${faqKey}.a`)}</p>
+                    <p className="text-sm text-text-secondary/90 mt-2 leading-relaxed">{t(`helpCenter.channelFaq.items.${faqKey}.a`)}</p>
                   </details>
                 ))}
               </div>
@@ -225,17 +226,17 @@ export default function HelpCenterPage() {
             <CardContent className="p-5 space-y-3.5">
               <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <Send size={18} className="text-primary-400" />
-                {t('helpCenter.gatewayProviders.feishu.title')}
+                {t('helpCenter.channelProviders.feishu.title')}
               </h2>
-              <p className="text-sm text-text-secondary/90">{t('helpCenter.gatewayProviders.feishu.subtitle')}</p>
+              <p className="text-sm text-text-secondary/90">{t('helpCenter.channelProviders.feishu.subtitle')}</p>
               <div className="space-y-2.5">
                 {FEISHU_GUIDE_KEYS.map((key, index) => (
                   <div key={key} className="rounded-lg border border-border-subtle/80 bg-bg-surface/70 px-4 py-3">
                     <p className="text-sm font-medium text-text-primary">
-                      {index + 1}. {t(`helpCenter.gatewayProviders.feishu.items.${key}.title`)}
+                      {index + 1}. {t(`helpCenter.channelProviders.feishu.items.${key}.title`)}
                     </p>
                     <p className="mt-1 text-sm text-text-secondary/90 leading-relaxed">
-                      {t(`helpCenter.gatewayProviders.feishu.items.${key}.description`)}
+                      {t(`helpCenter.channelProviders.feishu.items.${key}.description`)}
                     </p>
                   </div>
                 ))}
@@ -247,17 +248,17 @@ export default function HelpCenterPage() {
             <CardContent className="p-5 space-y-3.5">
               <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <Send size={18} className="text-primary-400" />
-                {t('helpCenter.gatewayProviders.telegram.title')}
+                {t('helpCenter.channelProviders.telegram.title')}
               </h2>
-              <p className="text-sm text-text-secondary/90">{t('helpCenter.gatewayProviders.telegram.subtitle')}</p>
+              <p className="text-sm text-text-secondary/90">{t('helpCenter.channelProviders.telegram.subtitle')}</p>
               <div className="space-y-2.5">
                 {TELEGRAM_GUIDE_KEYS.map((key, index) => (
                   <div key={key} className="rounded-lg border border-border-subtle/80 bg-bg-surface/70 px-4 py-3">
                     <p className="text-sm font-medium text-text-primary">
-                      {index + 1}. {t(`helpCenter.gatewayProviders.telegram.items.${key}.title`)}
+                      {index + 1}. {t(`helpCenter.channelProviders.telegram.items.${key}.title`)}
                     </p>
                     <p className="mt-1 text-sm text-text-secondary/90 leading-relaxed">
-                      {t(`helpCenter.gatewayProviders.telegram.items.${key}.description`)}
+                      {t(`helpCenter.channelProviders.telegram.items.${key}.description`)}
                     </p>
                   </div>
                 ))}

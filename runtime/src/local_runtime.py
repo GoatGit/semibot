@@ -486,7 +486,6 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
             "http_client",
             "csv_xlsx",
             "sql_query_readonly",
-            "rule_authoring",
             "skill_installer",
         }:
             risk_level = "high"
@@ -501,7 +500,6 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
                 "http_client",
                 "csv_xlsx",
                 "sql_query_readonly",
-                "rule_authoring",
                 "skill_installer",
             },
         )
@@ -590,7 +588,8 @@ def _guard_rule_authoring_success_claim(final_response: str, tool_results: list[
     failed_rows = [
         row
         for row in tool_results
-        if str(row.get("tool_name") or "").strip() == "rule_authoring" and not bool(row.get("success"))
+        if str(row.get("tool_name") or "").strip() in {"rule_authoring", "control_plane"}
+        and not bool(row.get("success"))
     ]
     if not failed_rows:
         return final_response
@@ -608,7 +607,7 @@ def _guard_rule_authoring_success_claim(final_response: str, tool_results: list[
         safe = safe.replace(phrase, "尝试创建但未成功")
 
     notice = (
-        f"注意：规则创建未成功落地（rule_authoring 执行失败：{first_error}）。"
+        f"注意：控制面变更未成功落地（control_plane 执行失败：{first_error}）。"
         "请修正参数后重试。"
     )
     if not safe.strip():
