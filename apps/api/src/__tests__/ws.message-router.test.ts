@@ -73,6 +73,19 @@ describe('ws/message-router', () => {
     expect(mapRuntimeEventToAgent2UI({ type: 'file_created', filename: 'a.txt', url: '/x' })?.type).toBe('file')
   })
 
+  it('maps skill_orchestration_trace event', () => {
+    const msg = mapRuntimeEventToAgent2UI({
+      type: 'skill_orchestration_trace',
+      selected_skill: 'deep-research',
+      selected_skill_kind: 'hybrid',
+      has_skill_md: true,
+      skill_md_gate_injected: true,
+      installer_gate: { dropped: 1, reports: [] },
+    })
+    expect(msg?.type).toBe('tool_result')
+    expect((msg?.data as { toolName: string }).toolName).toBe('skill_orchestration')
+  })
+
   it('returns null for unknown event', () => {
     expect(mapRuntimeEventToAgent2UI({ type: 'unknown' })).toBeNull()
   })

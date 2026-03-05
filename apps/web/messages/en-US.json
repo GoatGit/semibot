@@ -678,6 +678,13 @@
       "action": "Action {action}",
       "target": "Target {target}"
     },
+    "trace": {
+      "title": "Skill Orchestration Trace",
+      "selectedSkill": "Selected skill",
+      "skillKind": "Skill kind",
+      "skillMdGate": "SKILL.md first-step gate",
+      "raw": "View raw trace"
+    },
     "scopeGroups": {
       "title": "Grouped by task scope",
       "scopeLabel": "Scope: {id}",

@@ -1,9 +1,18 @@
 """Tests for orchestrator nodes (plan_node, act_node, observe_node, etc.)."""
 
 from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 import pytest
 
-from src.orchestrator.nodes import plan_node, act_node, observe_node, reflect_node
+from src.orchestrator.nodes import (
+    plan_node,
+    act_node,
+    observe_node,
+    reflect_node,
+    _pick_skill_candidate,
+    _enforce_structured_installer_gap,
+    _enforce_skill_md_gate_step,
+)
 from src.orchestrator.state import AgentState, ExecutionPlan, PlanStep
 
 
@@ -217,3 +226,66 @@ async def test_act_node_handles_execution_failure(mock_context, base_state):
 
     # Should still move to observe to handle failure
     assert result["current_step"] == "observe"
+
+
+def test_pick_skill_candidate_prefers_exact_name_match():
+    runtime_context = SimpleNamespace(
+        metadata={
+            "skill_index": [
+                {"id": "browser_automation", "description": "网页自动化操作", "tags": ["web"]},
+                {"id": "deep-research", "description": "研究与报告", "tags": ["research"]},
+            ]
+        }
+    )
+    selected = _pick_skill_candidate(runtime_context, "请用 deep-research 研究阿里巴巴")
+    assert isinstance(selected, dict)
+    assert selected.get("id") == "deep-research"
+
+
+def test_pick_skill_candidate_tie_break_prefers_enabled_skill():
+    runtime_context = SimpleNamespace(
+        metadata={
+            "skill_index": [
+                {"id": "skill-a", "description": "data processing", "tags": ["data"], "enabled": False},
+                {"id": "skill-b", "description": "data processing", "tags": ["data"], "enabled": True},
+            ]
+        }
+    )
+    selected = _pick_skill_candidate(runtime_context, "need data processing")
+    assert isinstance(selected, dict)
+    assert selected.get("id") == "skill-b"
+
+
+def test_enforce_structured_installer_gap_drops_unstructured_installer_step():
+    plan = ExecutionPlan(
+        goal="test",
+        steps=[
+            PlanStep(id="1", title="install", tool="skill_installer", params={}),
+            PlanStep(id="2", title="run", tool="code_executor", params={"language": "python", "code": "print(1)"}),
+        ],
+        current_step_index=0,
+        requires_delegation=False,
+        delegate_to=None,
+    )
+    gate = _enforce_structured_installer_gap(plan, {"code_executor", "skill_installer"}, "sess-1")
+    assert [s.tool for s in plan.steps] == ["code_executor"]
+    assert gate["dropped"] == 1
+
+
+def test_enforce_skill_md_gate_step_inserts_first_step():
+    plan = ExecutionPlan(
+        goal="test",
+        steps=[
+            PlanStep(id="2", title="执行", tool="code_executor", params={"language": "python", "code": "print(1)"}),
+        ],
+        current_step_index=0,
+        requires_delegation=False,
+        delegate_to=None,
+    )
+    skill_item = {
+        "id": "deep-research",
+        "package": {"files": [{"path": "SKILL.md"}, {"path": "scripts/main.py"}]},
+    }
+    _enforce_skill_md_gate_step(plan, skill_item, {"read_skill_file", "code_executor"}, "sess-2")
+    assert plan.steps[0].tool == "read_skill_file"
+    assert plan.steps[0].params.get("file_path") == "SKILL.md"

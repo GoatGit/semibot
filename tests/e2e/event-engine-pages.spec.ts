@@ -164,6 +164,13 @@ test.describe('Event Engine Pages', () => {
         status: 'pending',
         risk_level: 'high',
         reason: '需要人工确认',
+        context: {
+          skill_orchestration_trace: {
+            selected_skill: 'deep-research',
+            selected_skill_kind: 'hybrid',
+            skill_md_gate_injected: true,
+          },
+        },
         created_at: '2026-02-26T12:00:00Z',
       },
       {
@@ -210,6 +217,8 @@ test.describe('Event Engine Pages', () => {
 
     await page.goto('/approvals')
     await expect(page.getByRole('heading', { name: '审批中心' })).toBeVisible()
+    await expect(page.getByText('技能编排 Trace')).toBeVisible()
+    await expect(page.getByText('命中技能: deep-research')).toBeVisible()
 
     await page.getByRole('button', { name: '批准' }).first().click()
     await expect.poll(() => decisions.some((item) => item.decision === 'approve')).toBeTruthy()

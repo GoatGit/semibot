@@ -14,6 +14,8 @@ vi.mock('fs-extra', () => {
     pathExists: vi.fn(),
     readFile: vi.fn(),
     stat: vi.fn(),
+    lstat: vi.fn(),
+    realpath: vi.fn(),
     readdir: vi.fn(),
   }
   return { default: fns, ...fns }
@@ -53,6 +55,8 @@ describe('Skill File Service', () => {
     it('应该成功读取存在的文件', async () => {
       ;(fs.pathExists as ReturnType<typeof vi.fn>).mockResolvedValue(true)
       ;(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isFile: () => true, size: 100 })
+      ;(fs.lstat as ReturnType<typeof vi.fn>).mockResolvedValue({ isSymbolicLink: () => false })
+      ;(fs.realpath as ReturnType<typeof vi.fn>).mockImplementation(async (p: string) => p)
       ;(fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValue('# Test Skill\nHello world')
 
       const result = await readSkillFile('test-skill', 'SKILL.md', skillFileMap)
@@ -63,6 +67,8 @@ describe('Skill File Service', () => {
     it('应该读取 scripts 子目录中的文件', async () => {
       ;(fs.pathExists as ReturnType<typeof vi.fn>).mockResolvedValue(true)
       ;(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isFile: () => true, size: 50 })
+      ;(fs.lstat as ReturnType<typeof vi.fn>).mockResolvedValue({ isSymbolicLink: () => false })
+      ;(fs.realpath as ReturnType<typeof vi.fn>).mockImplementation(async (p: string) => p)
       ;(fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValue('print("hello")')
 
       const result = await readSkillFile('test-skill', 'scripts/main.py', skillFileMap)
@@ -102,7 +108,7 @@ describe('Skill File Service', () => {
     it('应该在文件不存在时列出可用文件', async () => {
       ;(fs.pathExists as ReturnType<typeof vi.fn>).mockImplementation(async (p: string) => {
         if (p.endsWith('current')) return true
-        if (p.endsWith('nonexistent.md')) return false
+        if (p.endsWith('scripts/nonexistent.py')) return false
         return true
       })
       ;(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -110,7 +116,7 @@ describe('Skill File Service', () => {
         { name: 'README.md', isFile: () => true, isDirectory: () => false },
       ])
 
-      const result = await readSkillFile('test-skill', 'nonexistent.md', skillFileMap)
+      const result = await readSkillFile('test-skill', 'scripts/nonexistent.py', skillFileMap)
 
       expect(result).toContain('错误')
       expect(result).toContain('不存在')
@@ -121,7 +127,7 @@ describe('Skill File Service', () => {
       ;(fs.pathExists as ReturnType<typeof vi.fn>).mockResolvedValue(true)
       ;(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isFile: () => false, size: 0 })
 
-      const result = await readSkillFile('test-skill', 'scripts', skillFileMap)
+      const result = await readSkillFile('test-skill', 'scripts/not-a-file.py', skillFileMap)
 
       expect(result).toContain('错误')
       expect(result).toContain('不是文件')
@@ -133,8 +139,10 @@ describe('Skill File Service', () => {
         isFile: () => true,
         size: 2 * 1024 * 1024, // 2MB
       })
+      ;(fs.lstat as ReturnType<typeof vi.fn>).mockResolvedValue({ isSymbolicLink: () => false })
+      ;(fs.realpath as ReturnType<typeof vi.fn>).mockImplementation(async (p: string) => p)
 
-      const result = await readSkillFile('test-skill', 'large-file.bin', skillFileMap)
+      const result = await readSkillFile('test-skill', 'scripts/large-file.bin', skillFileMap)
 
       expect(result).toContain('错误')
       expect(result).toContain('文件过大')
@@ -144,6 +152,8 @@ describe('Skill File Service', () => {
     it('应该处理读取文件时的异常', async () => {
       ;(fs.pathExists as ReturnType<typeof vi.fn>).mockResolvedValue(true)
       ;(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isFile: () => true, size: 100 })
+      ;(fs.lstat as ReturnType<typeof vi.fn>).mockResolvedValue({ isSymbolicLink: () => false })
+      ;(fs.realpath as ReturnType<typeof vi.fn>).mockImplementation(async (p: string) => p)
       ;(fs.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Permission denied'))
 
       const result = await readSkillFile('test-skill', 'SKILL.md', skillFileMap)
@@ -157,6 +167,12 @@ describe('Skill File Service', () => {
 
       expect(result).toContain('错误')
       expect(result).toContain('未找到技能')
+    })
+
+    it('应该拒绝非白名单目录路径', async () => {
+      const result = await readSkillFile('test-skill', 'docs/guide.md', skillFileMap)
+      expect(result).toContain('错误')
+      expect(result).toContain('仅允许读取')
     })
   })
 

@@ -678,6 +678,13 @@
       "action": "执行动作 {action}",
       "target": "目标 {target}"
     },
+    "trace": {
+      "title": "技能编排 Trace",
+      "selectedSkill": "命中技能",
+      "skillKind": "技能类型",
+      "skillMdGate": "SKILL.md 首步门控",
+      "raw": "查看原始 Trace"
+    },
     "scopeGroups": {
       "title": "按任务分组（去重）",
       "scopeLabel": "Scope: {id}",

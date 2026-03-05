@@ -53,11 +53,18 @@ function buildApprovalDetail(
   return approval.summary || ''
 }
 
-function approvalScopeId(approval: ApprovalRecord): string {
-  const value = approval.context?.approval_scope_id
-  if (typeof value === 'string' && value.trim()) return value.trim()
-  if (approval.eventId) return approval.eventId
-  return approval.id
+function readObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
+}
+
+function extractSkillOrchestrationTrace(approval: ApprovalRecord): Record<string, unknown> | null {
+  const context = readObject(approval.context)
+  if (!context) return null
+  const direct = readObject(context.skill_orchestration_trace)
+  if (direct) return direct
+  const camel = readObject(context.skillOrchestrationTrace)
+  if (camel) return camel
+  return null
 }
 
 export default function ApprovalsPage() {
@@ -72,7 +79,6 @@ export default function ApprovalsPage() {
   const [status, setStatus] = useState<'all' | ApprovalRecord['status']>('all')
   const [resolvingId, setResolvingId] = useState<string | null>(null)
   const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | null>(null)
-  const [scopeAction, setScopeAction] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const {
@@ -97,21 +103,6 @@ export default function ApprovalsPage() {
     () => approvals.filter((item) => item.status === 'pending').map((item) => item.id),
     [approvals]
   )
-
-  const pendingScopeGroups = useMemo(() => {
-    const grouped = new Map<string, ApprovalRecord[]>()
-    approvals
-      .filter((item) => item.status === 'pending')
-      .forEach((item) => {
-        const scopeId = approvalScopeId(item)
-        const arr = grouped.get(scopeId)
-        if (arr) arr.push(item)
-        else grouped.set(scopeId, [item])
-      })
-    return Array.from(grouped.entries())
-      .map(([scopeId, items]) => ({ scopeId, items }))
-      .sort((a, b) => b.items[0].createdAt.localeCompare(a.items[0].createdAt))
-  }, [approvals])
 
   const handleResolve = async (id: string, decision: 'approve' | 'reject') => {
     try {
@@ -138,22 +129,6 @@ export default function ApprovalsPage() {
       setActionError(err instanceof Error ? err.message : t('approvals.error.action'))
     } finally {
       setBulkAction(null)
-    }
-  }
-
-  const handleScopeResolve = async (scopeId: string, decision: 'approve' | 'reject') => {
-    const group = pendingScopeGroups.find((item) => item.scopeId === scopeId)
-    if (!group || group.items.length === 0 || resolvingId || bulkAction || scopeAction) return
-    setActionError(null)
-    setScopeAction(`${scopeId}:${decision}`)
-    try {
-      const action = decision === 'approve' ? 'approve' : 'reject'
-      await Promise.all(group.items.map((item) => resolveApproval(item.id, action)))
-      await loadApprovals({ status, limit: 100 })
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : t('approvals.error.action'))
-    } finally {
-      setScopeAction(null)
     }
   }
 
@@ -224,60 +199,6 @@ export default function ApprovalsPage() {
           </CardContent>
         </Card>
 
-        {pendingScopeGroups.length > 0 && (
-          <Card className="border-border-default">
-            <CardContent className="p-4 space-y-3">
-              <div className="text-sm font-medium text-text-primary">{t('approvals.scopeGroups.title')}</div>
-              <div className="space-y-2">
-                {pendingScopeGroups.map((group) => {
-                  const sample = group.items[0]
-                  const detailText = buildApprovalDetail(sample, t)
-                  return (
-                    <div
-                      key={group.scopeId}
-                      className="rounded-lg border border-border-subtle bg-bg-surface px-3 py-2"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-sm text-text-primary font-medium">
-                            {t('approvals.scopeGroups.scopeLabel', { id: group.scopeId })}
-                          </div>
-                          <div className="mt-1 text-xs text-text-secondary">
-                            {t('approvals.scopeGroups.pendingCount', { count: group.items.length })}
-                          </div>
-                          {detailText && (
-                            <div className="mt-1 text-xs text-text-tertiary break-words">{detailText}</div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            loading={scopeAction === `${group.scopeId}:approve`}
-                            disabled={!!resolvingId || !!bulkAction || !!scopeAction}
-                            onClick={() => void handleScopeResolve(group.scopeId, 'approve')}
-                          >
-                            {t('approvals.scopeGroups.approveScope')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            loading={scopeAction === `${group.scopeId}:reject`}
-                            disabled={!!resolvingId || !!bulkAction || !!scopeAction}
-                            onClick={() => void handleScopeResolve(group.scopeId, 'reject')}
-                          >
-                            {t('approvals.scopeGroups.rejectScope')}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         {!apiAvailable && (
           <div className="rounded-lg border border-warning-500/30 bg-warning-500/10 px-4 py-3 text-sm text-warning-500">
             <>
@@ -306,6 +227,7 @@ export default function ApprovalsPage() {
           ) : approvals.length > 0 ? (
             approvals.map((approval) => {
               const detailText = buildApprovalDetail(approval, t)
+              const orchestrationTrace = extractSkillOrchestrationTrace(approval)
               return (
                 <Card key={approval.id} className="border-border-subtle">
                   <CardContent className="p-4">
@@ -333,6 +255,32 @@ export default function ApprovalsPage() {
                         )}
                         {approval.reason && (
                           <p className="mt-2 text-sm text-text-secondary">{approval.reason}</p>
+                        )}
+                        {orchestrationTrace && (
+                          <div className="mt-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
+                            <p className="text-xs font-medium text-text-primary">
+                              {t('approvals.trace.title')}
+                            </p>
+                            <div className="mt-1 text-xs text-text-secondary space-y-1">
+                              <p>
+                                {t('approvals.trace.selectedSkill')}: {String(orchestrationTrace.selected_skill ?? orchestrationTrace.selectedSkill ?? '-')}
+                              </p>
+                              <p>
+                                {t('approvals.trace.skillKind')}: {String(orchestrationTrace.selected_skill_kind ?? orchestrationTrace.selectedSkillKind ?? '-')}
+                              </p>
+                              <p>
+                                {t('approvals.trace.skillMdGate')}: {String(orchestrationTrace.skill_md_gate_injected ?? orchestrationTrace.skillMdGateInjected ?? false)}
+                              </p>
+                            </div>
+                            <details className="mt-2">
+                              <summary className="cursor-pointer text-xs text-primary-400">
+                                {t('approvals.trace.raw')}
+                              </summary>
+                              <pre className="mt-2 overflow-x-auto text-[11px] text-text-secondary">
+                                {JSON.stringify(orchestrationTrace, null, 2)}
+                              </pre>
+                            </details>
+                          </div>
                         )}
                       </div>
 

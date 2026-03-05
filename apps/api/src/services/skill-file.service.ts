@@ -45,6 +45,20 @@ export interface SkillFileMap {
   [skillName: string]: string // skillName -> packagePath
 }
 
+const ALLOWED_ROOT_FILES = new Set(['SKILL.md', 'REFERENCE.md', 'manifest.json'])
+const ALLOWED_DIR_PREFIXES = ['scripts/', 'reference/', 'references/', 'templates/']
+const SENSITIVE_SEGMENTS = new Set([
+  '.env',
+  '.env.local',
+  '.env.production',
+  '.env.development',
+  'id_rsa',
+  'id_ed25519',
+  '.ssh',
+  '.git',
+])
+const MAX_FILE_SIZE = 1024 * 1024
+
 // ═══════════════════════════════════════════════════════════════
 // 核心功能
 // ═══════════════════════════════════════════════════════════════
@@ -74,18 +88,45 @@ export async function readSkillFile(
     return '错误: file_path 必须是相对路径'
   }
 
-  if (filePath.includes('..')) {
+  const normalizedPosix = path.posix.normalize(filePath.replaceAll('\\', '/')).replace(/^\.\/+/, '')
+  if (!normalizedPosix || normalizedPosix === '.' || normalizedPosix.startsWith('../') || normalizedPosix.includes('/../')) {
     logger.warn('拒绝路径穿越', { skillName, filePath })
     return '错误: file_path 不能包含 ..'
   }
+  if (normalizedPosix.startsWith('/')) {
+    logger.warn('拒绝归一化后的绝对路径', { skillName, filePath, normalizedPosix })
+    return '错误: file_path 必须是相对路径'
+  }
+
+  // 目录白名单：仅允许根目录关键文件和特定子目录
+  const inRootAllowlist = ALLOWED_ROOT_FILES.has(normalizedPosix)
+  const inAllowedDir = ALLOWED_DIR_PREFIXES.some((prefix) => normalizedPosix.startsWith(prefix))
+  if (!inRootAllowlist && !inAllowedDir) {
+    logger.warn('拒绝非白名单路径', { skillName, filePath: normalizedPosix })
+    return '错误: 仅允许读取 SKILL.md/REFERENCE.md/manifest.json 及 scripts|reference|references|templates 目录'
+  }
+
+  const segments = normalizedPosix.split('/').filter(Boolean).map((s) => s.toLowerCase())
+  if (segments.some((seg) => SENSITIVE_SEGMENTS.has(seg))) {
+    logger.warn('拒绝敏感路径', { skillName, filePath: normalizedPosix })
+    return '错误: 请求的文件属于敏感路径，已拒绝'
+  }
 
   // 3. 解析并验证最终路径
-  const resolvedPath = path.resolve(packagePath, filePath)
+  const resolvedPath = path.resolve(packagePath, normalizedPosix)
   const normalizedPackagePath = path.resolve(packagePath)
 
   if (!resolvedPath.startsWith(normalizedPackagePath + path.sep) && resolvedPath !== normalizedPackagePath) {
     logger.warn('路径穿越检测', { skillName, filePath, resolvedPath, packagePath })
     return '错误: 文件路径超出技能目录范围'
+  }
+
+  // 额外防护：realpath 校验 + 禁止符号链接跳出
+  let packageRealPath = normalizedPackagePath
+  try {
+    packageRealPath = await fs.realpath(normalizedPackagePath)
+  } catch {
+    packageRealPath = normalizedPackagePath
   }
 
   // 4. 读取文件
@@ -100,15 +141,34 @@ export async function readSkillFile(
     return `错误: "${filePath}" 不是文件`
   }
 
+  const lst = await fs.lstat(resolvedPath)
+  if (lst.isSymbolicLink()) {
+    logger.warn('拒绝符号链接文件', { skillName, filePath: normalizedPosix })
+    return '错误: 不允许读取符号链接文件'
+  }
+
+  let realPath = resolvedPath
+  try {
+    realPath = await fs.realpath(resolvedPath)
+  } catch {
+    realPath = resolvedPath
+  }
+  if (!realPath.startsWith(packageRealPath + path.sep) && realPath !== packageRealPath) {
+    logger.warn('realpath 越界检测', { skillName, filePath: normalizedPosix, realPath, packageRealPath })
+    return '错误: 文件路径超出技能目录范围'
+  }
+
   // 5. 限制文件大小（最大 1MB）
-  const MAX_FILE_SIZE = 1024 * 1024
   if (stats.size > MAX_FILE_SIZE) {
     return `错误: 文件过大 (${(stats.size / 1024).toFixed(1)}KB)，最大支持 1MB`
   }
 
   try {
-    const content = await fs.readFile(resolvedPath, 'utf-8')
-    logger.info('读取 skill 文件', { skillName, filePath, size: stats.size })
+    const content = await fs.readFile(realPath, 'utf-8')
+    if (content.includes('\u0000')) {
+      return '错误: 检测到二进制内容，仅支持文本文件'
+    }
+    logger.info('读取 skill 文件', { skillName, filePath: normalizedPosix, size: stats.size })
     return content
   } catch (error) {
     logger.error('读取文件失败', error as Error, { skillName, filePath })
@@ -131,12 +191,11 @@ async function listAvailableFiles(packagePath: string): Promise<string[]> {
   for (const entry of entries) {
     if (entry.isFile()) {
       files.push(entry.name)
-    } else if (entry.isDirectory() && entry.name === 'scripts') {
-      const scriptsDir = path.join(packagePath, 'scripts')
-      const scriptEntries = await fs.readdir(scriptsDir, { withFileTypes: true })
+    } else if (entry.isDirectory() && ['scripts', 'reference', 'references', 'templates'].includes(entry.name)) {
+      const scriptEntries = await fs.readdir(path.join(packagePath, entry.name), { withFileTypes: true })
       for (const se of scriptEntries) {
         if (se.isFile()) {
-          files.push(`scripts/${se.name}`)
+          files.push(`${entry.name}/${se.name}`)
         }
       }
     }

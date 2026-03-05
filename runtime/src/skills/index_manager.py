@@ -128,7 +128,7 @@ def _content_hash(skill_dir: Path) -> str:
 
 
 def resolve_skill_dir(candidate: Path) -> Path | None:
-    """Resolve to a directory that contains scripts/main.py."""
+    """Resolve to a directory that contains executable scripts/main.py."""
     if not candidate.exists() or candidate.is_file():
         return None
     direct = candidate / "scripts" / "main.py"
@@ -264,12 +264,19 @@ class SkillsIndexManager:
             seen.add(skill_id)
             previous = current_map.get(skill_id)
             resolved = resolve_skill_dir(item)
-            if resolved is None:
-                skill_md_dir = resolve_skill_md_dir(item)
-                if skill_md_dir is None:
-                    invalid += 1
-                    # Non-skill directories are ignored.
-                    continue
+            skill_md_dir = resolve_skill_md_dir(item)
+            kind: str | None = None
+            if resolved is not None and skill_md_dir is not None:
+                kind = "hybrid"
+            elif resolved is not None:
+                kind = "package"
+            elif skill_md_dir is not None:
+                kind = "instruction"
+            if kind is None:
+                invalid += 1
+                # Non-skill directories are ignored.
+                continue
+            if kind == "instruction":
                 now = _iso_now()
                 current_hash = _content_hash(skill_md_dir)
                 mtime = int(skill_md_dir.stat().st_mtime)
@@ -303,6 +310,7 @@ class SkillsIndexManager:
                     updated += 1
                 continue
 
+            assert resolved is not None
             record, changed = self._build_record(
                 skill_id=skill_id,
                 skill_dir=resolved,
@@ -310,7 +318,8 @@ class SkillsIndexManager:
                 previous=previous,
                 force=(mode == "full"),
             )
-            record["kind"] = "package"
+            record["kind"] = kind
+            record["skill_md_path"] = "SKILL.md" if kind == "hybrid" else ""
             next_rows.append(record)
             if previous is None:
                 added += 1
@@ -335,9 +344,11 @@ class SkillsIndexManager:
         return result
 
     def upsert_after_install(self, skill_id: str, *, source: str = "manual") -> dict[str, Any]:
-        resolved = resolve_skill_dir(self.skills_root / skill_id)
-        if resolved is None:
-            raise ValueError(f"invalid skill package: {skill_id} scripts/main.py missing")
+        candidate = self.skills_root / skill_id
+        resolved = resolve_skill_dir(candidate)
+        skill_md_dir = resolve_skill_md_dir(candidate)
+        if resolved is None and skill_md_dir is None:
+            raise ValueError(f"invalid skill package: {skill_id} missing scripts/main.py and SKILL.md")
 
         current_rows = self.list_records()
         current_map = {
@@ -346,13 +357,40 @@ class SkillsIndexManager:
             if isinstance(row, dict) and str(row.get("skill_id") or "").strip()
         }
         previous = current_map.get(skill_id)
-        record, _ = self._build_record(
-            skill_id=skill_id,
-            skill_dir=resolved,
-            source=source,
-            previous=previous if isinstance(previous, dict) else None,
-            force=True,
-        )
+        if resolved is not None:
+            record, _ = self._build_record(
+                skill_id=skill_id,
+                skill_dir=resolved,
+                source=source,
+                previous=previous if isinstance(previous, dict) else None,
+                force=True,
+            )
+            record["kind"] = "hybrid" if skill_md_dir is not None else "package"
+            record["skill_md_path"] = "SKILL.md" if skill_md_dir is not None else ""
+        else:
+            assert skill_md_dir is not None
+            now = _iso_now()
+            current_hash = _content_hash(skill_md_dir)
+            mtime = int(skill_md_dir.stat().st_mtime)
+            record = {
+                "skill_id": skill_id,
+                "name": str(previous.get("name") if isinstance(previous, dict) and previous.get("name") else skill_id),
+                "description": _read_description(skill_md_dir, skill_id),
+                "version": str(previous.get("version") if isinstance(previous, dict) and previous.get("version") else "0.0.0-local"),
+                "source": source,
+                "installed_path": str(skill_md_dir),
+                "entry_script": "",
+                "skill_md_path": "SKILL.md",
+                "tags": previous.get("tags") if isinstance(previous, dict) and isinstance(previous.get("tags"), list) else [],
+                "requires": previous.get("requires") if isinstance(previous, dict) and isinstance(previous.get("requires"), dict) else {"binaries": [], "env_vars": [], "python": []},
+                "enabled": bool(previous.get("enabled", True)) if isinstance(previous, dict) else True,
+                "status": "active",
+                "kind": "instruction",
+                "hash": current_hash,
+                "mtime": mtime,
+                "created_at": str(previous.get("created_at") if isinstance(previous, dict) and previous.get("created_at") else now),
+                "updated_at": now,
+            }
         current_map[skill_id] = record
         self.write_index(list(current_map.values()))
         return record

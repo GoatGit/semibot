@@ -195,6 +195,35 @@ def test_semigraph_adapter_registers_package_python_tool():
     assert adapter.skill_registry.get_tool("pkg-skill-demo") is not None
 
 
+def test_semigraph_adapter_instruction_skill_not_registered_as_tool():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-instruction-skill",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={"api_keys": {}, "memory_dir": "/tmp/semibot-test-memory"},
+        start_payload={
+            "agent_id": "agent-1",
+            "agent_config": {},
+            "mcp_servers": [],
+            "skill_index": [
+                {
+                    "id": "instruction-only",
+                    "name": "instruction-only",
+                    "package": {
+                        "files": [
+                            {"path": "SKILL.md", "content": "# Skill", "encoding": "utf-8"},
+                        ],
+                    },
+                },
+            ],
+        },
+    )
+
+    adapter._register_package_tools()
+    assert adapter.skill_registry.get_tool("instruction-only") is None
+
+
 def test_semigraph_adapter_uses_runtime_init_llm_config_for_custom_provider():
     adapter = SemiGraphAdapter(
         client=DummyClient(),

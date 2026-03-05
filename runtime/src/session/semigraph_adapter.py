@@ -290,7 +290,11 @@ class SemiGraphAdapter(RuntimeAdapter):
                     temperature=float(agent_cfg.get("temperature", 0.7)),
                     max_tokens=int(agent_cfg.get("max_tokens", 4096)),
                 ),
-                metadata={"event_emitter": event_engine, "skill_registry": self.skill_registry},
+                metadata={
+                    "event_emitter": event_engine,
+                    "skill_registry": self.skill_registry,
+                    "skill_index": self.start_payload.get("skill_index") if isinstance(self.start_payload.get("skill_index"), list) else [],
+                },
                 available_skills=self._build_skill_definitions(),
                 available_tools=self._build_tool_definitions(),
                 available_mcp_servers=mcp_servers,
@@ -789,7 +793,10 @@ class SemiGraphAdapter(RuntimeAdapter):
                 temperature=float(resolved_cfg.get("temperature", 0.7)),
                 max_tokens=int(resolved_cfg.get("max_tokens", 4096)),
             ),
-            metadata={"event_emitter": event_engine},
+            metadata={
+                "event_emitter": event_engine,
+                "skill_index": self.start_payload.get("skill_index") if isinstance(self.start_payload.get("skill_index"), list) else [],
+            },
             available_skills=self._build_skill_definitions(),
             available_tools=self._build_tool_definitions(),
             available_mcp_servers=[],
@@ -962,6 +969,17 @@ class SemiGraphAdapter(RuntimeAdapter):
                     extra={"session_id": self.session_id, "skill_id": skill_id},
                 )
                 continue
+            kind = self._resolve_skill_kind(item)
+            package = item.get("package")
+            package_files: list[str] = []
+            if isinstance(package, dict):
+                files = package.get("files")
+                if isinstance(files, list):
+                    package_files = [
+                        str(f.get("path") or "")
+                        for f in files
+                        if isinstance(f, dict) and str(f.get("path") or "").strip()
+                    ]
             definitions.append(
                 SkillDefinition(
                     id=skill_id,
@@ -970,7 +988,12 @@ class SemiGraphAdapter(RuntimeAdapter):
                     version=str(item.get("version") or "").strip() or None,
                     source=str(item.get("source") or "local"),
                     schema={},
-                    metadata={},
+                    metadata={
+                        "kind": kind,
+                        "has_skill_md": "SKILL.md" in package_files,
+                        "package_files": package_files[:50],
+                        "legacy_package": kind == "package" and "SKILL.md" not in package_files,
+                    },
                 )
             )
         return definitions
@@ -1002,6 +1025,26 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
         return defs
 
+    def _resolve_skill_kind(self, item: dict[str, Any]) -> str:
+        explicit = str(item.get("kind") or "").strip().lower()
+        if explicit in {"instruction", "package", "hybrid"}:
+            return explicit
+        pkg = item.get("package")
+        files: list[str] = []
+        if isinstance(pkg, dict) and isinstance(pkg.get("files"), list):
+            files = [
+                str(f.get("path") or "")
+                for f in pkg.get("files", [])
+                if isinstance(f, dict) and str(f.get("path") or "").strip()
+            ]
+        has_skill_md = "SKILL.md" in files
+        has_entry = "scripts/main.py" in files
+        if has_skill_md and has_entry:
+            return "hybrid"
+        if has_entry:
+            return "package"
+        return "instruction"
+
     def _register_package_tools(self) -> None:
         raw_index = self.start_payload.get("skill_index")
         if not isinstance(raw_index, list):
@@ -1014,6 +1057,14 @@ class SemiGraphAdapter(RuntimeAdapter):
             if not skill_name:
                 continue
             if self.skill_registry.get_tool(skill_name) is not None:
+                continue
+
+            kind = self._resolve_skill_kind(item)
+            if kind == "instruction":
+                logger.info(
+                    "instruction_skill_skip_registration",
+                    extra={"session_id": self.session_id, "skill_name": skill_name},
+                )
                 continue
 
             pkg = item.get("package")
@@ -1035,6 +1086,10 @@ class SemiGraphAdapter(RuntimeAdapter):
                         break
 
             if not script_content:
+                logger.warning(
+                    "skill_entry_script_missing",
+                    extra={"session_id": self.session_id, "skill_name": skill_name, "kind": kind},
+                )
                 continue
 
             description = str(item.get("description") or "").strip() or None

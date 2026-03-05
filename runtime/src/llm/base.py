@@ -203,12 +203,11 @@ IMPORTANT RULES:
 10. FRESHNESS FOR "LATEST/RECENT": If the user asks for latest/recent/today news or trends, your search query MUST include an explicit time window and date constraint, e.g. "近30天/最近一周", current year/month/day, and "必须包含发布日期". Prefer authoritative first-party sources and mainstream media, avoid encyclopedia/history overview pages unless explicitly requested.
 11. QUANTITATIVE COVERAGE: If the user asks for year-range/period data (e.g. "近N年", "过去N年", "last N years"), your plan must ensure enough data points are collected and structured by period (usually one row per year). Avoid producing files with only a few summary rows when a long time range is requested.
 12. WEBSITE INTERACTION: If the user asks to visit/open a website, click/submit form, login, or extract content from a webpage and "browser_automation" is available, prefer "browser_automation" steps before giving conclusions.
-13. CAPABILITY GAP HANDLING: If the request cannot be completed with current tools, and "skill_installer" is available, create a plan to:
-   (a) search skill hub (e.g. https://clawhub.ai/skills?sort=downloads) via web_fetch/browser tools,
-   (b) get a downloadable skill package URL,
-   (c) call skill_installer to install it,
-   (d) continue execution using the newly installed tool.
-   Do NOT fabricate completion without attempting this fallback.
+13. CAPABILITY GAP HANDLING: "skill_installer" is fallback only (not default). Use it only when there is a clear capability gap after trying available tools/skills first.
+   If you include a "skill_installer" step, you MUST provide:
+   - params.missing_capabilities: string[] (what is missing),
+   - params.evidence: string[] (why current capabilities cannot satisfy it).
+   If no structured gap evidence exists, do not add skill_installer.
 
 Available tools:
 {tools_text or "No tools available."}

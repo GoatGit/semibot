@@ -377,6 +377,53 @@ test.describe('Chat E2E Quality (Mocked)', () => {
     await expect(page.getByText('答案是42')).toHaveCount(1)
   })
 
+  test('技能编排 trace：在过程卡中可见并可展开详情', async ({ page }) => {
+    const sessionId = 'quality-ui-skill-trace-001'
+    await mockSessionList(page, [sessionId])
+    await mockSessionShell(page, sessionId)
+
+    await mockChatStream(page, sessionId, [
+      {
+        event: 'message',
+        data: {
+          id: 'st1',
+          type: 'tool_result',
+          data: {
+            toolName: 'skill_orchestration',
+            result: {
+              selected_skill: 'deep-research',
+              selected_skill_kind: 'hybrid',
+              has_skill_md: true,
+              skill_md_gate_injected: true,
+              installer_gate: { dropped: 1, reports: [] },
+            },
+            success: true,
+          },
+          timestamp: new Date().toISOString(),
+        },
+      },
+      {
+        event: 'message',
+        data: {
+          id: 'txt-end',
+          type: 'text',
+          data: { content: '已完成分析。' },
+          timestamp: new Date().toISOString(),
+        },
+      },
+      { event: 'done', data: { sessionId, messageId: 'done-skill-trace' } },
+    ])
+
+    await page.goto(`/chat/${sessionId}`)
+    await page.getByPlaceholder('输入您的问题...').fill('研究阿里巴巴股票')
+    await page.getByRole('button', { name: '发送' }).click()
+
+    await expect(page.getByText('skill_orchestration')).toBeVisible({ timeout: 10000 })
+    await page.getByRole('button', { name: '详情' }).first().click()
+    await expect(page.getByText('selected_skill')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('deep-research')).toBeVisible({ timeout: 10000 })
+  })
+
   test('工具失败时：显示失败状态与错误回答，不会误报成功', async ({ page }) => {
     const sessionId = 'quality-ui-002'
     await mockSessionList(page, [sessionId])

@@ -59,13 +59,17 @@ def register_installed_package_tools(
         if registry.get_tool(skill_name) is not None:
             skipped.append({"name": skill_name, "reason": "already_registered"})
             continue
+        metadata_row = indexed_map.get(skill_name, {})
+        kind = str(metadata_row.get("kind") or "package")
+        if kind == "instruction":
+            skipped.append({"name": skill_name, "reason": "instruction_skill_not_executable"})
+            continue
         skill_dir = resolve_skill_dir(item)
         if skill_dir is None:
-            skipped.append({"name": skill_name, "reason": "scripts/main.py missing"})
+            skipped.append({"name": skill_name, "reason": "entry script missing"})
             continue
         script_file = skill_dir / "scripts" / "main.py"
         script_content = script_file.read_text(encoding="utf-8")
-        metadata_row = indexed_map.get(skill_name, {})
         description = str(metadata_row.get("description") or f"Execute installed package skill: {skill_name}")
         tags = metadata_row.get("tags") if isinstance(metadata_row.get("tags"), list) else []
         registry.register_tool(
@@ -77,6 +81,8 @@ def register_installed_package_tools(
                 additional={
                     "installed_path": str(item),
                     "index_status": str(metadata_row.get("status") or "active"),
+                    "skill_kind": kind,
+                    "has_skill_md": bool(metadata_row.get("skill_md_path")),
                     "requires": metadata_row.get("requires") if isinstance(metadata_row.get("requires"), dict) else {},
                 },
             ),

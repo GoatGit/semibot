@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from src.bootstrap import default_skills_path
-from src.skills.index_manager import SkillsIndexManager, resolve_skill_dir
+from src.skills.index_manager import SkillsIndexManager, resolve_skill_dir, resolve_skill_md_dir
 from src.skills.base import BaseTool, ToolResult
 from src.skills.package_loader import register_installed_package_tools
 from src.skills.registry import SkillRegistry
@@ -123,18 +123,18 @@ def install_or_refresh_skill(
             extracted_root = Path(extracted_temp.name)
             with zipfile.ZipFile(src, "r") as zf:
                 zf.extractall(extracted_root)
-            skill_dir = resolve_skill_dir(extracted_root)
+            skill_dir = resolve_skill_dir(extracted_root) or resolve_skill_md_dir(extracted_root)
             default_name = src.stem
             if source_kind == "manual":
                 source_kind = "zip"
         else:
-            skill_dir = resolve_skill_dir(src)
+            skill_dir = resolve_skill_dir(src) or resolve_skill_md_dir(src)
             default_name = src.name
             if source_kind == "manual":
                 source_kind = "local"
 
         if skill_dir is None:
-            raise ValueError("skill package invalid: scripts/main.py not found")
+            raise ValueError("skill package invalid: scripts/main.py or SKILL.md not found")
 
         target_name = str(skill_name or default_name).strip()
         if not target_name:

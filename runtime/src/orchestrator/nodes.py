@@ -794,6 +794,232 @@ def _inject_context_data(
     )
 
 
+def _get_planner_tool_names(available_schemas: list[dict[str, Any]]) -> set[str]:
+    names: set[str] = set()
+    for schema in available_schemas:
+        if not isinstance(schema, dict):
+            continue
+        fn = schema.get("function")
+        if isinstance(fn, dict):
+            name = str(fn.get("name") or "").strip()
+            if name:
+                names.add(name)
+                continue
+        name = str(schema.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return names
+
+
+def _pick_skill_candidate(runtime_context: Any, user_text: str) -> dict[str, Any] | None:
+    metadata = getattr(runtime_context, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get("skill_index")
+    if not isinstance(raw, list):
+        return None
+
+    raw_text = (user_text or "").strip()
+    text = raw_text.lower()
+    if not text:
+        return None
+
+    import re as _token_re
+
+    def _tokenize(value: str) -> list[str]:
+        lowered = (value or "").lower()
+        latin = _token_re.findall(r"[a-z0-9._:/-]+", lowered)
+        cjk = _token_re.findall(r"[\u4e00-\u9fff]{2,}", lowered)
+        return [t for t in (latin + cjk) if t]
+
+    user_tokens = _tokenize(raw_text)
+    if not user_tokens:
+        return None
+
+    best: dict[str, Any] | None = None
+    best_score = -1
+    best_tie_key = ""
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        skill_id = str(item.get("id") or item.get("name") or "").strip()
+        if not skill_id:
+            continue
+        aliases = [str(a).strip() for a in (item.get("aliases") or []) if isinstance(a, str) and str(a).strip()]
+        tags = [str(tag).strip() for tag in (item.get("tags") or []) if isinstance(tag, str) and str(tag).strip()]
+        description = str(item.get("description") or "").strip()
+        name_tokens = _tokenize(" ".join([skill_id, str(item.get("name") or ""), *aliases]))
+        desc_tokens = _tokenize(description)
+        tag_tokens = _tokenize(" ".join(tags))
+        available = bool(item.get("enabled", True))
+
+        score = 0
+        exact_match = skill_id.lower() in text or any(alias.lower() in text for alias in aliases)
+        if exact_match:
+            score += 100
+        score += 6 * sum(1 for token in user_tokens if token in set(name_tokens))
+        score += 3 * sum(1 for token in user_tokens if token in set(desc_tokens))
+        score += 4 * sum(1 for token in user_tokens if token in set(tag_tokens))
+        if not available:
+            score -= 20
+
+        # Tie-breakers: availability > specificity (short desc + fewer tags) > lexical order
+        specificity = -((len(description) // 40) + len(tags))
+        tie_key = f"{1 if available else 0}:{specificity}:{skill_id.lower()}"
+
+        if score > best_score or (score == best_score and tie_key > best_tie_key):
+            best = item
+            best_score = score
+            best_tie_key = tie_key
+
+    if best_score <= 0:
+        return None
+    return best
+
+
+def _resolve_skill_kind_from_item(skill_item: dict[str, Any]) -> str:
+    explicit = str(skill_item.get("kind") or "").strip().lower()
+    if explicit in {"instruction", "package", "hybrid"}:
+        return explicit
+    pkg = skill_item.get("package")
+    files = pkg.get("files") if isinstance(pkg, dict) else None
+    paths = {
+        str(f.get("path") or "").strip()
+        for f in (files or [])
+        if isinstance(f, dict) and str(f.get("path") or "").strip()
+    }
+    has_skill_md = "SKILL.md" in paths
+    has_entry = "scripts/main.py" in paths
+    if has_skill_md and has_entry:
+        return "hybrid"
+    if has_entry:
+        return "package"
+    return "instruction"
+
+
+def _has_skill_md_in_item(skill_item: dict[str, Any]) -> bool:
+    pkg = skill_item.get("package")
+    files = pkg.get("files") if isinstance(pkg, dict) else None
+    if not isinstance(files, list):
+        return False
+    return any(str(f.get("path") or "") == "SKILL.md" for f in files if isinstance(f, dict))
+
+
+def _inject_skill_constraints_message(
+    messages: list[Message | dict[str, str]],
+    skill_item: dict[str, Any] | None,
+    available_tool_names: set[str],
+) -> None:
+    if not skill_item:
+        return
+    skill_name = str(skill_item.get("id") or skill_item.get("name") or "").strip()
+    if not skill_name:
+        return
+    kind = _resolve_skill_kind_from_item(skill_item)
+    has_skill_md = _has_skill_md_in_item(skill_item)
+    constraints = [
+        f"[SYSTEM] Skill orchestration constraints for selected skill: {skill_name}",
+        f"- skill_kind: {kind}",
+        "- installer is fallback only; use existing tools/skills first.",
+        "- if you still need skill_installer, include params.missing_capabilities (array) and params.evidence (array).",
+    ]
+    if has_skill_md:
+        if "read_skill_file" in available_tool_names:
+            constraints.append("- first step must call read_skill_file with file_path='SKILL.md' for this skill.")
+        else:
+            constraints.append("- read and follow SKILL.md guidance before reading scripts/reference/templates.")
+    elif kind == "package":
+        constraints.append("- legacy package without SKILL.md is allowed; execute entry script directly.")
+
+    messages.append(
+        {
+            "role": "user",
+            "content": "\n".join(constraints),
+        }
+    )
+
+
+def _enforce_skill_md_gate_step(
+    plan: ExecutionPlan,
+    skill_item: dict[str, Any] | None,
+    available_tool_names: set[str],
+    session_id: str,
+) -> None:
+    if not skill_item or "read_skill_file" not in available_tool_names:
+        return
+    if not _has_skill_md_in_item(skill_item):
+        return
+    skill_name = str(skill_item.get("id") or skill_item.get("name") or "").strip()
+    if not skill_name:
+        return
+    if plan.steps and (plan.steps[0].tool or "").strip() == "read_skill_file":
+        return
+    plan.steps.insert(
+        0,
+        PlanStep(
+            id="skill_read_1",
+            title="读取技能说明文档",
+            tool="read_skill_file",
+            params={"skill_name": skill_name, "file_path": "SKILL.md"},
+            parallel=False,
+        ),
+    )
+    logger.info(
+        "skill_md_gate_step_injected",
+        extra={"session_id": session_id, "skill_name": skill_name},
+    )
+
+
+def _evaluate_installer_gap(
+    step: PlanStep,
+    available_tool_names: set[str],
+) -> dict[str, Any]:
+    missing = step.params.get("missing_capabilities")
+    evidence = step.params.get("evidence")
+    missing_list = [str(x).strip() for x in missing] if isinstance(missing, list) else []
+    evidence_list = [str(x).strip() for x in evidence] if isinstance(evidence, list) else []
+    missing_list = [x for x in missing_list if x]
+    evidence_list = [x for x in evidence_list if x]
+    missing_not_available = [cap for cap in missing_list if cap not in available_tool_names]
+    return {
+        "step_id": step.id,
+        "missing_capabilities": missing_list,
+        "missing_not_available": missing_not_available,
+        "evidence": evidence_list,
+        "gap": bool(missing_not_available),
+        "structured": bool(missing_list and evidence_list),
+        "allow_install": bool(missing_not_available and missing_list and evidence_list),
+    }
+
+
+def _enforce_structured_installer_gap(
+    plan: ExecutionPlan,
+    available_tool_names: set[str],
+    session_id: str,
+) -> dict[str, Any]:
+    filtered_steps: list[PlanStep] = []
+    dropped = 0
+    reports: list[dict[str, Any]] = []
+    for step in plan.steps:
+        if (step.tool or "").strip() != "skill_installer":
+            filtered_steps.append(step)
+            continue
+        report = _evaluate_installer_gap(step, available_tool_names)
+        reports.append(report)
+        if report["allow_install"]:
+            filtered_steps.append(step)
+            continue
+        dropped += 1
+
+    if dropped:
+        plan.steps = filtered_steps
+        logger.info(
+            "skill_installer_step_dropped",
+            extra={"session_id": session_id, "count": dropped},
+        )
+    return {"dropped": dropped, "reports": reports}
+
+
 async def start_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
     """
     START node: Initialize execution context and load memories.
@@ -920,6 +1146,11 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
     messages = list(state["messages"])
     memory_context = state["memory_context"]
     latest_user_text = str(messages[-1].get("content") or "") if messages else ""
+    available_tool_names = _get_planner_tool_names(available_skills)
+
+    selected_skill = _pick_skill_candidate(runtime_context, latest_user_text) if runtime_context else None
+    _inject_skill_constraints_message(messages, selected_skill, available_tool_names)
+
     before_rule_filter = len(available_skills)
     available_skills = _filter_rule_authoring_by_intent(available_skills, latest_user_text)
     if len(available_skills) != before_rule_filter:
@@ -976,6 +1207,8 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             extra={"session_id": state["session_id"], "error_count": len(failed_results)},
         )
 
+    available_tool_names = _get_planner_tool_names(available_skills)
+
     try:
         # Extract agent system_prompt for LLM persona injection
         agent_system_prompt = ""
@@ -1028,10 +1261,6 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             effective_memory = f"{memory_context}\n\n{evolved_skills_context}" if memory_context else evolved_skills_context
 
         # Call LLM to generate plan
-        available_tool_names = {
-            str((schema.get("function") or {}).get("name") or schema.get("name") or "")
-            for schema in available_skills
-        }
         plan_response = await llm_provider.generate_plan(
             messages=messages,
             memory=effective_memory,
@@ -1081,6 +1310,26 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
             available_tool_names=available_tool_names,
             session_id=state["session_id"],
         )
+        _enforce_skill_md_gate_step(
+            plan=plan,
+            skill_item=selected_skill,
+            available_tool_names=available_tool_names,
+            session_id=state["session_id"],
+        )
+        installer_gate = _enforce_structured_installer_gap(
+            plan=plan,
+            available_tool_names=available_tool_names,
+            session_id=state["session_id"],
+        )
+        orchestration_trace = {
+            "selected_skill": str(selected_skill.get("id") or selected_skill.get("name") or "") if isinstance(selected_skill, dict) else "",
+            "selected_skill_kind": _resolve_skill_kind_from_item(selected_skill) if isinstance(selected_skill, dict) else "",
+            "has_skill_md": _has_skill_md_in_item(selected_skill) if isinstance(selected_skill, dict) else False,
+            "skill_md_gate_injected": bool(plan.steps and (plan.steps[0].tool or "").strip() == "read_skill_file"),
+            "installer_gate": installer_gate,
+        }
+        if event_emitter:
+            await event_emitter.emit("skill_orchestration_trace", orchestration_trace)
 
         # Emit plan_created event
         if event_emitter and plan.steps:
@@ -1110,6 +1359,10 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         return {
             "plan": plan,
             "pending_actions": plan.steps,
+            "metadata": {
+                **(state.get("metadata") or {}),
+                "skill_orchestration_trace": orchestration_trace,
+            },
             "current_step": "delegate" if can_delegate else "act",
         }
 

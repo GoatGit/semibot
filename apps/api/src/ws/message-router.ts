@@ -87,6 +87,19 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
         duration: event.duration as number | undefined,
       })
 
+    case 'skill_orchestration_trace':
+      return mkMessage('tool_result', {
+        toolName: 'skill_orchestration',
+        result: {
+          selected_skill: event.selected_skill,
+          selected_skill_kind: event.selected_skill_kind,
+          has_skill_md: event.has_skill_md,
+          skill_md_gate_injected: event.skill_md_gate_injected,
+          installer_gate: event.installer_gate,
+        },
+        success: true,
+      })
+
     // OpenClaw bridge compatibility
     case 'tool_call':
       return mkMessage('tool_call', {

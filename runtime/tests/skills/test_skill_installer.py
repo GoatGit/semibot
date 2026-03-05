@@ -16,6 +16,11 @@ def _write_skill_package(base: Path) -> None:
     (base / "scripts" / "main.py").write_text("print('ok')\n", encoding="utf-8")
 
 
+def _write_instruction_skill(base: Path) -> None:
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "SKILL.md").write_text("# Instruction Skill\n", encoding="utf-8")
+
+
 @pytest.mark.asyncio
 async def test_skill_installer_installs_from_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
@@ -66,3 +71,23 @@ async def test_skill_installer_updates_index_file(tmp_path: Path, monkeypatch: p
     payload = json.loads(index_path.read_text(encoding="utf-8"))
     skills = payload.get("skills", [])
     assert any(item.get("skill_id") == "indexed_skill" for item in skills)
+
+
+@pytest.mark.asyncio
+async def test_skill_installer_supports_instruction_only_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home4"
+    monkeypatch.setenv("SEMIBOT_HOME", str(home))
+    src = tmp_path / "instruction_skill"
+    _write_instruction_skill(src)
+
+    registry = SkillRegistry()
+    tool = SkillInstallerTool(registry)
+    result = await tool.execute(source_path=str(src), skill_name="instruction_skill")
+    assert result.success is True
+    assert registry.get_tool("instruction_skill") is None
+
+    index_path = home / "skills" / ".index.json"
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    skills = payload.get("skills", [])
+    row = next(item for item in skills if item.get("skill_id") == "instruction_skill")
+    assert row.get("kind") == "instruction"

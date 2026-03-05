@@ -161,11 +161,56 @@ export function useAgent2UI(): UseAgent2UIReturn {
         case 'tool_result': {
           // Update the matching tool call with result
           const data = message.data as { toolName: string; result?: unknown; success: boolean; error?: string; duration?: number }
-          const toolCalls = prev.toolCalls.map((tc) =>
-            tc.toolName === data.toolName && tc.status === 'calling'
+          let matched = false
+          const toolCalls = prev.toolCalls.map((tc) => {
+            const isMatch = tc.toolName === data.toolName && tc.status === 'calling'
+            if (isMatch) {
+              matched = true
+            }
+            return isMatch
               ? { ...tc, status: (data.success ? 'success' : 'error') as ToolCallData['status'], result: data.result, error: data.error, duration: data.duration }
               : tc
-          )
+          })
+
+          if (!matched) {
+            toolCalls.push({
+              toolName: data.toolName,
+              arguments: {},
+              status: (data.success ? 'success' : 'error') as ToolCallData['status'],
+              result: data.result,
+              error: data.error,
+              duration: data.duration,
+            })
+          }
+
+          return { ...prev, messages, toolCalls }
+        }
+
+        case 'mcp_result': {
+          // Update the matching MCP call with result
+          const data = message.data as { toolName: string; result?: unknown; success: boolean; error?: string; duration?: number }
+          let matched = false
+          const toolCalls = prev.toolCalls.map((tc) => {
+            const isMatch = tc.toolName === data.toolName && tc.status === 'calling'
+            if (isMatch) {
+              matched = true
+            }
+            return isMatch
+              ? { ...tc, status: (data.success ? 'success' : 'error') as ToolCallData['status'], result: data.result, error: data.error, duration: data.duration }
+              : tc
+          })
+
+          if (!matched) {
+            toolCalls.push({
+              toolName: data.toolName,
+              arguments: {},
+              status: (data.success ? 'success' : 'error') as ToolCallData['status'],
+              result: data.result,
+              error: data.error,
+              duration: data.duration,
+            })
+          }
+
           return { ...prev, messages, toolCalls }
         }
 
@@ -177,17 +222,6 @@ export function useAgent2UI(): UseAgent2UIReturn {
             arguments: data.arguments,
             status: 'calling' as const,
           }]
-          return { ...prev, messages, toolCalls }
-        }
-
-        case 'mcp_result': {
-          // Update the matching MCP call with result
-          const data = message.data as { toolName: string; result?: unknown; success: boolean; error?: string; duration?: number }
-          const toolCalls = prev.toolCalls.map((tc) =>
-            tc.toolName === data.toolName && tc.status === 'calling'
-              ? { ...tc, status: (data.success ? 'success' : 'error') as ToolCallData['status'], result: data.result, error: data.error, duration: data.duration }
-              : tc
-          )
           return { ...prev, messages, toolCalls }
         }
 
