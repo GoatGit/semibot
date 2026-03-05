@@ -268,6 +268,20 @@ Gateway 在提交 runtime 前注入：
 
 ---
 
+## 13. 实施状态（当前）
+
+- 已完成：
+  - `control_plane` 主工具名 + `rule_authoring` 兼容别名
+  - `rules/channels/mcp/skills/config` 五个 domain 的首版实现
+  - 版本门禁（`CONTROL_PLANE_VERSION_MISMATCH`）
+  - 自调用阻断（`TOOL_RECURSION_BLOCKED`）
+  - `llm` 命名空间写保护（`LLM_CONFIG_WRITE_BLOCKED`）
+- 未完成：
+  - `agents` domain 真实 CRUD（当前返回占位错误）
+  - 跨 domain 多步事务的统一回滚编排器（目前按单操作原子执行）
+
+---
+
 ## 11. E2E 用例（新增）
 
 1. `@telegram`: “给我创建一个每天 9 点新闻简报并发到当前群”

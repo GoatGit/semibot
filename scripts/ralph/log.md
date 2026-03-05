@@ -579,3 +579,25 @@
   - `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/skills/test_rule_authoring.py tests/skills/test_bootstrap_tools.py tests/orchestrator/test_rule_authoring_intent_filter.py tests/test_local_runtime.py`
   - `pnpm -C apps/api exec tsc --noEmit`
   - `pnpm -C apps/web exec tsc --noEmit`
+
+### 2026-03-05 迭代 V2-Control-Plane-Phase2 — control_plane 多域扩展
+1. `runtime/src/skills/rule_authoring.py` 扩展 `control_plane` 到多域分发：
+   - `channels`: list/get/create/update/delete/enable/disable
+   - `mcp`: list/get/create/update/delete/bind/unbind
+   - `skills`: list/get/install/uninstall/refresh
+   - `config`: list/get/update（限制 llm 写入）
+2. 增加 `domain+action` 映射兼容（处理 `create_rule/list_rules` 对非 rules 域的回收）
+3. 保持并强化安全约束：
+   - 自调用阻断 `TOOL_RECURSION_BLOCKED`
+   - 版本门禁 `CONTROL_PLANE_VERSION_MISMATCH`
+   - `llm` 配置写保护 `LLM_CONFIG_WRITE_BLOCKED`
+4. `runtime/src/skills/bootstrap.py` 为 `control_plane/rule_authoring` 注入同一 registry，支持 skills install/refresh
+5. 新增 story：`docs/user-stories/control-plane-domain-expansion-phase2.json`
+6. 新增/更新测试：
+   - `runtime/tests/skills/test_rule_authoring.py`（新增 channels/mcp/config 场景）
+   - `runtime/tests/skills/test_bootstrap_tools.py`
+   - `runtime/tests/orchestrator/test_rule_authoring_intent_filter.py`
+   - `runtime/tests/test_local_runtime.py`
+- 验证：
+  - ✅ `cd runtime && PYTHONPATH=. .venv/bin/pytest -q tests/skills/test_rule_authoring.py tests/skills/test_bootstrap_tools.py tests/orchestrator/test_rule_authoring_intent_filter.py tests/test_local_runtime.py`
+  - ⚠️ `pnpm -C apps/api exec tsc --noEmit` 失败（现有文件 `apps/api/src/routes/v1/llm-providers.ts` 存在 `??` 与 `||` 混用语法错误，非本迭代引入）

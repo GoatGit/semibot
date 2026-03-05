@@ -90,7 +90,12 @@ class RuleAuthoringTool(BaseTool):
     def _resolve_action_from_domain(self, domain: str, action: str) -> str:
         domain_value = domain.strip().lower()
         action_value = action.strip().lower()
-        legacy_generic_action = action_value[:-5] if action_value.endswith("_rule") else action_value
+        if action_value.endswith("_rule"):
+            legacy_generic_action = action_value[:-5]
+        elif action_value.endswith("_rules"):
+            legacy_generic_action = action_value[:-6]
+        else:
+            legacy_generic_action = action_value
         if not domain_value:
             return action
         if domain_value in {"channels", "mcp", "skills", "config", "agents"}:
@@ -896,8 +901,9 @@ class RuleAuthoringTool(BaseTool):
             # Product policy: default mode should be auto instead of letting model decide.
             payload_obj["action_mode"] = "auto"
 
-        action_name, payload_obj = self._normalize_legacy_payload(action_name, payload_obj)
-        payload_obj = self._apply_one_shot_hint_for_cron(payload_obj)
+        if not domain_value or domain_value == "rules":
+            action_name, payload_obj = self._normalize_legacy_payload(action_name, payload_obj)
+            payload_obj = self._apply_one_shot_hint_for_cron(payload_obj)
 
         if domain_value and domain_value != "rules":
             if dry_run:

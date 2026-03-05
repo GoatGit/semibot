@@ -1,0 +1,41 @@
+{
+  "id": "control-plane-domain-expansion-phase2",
+  "title": "control_plane 多域扩展（Phase 2）",
+  "description": "将 control_plane 从 rules-only 扩展到 channels/mcp/skills/config 域，并保留 agents 域占位；确保版本门禁、递归阻断和 LLM 配置写保护持续生效。",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "control_plane 支持 channels 域：list/get/create/update/delete/enable/disable",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "control_plane 支持 mcp 域：list/get/create/update/delete/bind/unbind",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "control_plane 支持 skills 域：list/get/install/uninstall/refresh",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "control_plane 支持 config 域：list/get/update（llm 命名空间禁止写入）",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "agents 域返回明确占位错误（UNSUPPORTED_CONTROL_DOMAIN）",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "新增单元测试覆盖 channels/mcp/config 关键路径",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit",
+  "priority": "high",
+  "tags": ["control-plane", "channels", "mcp", "skills", "config", "runtime"]
+}
