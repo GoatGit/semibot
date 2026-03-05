@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Activity,
   Clock3,
-  CircleHelp,
   ExternalLink,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -320,7 +319,15 @@ export default function DashboardPage() {
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
         <Card className="overflow-hidden border-border-default">
           <CardContent className="relative p-0">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(147,120,147,0.2),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.16),transparent_40%)]" />
+            <div
+              className="absolute inset-0 bg-no-repeat"
+              style={{
+                backgroundImage:
+                  "url('/dashboard-title-bg.svg'), linear-gradient(135deg, rgba(245, 239, 250, 0.95) 0%, rgba(238, 244, 255, 0.92) 100%)",
+                backgroundPosition: 'center center, center center',
+                backgroundSize: 'auto 100%, cover',
+              }}
+            />
             <div className="relative p-6 md:p-8">
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-3">
@@ -332,15 +339,6 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Link href="/help" className="inline-flex">
-                    <Button
-                      variant="tertiary"
-                      leftIcon={<CircleHelp size={16} />}
-                      title={t('help.nav.helpCenter')}
-                    >
-                      {t('nav.helpCenter')}
-                    </Button>
-                  </Link>
                   <Button
                     variant="secondary"
                     leftIcon={<RefreshCw size={16} />}

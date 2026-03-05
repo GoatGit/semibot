@@ -143,13 +143,23 @@ export function useAgent(): UseAgentReturn {
    * 创建 Agent
    */
   const createAgent = useCallback(async (input: CreateAgentInput): Promise<Agent> => {
-    const response = await apiClient.post<ApiResponse<Agent>>('/agents', input)
+    const response = await apiClient.post<ApiResponse<{ item?: Agent }>>('/control/agents/create', {
+      payload: {
+        name: input.name,
+        description: input.description,
+        system_prompt: input.systemPrompt,
+        config: input.config,
+        skills: input.skills,
+        sub_agents: input.subAgents,
+        is_public: input.isPublic,
+      },
+    })
 
-    if (!response.success || !response.data) {
+    if (!response.success || !response.data?.item) {
       throw new Error(response.error?.message ?? '创建 Agent 失败')
     }
 
-    const agent = response.data
+    const agent = response.data.item
 
     setState((prev) => ({
       ...prev,
@@ -195,13 +205,27 @@ export function useAgent(): UseAgentReturn {
    * 更新 Agent
    */
   const updateAgent = useCallback(async (agentId: string, input: UpdateAgentInput): Promise<Agent> => {
-    const response = await apiClient.put<ApiResponse<Agent>>(`/agents/${agentId}`, input)
+    const response = await apiClient.post<ApiResponse<{ item?: Agent }>>('/control/agents/update', {
+      payload: {
+        agent_id: agentId,
+        patch: {
+          name: input.name,
+          description: input.description,
+          system_prompt: input.systemPrompt,
+          config: input.config,
+          skills: input.skills,
+          sub_agents: input.subAgents,
+          is_active: input.isActive,
+          is_public: input.isPublic,
+        },
+      },
+    })
 
-    if (!response.success || !response.data) {
+    if (!response.success || !response.data?.item) {
       throw new Error(response.error?.message ?? '更新 Agent 失败')
     }
 
-    const updatedAgent = response.data
+    const updatedAgent = response.data.item
 
     setState((prev) => ({
       ...prev,
@@ -216,7 +240,9 @@ export function useAgent(): UseAgentReturn {
    * 删除 Agent
    */
   const deleteAgent = useCallback(async (agentId: string) => {
-    await apiClient.delete(`/agents/${agentId}`)
+    await apiClient.post('/control/agents/delete', {
+      payload: { agent_id: agentId },
+    })
 
     setState((prev) => ({
       ...prev,

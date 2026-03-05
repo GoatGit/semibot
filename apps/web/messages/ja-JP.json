@@ -734,7 +734,7 @@
     "disable": "無効化",
     "enable": "有効化",
     "empty": "まだルールがありません。作成して開始してください。",
-    "apiUnavailable": "ルール API はまだ接続されていません。`/v1/rules` を実装してください。",
+    "apiUnavailable": "ルール API はまだ接続されていません。`/v1/control/rules/list` を実装してください。",
     "createDescription": "イベントトリガールールを作成",
     "updateDescription": "ルール設定を更新",
     "actionMode": {
@@ -1014,7 +1014,7 @@
     }
   },
   "dashboard": {
-    "subtitle": "実行・リマインド・協調・成長を続けるデジタル社員。",
+    "subtitle": "実行・リマインド・協調・成長を続ける Crab。",
     "cards": {
       "agents": {
         "label": "エージェント",

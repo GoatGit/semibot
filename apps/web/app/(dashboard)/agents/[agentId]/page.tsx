@@ -177,13 +177,36 @@ export default function AgentDetailPage() {
       }
 
       if (isNew) {
-        const response = await apiClient.post<ApiResponse<Agent>>('/agents', payload)
-        if (!response.success || !response.data) {
+        const response = await apiClient.post<ApiResponse<{ item?: Agent }>>('/control/agents/create', {
+          payload: {
+            name: payload.name,
+            description: payload.description,
+            system_prompt: payload.systemPrompt,
+            runtime_type: payload.runtimeType,
+            config: payload.config,
+            skills: payload.skills,
+            mcp_server_ids: payload.mcpServerIds,
+          },
+        })
+        if (!response.success || !response.data?.item) {
           throw new Error(t('agentsDetail.error.createFailed'))
         }
       } else {
-        const response = await apiClient.put<ApiResponse<Agent>>(`/agents/${agentId}`, payload)
-        if (!response.success || !response.data) {
+        const response = await apiClient.post<ApiResponse<{ item?: Agent }>>('/control/agents/update', {
+          payload: {
+            agent_id: agentId,
+            patch: {
+              name: payload.name,
+              description: payload.description,
+              system_prompt: payload.systemPrompt,
+              runtime_type: payload.runtimeType,
+              config: payload.config,
+              skills: payload.skills,
+              mcp_server_ids: payload.mcpServerIds,
+            },
+          },
+        })
+        if (!response.success || !response.data?.item) {
           throw new Error(t('agentsDetail.error.updateFailed'))
         }
       }

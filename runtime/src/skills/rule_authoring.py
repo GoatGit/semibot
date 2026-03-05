@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+import httpx
 
 from src.bootstrap import default_skills_path
 from src.events.trigger_scheduler import TriggerScheduler
@@ -241,10 +245,66 @@ class RuleAuthoringTool(BaseTool):
             return ToolResult.success_result(
                 {"ok": True, "domain": "mcp", "action": action_name, "agent_id": agent_id, "mcp_server_ids": sorted(next_ids)}
             )
+        if action_name == "test":
+            server_id = str(payload_obj.get("server_id") or payload_obj.get("id") or "").strip()
+            if not server_id:
+                return ToolResult.error_result("server_id is required", error_code="INVALID_MCP_SERVER_ID")
+            item = store.get_mcp_server(server_id)
+            if not item:
+                return ToolResult.error_result("mcp server not found", error_code="MCP_SERVER_NOT_FOUND")
+            ok, message = self._probe_mcp_server(item)
+            patch: dict[str, Any] = {
+                "status": "connected" if ok else "error",
+                "last_connected_at": datetime.now(timezone.utc).isoformat() if ok else item.get("last_connected_at"),
+            }
+            store.update_mcp_server(server_id, patch)
+            if not ok:
+                return ToolResult.error_result(message, error_code="MCP_TEST_FAILED")
+            return ToolResult.success_result(
+                {
+                    "ok": True,
+                    "domain": "mcp",
+                    "action": action_name,
+                    "server_id": server_id,
+                    "success": True,
+                    "message": message,
+                }
+            )
         return ToolResult.error_result(
             f"unsupported mcp action: {action_name}",
             error_code="UNSUPPORTED_CONTROL_ACTION",
         )
+
+    @staticmethod
+    def _probe_mcp_server(server: dict[str, Any]) -> tuple[bool, str]:
+        transport = str(server.get("transport") or "streamable_http").strip().lower()
+        endpoint = str(server.get("endpoint") or "").strip()
+        if not endpoint:
+            return False, "mcp endpoint is empty"
+
+        if transport == "stdio":
+            try:
+                parts = shlex.split(endpoint)
+            except ValueError as exc:
+                return False, f"invalid stdio command: {exc}"
+            if not parts:
+                return False, "invalid stdio command"
+            cmd = parts[0]
+            if shutil.which(cmd) or Path(cmd).exists():
+                return True, f"stdio command found: {cmd}"
+            return False, f"stdio command not found: {cmd}"
+
+        if transport in {"streamable_http", "sse"}:
+            try:
+                with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+                    response = client.get(endpoint)
+                if response.status_code >= 500:
+                    return False, f"http status {response.status_code}"
+                return True, f"http status {response.status_code}"
+            except Exception as exc:
+                return False, f"http probe failed: {exc}"
+
+        return False, f"unsupported transport: {transport}"
 
     def _execute_skills_action(self, action_name: str, payload_obj: dict[str, Any]) -> ToolResult:
         skills_root = default_skills_path()
@@ -298,6 +358,35 @@ class RuleAuthoringTool(BaseTool):
             else:
                 summary = {"registered": [], "skipped": [], "index_total": len(index.list_records())}
             return ToolResult.success_result({"ok": True, "domain": "skills", "action": action_name, "reindex": reindex, "refresh": summary})
+        if action_name in {"enable", "disable"}:
+            skill_id = str(payload_obj.get("skill_id") or payload_obj.get("name") or "").strip()
+            if not skill_id:
+                return ToolResult.error_result("skill_id is required", error_code="INVALID_SKILL_ID")
+            rows = index.list_records()
+            item = next((row for row in rows if str(row.get("skill_id") or "") == skill_id), None)
+            if not item:
+                return ToolResult.error_result("skill not found", error_code="SKILL_NOT_FOUND")
+            disabled = self._read_disabled_skills(skills_root)
+            if action_name == "enable":
+                disabled.discard(skill_id)
+            else:
+                disabled.add(skill_id)
+            self._write_disabled_skills(skills_root, disabled)
+            reindex = index.reindex(scope="incremental")
+            if self._registry is not None:
+                refresh = register_installed_package_tools(self._registry, skills_root=skills_root)
+            else:
+                refresh = {"registered": [], "skipped": [], "index_total": len(index.list_records())}
+            return ToolResult.success_result(
+                {
+                    "ok": True,
+                    "domain": "skills",
+                    "action": action_name,
+                    "skill_id": skill_id,
+                    "reindex": reindex,
+                    "refresh": refresh,
+                }
+            )
         return ToolResult.error_result(
             f"unsupported skills action: {action_name}",
             error_code="UNSUPPORTED_CONTROL_ACTION",
@@ -379,6 +468,54 @@ class RuleAuthoringTool(BaseTool):
             error_code="INVALID_CONFIG_NAMESPACE",
         )
 
+    def _execute_agents_action(self, action_name: str, payload_obj: dict[str, Any]) -> ToolResult:
+        store = self._get_config_store()
+        if action_name == "list":
+            items = store.list_agent_profiles(include_inactive=True)
+            return ToolResult.success_result({"ok": True, "domain": "agents", "action": action_name, "items": items})
+        if action_name == "get":
+            agent_id = str(payload_obj.get("agent_id") or payload_obj.get("id") or "").strip()
+            if not agent_id:
+                return ToolResult.error_result("agent_id is required", error_code="INVALID_AGENT_ID")
+            item = store.get_agent_profile(agent_id)
+            if not item:
+                return ToolResult.error_result("agent profile not found", error_code="AGENT_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "agents", "action": action_name, "item": item})
+        if action_name == "create":
+            item = store.create_agent_profile(payload_obj)
+            return ToolResult.success_result({"ok": True, "domain": "agents", "action": action_name, "item": item})
+        if action_name == "update":
+            agent_id = str(payload_obj.get("agent_id") or payload_obj.get("id") or "").strip()
+            if not agent_id:
+                return ToolResult.error_result("agent_id is required", error_code="INVALID_AGENT_ID")
+            patch = payload_obj.get("patch")
+            if not isinstance(patch, dict):
+                patch = {k: v for k, v in payload_obj.items() if k not in {"agent_id", "id", "patch"}}
+            item = store.update_agent_profile(agent_id, patch)
+            if not item:
+                return ToolResult.error_result("agent profile not found", error_code="AGENT_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "agents", "action": action_name, "item": item})
+        if action_name == "delete":
+            agent_id = str(payload_obj.get("agent_id") or payload_obj.get("id") or "").strip()
+            if not agent_id:
+                return ToolResult.error_result("agent_id is required", error_code="INVALID_AGENT_ID")
+            deleted = store.soft_delete_agent_profile(agent_id)
+            if not deleted:
+                return ToolResult.error_result("agent profile not found", error_code="AGENT_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "agents", "action": action_name, "deleted": True})
+        if action_name in {"enable", "disable"}:
+            agent_id = str(payload_obj.get("agent_id") or payload_obj.get("id") or "").strip()
+            if not agent_id:
+                return ToolResult.error_result("agent_id is required", error_code="INVALID_AGENT_ID")
+            item = store.update_agent_profile(agent_id, {"is_active": action_name == "enable"})
+            if not item:
+                return ToolResult.error_result("agent profile not found", error_code="AGENT_NOT_FOUND")
+            return ToolResult.success_result({"ok": True, "domain": "agents", "action": action_name, "item": item})
+        return ToolResult.error_result(
+            f"unsupported agents action: {action_name}",
+            error_code="UNSUPPORTED_CONTROL_ACTION",
+        )
+
     def _assert_version_compatible_for_write(self, action_name: str) -> str | None:
         if action_name not in self.WRITE_ACTIONS:
             return None
@@ -416,11 +553,28 @@ class RuleAuthoringTool(BaseTool):
                 "domain": {
                     "type": "string",
                     "enum": ["rules", "skills", "mcp", "channels", "agents", "config"],
-                    "description": "Control domain. Implemented now: rules/channels/mcp/skills/config. agents is reserved.",
+                    "description": (
+                        "Control domain. "
+                        "rules=event rules, skills=skills registry, mcp=MCP servers/bindings, "
+                        "channels=channel instances, agents=agent profiles, config=runtime config namespaces."
+                    ),
                 },
                 "action": {
                     "type": "string",
                     "enum": [
+                        "create",
+                        "update",
+                        "delete",
+                        "enable",
+                        "disable",
+                        "list",
+                        "get",
+                        "install",
+                        "uninstall",
+                        "refresh",
+                        "bind",
+                        "unbind",
+                        "test",
                         "create_rule",
                         "update_rule",
                         "enable_rule",
@@ -430,12 +584,14 @@ class RuleAuthoringTool(BaseTool):
                         "list_rules",
                     ],
                     "description": (
-                        "Operation name.\n"
-                        "- create_rule: create a new rule\n"
-                        "- update_rule: patch an existing rule (requires rule_id)\n"
-                        "- enable_rule/disable_rule/delete_rule: lifecycle ops (requires rule_id)\n"
-                        "- simulate_rule: test a rule against an event\n"
-                        "- list_rules: return all rules"
+                        "Operation name. Prefer generic actions with domain:\n"
+                        "- rules: create/update/delete/enable/disable/list/get/simulate\n"
+                        "- channels: create/update/delete/enable/disable/list/get\n"
+                        "- mcp: create/update/delete/list/get/bind/unbind/test\n"
+                        "- skills: list/get/install/uninstall/refresh/enable/disable\n"
+                        "- agents: create/update/delete/enable/disable/list/get\n"
+                        "- config: list/get/update\n"
+                        "Legacy rules aliases are still accepted: create_rule/update_rule/..."
                     ),
                 },
                 "payload": {
@@ -878,7 +1034,7 @@ class RuleAuthoringTool(BaseTool):
         action_name = self._resolve_action_from_domain(domain_value, action_name)
         if action_name == "__unsupported_domain__":
             return ToolResult.error_result(
-                "unsupported domain for current implementation: only domain=rules is available",
+                "unsupported domain for current implementation",
                 error_code="UNSUPPORTED_CONTROL_DOMAIN",
                 domain=str(domain or ""),
             )
@@ -925,10 +1081,7 @@ class RuleAuthoringTool(BaseTool):
             if domain_value == "config":
                 return self._execute_config_action(action_name, payload_obj)
             if domain_value == "agents":
-                return ToolResult.error_result(
-                    "agents domain not implemented in current phase",
-                    error_code="UNSUPPORTED_CONTROL_DOMAIN",
-                )
+                return self._execute_agents_action(action_name, payload_obj)
             return ToolResult.error_result(
                 f"unsupported domain: {domain_value}",
                 error_code="UNSUPPORTED_CONTROL_DOMAIN",

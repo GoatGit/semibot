@@ -118,13 +118,16 @@ function normalizeRule(raw: unknown): EventRule | null {
 
 function normalizeRulesResponse(raw: unknown): EventRule[] {
   if (!isObject(raw)) return []
-  const items =
-    Array.isArray(raw.items)
-      ? raw.items
-      : isObject(raw.data) && Array.isArray((raw.data as Record<string, unknown>).items)
-        ? ((raw.data as Record<string, unknown>).items as unknown[])
-        : Array.isArray(raw.data)
-          ? raw.data
+  const topData = raw.data
+  const nestedData = isObject(topData) ? topData.data : undefined
+  const items = Array.isArray(raw.items)
+    ? raw.items
+    : isObject(topData) && Array.isArray(topData.items)
+      ? (topData.items as unknown[])
+      : isObject(nestedData) && Array.isArray(nestedData.items)
+        ? (nestedData.items as unknown[])
+        : Array.isArray(topData)
+          ? topData
           : []
 
   return items
@@ -160,7 +163,13 @@ export function useRules() {
   const loadRules = useCallback(async () => {
     try {
       setIsLoading(true)
-      const response = await apiClient.get<unknown>('/rules')
+      // Prefer unified control entry; fallback to legacy /rules when needed.
+      let response: unknown
+      try {
+        response = await apiClient.post<unknown>('/control/rules/list', {})
+      } catch {
+        response = await apiClient.get<unknown>('/rules')
+      }
       setRules(normalizeRulesResponse(response))
       setError(null)
       setApiAvailable(true)
@@ -168,7 +177,7 @@ export function useRules() {
       const status = getHttpStatus(err)
       if (status === 404) {
         setApiAvailable(false)
-        setError('规则接口尚未接入（/v1/rules）')
+        setError('规则接口尚未接入（/v1/control/rules/list）')
       } else {
         setError(getErrorMessage(err, '加载规则失败'))
       }
@@ -189,29 +198,31 @@ export function useRules() {
           params: input.actionParams ?? { channel: 'chat' },
         },
       ]
-    await apiClient.post('/rules', {
-      name: input.name,
-      event_type: input.eventType,
-      conditions: input.conditions ?? { all: [] },
-      action_mode: input.actionMode,
-      actions: normalizedActions,
-      risk_level: input.riskLevel,
-      priority: input.priority,
-      dedupe_window_seconds: input.dedupeWindowSeconds ?? 300,
-      cooldown_seconds: input.cooldownSeconds ?? 600,
-      attention_budget_per_day: input.attentionBudgetPerDay ?? 10,
-      is_active: true,
-      cron: input.cron
-        ? {
-          upsert: Boolean(input.cron.upsert),
-          name: input.cron.name,
-          schedule: input.cron.schedule,
-          event_type: input.cron.eventType,
-          source: input.cron.source,
-          subject: input.cron.subject,
-          payload: input.cron.payload ?? {},
-        }
-        : undefined,
+    await apiClient.post('/control/rules/create', {
+      payload: {
+        name: input.name,
+        event_type: input.eventType,
+        conditions: input.conditions ?? { all: [] },
+        action_mode: input.actionMode,
+        actions: normalizedActions,
+        risk_level: input.riskLevel,
+        priority: input.priority,
+        dedupe_window_seconds: input.dedupeWindowSeconds ?? 300,
+        cooldown_seconds: input.cooldownSeconds ?? 600,
+        attention_budget_per_day: input.attentionBudgetPerDay ?? 10,
+        is_active: true,
+        cron: input.cron
+          ? {
+            upsert: Boolean(input.cron.upsert),
+            name: input.cron.name,
+            schedule: input.cron.schedule,
+            event_type: input.cron.eventType,
+            source: input.cron.source,
+            subject: input.cron.subject,
+            payload: input.cron.payload ?? {},
+          }
+          : undefined,
+      },
     })
   }, [])
 
@@ -251,7 +262,12 @@ export function useRules() {
       }]
     }
 
-    await apiClient.put(`/rules/${ruleId}`, payload)
+    await apiClient.post('/control/rules/update', {
+      payload: {
+        rule_id: ruleId,
+        ...payload,
+      },
+    })
   }, [])
 
   return {

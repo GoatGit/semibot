@@ -11,6 +11,7 @@ import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
 import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
 import fs from 'fs-extra'
+import type { Dirent } from 'fs'
 import os from 'os'
 import path from 'path'
 import { spawn } from 'child_process'
@@ -120,22 +121,17 @@ const runtimeSkillsCliSchema = z.object({
   skill: z.string().min(1).max(200).optional(),
 })
 
-const SKILLS_CLI_TIMEOUT_MS = 120_000
+const controlPlaneActionParamsSchema = z.object({
+  domain: z.string().min(1).max(64),
+  action: z.string().min(1).max(64),
+})
 
-function listSubdirs(root: string): Set<string> {
-  if (!fs.existsSync(root)) return new Set()
-  const names = fs
-    .readdirSync(root)
-    .filter((name) => !name.startsWith('.'))
-    .filter((name) => {
-      try {
-        return fs.statSync(path.join(root, name)).isDirectory()
-      } catch {
-        return false
-      }
-    })
-  return new Set(names)
-}
+const controlPlaneActionBodySchema = z.object({
+  payload: z.record(z.unknown()).optional(),
+  options: z.record(z.unknown()).optional(),
+})
+
+const SKILLS_CLI_TIMEOUT_MS = 120_000
 
 function sanitizeSkillName(raw: string): string {
   const text = String(raw || '').trim()
@@ -189,21 +185,96 @@ function runSkillsCli(args: string[]): Promise<{ code: number; stdout: string; s
 function candidateAgentsSkillsRoots(): string[] {
   const roots = [
     path.join(os.homedir(), '.agents', 'skills'),
-    path.join(process.cwd(), '.agents', 'skills'),
     path.join(process.cwd(), 'apps', 'api', '.agents', 'skills'),
+    path.join(process.cwd(), '.agents', 'skills'),
   ]
   return Array.from(new Set(roots))
 }
 
 function sanitizeCliText(raw: string): string {
   const text = String(raw || '')
-  return text
+  const ansiPattern = new RegExp(String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]`, 'g')
+  const cleaned = text
     // Real ANSI escape codes
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(ansiPattern, '')
     // Broken color fragments without ESC (e.g. "[38;5;145m")
     .replace(/\[[0-9;]{1,20}m/g, '')
+    // Box drawing / bullet glyph noise from interactive TUI output
+    .replace(/[\u2500-\u257F\u25A0-\u25FF]/g, '')
     .replace(/\[0m/g, '')
-    .trim()
+  let normalized = ''
+  for (const ch of cleaned) {
+    const code = ch.charCodeAt(0)
+    const isTabOrNewline = code === 0x09 || code === 0x0a || code === 0x0d
+    const isControl = (code >= 0x00 && code <= 0x08) || (code >= 0x0b && code <= 0x1f) || code === 0x7f
+    if (isControl && !isTabOrNewline) continue
+    normalized += ch
+  }
+  return normalized.trim()
+}
+
+function listSkillDirs(root: string): Map<string, string> {
+  const resolved = path.resolve(root)
+  const found = new Map<string, string>()
+  if (!fs.existsSync(resolved)) return found
+  const stack: string[] = [resolved]
+  while (stack.length > 0) {
+    const current = stack.pop() || ''
+    if (!current) continue
+    let entries: Dirent[] = []
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    const hasSkillMd = entries.some((entry) => entry.isFile() && entry.name === 'SKILL.md')
+    if (hasSkillMd) {
+      const name = path.basename(current)
+      if (name && !found.has(name)) {
+        found.set(name, current)
+      }
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (entry.name.startsWith('.')) continue
+      stack.push(path.join(current, entry.name))
+    }
+  }
+  return found
+}
+
+async function syncAgentSkillsToSemibot({
+  agentsSkillsRoots,
+  semibotSkillsRoot,
+}: {
+  agentsSkillsRoots: string[]
+  semibotSkillsRoot: string
+}): Promise<{ synced: string[]; scannedRoots: string[] }> {
+  const merged = new Map<string, string>()
+  const scannedRoots: string[] = []
+  for (const root of agentsSkillsRoots) {
+    if (!fs.existsSync(root)) continue
+    scannedRoots.push(root)
+    const rows = listSkillDirs(root)
+    for (const [name, skillPath] of rows.entries()) {
+      // Keep first hit by root priority.
+      if (!merged.has(name)) merged.set(name, skillPath)
+    }
+  }
+  const synced: string[] = []
+  for (const [name, src] of merged.entries()) {
+    const dst = path.join(semibotSkillsRoot, name)
+    await fs.copy(src, dst, { overwrite: true, errorOnExist: false })
+    synced.push(name)
+  }
+  return { synced, scannedRoots }
+}
+
+function extractSkillsCliCandidates(text: string): string[] {
+  const pattern = /\b([a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]*)\b/gi
+  const hits = text.match(pattern) || []
+  return Array.from(new Set(hits.map((item) => item.trim()).filter(Boolean)))
 }
 
 async function postRuntimeJson(baseUrls: string[], endpoint: string, payload: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; error?: string }> {
@@ -517,6 +588,74 @@ router.post(
  * 通过 `npx skills` 安装技能，并同步到 ~/.semibot/skills
  */
 router.post(
+  '/control/:domain/:action',
+  authenticate,
+  combinedRateLimit,
+  validate(controlPlaneActionParamsSchema, 'params'),
+  validate(controlPlaneActionBodySchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const baseUrls = getRuntimeBaseUrls()
+    const errors: string[] = []
+    const params = req.params as z.infer<typeof controlPlaneActionParamsSchema>
+    const body = req.body as z.infer<typeof controlPlaneActionBodySchema>
+    const runtimePayload = {
+      payload: body.payload || {},
+      options: body.options || {},
+    }
+
+    for (const baseUrl of baseUrls) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 20000)
+      try {
+        const response = await fetch(
+          `${baseUrl}/v1/control/${encodeURIComponent(params.domain)}/${encodeURIComponent(params.action)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(runtimePayload),
+            signal: controller.signal,
+          }
+        )
+        clearTimeout(timeout)
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          const detail =
+            (data as { detail?: { message?: string } | string }).detail ||
+            `runtime returned ${response.status}`
+          const msg =
+            typeof detail === 'string'
+              ? detail
+              : detail && typeof detail === 'object' && 'message' in detail
+                ? String((detail as { message?: string }).message || '')
+                : `runtime returned ${response.status}`
+          errors.push(`${baseUrl}: ${msg}`)
+          continue
+        }
+        const runtimeData = data as { ok?: boolean; data?: unknown; metadata?: unknown }
+        res.json({
+          success: true,
+          data: runtimeData?.data ?? data,
+          metadata: runtimeData?.metadata ?? {},
+          runtimeOk: runtimeData?.ok ?? true,
+        })
+        return
+      } catch (error) {
+        clearTimeout(timeout)
+        errors.push(`${baseUrl}: ${stringifyError(error)}`)
+      }
+    }
+
+    res.status(502).json({
+      success: false,
+      error: {
+        code: 'RUNTIME_UNREACHABLE',
+        message: errors.join('; ') || 'runtime unreachable',
+      },
+    })
+  })
+)
+
+router.post(
   '/skills/skills-cli',
   authenticate,
   combinedRateLimit,
@@ -531,10 +670,6 @@ router.post(
     }
     await fs.ensureDir(semibotSkillsRoot)
 
-    const before = new Set<string>()
-    for (const root of agentsSkillsRoots) {
-      for (const name of listSubdirs(root)) before.add(name)
-    }
     let commandArgs: string[] = []
     if (action === 'init') {
       commandArgs = ['init', '--yes']
@@ -575,39 +710,18 @@ router.post(
       return
     }
 
+    const cleanedStdout = sanitizeCliText(run.stdout)
+    const cleanedStderr = sanitizeCliText(run.stderr)
+    const candidates = action === 'find' ? extractSkillsCliCandidates(`${cleanedStdout}\n${cleanedStderr}`) : []
     let synced: string[] = []
+    let scannedRoots: string[] = []
     if (action === 'add' || action === 'update' || action === 'init') {
-      const rootsAfter = agentsSkillsRoots.map((root) => ({ root, names: listSubdirs(root) }))
-      const after = new Set<string>()
-      for (const bucket of rootsAfter) {
-        for (const name of bucket.names) after.add(name)
-      }
-      const candidates = new Set<string>()
-      for (const name of after) {
-        if (!before.has(name) || action !== 'add') {
-          candidates.add(name)
-        }
-      }
-      if (action === 'add' && body.skill) {
-        const skill = sanitizeSkillName(body.skill)
-        if (skill && after.has(skill)) {
-          candidates.add(skill)
-        }
-      }
-      for (const name of candidates) {
-        let src = ''
-        for (const bucket of rootsAfter) {
-          const candidate = path.join(bucket.root, name)
-          if (bucket.names.has(name) && fs.existsSync(candidate)) {
-            src = candidate
-            break
-          }
-        }
-        if (!src) continue
-        const dst = path.join(semibotSkillsRoot, name)
-        await fs.copy(src, dst, { overwrite: true, errorOnExist: false })
-        synced.push(name)
-      }
+      const syncResult = await syncAgentSkillsToSemibot({
+        agentsSkillsRoots,
+        semibotSkillsRoot,
+      })
+      synced = syncResult.synced
+      scannedRoots = syncResult.scannedRoots
     }
 
     const baseUrls = getRuntimeBaseUrls()
@@ -619,9 +733,10 @@ router.post(
       data: {
         action,
         command: ['npx', 'skills', ...commandArgs],
-        stdout: sanitizeCliText(run.stdout),
-        stderr: sanitizeCliText(run.stderr),
-        agentsSkillsRoots,
+        stdout: cleanedStdout,
+        stderr: cleanedStderr,
+        candidates,
+        agentsSkillsRoots: scannedRoots.length > 0 ? scannedRoots : agentsSkillsRoots,
         syncedSkills: synced,
         reindex,
         refresh,

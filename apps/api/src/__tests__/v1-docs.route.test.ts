@@ -27,6 +27,7 @@ describe('v1 docs route', () => {
     expect(res.json).toHaveBeenCalledTimes(1)
     const payload = res.json.mock.calls[0][0]
     expect(payload?.success).toBe(true)
+    expect(payload?.data?.endpoints?.control).toBe('/api/v1/control')
     expect(payload?.data?.endpoints?.evolutionCapabilities).toBe('/api/v1/evolution-capabilities')
     expect(payload?.data?.deprecated?.[0]).toMatchObject({
       path: '/api/v1/context-policies',

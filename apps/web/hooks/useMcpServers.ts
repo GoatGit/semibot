@@ -125,30 +125,56 @@ export function useMcpServers(options: ListMcpServersOptions = {}) {
   }, [fetchServers])
 
   const createServer = useCallback(async (input: CreateMcpServerInput): Promise<McpServer> => {
-    const response = await apiClient.post<ApiResponse<McpServer>>('/mcp', input)
-    if (response.success) {
-      setServers((prev) => [...prev, response.data])
-      return response.data
+    const response = await apiClient.post<ApiResponse<{ item?: McpServer }>>('/control/mcp/create', {
+      payload: {
+        name: input.name,
+        description: input.description,
+        endpoint: input.endpoint,
+        transport: input.transport,
+        auth_type: input.authType,
+        auth_config: input.authConfig,
+      },
+    })
+    if (response.success && response.data?.item) {
+      setServers((prev) => [...prev, response.data.item!])
+      return response.data.item
     }
     throw new Error('创建 MCP Server 失败')
   }, [])
 
   const updateServer = useCallback(async (id: string, input: UpdateMcpServerInput): Promise<McpServer> => {
-    const response = await apiClient.put<ApiResponse<McpServer>>(`/mcp/${id}`, input)
-    if (response.success) {
-      setServers((prev) => prev.map((s) => (s.id === id ? response.data : s)))
-      return response.data
+    const response = await apiClient.post<ApiResponse<{ item?: McpServer }>>('/control/mcp/update', {
+      payload: {
+        server_id: id,
+        patch: {
+          name: input.name,
+          description: input.description,
+          endpoint: input.endpoint,
+          transport: input.transport,
+          auth_type: input.authType,
+          auth_config: input.authConfig,
+          is_active: input.isActive,
+        },
+      },
+    })
+    if (response.success && response.data?.item) {
+      setServers((prev) => prev.map((s) => (s.id === id ? response.data.item! : s)))
+      return response.data.item
     }
     throw new Error('更新 MCP Server 失败')
   }, [])
 
   const deleteServer = useCallback(async (id: string): Promise<void> => {
-    await apiClient.delete(`/mcp/${id}`)
+    await apiClient.post('/control/mcp/delete', {
+      payload: { server_id: id },
+    })
     setServers((prev) => prev.filter((s) => s.id !== id))
   }, [])
 
   const testConnection = useCallback(async (id: string): Promise<{ success: boolean; tools: McpTool[]; resources: McpResource[] }> => {
-    const response = await apiClient.post<ApiResponse<{ success: boolean; tools: McpTool[]; resources: McpResource[] }>>(`/mcp/${id}/test`)
+    const response = await apiClient.post<ApiResponse<{ success: boolean; tools: McpTool[]; resources: McpResource[] }>>('/control/mcp/test', {
+      payload: { server_id: id },
+    })
     if (response.success) {
       // 更新本地状态
       setServers((prev) =>

@@ -741,7 +741,7 @@
     "disable": "停用",
     "enable": "启用",
     "empty": "暂无规则，先创建一条规则开始。",
-    "apiUnavailable": "规则 API 尚未接入，请先实现 `/v1/rules`。",
+    "apiUnavailable": "规则 API 尚未接入，请先实现 `/v1/control/rules/list`。",
     "createDescription": "创建事件触发规则",
     "updateDescription": "更新规则配置",
     "actionMode": {
@@ -1021,7 +1021,7 @@
     }
   },
   "dashboard": {
-    "subtitle": "能干活、能提醒、能协作、能自己变强的数字员工。",
+    "subtitle": "能干活、能提醒、能协作、能自己变强的大闸蟹。",
     "cards": {
       "agents": {
         "label": "Agent",
@@ -1103,7 +1103,7 @@
       "coreData": "无法加载仪表盘核心数据，请检查 API 服务状态",
       "load": "加载失败"
     },
-    "title": "Semibot - 半自动智能体平台",
+    "title": "Semibot - 半个通用智能体",
     "channelList": {
       "title": "通道会话总览",
       "subtitle": "按来源与 Chat ID 分组查看全部通道会话和最近执行记录。",

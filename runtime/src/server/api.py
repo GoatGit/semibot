@@ -120,6 +120,11 @@ class SimulateRuleRequest(BaseModel):
     event: dict[str, Any]
 
 
+class ControlPlaneActionRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatStartRequest(BaseModel):
     message: str
     agent_id: str = "semibot"
@@ -433,6 +438,33 @@ def create_app(
         return sessions, agents
 
     register_gateway_routes(app, gateway_manager)
+
+    @app.post("/v1/control/{domain}/{action}")
+    async def control_plane_action(
+        domain: str,
+        action: str,
+        req: ControlPlaneActionRequest,
+    ) -> dict[str, Any]:
+        registry = app.state.skill_registry
+        tool = registry.get_tool("control_plane") or registry.get_tool("rule_authoring")
+        if tool is None:
+            raise HTTPException(status_code=503, detail="control_plane tool unavailable")
+        result = await tool.execute(
+            domain=str(domain or "").strip().lower(),
+            action=str(action or "").strip(),
+            payload=req.payload or {},
+            options=req.options or {},
+        )
+        if result.success:
+            return {
+                "ok": True,
+                "data": result.result,
+                "metadata": result.metadata or {},
+            }
+        detail_payload: dict[str, Any] = {"message": result.error or "control action failed"}
+        if isinstance(result.metadata, dict):
+            detail_payload.update(result.metadata)
+        raise HTTPException(status_code=400, detail=detail_payload)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:

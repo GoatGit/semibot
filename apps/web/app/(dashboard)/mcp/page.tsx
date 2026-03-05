@@ -436,7 +436,15 @@ export default function McpPage() {
   }, [servers])
 
   const buildPayload = () => {
-    const payload: Record<string, unknown> = {
+    const payload: {
+      name: string
+      endpoint: string
+      transport: TransportType
+      description?: string
+      authType?: 'api_key'
+      authConfig?: { apiKey: string }
+      isSystem?: boolean
+    } = {
       name: formState.name.trim(),
       endpoint: formState.endpoint.trim(),
       transport: formState.transport,
@@ -458,7 +466,18 @@ export default function McpPage() {
     if (!formState.name.trim() || !formState.endpoint.trim()) return
     try {
       setSaving(true)
-      await apiClient.post<ApiResponse<McpServer>>('/mcp', buildPayload())
+      const payload = buildPayload()
+      await apiClient.post('/control/mcp/create', {
+        payload: {
+          name: payload.name,
+          description: payload.description,
+          endpoint: payload.endpoint,
+          transport: payload.transport,
+          auth_type: payload.authType,
+          auth_config: payload.authConfig,
+          is_system: payload.isSystem,
+        },
+      })
       setFormState(EMPTY_FORM)
       setShowCreate(false)
       await loadServers()
@@ -473,7 +492,11 @@ export default function McpPage() {
   const handleDelete = async (serverId: string) => {
     try {
       setSaving(true)
-      await apiClient.delete(`/mcp/${serverId}`)
+      await apiClient.post('/control/mcp/delete', {
+        payload: {
+          server_id: serverId,
+        },
+      })
       await loadServers()
     } catch (err) {
       console.error('[MCP] 删除失败:', err)
@@ -507,7 +530,11 @@ export default function McpPage() {
       setError(null)
       const total = selectedServerIds.length
       const results = await Promise.allSettled(
-        selectedServerIds.map((id) => apiClient.post(`/mcp/${id}/test`))
+        selectedServerIds.map((id) =>
+          apiClient.post('/control/mcp/test', {
+            payload: { server_id: id },
+          })
+        )
       )
       const failed = results.filter((result) => result.status === 'rejected').length
       setSelectedServerIds([])
@@ -529,7 +556,11 @@ export default function McpPage() {
       setError(null)
       const total = selectedServerIds.length
       const results = await Promise.allSettled(
-        selectedServerIds.map((id) => apiClient.delete(`/mcp/${id}`))
+        selectedServerIds.map((id) =>
+          apiClient.post('/control/mcp/delete', {
+            payload: { server_id: id },
+          })
+        )
       )
       const failed = results.filter((result) => result.status === 'rejected').length
       setSelectedServerIds([])
@@ -545,7 +576,9 @@ export default function McpPage() {
   const handleTestConnection = async (serverId: string) => {
     try {
       setTestingId(serverId)
-      await apiClient.post(`/mcp/${serverId}/test`)
+      await apiClient.post('/control/mcp/test', {
+        payload: { server_id: serverId },
+      })
       await loadServers()
     } catch (err) {
       console.error('[MCP] 连接测试失败:', err)
@@ -572,7 +605,21 @@ export default function McpPage() {
     if (!editingServerId || !formState.name.trim() || !formState.endpoint.trim()) return
     try {
       setSaving(true)
-      await apiClient.put<ApiResponse<McpServer>>(`/mcp/${editingServerId}`, buildPayload())
+      const payload = buildPayload()
+      await apiClient.post('/control/mcp/update', {
+        payload: {
+          server_id: editingServerId,
+          patch: {
+            name: payload.name,
+            description: payload.description,
+            endpoint: payload.endpoint,
+            transport: payload.transport,
+            auth_type: payload.authType,
+            auth_config: payload.authConfig,
+            is_system: payload.isSystem,
+          },
+        },
+      })
       setShowEdit(false)
       setEditingServerId(null)
       setFormState(EMPTY_FORM)

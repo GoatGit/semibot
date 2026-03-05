@@ -25,7 +25,7 @@
     },
     {
       "id": "AC-5",
-      "description": "agents 域返回明确占位错误（UNSUPPORTED_CONTROL_DOMAIN）",
+      "description": "control_plane 支持 agents 域：list/get/create/update/delete/enable/disable",
       "passes": true
     },
     {

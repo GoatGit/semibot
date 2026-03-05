@@ -114,25 +114,51 @@ export function useAgents(options: ListAgentsOptions = {}) {
   }, [fetchAgents])
 
   const createAgent = useCallback(async (input: CreateAgentInput): Promise<Agent> => {
-    const response = await apiClient.post<ApiResponse<Agent>>('/agents', input)
-    if (response.success) {
-      setAgents((prev) => [...prev, response.data])
-      return response.data
+    const response = await apiClient.post<ApiResponse<{ item?: Agent }>>('/control/agents/create', {
+      payload: {
+        name: input.name,
+        description: input.description,
+        system_prompt: input.systemPrompt,
+        config: input.config,
+        skills: input.skills,
+        sub_agents: input.subAgents,
+        is_public: input.isPublic,
+      },
+    })
+    if (response.success && response.data?.item) {
+      setAgents((prev) => [...prev, response.data.item!])
+      return response.data.item
     }
     throw new Error('创建 Agent 失败')
   }, [])
 
   const updateAgent = useCallback(async (id: string, input: UpdateAgentInput): Promise<Agent> => {
-    const response = await apiClient.put<ApiResponse<Agent>>(`/agents/${id}`, input)
-    if (response.success) {
-      setAgents((prev) => prev.map((a) => (a.id === id ? response.data : a)))
-      return response.data
+    const response = await apiClient.post<ApiResponse<{ item?: Agent }>>('/control/agents/update', {
+      payload: {
+        agent_id: id,
+        patch: {
+          name: input.name,
+          description: input.description,
+          system_prompt: input.systemPrompt,
+          config: input.config,
+          skills: input.skills,
+          sub_agents: input.subAgents,
+          is_active: input.isActive,
+          is_public: input.isPublic,
+        },
+      },
+    })
+    if (response.success && response.data?.item) {
+      setAgents((prev) => prev.map((a) => (a.id === id ? response.data.item! : a)))
+      return response.data.item
     }
     throw new Error('更新 Agent 失败')
   }, [])
 
   const deleteAgent = useCallback(async (id: string): Promise<void> => {
-    await apiClient.delete(`/agents/${id}`)
+    await apiClient.post('/control/agents/delete', {
+      payload: { agent_id: id },
+    })
     setAgents((prev) => prev.filter((a) => a.id !== id))
   }, [])
 

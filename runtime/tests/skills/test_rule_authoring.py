@@ -414,7 +414,7 @@ async def test_control_plane_blocks_unsupported_domain(tmp_path: Path, monkeypat
     monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
     tool = RuleAuthoringTool(tool_name="control_plane")
 
-    result = await tool.execute(domain="agents", action="list", payload={})
+    result = await tool.execute(domain="unknown", action="list", payload={})
     assert result.success is False
     assert result.metadata.get("error_code") == "UNSUPPORTED_CONTROL_DOMAIN"
 
@@ -530,6 +530,58 @@ async def test_control_plane_mcp_create_bind_and_delete(tmp_path: Path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_control_plane_mcp_test_action(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    created = await tool.execute(
+        domain="mcp",
+        action="create",
+        payload={"name": "mcp-probe", "endpoint": "http://localhost:9100", "transport": "streamable_http"},
+    )
+    assert created.success is True
+    server_id = str((created.result.get("item") or {}).get("id") or "")
+    assert server_id
+
+    monkeypatch.setattr(RuleAuthoringTool, "_probe_mcp_server", staticmethod(lambda _server: (True, "ok")))
+    tested = await tool.execute(domain="mcp", action="test", payload={"server_id": server_id})
+    assert tested.success is True
+    assert tested.result.get("success") is True
+
+
+@pytest.mark.asyncio
+async def test_control_plane_skills_enable_disable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "demo-skill"
+    (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
+    (skill_dir / "scripts" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text("# demo-skill\n", encoding="utf-8")
+
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    monkeypatch.setattr("src.skills.rule_authoring.default_skills_path", lambda: skills_root)
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    refreshed = await tool.execute(domain="skills", action="refresh", payload={})
+    assert refreshed.success is True
+
+    disabled = await tool.execute(domain="skills", action="disable", payload={"skill_id": "demo-skill"})
+    assert disabled.success is True
+    state_file = skills_root / ".state.json"
+    assert state_file.exists()
+    assert "demo-skill" in state_file.read_text(encoding="utf-8")
+
+    enabled = await tool.execute(domain="skills", action="enable", payload={"skill_id": "demo-skill"})
+    assert enabled.success is True
+    assert "demo-skill" not in state_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
 async def test_control_plane_config_llm_write_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules_dir = tmp_path / "rules"
     db_path = tmp_path / "events.db"
@@ -544,3 +596,50 @@ async def test_control_plane_config_llm_write_blocked(tmp_path: Path, monkeypatc
     )
     assert result.success is False
     assert result.metadata.get("error_code") == "LLM_CONFIG_WRITE_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_control_plane_agents_crud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules_dir = tmp_path / "rules"
+    db_path = tmp_path / "events.db"
+    monkeypatch.setenv("SEMIBOT_RULES_PATH", str(rules_dir))
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    tool = RuleAuthoringTool(tool_name="control_plane")
+
+    created = await tool.execute(
+        domain="agents",
+        action="create",
+        payload={
+            "name": "agent-alpha",
+            "description": "alpha",
+            "system_prompt": "You are alpha",
+            "model": "gpt-4o",
+            "temperature": 0.5,
+            "max_tokens": 1024,
+        },
+    )
+    assert created.success is True
+    item = created.result.get("item") or {}
+    agent_id = str(item.get("id") or "")
+    assert agent_id
+
+    listed = await tool.execute(domain="agents", action="list", payload={})
+    assert listed.success is True
+    items = listed.result.get("items") or []
+    assert any(str(row.get("id") or "") == agent_id for row in items)
+
+    updated = await tool.execute(
+        domain="agents",
+        action="update",
+        payload={"agent_id": agent_id, "description": "alpha-v2", "temperature": 0.6},
+    )
+    assert updated.success is True
+    assert (updated.result.get("item") or {}).get("description") == "alpha-v2"
+
+    disabled = await tool.execute(domain="agents", action="disable", payload={"agent_id": agent_id})
+    assert disabled.success is True
+    assert (disabled.result.get("item") or {}).get("is_active") is False
+
+    deleted = await tool.execute(domain="agents", action="delete", payload={"agent_id": agent_id})
+    assert deleted.success is True
+    assert deleted.result.get("deleted") is True

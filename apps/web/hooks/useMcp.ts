@@ -134,13 +134,22 @@ export function useMcp(): UseMcpReturn {
    * 创建 Server
    */
   const createServer = useCallback(async (input: CreateMcpServerInput): Promise<McpServer> => {
-    const response = await apiClient.post<ApiResponse<McpServer>>('/mcp', input)
+    const response = await apiClient.post<ApiResponse<{ item?: McpServer }>>('/control/mcp/create', {
+      payload: {
+        name: input.name,
+        description: input.description,
+        endpoint: input.endpoint,
+        transport: input.transport,
+        auth_type: input.authType,
+        auth_config: input.authConfig,
+      },
+    })
 
-    if (!response.success || !response.data) {
+    if (!response.success || !response.data?.item) {
       throw new Error(response.error?.message ?? '创建 MCP Server 失败')
     }
 
-    const server = response.data
+    const server = response.data.item
 
     setState((prev) => ({
       ...prev,
@@ -172,13 +181,26 @@ export function useMcp(): UseMcpReturn {
    * 更新 Server
    */
   const updateServer = useCallback(async (serverId: string, input: UpdateMcpServerInput): Promise<McpServer> => {
-    const response = await apiClient.put<ApiResponse<McpServer>>(`/mcp/${serverId}`, input)
+    const response = await apiClient.post<ApiResponse<{ item?: McpServer }>>('/control/mcp/update', {
+      payload: {
+        server_id: serverId,
+        patch: {
+          name: input.name,
+          description: input.description,
+          endpoint: input.endpoint,
+          transport: input.transport,
+          auth_type: input.authType,
+          auth_config: input.authConfig,
+          is_active: input.isActive,
+        },
+      },
+    })
 
-    if (!response.success || !response.data) {
+    if (!response.success || !response.data?.item) {
       throw new Error(response.error?.message ?? '更新 MCP Server 失败')
     }
 
-    const updatedServer = response.data
+    const updatedServer = response.data.item
 
     setState((prev) => ({
       ...prev,
@@ -193,7 +215,9 @@ export function useMcp(): UseMcpReturn {
    * 删除 Server
    */
   const deleteServer = useCallback(async (serverId: string) => {
-    await apiClient.delete(`/mcp/${serverId}`)
+    await apiClient.post('/control/mcp/delete', {
+      payload: { server_id: serverId },
+    })
 
     setState((prev) => ({
       ...prev,
@@ -209,7 +233,9 @@ export function useMcp(): UseMcpReturn {
     setState((prev) => ({ ...prev, isTesting: true }))
 
     try {
-      const response = await apiClient.post<ApiResponse<{ success: boolean; message: string }>>(`/mcp/${serverId}/test`)
+      const response = await apiClient.post<ApiResponse<{ success: boolean; message: string }>>('/control/mcp/test', {
+        payload: { server_id: serverId },
+      })
 
       if (!response.success || !response.data) {
         throw new Error(response.error?.message ?? '测试连接失败')

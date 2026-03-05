@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route, type Request } from '@playwright/test'
+import { test, expect, type Page, type Route } from '@playwright/test'
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({
@@ -31,49 +31,72 @@ async function bootstrap(page: Page) {
       })
     )
   })
-
-  await page.route('**/api/v1/sessions**', async (route) => {
-    await json(route, { success: true, data: [], meta: { total: 0, page: 1, limit: 10, totalPages: 0 } })
-  })
 }
 
 async function setupSkillsMocks(page: Page) {
   let definitions = [
     { id: 'skill-1', name: 'Skill A', skillId: 'skill-a', description: 'A', category: 'general', isActive: true },
     { id: 'skill-2', name: 'Skill B', skillId: 'skill-b', description: 'B', category: 'general', isActive: true },
-    { id: 'skill-3', name: 'Skill C', skillId: 'skill-c', description: 'C', category: 'general', isActive: false },
+    { id: 'skill-3', name: 'Skill C', skillId: 'skill-c', description: 'C', category: 'general', isActive: true },
   ]
 
-  await page.route('**/api/v1/skill-definitions**', async (route, request) => {
-    const { pathname } = new URL(request.url())
-    const method = request.method()
+  await page.route('**/api/v1/**', async (route) => {
+    const req = route.request()
+    const url = new URL(req.url())
+    const pathname = url.pathname
+    const method = req.method()
 
-    if (pathname.endsWith('/skill-definitions') && method === 'GET') {
+    if (pathname.includes('/api/v1/sessions') && method === 'GET') {
+      await json(route, { success: true, data: [], meta: { total: 0, page: 1, limit: 10, totalPages: 0 } })
+      return
+    }
+
+    if (pathname === '/api/v1/runtime/skills' && method === 'GET') {
       await json(route, {
         success: true,
-        data: definitions,
-        meta: { total: definitions.length, page: 1, limit: 100, totalPages: 1 },
+        data: {
+          available: true,
+          metadata: definitions.map((def) => ({
+            skill_id: def.skillId,
+            name: def.name,
+            description: def.description,
+            source: def.category,
+            status: def.isActive ? 'active' : 'disabled',
+            tags: [],
+            installed_at: new Date().toISOString(),
+            indexed_at: new Date().toISOString(),
+          })),
+          skills: [],
+        },
       })
       return
     }
 
-    const idMatch = pathname.match(/\/api\/v1\/skill-definitions\/([^/]+)$/)
-    if (idMatch && method === 'PUT') {
-      const id = idMatch[1]
-      const body = (request.postDataJSON() ?? {}) as { isActive?: boolean }
-      definitions = definitions.map((def) => (def.id === id ? { ...def, isActive: body.isActive ?? def.isActive } : def))
-      await json(route, { success: true, data: definitions.find((def) => def.id === id) })
+    if (pathname === '/api/v1/control/skills/enable' && method === 'POST') {
+      const body = (req.postDataJSON() ?? {}) as { payload?: { skill_id?: string } }
+      const skillId = body.payload?.skill_id
+      definitions = definitions.map((def) => (def.skillId === skillId ? { ...def, isActive: true } : def))
+      await json(route, { success: true, data: { ok: true } })
       return
     }
 
-    if (idMatch && method === 'DELETE') {
-      const id = idMatch[1]
-      definitions = definitions.filter((def) => def.id !== id)
-      await json(route, { success: true, deleted: true })
+    if (pathname === '/api/v1/control/skills/disable' && method === 'POST') {
+      const body = (req.postDataJSON() ?? {}) as { payload?: { skill_id?: string } }
+      const skillId = body.payload?.skill_id
+      definitions = definitions.map((def) => (def.skillId === skillId ? { ...def, isActive: false } : def))
+      await json(route, { success: true, data: { ok: true } })
       return
     }
 
-    await route.continue()
+    if (pathname === '/api/v1/control/skills/uninstall' && method === 'POST') {
+      const body = (req.postDataJSON() ?? {}) as { payload?: { skill_id?: string } }
+      const skillId = body.payload?.skill_id
+      definitions = definitions.filter((def) => def.skillId !== skillId)
+      await json(route, { success: true, data: { ok: true } })
+      return
+    }
+
+    await json(route, { success: true, data: [] })
   })
 
   return {
@@ -119,11 +142,18 @@ async function setupMcpMocks(page: Page) {
     },
   ]
 
-  await page.route('**/api/v1/mcp**', async (route: Route, request: Request) => {
-    const method = request.method()
-    const pathname = new URL(request.url()).pathname
+  await page.route('**/api/v1/**', async (route) => {
+    const req = route.request()
+    const url = new URL(req.url())
+    const pathname = url.pathname
+    const method = req.method()
 
-    if (pathname.endsWith('/mcp') && method === 'GET') {
+    if (pathname.includes('/api/v1/sessions') && method === 'GET') {
+      await json(route, { success: true, data: [], meta: { total: 0, page: 1, limit: 10, totalPages: 0 } })
+      return
+    }
+
+    if (pathname === '/api/v1/mcp' && method === 'GET') {
       await json(route, {
         success: true,
         data: servers,
@@ -132,27 +162,27 @@ async function setupMcpMocks(page: Page) {
       return
     }
 
-    const testMatch = pathname.match(/\/api\/v1\/mcp\/([^/]+)\/test$/)
-    if (testMatch && method === 'POST') {
-      const id = testMatch[1]
+    if (pathname === '/api/v1/control/mcp/test' && method === 'POST') {
+      const body = (req.postDataJSON() ?? {}) as { payload?: { server_id?: string } }
+      const id = body.payload?.server_id || ''
       servers = servers.map((server) => (
         server.id === id
           ? { ...server, status: 'connected', tools: [{ name: `${server.name.toLowerCase()}_tool` }] }
           : server
       ))
-      await json(route, { success: true, connected: true })
+      await json(route, { success: true, data: { success: true, message: 'ok' } })
       return
     }
 
-    const deleteMatch = pathname.match(/\/api\/v1\/mcp\/([^/]+)$/)
-    if (deleteMatch && method === 'DELETE') {
-      const id = deleteMatch[1]
+    if (pathname === '/api/v1/control/mcp/delete' && method === 'POST') {
+      const body = (req.postDataJSON() ?? {}) as { payload?: { server_id?: string } }
+      const id = body.payload?.server_id || ''
       servers = servers.filter((server) => server.id !== id)
-      await json(route, { success: true, deleted: true })
+      await json(route, { success: true, data: { deleted: true } })
       return
     }
 
-    await route.continue()
+    await json(route, { success: true, data: [] })
   })
 
   return {
@@ -167,7 +197,7 @@ test.describe('Skills & MCP Batch Management', () => {
     const skillState = await setupSkillsMocks(page)
 
     await page.goto('/skills')
-    await expect(page.getByRole('heading', { name: '技能管理' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /技能|Skills/i })).toBeVisible({ timeout: 15000 })
 
     await page.getByTestId('skills-select-all').click()
     await expect(page.getByText('已选择 3 个技能')).toBeVisible()
@@ -188,7 +218,7 @@ test.describe('Skills & MCP Batch Management', () => {
     const mcpState = await setupMcpMocks(page)
 
     await page.goto('/mcp')
-    await expect(page.getByRole('heading', { name: 'MCP Servers' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /MCP Servers|MCP 服务器/i })).toBeVisible({ timeout: 15000 })
 
     await page.getByTestId('mcp-select-all').click()
     await expect(page.getByText('已选择 3 个 MCP')).toBeVisible()

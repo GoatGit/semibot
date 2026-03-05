@@ -9,19 +9,9 @@ import { Card, CardContent } from '@/components/ui/Card'
 import { FileUpload } from '@/components/ui/FileUpload'
 import { Modal } from '@/components/ui/Modal'
 import { apiClient } from '@/lib/api'
+import { toast } from '@/stores/toastStore'
 import type { SkillDefinition } from '@semibot/shared-types'
 import { useLocale } from '@/components/providers/LocaleProvider'
-
-interface ApiResponse<T> {
-  success: boolean
-  data: T
-  meta?: {
-    total: number
-    page: number
-    limit: number
-    totalPages: number
-  }
-}
 
 interface RuntimeSkillsResponse {
   success: boolean
@@ -35,6 +25,16 @@ interface RuntimeSkillsResponse {
   }
 }
 
+interface SkillsCliResponse {
+  success?: boolean
+  data?: {
+    stdout?: string
+    stderr?: string
+    syncedSkills?: string[]
+    candidates?: string[]
+  }
+}
+
 export default function SkillDefinitionsPage() {
   const { t } = useLocale()
   const [definitions, setDefinitions] = useState<SkillDefinition[]>([])
@@ -44,6 +44,7 @@ export default function SkillDefinitionsPage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [uploadLoading, setUploadLoading] = useState(false)
   const [skillsCliLoading, setSkillsCliLoading] = useState(false)
+  const [skillsCliActionLoading, setSkillsCliActionLoading] = useState<'init' | 'update' | 'find' | 'add' | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   // 创建表单状态
@@ -58,6 +59,67 @@ export default function SkillDefinitionsPage() {
   const [skillsCliCandidates, setSkillsCliCandidates] = useState<string[]>([])
   const directoryInputRef = useRef<HTMLInputElement | null>(null)
 
+  const buildDefinitionsFromRuntime = useCallback((runtimeData?: RuntimeSkillsResponse['data']): SkillDefinition[] => {
+    const metadataRows = Array.isArray(runtimeData?.metadata) ? runtimeData?.metadata : []
+    const nowIso = new Date().toISOString()
+    const fromMetadata: SkillDefinition[] = metadataRows
+      .map((row, idx) => {
+        const skillId = String(row.skill_id || row.name || `skill_${idx}`)
+        const name = String(row.name || skillId)
+        const description = String(row.description || '')
+        const tags = Array.isArray(row.tags) ? row.tags.map((tag) => String(tag)) : []
+        const status = String(row.status || 'active')
+        const createdAt = String(row.installed_at || nowIso)
+        const updatedAt = String(row.indexed_at || nowIso)
+        return {
+          id: `runtime:${skillId}`,
+          skillId,
+          name,
+          description,
+          triggerKeywords: [],
+          category: String(row.source || 'package'),
+          tags,
+          isActive: status === 'active',
+          isPublic: false,
+          createdAt,
+          updatedAt,
+        }
+      })
+
+    const builtinSkillNames = Array.isArray(runtimeData?.skills) ? runtimeData.skills : []
+    const builtinSkillLike = builtinSkillNames
+      .filter((name) => name === 'pdf' || name === 'xlsx')
+      .map<SkillDefinition>((name) => ({
+        id: `builtin:${name}`,
+        skillId: name,
+        name,
+        description: '',
+        triggerKeywords: [],
+        category: 'builtin',
+        tags: ['builtin'],
+        isActive: true,
+        isPublic: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }))
+
+    const merged = [...fromMetadata, ...builtinSkillLike]
+    const dedup = new Map<string, SkillDefinition>()
+    for (const item of merged) {
+      if (!dedup.has(item.skillId)) dedup.set(item.skillId, item)
+    }
+    return Array.from(dedup.values())
+  }, [])
+
+  const applyDefinitionsSafely = useCallback((next: SkillDefinition[]) => {
+    setDefinitions((prev) => {
+      const prevHasCustom = prev.some((item) => item.category !== 'builtin')
+      const nextHasCustom = next.some((item) => item.category !== 'builtin')
+      if (prevHasCustom && !nextHasCustom) return prev
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     if (!directoryInputRef.current) return
     directoryInputRef.current.setAttribute('webkitdirectory', '')
@@ -71,67 +133,8 @@ export default function SkillDefinitionsPage() {
       const runtime = await apiClient.get<RuntimeSkillsResponse>('/runtime/skills')
       const runtimeData = runtime.data
       if (runtime.success && runtimeData?.available) {
-        const metadataRows = Array.isArray(runtimeData.metadata) ? runtimeData.metadata : []
-        const nowIso = new Date().toISOString()
-        const fromMetadata: SkillDefinition[] = metadataRows
-          .filter((row) => String(row.status || 'active') === 'active')
-          .map((row, idx) => {
-          const skillId = String(row.skill_id || row.name || `skill_${idx}`)
-          const name = String(row.name || skillId)
-          const description = String(row.description || '')
-          const tags = Array.isArray(row.tags) ? row.tags.map((tag) => String(tag)) : []
-          const status = String(row.status || 'active')
-          const createdAt = String(row.installed_at || nowIso)
-          const updatedAt = String(row.indexed_at || nowIso)
-          return {
-            id: `runtime:${skillId}`,
-            skillId,
-            name,
-            description,
-            triggerKeywords: [],
-            category: String(row.source || 'package'),
-            tags,
-            isActive: status === 'active',
-            isPublic: false,
-            createdAt,
-            updatedAt,
-          }
-        })
-
-        const builtinSkillNames = Array.isArray(runtimeData.skills) ? runtimeData.skills : []
-        const builtinSkillLike = builtinSkillNames
-          .filter((name) => name === 'pdf' || name === 'xlsx')
-          .map<SkillDefinition>((name) => ({
-            id: `builtin:${name}`,
-            skillId: name,
-            name,
-            description: '',
-            triggerKeywords: [],
-            category: 'builtin',
-            tags: ['builtin'],
-            isActive: true,
-            isPublic: false,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          }))
-
-        const merged = [...fromMetadata, ...builtinSkillLike]
-        const dedup = new Map<string, SkillDefinition>()
-        for (const item of merged) {
-          if (!dedup.has(item.skillId)) {
-            dedup.set(item.skillId, item)
-          }
-        }
-        const next = Array.from(dedup.values())
-        setDefinitions((prev) => {
-          // Avoid temporary fallback to only builtin skills while runtime index is refreshing.
-          const prevHasCustom = prev.some((item) => item.category !== 'builtin')
-          const nextHasCustom = next.some((item) => item.category !== 'builtin')
-          if (prevHasCustom && !nextHasCustom) {
-            return prev
-          }
-          return next
-        })
+        const next = buildDefinitionsFromRuntime(runtimeData)
+        applyDefinitionsSafely(next)
         return
       }
       // Runtime temporarily unavailable: keep existing list to avoid UI flashing back to legacy data source.
@@ -141,7 +144,28 @@ export default function SkillDefinitionsPage() {
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [applyDefinitionsSafely, buildDefinitionsFromRuntime, t])
+
+  const waitForSyncedSkillsVisible = useCallback(
+    async (expectedSkills: string[]) => {
+      const targets = expectedSkills.map((item) => item.trim()).filter(Boolean)
+      if (targets.length === 0) return
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        const runtime = await apiClient.get<RuntimeSkillsResponse>('/runtime/skills')
+        const runtimeData = runtime.data
+        if (!runtime.success || !runtimeData?.available) continue
+        const next = buildDefinitionsFromRuntime(runtimeData)
+        const ids = new Set(next.map((item) => item.skillId))
+        const ready = targets.every((name) => ids.has(name))
+        if (ready) {
+          applyDefinitionsSafely(next)
+          return
+        }
+      }
+    },
+    [applyDefinitionsSafely, buildDefinitionsFromRuntime]
+  )
 
   useEffect(() => {
     loadDefinitions()
@@ -184,9 +208,12 @@ export default function SkillDefinitionsPage() {
       setDirectoryFiles([])
       setDirectoryName('')
       await loadDefinitions()
+      toast.success('技能安装成功', `已安装 ${uploadFile.name}`)
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: { message?: string } } }; message?: string }
-      setError(error.response?.data?.error?.message || error.message || t('skillsPage.error.create'))
+      const message = error.response?.data?.error?.message || error.message || t('skillsPage.error.create')
+      setError(message)
+      toast.error('技能安装失败', message)
     } finally {
       setUploadLoading(false)
     }
@@ -195,6 +222,7 @@ export default function SkillDefinitionsPage() {
   const handleSkillsCliAction = async (action: 'init' | 'update' | 'find' | 'add') => {
     try {
       setSkillsCliLoading(true)
+      setSkillsCliActionLoading(action)
       setError(null)
       setSkillsCliOutput('')
       const payload: Record<string, unknown> = { action }
@@ -204,7 +232,7 @@ export default function SkillDefinitionsPage() {
       if (action === 'add') {
         payload.skill = skillsCliSkill.trim()
       }
-      const response = await apiClient.post<{ success?: boolean; data?: { stdout?: string; stderr?: string; syncedSkills?: string[] } }>(
+      const response = await apiClient.post<SkillsCliResponse>(
         '/runtime/skills/skills-cli',
         payload
       )
@@ -219,37 +247,68 @@ export default function SkillDefinitionsPage() {
       const output = lines.filter(Boolean).join('\n').trim()
       setSkillsCliOutput(output)
       if (action === 'find') {
-        const packagePattern = /([a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]*)/gi
-        const matches = output.match(packagePattern) || []
-        const candidates = Array.from(new Set(matches.map((item) => item.trim()).filter(Boolean)))
-        setSkillsCliCandidates(candidates)
+        const fromBackend = Array.isArray(data?.candidates)
+          ? data.candidates
+              .map((item) => String(item || '').trim())
+              .filter((item) => /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]*$/i.test(item))
+          : []
+        if (fromBackend.length > 0) {
+          setSkillsCliCandidates(Array.from(new Set(fromBackend)))
+        } else {
+          const packagePattern = /\b([a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]*)\b/gi
+          const matches = output.match(packagePattern) || []
+          const candidates = Array.from(new Set(matches.map((item) => item.trim()).filter(Boolean)))
+          setSkillsCliCandidates(candidates)
+        }
       } else {
         setSkillsCliCandidates([])
       }
       if (action === 'add' || action === 'update' || action === 'init') {
         await loadDefinitions()
+        const synced = Array.isArray(data?.syncedSkills) ? data.syncedSkills : []
+        await waitForSyncedSkillsVisible(synced)
+        if (action === 'add') {
+          toast.success(
+            'Skills.sh 安装完成',
+            synced.length > 0 ? `已同步: ${synced.join(', ')}` : '安装完成，未发现新增技能目录'
+          )
+        } else {
+          toast.success(
+            action === 'init' ? '技能库初始化完成' : '技能库更新完成',
+            synced.length > 0 ? `已同步 ${synced.length} 个技能` : '未检测到新增技能'
+          )
+        }
       }
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: { message?: string } } }; message?: string }
-      setError(error.response?.data?.error?.message || error.message || 'skills cli failed')
+      const message = error.response?.data?.error?.message || error.message || 'skills cli failed'
+      setError(message)
+      toast.error('Skills.sh 操作失败', message)
       setSkillsCliCandidates([])
     } finally {
       setSkillsCliLoading(false)
+      setSkillsCliActionLoading(null)
     }
   }
 
   const handleToggleActive = async (definition: SkillDefinition) => {
-    if (definition.id.startsWith('runtime:') || definition.id.startsWith('builtin:')) {
-      setError('当前版本暂不支持在此页面启停 runtime 技能，请通过技能目录或配置管理调整。')
+    if (definition.id.startsWith('builtin:')) {
+      setError('内置技能暂不支持在此页面启停。')
       return
     }
     try {
       setActionLoading(true)
       setError(null)
 
-      await apiClient.put(`/skill-definitions/${definition.id}`, {
-        isActive: !definition.isActive,
-      })
+      if (definition.id.startsWith('runtime:')) {
+        await apiClient.post(`/control/skills/${definition.isActive ? 'disable' : 'enable'}`, {
+          payload: { skill_id: definition.skillId },
+        })
+      } else {
+        await apiClient.put(`/skill-definitions/${definition.id}`, {
+          isActive: !definition.isActive,
+        })
+      }
 
       await loadDefinitions()
     } catch (err: unknown) {
@@ -262,8 +321,8 @@ export default function SkillDefinitionsPage() {
   }
 
   const handleDelete = async (definition: SkillDefinition) => {
-    if (definition.id.startsWith('runtime:') || definition.id.startsWith('builtin:')) {
-      setError('当前版本暂不支持在此页面删除 runtime 技能，请从 ~/.semibot/skills 删除后刷新。')
+    if (definition.id.startsWith('builtin:')) {
+      setError('内置技能暂不支持删除。')
       return
     }
     if (!confirm(t('skillsPage.confirm.delete', { name: definition.name }))) return
@@ -272,7 +331,13 @@ export default function SkillDefinitionsPage() {
       setActionLoading(true)
       setError(null)
 
-      await apiClient.delete(`/skill-definitions/${definition.id}`)
+      if (definition.id.startsWith('runtime:')) {
+        await apiClient.post('/control/skills/uninstall', {
+          payload: { skill_id: definition.skillId },
+        })
+      } else {
+        await apiClient.delete(`/skill-definitions/${definition.id}`)
+      }
 
       await loadDefinitions()
     } catch (err: unknown) {
@@ -295,6 +360,10 @@ export default function SkillDefinitionsPage() {
   const selectedCount = selectedIds.length
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id))
   const modalBusy = uploadLoading || skillsCliLoading
+  const installLabel = (() => {
+    const text = t('skillsPage.install')
+    return text === 'skillsPage.install' ? '安装技能' : text
+  })()
 
   useEffect(() => {
     const validIds = new Set(definitions.map((def) => def.id))
@@ -324,10 +393,19 @@ export default function SkillDefinitionsPage() {
       setActionLoading(true)
       setError(null)
       const total = selectedIds.length
+      const selectedDefs = definitions.filter((def) => selectedIds.includes(def.id))
       const results = await Promise.allSettled(
-        selectedIds.map((id) =>
-          apiClient.put(`/skill-definitions/${id}`, { isActive })
-        )
+        selectedDefs.map((def) => {
+          if (def.id.startsWith('builtin:')) {
+            return Promise.reject(new Error('builtin skill immutable'))
+          }
+          if (def.id.startsWith('runtime:')) {
+            return apiClient.post(`/control/skills/${isActive ? 'enable' : 'disable'}`, {
+              payload: { skill_id: def.skillId },
+            })
+          }
+          return apiClient.put(`/skill-definitions/${def.id}`, { isActive })
+        })
       )
       const failed = results.filter((result) => result.status === 'rejected').length
       setSelectedIds([])
@@ -348,8 +426,19 @@ export default function SkillDefinitionsPage() {
       setActionLoading(true)
       setError(null)
       const total = selectedIds.length
+      const selectedDefs = definitions.filter((def) => selectedIds.includes(def.id))
       const results = await Promise.allSettled(
-        selectedIds.map((id) => apiClient.delete(`/skill-definitions/${id}`))
+        selectedDefs.map((def) => {
+          if (def.id.startsWith('builtin:')) {
+            return Promise.reject(new Error('builtin skill immutable'))
+          }
+          if (def.id.startsWith('runtime:')) {
+            return apiClient.post('/control/skills/uninstall', {
+              payload: { skill_id: def.skillId },
+            })
+          }
+          return apiClient.delete(`/skill-definitions/${def.id}`)
+        })
       )
       const failed = results.filter((result) => result.status === 'rejected').length
       setSelectedIds([])
@@ -386,7 +475,7 @@ export default function SkillDefinitionsPage() {
               </p>
             </div>
             <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreateDialog(true)}>
-              {t('skillsPage.install')}
+              {installLabel}
             </Button>
           </div>
 
@@ -601,12 +690,12 @@ export default function SkillDefinitionsPage() {
             <div className="rounded-lg border border-border-subtle p-3">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-text-secondary">或上传技能目录</div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  type="button"
-                  onClick={() => directoryInputRef.current?.click()}
-                  disabled={modalBusy}
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => directoryInputRef.current?.click()}
+                  disabled={uploadLoading}
                 >
                   选择目录
                 </Button>
@@ -636,7 +725,7 @@ export default function SkillDefinitionsPage() {
               )}
             </div>
             <div className="pt-1">
-              <Button onClick={handleCreate} loading={uploadLoading} disabled={modalBusy || (!createFile && directoryFiles.length === 0)}>
+              <Button onClick={handleCreate} loading={uploadLoading} disabled={uploadLoading || (!createFile && directoryFiles.length === 0)}>
                 {t('skillsPage.uploadAndInstall')}
               </Button>
             </div>
@@ -648,22 +737,49 @@ export default function SkillDefinitionsPage() {
               使用 npx skills 管理并同步 ~/.agents/skills 到 ~/.semibot/skills
             </p>
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" type="button" disabled={modalBusy} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('init')}>
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                disabled={skillsCliLoading || uploadLoading}
+                loading={skillsCliActionLoading === 'init'}
+                onClick={() => handleSkillsCliAction('init')}
+              >
                 初始化技能库
               </Button>
-              <Button variant="secondary" size="sm" type="button" disabled={modalBusy} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('update')}>
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                disabled={skillsCliLoading || uploadLoading}
+                loading={skillsCliActionLoading === 'update'}
+                onClick={() => handleSkillsCliAction('update')}
+              >
                 更新技能库
               </Button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-              <Input placeholder="输入关键词搜索（例如 deep research）" value={skillsCliQuery} onChange={(e) => setSkillsCliQuery(e.target.value)} disabled={modalBusy} />
-              <Button variant="secondary" size="sm" type="button" disabled={modalBusy || !skillsCliQuery.trim()} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('find')}>
+              <Input placeholder="输入关键词搜索（例如 deep research）" value={skillsCliQuery} onChange={(e) => setSkillsCliQuery(e.target.value)} disabled={skillsCliLoading || uploadLoading} />
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                disabled={skillsCliLoading || uploadLoading || !skillsCliQuery.trim()}
+                loading={skillsCliActionLoading === 'find'}
+                onClick={() => handleSkillsCliAction('find')}
+              >
                 搜索技能
               </Button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-              <Input placeholder="输入技能包名（例如 owner/repo@skill-id）" value={skillsCliSkill} onChange={(e) => setSkillsCliSkill(e.target.value)} disabled={modalBusy} />
-              <Button size="sm" type="button" disabled={modalBusy || !skillsCliSkill.trim()} loading={skillsCliLoading} onClick={() => handleSkillsCliAction('add')}>
+              <Input placeholder="输入技能包名（例如 owner/repo@skill-id）" value={skillsCliSkill} onChange={(e) => setSkillsCliSkill(e.target.value)} disabled={skillsCliLoading || uploadLoading} />
+              <Button
+                size="sm"
+                type="button"
+                disabled={skillsCliLoading || uploadLoading || !skillsCliSkill.trim()}
+                loading={skillsCliActionLoading === 'add'}
+                onClick={() => handleSkillsCliAction('add')}
+              >
                 安装该技能
               </Button>
             </div>

@@ -223,6 +223,22 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
         setLoading(true)
         setError(null)
 
+        if (id.startsWith('builtin:')) {
+          throw new Error('内置技能不支持修改状态')
+        }
+        if (id.startsWith('runtime:')) {
+          if (typeof input.isActive === 'boolean') {
+            const skillId = id.replace(/^runtime:/, '').trim()
+            await apiClient.post(`/control/skills/${input.isActive ? 'enable' : 'disable'}`, {
+              payload: { skill_id: skillId },
+            })
+            await fetchDefinitions()
+            const updated = definitions.find((item) => item.id === id)
+            if (updated) return updated
+          }
+          throw new Error('runtime 技能仅支持启停操作')
+        }
+
         const response = await apiClient.put<ApiResponse<SkillDefinition>>(`/skill-definitions/${id}`, input)
 
         if (response.success) {
@@ -238,7 +254,7 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
         setLoading(false)
       }
     },
-    [fetchDefinitions]
+    [fetchDefinitions, definitions]
   )
 
   /**
@@ -250,7 +266,17 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
         setLoading(true)
         setError(null)
 
-        await apiClient.delete(`/skill-definitions/${id}`)
+        if (id.startsWith('builtin:')) {
+          throw new Error('内置技能不支持删除')
+        }
+        if (id.startsWith('runtime:')) {
+          const skillId = id.replace(/^runtime:/, '').trim()
+          await apiClient.post('/control/skills/uninstall', {
+            payload: { skill_id: skillId },
+          })
+        } else {
+          await apiClient.delete(`/skill-definitions/${id}`)
+        }
         await fetchDefinitions()
       } catch (err) {
         setError(err as Error)

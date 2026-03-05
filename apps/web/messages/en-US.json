@@ -741,7 +741,7 @@
     "disable": "Disable",
     "enable": "Enable",
     "empty": "No rules yet. Create one to start.",
-    "apiUnavailable": "Rules API is not connected yet. Please implement `/v1/rules`.",
+    "apiUnavailable": "Rules API is not connected yet. Please implement `/v1/control/rules/list`.",
     "createDescription": "Create an event trigger rule",
     "updateDescription": "Update rule settings",
     "actionMode": {
@@ -1021,7 +1021,7 @@
     }
   },
   "dashboard": {
-    "subtitle": "A digital employee that executes, reminds, collaborates, and keeps improving.",
+    "subtitle": "A Crab that works, reminds, collaborates, evolves.",
     "cards": {
       "agents": {
         "label": "Agents",

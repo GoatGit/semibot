@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Sparkles, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle, CircleHelp, ExternalLink } from 'lucide-react'
+import { Bot, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle, CircleHelp, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
@@ -237,8 +238,8 @@ export default function NewChatPage() {
         <div className="max-w-3xl mx-auto px-6 py-12">
           {/* 标题区 */}
           <div className="text-center mb-10">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary-500/20 mb-4">
-              <Sparkles size={32} className="text-primary-400" />
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary-500/20 mb-4">
+              <Image src="/semibot-logo.png" alt="Semibot logo" width={64} height={64} priority />
             </div>
             <h1 className="text-2xl font-semibold text-text-primary">{t('chatNew.title')}</h1>
             <p className="text-text-secondary mt-2">

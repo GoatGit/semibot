@@ -1,0 +1,41 @@
+{
+  "id": "control-plane-unified-entry-phase3",
+  "title": "control_plane 统一入口（Phase 3）",
+  "description": "新增 runtime 统一控制入口 /v1/control/{domain}/{action}，并与 control_plane 工具能力对齐（含 channels-only 对外 API 路由）。",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "description": "runtime 提供 POST /v1/control/{domain}/{action}，统一透传 payload/options 到 control_plane 工具",
+      "passes": true
+    },
+    {
+      "id": "AC-2",
+      "description": "控制入口支持 agents/create 与 agents/list 基本链路",
+      "passes": true
+    },
+    {
+      "id": "AC-3",
+      "description": "非法 domain 返回 400 且包含 UNSUPPORTED_CONTROL_DOMAIN",
+      "passes": true
+    },
+    {
+      "id": "AC-4",
+      "description": "API 层对外仅保留 channels 路由文件，不再提供 gateways 路由文件",
+      "passes": true
+    },
+    {
+      "id": "AC-5",
+      "description": "TypeScript 编译与 runtime 相关测试通过",
+      "passes": true
+    },
+    {
+      "id": "AC-6",
+      "description": "Web 规则与 Channel 配置写操作已开始迁移到 /api/v1/control/*",
+      "passes": true
+    }
+  ],
+  "passes": true,
+  "test_type": "unit+compile",
+  "priority": "high",
+  "tags": ["control-plane", "runtime-api", "channels", "phase3"]
+}

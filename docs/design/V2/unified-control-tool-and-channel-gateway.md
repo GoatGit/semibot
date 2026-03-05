@@ -258,6 +258,20 @@ Gateway 在提交 runtime 前注入：
 ## 12. 已确认决策（本轮澄清）
 
 1. `control_plane` 不允许直接修改 LLM 默认/回退模型（可建议，不可落地）。
+
+## 13. 当前落地状态（2026-03-05）
+
+- 对外 API 已统一到 `/api/v1/channels/*`。
+- 旧 `apps/api/src/routes/v1/gateways.ts` 已移除（不再作为对外路由入口）。
+- `control_plane` 已支持 `agents` 域 CRUD，不再是占位实现。
+- `control_plane` 已支持 `mcp.test`（基础连通性探测）并写回 `status/last_connected_at`。
+- runtime 已新增统一控制入口：`POST /v1/control/{domain}/{action}`。
+- API 聚合层已新增代理入口：`POST /api/v1/runtime/control/{domain}/{action}`。
+- API v1 已新增统一入口：`POST /api/v1/control/{domain}/{action}`（推荐前端使用）。
+- Web 配置页已切换到新 channels 路径（`/api/v1/channels/*`，不再使用 `/channels/instances`）。
+- Web 端 agents/mcp/rules 的写操作已开始收敛到 `/api/v1/control/*`。
+- Web 端 skills 页对 runtime skills 的启停/卸载已切到 `/api/v1/control/skills/*`。
+- Web Hook（`useSkillDefinitions`）对 runtime skills 的启停/卸载已切到 `/api/v1/control/skills/*`。
 2. 审批策略默认全部放行。
 3. 不引入角色系统（单机简化模型）。
 4. `channels` 单一真源为 runtime SQLite，API 为代理层。
@@ -272,12 +286,11 @@ Gateway 在提交 runtime 前注入：
 
 - 已完成：
   - `control_plane` 主工具名 + `rule_authoring` 兼容别名
-  - `rules/channels/mcp/skills/config` 五个 domain 的首版实现
+  - `rules/channels/mcp/skills/config/agents` 六个 domain 的首版实现
   - 版本门禁（`CONTROL_PLANE_VERSION_MISMATCH`）
   - 自调用阻断（`TOOL_RECURSION_BLOCKED`）
   - `llm` 命名空间写保护（`LLM_CONFIG_WRITE_BLOCKED`）
 - 未完成：
-  - `agents` domain 真实 CRUD（当前返回占位错误）
   - 跨 domain 多步事务的统一回滚编排器（目前按单操作原子执行）
 
 ---

@@ -206,17 +206,6 @@ interface GatewayItem {
   updatedAt: string
 }
 
-interface GatewayBatchResult {
-  action: 'enable' | 'disable' | 'delete'
-  requested: string[]
-  targets: string[]
-  changed: string[]
-  unchanged: string[]
-  blocked: Array<{ instanceId: string; reason: string }>
-  missing: string[]
-  failed: Array<{ instanceId: string; error: string }>
-}
-
 type GatewayChatBinding = {
   chatId: string
   agentId: string
@@ -927,7 +916,7 @@ export default function ConfigPage() {
   const loadGateways = useCallback(async () => {
     setSectionLoadingFlag('channels', true)
     try {
-      const response = await apiClient.get<ApiResponse<GatewayItem[]>>('/channels/instances')
+      const response = await apiClient.get<ApiResponse<GatewayItem[]>>('/channels')
       if (!response.success) {
         throw new Error(t('config.errors.channelsLoad'))
       }
@@ -1654,12 +1643,19 @@ export default function ConfigPage() {
       setSavingGateway(true)
       setError(null)
       if (gatewayForm.id) {
-        await apiClient.put(`/channels/instances/${gatewayForm.id}`, payload)
+        await apiClient.post('/control/channels/update', {
+          payload: {
+            instance_id: gatewayForm.id,
+            patch: payload,
+          },
+        })
       } else {
-        await apiClient.post('/channels/instances', {
-          provider: gatewayForm.provider,
-          instanceKey: gatewayForm.instanceKey.trim() || undefined,
-          ...payload,
+        await apiClient.post('/control/channels/create', {
+          payload: {
+            provider: gatewayForm.provider,
+            instanceKey: gatewayForm.instanceKey.trim() || undefined,
+            ...payload,
+          },
         })
       }
       setShowGatewayModal(false)
@@ -1748,7 +1744,7 @@ export default function ConfigPage() {
       const payload = isTelegram
         ? { text: 'Semibot gateway test' }
         : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
-      await apiClient.post(`/channels/instances/${gateway.id}/test`, payload)
+      await apiClient.post(`/channels/${gateway.id}/test`, payload)
     } catch (err) {
       setError(getErrorMessage(err, t('config.errors.testGateway')))
     } finally {
@@ -1760,7 +1756,11 @@ export default function ConfigPage() {
     if (!window.confirm(t('config.confirm.deleteGateway'))) return
     try {
       setError(null)
-      await apiClient.delete(`/channels/instances/${gateway.id}`)
+      await apiClient.post('/control/channels/delete', {
+        payload: {
+          instance_id: gateway.id,
+        },
+      })
       await loadGateways()
     } catch (err) {
       setError(getErrorMessage(err, t('config.errors.deleteGateway')))
@@ -1851,9 +1851,14 @@ export default function ConfigPage() {
             }
           }
         }
-        await apiClient.put(`/channels/instances/${gatewayId}`, {
-          config: {
-            chatBindings: normalized.normalized,
+        await apiClient.post('/control/channels/update', {
+          payload: {
+            instance_id: gatewayId,
+            patch: {
+              config: {
+                chatBindings: normalized.normalized,
+              },
+            },
           },
         })
         await loadGateways()
@@ -1922,25 +1927,29 @@ export default function ConfigPage() {
       try {
         setGatewayBatchLoading(true)
         setError(null)
-        const response = await apiClient.post<ApiResponse<GatewayBatchResult>>('/channels/instances/batch', {
-          action,
-          instanceIds: targets.map((item) => item.id),
-          ignoreMissing: true,
-        })
-        if (!response.success) {
-          throw new Error(t('config.errors.updateGateway'))
-        }
-        const failed = (response.data.failed?.length || 0) + (response.data.blocked?.length || 0)
+        const settled = await Promise.allSettled(
+          targets.map((item) =>
+            apiClient.post(`/control/channels/${action}`, {
+              payload: { instance_id: item.id },
+            })
+          )
+        )
+        const changed = settled.filter((item) => item.status === 'fulfilled').length
+        const failed = settled.length - changed
         if (failed > 0) {
           setError(
             t('config.channels.batchPartialFailed', {
-              success: response.data.changed?.length || 0,
+              success: changed,
               failed,
             })
           )
         }
         if (action === 'delete') {
-          const deletedIds = new Set(response.data.changed || [])
+          const deletedIds = new Set(
+            targets
+              .filter((_, idx) => settled[idx]?.status === 'fulfilled')
+              .map((item) => item.id)
+          )
           setSelectedGatewayIds((prev) => prev.filter((id) => !deletedIds.has(id)))
         }
         await loadGateways()
@@ -1967,7 +1976,7 @@ export default function ConfigPage() {
             item.provider === 'telegram'
               ? { text: 'Semibot gateway test' }
               : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
-          return apiClient.post(`/channels/instances/${item.id}/test`, payload)
+          return apiClient.post(`/channels/${item.id}/test`, payload)
         })
       )
       const failed = settled.filter((result) => result.status === 'rejected').length

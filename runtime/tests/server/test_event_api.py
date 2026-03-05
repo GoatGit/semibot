@@ -276,6 +276,42 @@ async def test_scheduler_cron_job_endpoints_and_persistence(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_control_plane_unified_endpoint(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    app = create_app(db_path=str(db_path), rules_path=str(rules_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_resp = await client.post(
+            "/v1/control/agents/create",
+            json={
+                "payload": {
+                    "name": "control-agent-1",
+                    "description": "created from unified control endpoint",
+                    "model": "gpt-4o-mini",
+                }
+            },
+        )
+        assert create_resp.status_code == 200
+        create_body = create_resp.json()
+        assert create_body["ok"] is True
+        item = create_body["data"]["item"]
+        assert item["name"] == "control-agent-1"
+
+        list_resp = await client.post("/v1/control/agents/list", json={})
+        assert list_resp.status_code == 200
+        list_body = list_resp.json()
+        assert list_body["ok"] is True
+        assert any(row["name"] == "control-agent-1" for row in list_body["data"]["items"])
+
+        invalid_resp = await client.post("/v1/control/unknown/list", json={})
+        assert invalid_resp.status_code == 400
+        assert "UNSUPPORTED_CONTROL_DOMAIN" in str(invalid_resp.json())
+
+
+@pytest.mark.asyncio
 async def test_rule_crud_and_simulate_endpoints(tmp_path: Path):
     db_path = tmp_path / "events.db"
     rules_path = tmp_path / "rules.json"

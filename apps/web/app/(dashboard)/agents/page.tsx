@@ -118,18 +118,20 @@ export default function AgentsPage() {
 
     setIsSubmitting(true)
     try {
-      const response = await apiClient.post<ApiResponse<Agent>>('/agents', {
-        name: formValues.name.trim(),
-        description: formValues.description.trim(),
-        systemPrompt: formValues.systemPrompt,
-        config: {
-          model: formValues.model,
+      const response = await apiClient.post<ApiResponse<{ item?: Agent }>>('/control/agents/create', {
+        payload: {
+          name: formValues.name.trim(),
+          description: formValues.description.trim(),
+          system_prompt: formValues.systemPrompt,
+          config: {
+            model: formValues.model,
+          },
+          is_active: true,
         },
-        isActive: true,
       })
 
-      if (response.success && response.data) {
-        const newAgent = response.data
+      if (response.success && response.data?.item) {
+        const newAgent = response.data.item
         setAgents((prev) => [newAgent, ...prev])
         toast.success(t('agents.toast.created'))
         setShowForm(false)
@@ -150,7 +152,12 @@ export default function AgentsPage() {
   const handleToggleActive = async (agent: Agent) => {
     setIsToggling(true)
     try {
-      await apiClient.put(`/agents/${agent.id}`, { isActive: !agent.isActive })
+      await apiClient.post('/control/agents/update', {
+        payload: {
+          agent_id: agent.id,
+          patch: { is_active: !agent.isActive },
+        },
+      })
       setAgents((prev) => prev.map((a) => a.id === agent.id ? { ...a, isActive: !a.isActive } : a))
     } catch (err) {
       console.error('[Agents] 切换状态失败:', err)
@@ -169,7 +176,11 @@ export default function AgentsPage() {
 
     setIsDeleting(true)
     try {
-      await apiClient.delete(`/agents/${confirmDelete.id}`)
+      await apiClient.post('/control/agents/delete', {
+        payload: {
+          agent_id: confirmDelete.id,
+        },
+      })
       setAgents((prev) => prev.filter((agent) => agent.id !== confirmDelete.id))
       toast.success(t('agents.toast.deleted'))
       setConfirmDelete(null)

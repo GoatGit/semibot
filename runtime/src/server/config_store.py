@@ -171,6 +171,24 @@ class RuntimeConfigStore:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_cron_jobs_active ON cron_jobs(is_active);
+
+                CREATE TABLE IF NOT EXISTS agent_profiles (
+                  id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL UNIQUE,
+                  description TEXT,
+                  system_prompt TEXT,
+                  model TEXT,
+                  temperature REAL NOT NULL DEFAULT 0.7,
+                  max_tokens INTEGER NOT NULL DEFAULT 4096,
+                  metadata_json TEXT NOT NULL DEFAULT '{}',
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  deleted_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_agent_profiles_name ON agent_profiles(name);
+                CREATE INDEX IF NOT EXISTS idx_agent_profiles_active ON agent_profiles(is_active);
                 """
             )
         self._seed_gateway_configs()
@@ -1196,5 +1214,132 @@ class RuntimeConfigStore:
                 WHERE name = ? AND deleted_at IS NULL
                 """,
                 (1 if active else 0, now, safe_name),
+            )
+        return cur.rowcount > 0
+
+    def _agent_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "system_prompt": row["system_prompt"],
+            "model": row["model"],
+            "temperature": float(row["temperature"] if row["temperature"] is not None else 0.7),
+            "max_tokens": int(row["max_tokens"] if row["max_tokens"] is not None else 4096),
+            "metadata": _json_loads(row["metadata_json"], {}),
+            "is_active": bool(row["is_active"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_agent_profiles(self, *, include_inactive: bool = True) -> list[dict[str, Any]]:
+        where = "deleted_at IS NULL"
+        if not include_inactive:
+            where += " AND is_active = 1"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM agent_profiles
+                WHERE {where}
+                ORDER BY updated_at DESC, created_at DESC
+                """
+            ).fetchall()
+        return [self._agent_row_to_dict(row) for row in rows]
+
+    def get_agent_profile(self, agent_id: str) -> dict[str, Any] | None:
+        safe_id = str(agent_id or "").strip()
+        if not safe_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_profiles
+                WHERE id = ? AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (safe_id,),
+            ).fetchone()
+        return self._agent_row_to_dict(row) if row else None
+
+    def create_agent_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = _now_iso()
+        agent_id = str(payload.get("id") or uuid4())
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("agent_name_required")
+        metadata = payload.get("metadata")
+        metadata_map = metadata if isinstance(metadata, dict) else {}
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_profiles (
+                  id, name, description, system_prompt, model, temperature, max_tokens,
+                  metadata_json, is_active, created_at, updated_at, deleted_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    agent_id,
+                    name,
+                    payload.get("description"),
+                    payload.get("system_prompt", payload.get("systemPrompt")),
+                    payload.get("model"),
+                    float(payload.get("temperature", 0.7)),
+                    int(payload.get("max_tokens", payload.get("maxTokens", 4096))),
+                    _json_dumps(metadata_map),
+                    1 if bool(payload.get("is_active", payload.get("isActive", True))) else 0,
+                    now,
+                    now,
+                ),
+            )
+        item = self.get_agent_profile(agent_id)
+        if not item:
+            raise ValueError("agent_create_failed")
+        return item
+
+    def update_agent_profile(self, agent_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        existing = self.get_agent_profile(agent_id)
+        if not existing:
+            return None
+        merged_metadata = existing.get("metadata") or {}
+        if isinstance(patch.get("metadata"), dict):
+            merged_metadata = {**merged_metadata, **patch["metadata"]}
+        now = _now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE agent_profiles
+                SET name = ?, description = ?, system_prompt = ?, model = ?,
+                    temperature = ?, max_tokens = ?, metadata_json = ?, is_active = ?,
+                    updated_at = ?, deleted_at = NULL
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (
+                    patch.get("name", existing.get("name")),
+                    patch.get("description", existing.get("description")),
+                    patch.get("system_prompt", patch.get("systemPrompt", existing.get("system_prompt"))),
+                    patch.get("model", existing.get("model")),
+                    float(patch.get("temperature", existing.get("temperature", 0.7))),
+                    int(patch.get("max_tokens", patch.get("maxTokens", existing.get("max_tokens", 4096)))),
+                    _json_dumps(merged_metadata),
+                    1 if bool(patch.get("is_active", patch.get("isActive", existing.get("is_active", True)))) else 0,
+                    now,
+                    str(agent_id or "").strip(),
+                ),
+            )
+        return self.get_agent_profile(agent_id)
+
+    def soft_delete_agent_profile(self, agent_id: str) -> bool:
+        safe_id = str(agent_id or "").strip()
+        if not safe_id:
+            return False
+        now = _now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE agent_profiles
+                SET deleted_at = ?, is_active = 0, updated_at = ?
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (now, now, safe_id),
             )
         return cur.rowcount > 0

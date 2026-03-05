@@ -571,8 +571,7 @@ router.post(
 
     const envMap = await readEnvLocalMap()
     const sensitiveKeys = parseSensitiveEnvKeys(envMap)
-    const isSensitive =
-      body.isSensitive ?? (sensitiveKeys.has(name) || defaultSensitiveEnvKey(name))
+    const isSensitive = body.isSensitive ?? (sensitiveKeys.has(name) || defaultSensitiveEnvKey(name))
 
     if (clear) sensitiveKeys.delete(name)
     else if (isSensitive) sensitiveKeys.add(name)
