@@ -99,6 +99,21 @@ def executor(runtime_context, mock_skill_registry, mock_mcp_client):
     )
 
 
+@pytest.fixture
+def file_io_executor(runtime_context, mock_skill_registry):
+    runtime_context.available_tools.append(
+        ToolDefinition(
+            name="file_io",
+            description="File IO",
+        )
+    )
+    runtime_context.runtime_policy.high_risk_tools.append("file_io")
+    return UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_skill(executor, mock_skill_registry):
     """Test executing a skill."""
@@ -195,6 +210,34 @@ async def test_execute_no_tool_name(executor):
 
     assert result.success is False
     assert "No tool name specified" in result.error
+
+
+def test_build_metadata_file_io_read_is_low_risk(file_io_executor):
+    capability = file_io_executor.capability_graph.get_capability("file_io")
+
+    metadata = file_io_executor._build_metadata(
+        capability,
+        "file_io",
+        {"action": "read", "path": "report.md"},
+    )
+
+    assert metadata.is_high_risk is False
+    assert metadata.requires_approval is False
+    assert metadata.additional["risk_level"] == "low"
+
+
+def test_build_metadata_file_io_write_stays_high_risk(file_io_executor):
+    capability = file_io_executor.capability_graph.get_capability("file_io")
+
+    metadata = file_io_executor._build_metadata(
+        capability,
+        "file_io",
+        {"action": "write", "path": "report.md", "content": "x"},
+    )
+
+    assert metadata.is_high_risk is True
+    assert metadata.requires_approval is True
+    assert metadata.additional["risk_level"] == "high"
 
 
 @pytest.mark.asyncio

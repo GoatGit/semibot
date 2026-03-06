@@ -8,7 +8,7 @@ import json
 import os
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -73,6 +73,9 @@ class RunTaskRequest(BaseModel):
     agent_id: str = "semibot"
     session_id: str | None = None
     model: str | None = None
+    model_provider_key: str | None = None
+    fallback_model: str | None = None
+    fallback_provider_key: str | None = None
     system_prompt: str | None = None
 
 
@@ -131,7 +134,11 @@ class ChatStartRequest(BaseModel):
     agent_id: str = "semibot"
     session_id: str | None = None
     model: str | None = None
+    model_provider_key: str | None = None
+    fallback_model: str | None = None
+    fallback_provider_key: str | None = None
     system_prompt: str | None = None
+    skill_index: list[dict[str, Any]] = Field(default_factory=list)
     stream: bool = False
 
 
@@ -139,7 +146,11 @@ class ChatSessionRequest(BaseModel):
     message: str
     agent_id: str = "semibot"
     model: str | None = None
+    model_provider_key: str | None = None
+    fallback_model: str | None = None
+    fallback_provider_key: str | None = None
     system_prompt: str | None = None
+    skill_index: list[dict[str, Any]] = Field(default_factory=list)
     stream: bool = False
 
 
@@ -912,6 +923,9 @@ def create_app(
             agent_id=req.agent_id,
             session_id=req.session_id,
             model=req.model,
+            model_provider_key=req.model_provider_key,
+            fallback_model=req.fallback_model,
+            fallback_provider_key=req.fallback_provider_key,
             system_prompt=req.system_prompt,
         )
         return {"task": req.task, **result}
@@ -922,7 +936,11 @@ def create_app(
         agent_id: str,
         session_id: str | None,
         model: str | None,
+        model_provider_key: str | None,
+        fallback_model: str | None,
+        fallback_provider_key: str | None,
         system_prompt: str | None,
+        skill_index: list[dict[str, Any]] | None,
         stream: bool,
     ):
         if not stream:
@@ -933,7 +951,11 @@ def create_app(
                 agent_id=agent_id,
                 session_id=session_id,
                 model=model,
+                model_provider_key=model_provider_key,
+                fallback_model=fallback_model,
+                fallback_provider_key=fallback_provider_key,
                 system_prompt=system_prompt,
+                skill_index=skill_index,
             )
             return {
                 "message": message,
@@ -941,32 +963,67 @@ def create_app(
             }
 
         async def _stream():
+            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+            async def _runtime_event_callback(runtime_event: dict[str, Any]) -> None:
+                await queue.put(runtime_event)
+
+            async def _run_with_callback() -> None:
+                try:
+                    result = await _task_runner(
+                        task=message,
+                        db_path=db,
+                        rules_path=rules,
+                        agent_id=agent_id,
+                        session_id=session_id,
+                        model=model,
+                        model_provider_key=model_provider_key,
+                        fallback_model=fallback_model,
+                        fallback_provider_key=fallback_provider_key,
+                        system_prompt=system_prompt,
+                        skill_index=skill_index,
+                        runtime_event_callback=_runtime_event_callback,
+                    )
+                    await queue.put(
+                        {
+                            "event": "done",
+                            "status": result.get("status"),
+                            "final_response": result.get("final_response"),
+                            "error": result.get("error"),
+                            "session_id": result.get("session_id"),
+                            "agent_id": result.get("agent_id"),
+                        }
+                    )
+                except Exception as exc:
+                    await queue.put(
+                        {
+                            "event": "done",
+                            "status": "failed",
+                            "final_response": "",
+                            "error": str(exc),
+                            "session_id": session_id,
+                            "agent_id": agent_id,
+                        }
+                    )
+                finally:
+                    await queue.put(None)
+
             start = {
                 "event": "start",
                 "session_id": session_id,
                 "agent_id": agent_id,
             }
             yield f"data: {json.dumps(start, ensure_ascii=False)}\n\n"
-            result = await _task_runner(
-                task=message,
-                db_path=db,
-                rules_path=rules,
-                agent_id=agent_id,
-                session_id=session_id,
-                model=model,
-                system_prompt=system_prompt,
-            )
-            for event in result.get("runtime_events", []):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-            final_payload = {
-                "event": "done",
-                "status": result.get("status"),
-                "final_response": result.get("final_response"),
-                "error": result.get("error"),
-                "session_id": result.get("session_id"),
-                "agent_id": result.get("agent_id"),
-            }
-            yield f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
+            task_handle = asyncio.create_task(_run_with_callback())
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+            finally:
+                with suppress(Exception):
+                    await task_handle
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
@@ -977,7 +1034,11 @@ def create_app(
             agent_id=req.agent_id,
             session_id=req.session_id,
             model=req.model,
+            model_provider_key=req.model_provider_key,
+            fallback_model=req.fallback_model,
+            fallback_provider_key=req.fallback_provider_key,
             system_prompt=req.system_prompt,
+            skill_index=req.skill_index,
             stream=req.stream,
         )
 
@@ -988,7 +1049,11 @@ def create_app(
             agent_id=req.agent_id,
             session_id=session_id,
             model=req.model,
+            model_provider_key=req.model_provider_key,
+            fallback_model=req.fallback_model,
+            fallback_provider_key=req.fallback_provider_key,
             system_prompt=req.system_prompt,
+            skill_index=req.skill_index,
             stream=req.stream,
         )
 

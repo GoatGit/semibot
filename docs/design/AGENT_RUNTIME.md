@@ -32,9 +32,10 @@ stateDiagram-v2
     ACT --> OBSERVE : "执行完成"
     DELEGATE --> OBSERVE : "子Agent返回"
     
-    OBSERVE --> PLAN : "需要重新规划"
+    OBSERVE --> PLAN : "需要重新规划（当前轮失败）"
+    OBSERVE --> PLAN : "需要进行下一轮规划（当前轮成功）"
     OBSERVE --> ACT : "继续执行"
-    OBSERVE --> REFLECT : "任务完成"
+    OBSERVE --> REFLECT : "整体任务完成"
     
     REFLECT --> RESPOND : "总结输出"
     REFLECT --> EVOLVE : async (条件触发)
@@ -76,9 +77,10 @@ flowchart TD
     B -->|委派| D["DELEGATE\nSubAgent 执行"]
     C --> E["OBSERVE\n结果评估/错误检测"]
     D --> E
-    E -->|需要重规划| B
+    E -->|当前轮失败，需重规划| B
+    E -->|当前轮成功，进入下一轮规划| B
     E -->|继续执行| C
-    E -->|完成| F["REFLECT\n总结/记忆存储"]
+    E -->|整体任务完成| F["REFLECT\n总结/记忆存储"]
     F --> H
     H --> Z["END\n返回用户"]
 ```
@@ -88,13 +90,66 @@ flowchart TD
 | 状态 | 对应需求流程 | 职责 |
 | ---- | ------------ | ---- |
 | **START** | 用户输入目标 | 初始化上下文、加载短期/长期记忆 |
-| **PLAN** | 意图解析与计划生成 | 解析用户需求、生成执行计划、拆解步骤 |
+| **PLAN** | 意图解析与计划生成 | 重新进行技能理解、解析用户需求、生成执行计划、拆解步骤 |
 | **ACT** | 执行步骤与工具调用 | 执行 Skill/Tool（支持并行） |
 | **DELEGATE** | 执行步骤与工具调用 | 委派给 SubAgent 处理子任务 |
-| **OBSERVE** | 观察结果与反馈 | 结果检查、错误检测、反馈修正 |
+| **OBSERVE** | 观察结果与反馈 | 判定当前轮是否成功、整体任务是否完成、是否继续执行/重新规划/进入下一轮 |
 | **REFLECT** | 自我优化与学习 | 任务反思、经验总结、记忆存储 |
 | **EVOLVE** | 自我进化与技能生成 | 异步提取可复用技能、验证、注册到技能库（详见 [EVOLUTION.md](./EVOLUTION.md)） |
 | **RESPOND** | - | 生成最终响应给用户 |
+
+### 2.2.1 Observe 的四种输出
+
+`OBSERVE` 必须支持四种状态：
+
+1. `completed`
+   - 当前轮成功
+   - 整体任务也完成
+
+2. `continue`
+   - 当前轮未完成
+   - 当前计划还能继续执行
+
+3. `replan`
+   - 当前轮未成功
+   - 当前计划不能继续
+   - 语义是“修当前轮”
+
+4. `next_round`
+   - 当前轮已成功完成
+   - 整体任务尚未完成
+   - 语义是“开启下一轮规划”
+
+### 2.2.2 `replan` 与 `next_round` 的区别
+
+两者的核心差异，不在于是否允许切换主技能，而在于当前轮是否被判定为成功。
+
+`replan`：
+
+1. 当前轮失败、未完成或未达标
+2. 当前轮产物通常是待修复产物或不可依赖产物
+3. 可以保持主技能，也可以切换主技能
+4. 本质是修复当前轮
+
+`next_round`：
+
+1. 当前轮成功完成
+2. 当前轮产物是正式可交接 artifact
+3. 下一轮可以保持主技能，也可以切换主技能
+4. 本质是进入下一轮目标处理
+
+因此，`replan` 不能替代 `next_round`。
+
+### 2.2.3 每次进入 `PLAN` 都重新做技能理解
+
+无论 `PLAN` 是首次进入，还是由 `OBSERVE` 的 `replan` / `next_round` 回流进入，都应重新做一次技能理解。
+
+规则：
+
+1. 重新基于技能索引做技能选择
+2. 重新注入本轮选中技能的 `SKILL.md`
+3. 不依赖“上一次已注入”的缓存语义跳过技能理解
+4. 稳定性优先于注入去重优化
 
 ### 2.3 并行执行支持
 
@@ -195,9 +250,10 @@ def create_agent_graph(agent_config: dict) -> StateGraph:
         "observe",
         route_after_observe,
         {
-            "replan": "plan",    # 需要重新规划
-            "continue": "act",   # 继续执行下一步
-            "reflect": "reflect" # 任务完成，进入反思
+            "replan": "plan",       # 当前轮失败，重新规划
+            "next_round": "plan",   # 当前轮成功，进入下一轮规划
+            "continue": "act",      # 继续执行当前轮下一步
+            "reflect": "reflect"    # 整体任务完成，进入反思
         }
     )
     
@@ -221,7 +277,7 @@ async def start_node(state: AgentState) -> AgentState:
 
 
 async def plan_node(state: AgentState) -> AgentState:
-    """意图解析与计划生成"""
+    """重新进行技能理解，并完成意图解析与计划生成"""
     # 检索进化技能库（详见 EVOLUTION.md）
     evolved_skills = await search_evolved_skills(
         query=state["messages"][-1]["content"],
@@ -229,8 +285,18 @@ async def plan_node(state: AgentState) -> AgentState:
         limit=5
     )
 
-    plan = await llm.generate_plan(
+    # 每次进入 PLAN 都重新进行技能选择与 SKILL.md 注入
+    selected_skill = await select_skill(
         messages=state["messages"],
+        available_evolved_skills=evolved_skills,
+    )
+    messages_with_skill = await inject_skill_md(
+        messages=state["messages"],
+        selected_skill=selected_skill,
+    )
+
+    plan = await llm.generate_plan(
+        messages=messages_with_skill,
         memory=state["memory_context"],
         available_evolved_skills=evolved_skills
     )
@@ -262,7 +328,7 @@ async def act_node(state: AgentState) -> AgentState:
 
 
 async def observe_node(state: AgentState) -> AgentState:
-    """观察结果，决定下一步"""
+    """观察结果，决定当前轮是否继续、重规划或进入下一轮"""
     observation = await llm.analyze_results(
         plan=state["plan"],
         results=state["tool_results"],

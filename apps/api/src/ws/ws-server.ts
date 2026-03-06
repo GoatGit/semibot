@@ -391,8 +391,8 @@ export class WSServer {
     }
 
     return {
-      default_model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
-      fallback_model: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
+      default_model: process.env.DEFAULT_LLM_MODEL ?? '',
+      fallback_model: process.env.FALLBACK_LLM_MODEL ?? '',
       providers,
     }
   }

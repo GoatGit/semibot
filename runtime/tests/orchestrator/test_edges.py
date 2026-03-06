@@ -81,7 +81,14 @@ class TestRouteAfterObserve:
 
     def test_route_to_plan(self, sample_agent_state):
         """Test routing to plan for replanning."""
-        state = {**sample_agent_state, "current_step": "plan"}
+        state = {**sample_agent_state, "observe_outcome": "replan_current_round"}
+
+        result = route_after_observe(state)
+
+        assert result == "plan"
+
+    def test_route_to_plan_for_next_round(self, sample_agent_state):
+        state = {**sample_agent_state, "observe_outcome": "plan_next_round"}
 
         result = route_after_observe(state)
 
@@ -89,7 +96,7 @@ class TestRouteAfterObserve:
 
     def test_route_to_act(self, sample_agent_state):
         """Test routing to act for more steps."""
-        state = {**sample_agent_state, "current_step": "act"}
+        state = {**sample_agent_state, "observe_outcome": "continue_execution"}
 
         result = route_after_observe(state)
 
@@ -97,7 +104,7 @@ class TestRouteAfterObserve:
 
     def test_route_to_reflect(self, sample_agent_state):
         """Test routing to reflect when done."""
-        state = {**sample_agent_state, "current_step": "reflect"}
+        state = {**sample_agent_state, "observe_outcome": "task_completed"}
 
         result = route_after_observe(state)
 

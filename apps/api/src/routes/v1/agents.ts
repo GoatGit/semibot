@@ -24,11 +24,13 @@ const createAgentSchema = z.object({
   config: z
     .object({
       model: z.string().optional(),
+      modelProviderKey: z.string().optional(),
       temperature: z.number().min(0).max(2).optional(),
       maxTokens: z.number().min(1).max(128000).optional(),
       timeoutSeconds: z.number().min(1).max(600).optional(),
       retryAttempts: z.number().min(0).max(5).optional(),
       fallbackModel: z.string().optional(),
+      fallbackProviderKey: z.string().optional(),
     })
     .optional(),
   skills: z.array(z.string()).optional(),
@@ -46,11 +48,13 @@ const updateAgentSchema = z.object({
   config: z
     .object({
       model: z.string().optional(),
+      modelProviderKey: z.string().optional(),
       temperature: z.number().min(0).max(2).optional(),
       maxTokens: z.number().min(1).max(128000).optional(),
       timeoutSeconds: z.number().min(1).max(600).optional(),
       retryAttempts: z.number().min(0).max(5).optional(),
       fallbackModel: z.string().optional(),
+      fallbackProviderKey: z.string().optional(),
     })
     .optional(),
   skills: z.array(z.string()).optional(),

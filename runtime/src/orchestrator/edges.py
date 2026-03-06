@@ -90,16 +90,12 @@ def route_after_observe(
     Returns:
         Name of the next node
     """
-    # Check current step indicator set by observe_node
-    current_step = state.get("current_step", "reflect")
-
-    # Map current_step to valid transitions
-    if current_step == "plan":
+    observe_outcome = state.get("observe_outcome")
+    if observe_outcome in {"replan_current_round", "plan_next_round"}:
         return "plan"
-    elif current_step == "act":
+    if observe_outcome == "continue_execution":
         return "act"
-    else:
-        return "reflect"
+    return "reflect"
 
 
 def should_continue(state: AgentState) -> bool:

@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const baseURL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+const reuseExistingServer = process.env.PW_REUSE_SERVER === '1'
+const disableWebServer = process.env.PW_DISABLE_WEBSERVER === '1' || process.env.RUN_LIVE_E2E === '1'
+const isLiveE2E = process.env.RUN_LIVE_E2E === '1'
+
 /**
  * Playwright E2E 测试配置
  * @see https://playwright.dev/docs/test-configuration
@@ -28,15 +33,17 @@ export default defineConfig({
   workers: process.env.CI ? 1 : 2,
 
   // 测试报告配置
-  reporter: [
-    ['html', { outputFolder: '../playwright-report' }],
-    ['list'],
-  ],
+  reporter: isLiveE2E
+    ? [['list']]
+    : [
+        ['html', { outputFolder: '../playwright-report' }],
+        ['list'],
+      ],
 
   // 全局测试配置
   use: {
     // 基础 URL
-    baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+    baseURL,
 
     // 请求追踪 - 仅在首次重试时收集
     trace: 'on-first-retry',
@@ -66,7 +73,7 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        channel: 'chrome',
+        ...(isLiveE2E ? {} : { channel: 'chrome' }),
       },
     },
     {
@@ -97,16 +104,18 @@ export default defineConfig({
   ],
 
   // 开发服务器配置
-  webServer: {
-    // 使用独立 dist 目录，避免 E2E 启动时清理缓存影响开发中的 `pnpm --filter @semibot/web dev`
-    command: 'rm -rf apps/web/.next-e2e && NEXT_DIST_DIR=.next-e2e pnpm --filter @semibot/web dev',
-    url: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-    // 默认不复用本地已运行的 dev server，避免命中陈旧构建导致前端 JS 404
-    // 如需复用可显式设置 PW_REUSE_SERVER=1
-    reuseExistingServer: process.env.PW_REUSE_SERVER === '1',
-    timeout: 120000,
-    cwd: '../..',
-  },
+  webServer: disableWebServer
+    ? undefined
+    : {
+        // 使用独立 dist 目录，避免 E2E 启动时清理缓存影响开发中的 `pnpm --filter @semibot/web dev`
+        command: 'rm -rf apps/web/.next-e2e && NEXT_DIST_DIR=.next-e2e pnpm --filter @semibot/web dev',
+        url: baseURL,
+        // 默认不复用本地已运行的 dev server，避免命中陈旧构建导致前端 JS 404
+        // 如需复用可显式设置 PW_REUSE_SERVER=1
+        reuseExistingServer,
+        timeout: 120000,
+        cwd: '../..',
+      },
 
   // 输出目录
   outputDir: '../test-results',

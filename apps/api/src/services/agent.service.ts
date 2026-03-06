@@ -48,11 +48,13 @@ export interface Agent {
 
 export interface AgentConfig {
   model: string
+  modelProviderKey?: string
   temperature: number
   maxTokens: number
   timeoutSeconds: number
   retryAttempts?: number
   fallbackModel?: string
+  fallbackProviderKey?: string
 }
 
 export interface CreateAgentInput {
@@ -114,12 +116,14 @@ export interface AgentDraft {
 // ═══════════════════════════════════════════════════════════════
 
 const DEFAULT_AGENT_CONFIG: AgentConfig = {
-  model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
+  model: process.env.DEFAULT_LLM_MODEL ?? '',
+  modelProviderKey: process.env.DEFAULT_LLM_PROVIDER_KEY ?? '',
   temperature: 0.7,
   maxTokens: 4096,
   timeoutSeconds: 120,
   retryAttempts: 3,
-  fallbackModel: process.env.FALLBACK_LLM_MODEL ?? 'gpt-4o-mini',
+  fallbackModel: process.env.FALLBACK_LLM_MODEL ?? '',
+  fallbackProviderKey: process.env.FALLBACK_LLM_PROVIDER_KEY ?? '',
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -147,11 +151,13 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
     systemPrompt: row.system_prompt,
     config: {
       model: (config.model as string) ?? DEFAULT_AGENT_CONFIG.model,
+      modelProviderKey: (config.modelProviderKey as string) ?? DEFAULT_AGENT_CONFIG.modelProviderKey,
       temperature: (config.temperature as number) ?? DEFAULT_AGENT_CONFIG.temperature,
       maxTokens: (config.maxTokens as number) ?? DEFAULT_AGENT_CONFIG.maxTokens,
       timeoutSeconds: (config.timeoutSeconds as number) ?? DEFAULT_AGENT_CONFIG.timeoutSeconds,
       retryAttempts: config.retryAttempts as number | undefined,
       fallbackModel: config.fallbackModel as string | undefined,
+      fallbackProviderKey: config.fallbackProviderKey as string | undefined,
     },
     skills: row.skills ?? [],
     subAgents: row.sub_agents ?? [],
@@ -277,6 +283,14 @@ export async function listAgents(
   orgId: string,
   options: ListAgentsOptions = {}
 ): Promise<PaginatedResult<Agent>> {
+  const shouldEnsureSystemDefault =
+    !options.search &&
+    options.isActive !== false &&
+    (options.page === undefined || options.page === 1)
+  if (shouldEnsureSystemDefault) {
+    await agentRepository.ensureSystemDefault()
+  }
+
   let result = await agentRepository.findByOrg({
     orgId,
     page: options.page,

@@ -3033,6 +3033,7 @@ def cmd_serve_stop(args: argparse.Namespace) -> int:
         return _serve_pm2_action_error("stop", pm2_error)
 
     port_cleanup = _kill_processes_on_port(args.port)
+    execution_plane_cleanup = _kill_execution_plane_workers()
 
     try:
         existing = _pm2_find_process(args.name)
@@ -3048,6 +3049,7 @@ def cmd_serve_stop(args: argparse.Namespace) -> int:
                 "pm2_name": args.name,
                 "already_stopped": True,
                 "port_cleanup": port_cleanup,
+                "execution_plane_cleanup": execution_plane_cleanup,
             }
         )
         return EXIT_SUCCESS
@@ -3069,6 +3071,7 @@ def cmd_serve_stop(args: argparse.Namespace) -> int:
             "pm2_name": args.name,
             "stopped": True,
             "port_cleanup": port_cleanup,
+            "execution_plane_cleanup": execution_plane_cleanup,
         }
     )
     return EXIT_SUCCESS
@@ -3104,6 +3107,8 @@ def cmd_serve_restart(args: argparse.Namespace) -> int:
                 details={"stdout_tail": _tail_lines(stop_result.stdout), "stderr_tail": _tail_lines(stop_result.stderr)},
             )
 
+    execution_plane_cleanup = _kill_execution_plane_workers()
+
     try:
         start_command = _serve_pm2_start_command(args)
     except RuntimeError as exc:
@@ -3133,6 +3138,7 @@ def cmd_serve_restart(args: argparse.Namespace) -> int:
             "status": (proc.get("pm2_env") or {}).get("status") if isinstance(proc, dict) else "online",
             "pid": proc.get("pid") if isinstance(proc, dict) else None,
             "command": start_command,
+            "execution_plane_cleanup": execution_plane_cleanup,
         }
     )
     return EXIT_SUCCESS
@@ -3226,6 +3232,91 @@ def _kill_processes_on_port(port: int) -> dict[str, Any]:
     target_pids = _collect_pids_on_port(port)
     result = _kill_pids(target_pids)
     return {"port": port, **result}
+
+
+def _read_pid_file(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        pid = int(raw)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _command_for_pid(pid: int) -> str:
+    ps_bin = shutil.which("ps")
+    if not ps_bin or pid <= 0:
+        return ""
+    result = subprocess.run([ps_bin, "-p", str(pid), "-o", "command="], text=True, capture_output=True)
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "").strip()
+
+
+def _is_execution_plane_worker_command(command: str) -> bool:
+    if not command:
+        return False
+    normalized = " ".join(command.split())
+    if "-m src.main" not in normalized:
+        return False
+    # semibot serve-daemon also uses runtime entrypoint, but it is not the VM worker.
+    if "serve-daemon" in normalized or "runtime/main.py" in normalized:
+        return False
+    return True
+
+
+def _kill_execution_plane_workers(runtime_log_dir: str | None = None) -> dict[str, Any]:
+    root = Path((runtime_log_dir or os.getenv("RUNTIME_LOG_DIR") or "/tmp")).expanduser()
+    pid_files = sorted(root.glob("semibot-runtime-*.pid"))
+    pid_by_file: dict[Path, int | None] = {}
+    stale_pid_files: list[str] = []
+    target_pids: list[int] = []
+    current_pid = os.getpid()
+
+    for pid_file in pid_files:
+        pid = _read_pid_file(pid_file)
+        pid_by_file[pid_file] = pid
+        if pid is None or pid == current_pid:
+            stale_pid_files.append(str(pid_file))
+            continue
+        command = _command_for_pid(pid)
+        if not command:
+            stale_pid_files.append(str(pid_file))
+            continue
+        if _is_execution_plane_worker_command(command):
+            target_pids.append(pid)
+            continue
+        stale_pid_files.append(str(pid_file))
+
+    kill_result = _kill_pids(sorted(set(target_pids)))
+
+    removed_pid_files: list[str] = []
+    remaining_pid_files: list[str] = []
+    remaining_pids = set(kill_result.get("remaining_pids") or [])
+    for pid_file in pid_files:
+        pid = pid_by_file.get(pid_file)
+        if pid is not None and pid in remaining_pids:
+            remaining_pid_files.append(str(pid_file))
+            continue
+        try:
+            pid_file.unlink(missing_ok=True)
+            removed_pid_files.append(str(pid_file))
+        except OSError:
+            remaining_pid_files.append(str(pid_file))
+
+    return {
+        "runtime_log_dir": str(root),
+        "pid_files": [str(item) for item in pid_files],
+        "stale_pid_files": sorted(set(stale_pid_files)),
+        **kill_result,
+        "removed_pid_files": removed_pid_files,
+        "remaining_pid_files": remaining_pid_files,
+    }
 
 
 def _ensure_pnpm() -> str | None:
@@ -3383,6 +3474,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
     names = _ui_pm2_process_names(name_prefix)
     steps: list[dict[str, Any]] = []
     port_cleanup: list[dict[str, Any]] = []
+    execution_plane_cleanup: dict[str, Any] | None = None
     with_runtime = bool(getattr(args, "with_runtime", True))
     api_port = int(getattr(args, "api_port", _default_api_port()))
     web_port = int(getattr(args, "web_port", _default_web_port()))
@@ -3459,6 +3551,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
             ok, detail = _runtime_stop()
             if not ok:
                 return _ui_pm2_action_error(action, str((detail or {}).get("message", "unknown error")), details=detail)
+            execution_plane_cleanup = _kill_execution_plane_workers()
             ok, detail = _runtime_start()
             if not ok:
                 return _ui_pm2_action_error(action, str(detail.get("message", "unknown error")), details=detail)
@@ -3483,6 +3576,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
                 return _ui_pm2_action_error(action, str((detail or {}).get("message", "unknown error")), details=detail)
             steps.append({"step": "stop", "service": "runtime", "pm2_name": runtime_args.name, **(detail or {})})
             port_cleanup.append(_kill_processes_on_port(runtime_args.port))
+            execution_plane_cleanup = _kill_execution_plane_workers()
         port_cleanup.append(_kill_processes_on_port(api_port))
         port_cleanup.append(_kill_processes_on_port(web_port))
     elif action == "restart":
@@ -3492,6 +3586,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
                 return _ui_pm2_action_error(action, str((detail or {}).get("message", "unknown error")), details=detail)
             steps.append({"step": "stop", "service": "runtime", "pm2_name": runtime_args.name, **(detail or {})})
             port_cleanup.append(_kill_processes_on_port(runtime_args.port))
+            execution_plane_cleanup = _kill_execution_plane_workers()
             ok, detail = _runtime_start()
             if not ok:
                 return _ui_pm2_action_error(action, str(detail.get("message", "unknown error")), details=detail)
@@ -3534,6 +3629,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
                 "port": runtime_args.port,
             },
             "port_cleanup": port_cleanup,
+            "execution_plane_cleanup": execution_plane_cleanup,
             "services": (["runtime"] if with_runtime else []) + list(names.keys()),
             "processes": (
                 [_ui_pm2_process_summary(runtime_args.name)] if with_runtime else []

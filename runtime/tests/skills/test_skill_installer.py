@@ -32,7 +32,7 @@ async def test_skill_installer_installs_from_folder(tmp_path: Path, monkeypatch:
     tool = SkillInstallerTool(registry)
     result = await tool.execute(source_path=str(src), skill_name="demo_skill")
     assert result.success is True
-    assert registry.get_tool("demo_skill") is not None
+    assert registry.get_tool("demo_skill") is None
 
 
 @pytest.mark.asyncio
@@ -51,7 +51,7 @@ async def test_skill_installer_installs_from_zip(tmp_path: Path, monkeypatch: py
     tool = SkillInstallerTool(registry)
     result = await tool.execute(source_path=str(zip_path), skill_name="zip_skill")
     assert result.success is True
-    assert registry.get_tool("zip_skill") is not None
+    assert registry.get_tool("zip_skill") is None
 
 
 @pytest.mark.asyncio
@@ -90,4 +90,5 @@ async def test_skill_installer_supports_instruction_only_skill(tmp_path: Path, m
     payload = json.loads(index_path.read_text(encoding="utf-8"))
     skills = payload.get("skills", [])
     row = next(item for item in skills if item.get("skill_id") == "instruction_skill")
-    assert row.get("kind") == "instruction"
+    assert row.get("has_skill_md") is True
+    assert row.get("script_files") == []

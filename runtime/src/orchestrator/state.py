@@ -16,6 +16,7 @@ class PlanStep(BaseModel):
     title: str = Field(..., description="Step title/description")
     tool: str | None = Field(default=None, description="Tool to execute")
     params: dict[str, Any] = Field(default_factory=dict, description="Tool parameters")
+    skill_source: str | None = Field(default=None, description="Skill id that guided this step")
     parallel: bool = Field(default=False, description="Whether this step can run in parallel")
     status: Literal["pending", "running", "completed", "failed"] = Field(default="pending")
     result: Any = Field(default=None, description="Step execution result")
@@ -109,6 +110,9 @@ class AgentState(TypedDict):
 
     # State machine control
     current_step: Literal["start", "plan", "act", "delegate", "observe", "reflect", "respond"]
+    observe_outcome: (
+        Literal["task_completed", "continue_execution", "replan_current_round", "plan_next_round"] | None
+    )
 
     # Planning state
     plan: ExecutionPlan | None
@@ -183,6 +187,7 @@ def create_initial_state(
         context=context,
         messages=initial_messages,
         current_step="start",
+        observe_outcome=None,
         plan=None,
         pending_actions=[],
         tool_results=[],

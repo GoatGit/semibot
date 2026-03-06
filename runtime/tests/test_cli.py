@@ -378,6 +378,20 @@ def test_serve_stop_returns_success_when_not_found(monkeypatch, capsys) -> None:
         "src.cli._kill_processes_on_port",
         lambda port: {"port": port, "target_pids": [], "terminated_pids": [], "killed_pids": [], "remaining_pids": []},
     )
+    monkeypatch.setattr(
+        "src.cli._kill_execution_plane_workers",
+        lambda: {
+            "runtime_log_dir": "/tmp",
+            "pid_files": [],
+            "stale_pid_files": [],
+            "target_pids": [],
+            "terminated_pids": [],
+            "killed_pids": [],
+            "remaining_pids": [],
+            "removed_pid_files": [],
+            "remaining_pid_files": [],
+        },
+    )
 
     parser = build_parser()
     args = parser.parse_args(["serve", "stop"])
@@ -411,6 +425,20 @@ def test_serve_restart_prints_single_payload(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr("src.cli._pm2_find_process", _fake_find_process)
     monkeypatch.setattr("src.cli._run_pm2_command", lambda _command: _Result())
+    monkeypatch.setattr(
+        "src.cli._kill_execution_plane_workers",
+        lambda: {
+            "runtime_log_dir": "/tmp",
+            "pid_files": [],
+            "stale_pid_files": [],
+            "target_pids": [],
+            "terminated_pids": [],
+            "killed_pids": [],
+            "remaining_pids": [],
+            "removed_pid_files": [],
+            "remaining_pid_files": [],
+        },
+    )
 
     parser = build_parser()
     args = parser.parse_args(["serve", "restart", "--port", "9998"])
@@ -435,6 +463,20 @@ def test_ui_start_uses_pm2(monkeypatch, capsys, tmp_path) -> None:
     monkeypatch.setattr("src.cli._repo_root_from_cli", lambda: project_root)
     monkeypatch.setattr("src.cli._pm2_available", lambda: True)
     monkeypatch.setattr("src.cli._ensure_pnpm", lambda: None)
+    monkeypatch.setattr(
+        "src.cli._kill_execution_plane_workers",
+        lambda: {
+            "runtime_log_dir": "/tmp",
+            "pid_files": [],
+            "stale_pid_files": [],
+            "target_pids": [],
+            "terminated_pids": [],
+            "killed_pids": [],
+            "remaining_pids": [],
+            "removed_pid_files": [],
+            "remaining_pid_files": [],
+        },
+    )
 
     calls: list[list[str]] = []
     state: dict[str, dict[str, Any]] = {}
@@ -520,6 +562,20 @@ def test_ui_restart_runs_stop_then_start_pm2(monkeypatch, capsys, tmp_path) -> N
     monkeypatch.setattr("src.cli._repo_root_from_cli", lambda: project_root)
     monkeypatch.setattr("src.cli._pm2_available", lambda: True)
     monkeypatch.setattr("src.cli._ensure_pnpm", lambda: None)
+    monkeypatch.setattr(
+        "src.cli._kill_execution_plane_workers",
+        lambda: {
+            "runtime_log_dir": "/tmp",
+            "pid_files": [],
+            "stale_pid_files": [],
+            "target_pids": [],
+            "terminated_pids": [],
+            "killed_pids": [],
+            "remaining_pids": [],
+            "removed_pid_files": [],
+            "remaining_pid_files": [],
+        },
+    )
     port_cleanup_calls: list[int] = []
     monkeypatch.setattr(
         "src.cli._kill_processes_on_port",
@@ -577,6 +633,20 @@ def test_ui_stop_kills_runtime_api_web_ports(monkeypatch, capsys, tmp_path) -> N
 
     monkeypatch.setattr("src.cli._repo_root_from_cli", lambda: project_root)
     monkeypatch.setattr("src.cli._pm2_available", lambda: True)
+    monkeypatch.setattr(
+        "src.cli._kill_execution_plane_workers",
+        lambda: {
+            "runtime_log_dir": "/tmp",
+            "pid_files": [],
+            "stale_pid_files": [],
+            "target_pids": [],
+            "terminated_pids": [],
+            "killed_pids": [],
+            "remaining_pids": [],
+            "removed_pid_files": [],
+            "remaining_pid_files": [],
+        },
+    )
 
     calls: list[list[str]] = []
     state: dict[str, dict[str, Any]] = {

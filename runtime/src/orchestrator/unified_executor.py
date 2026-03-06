@@ -33,6 +33,37 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+def _normalize_action_params(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort param alias compatibility to prevent avoidable hard failures."""
+    if not isinstance(params, dict):
+        return {}
+
+    normalized = dict(params)
+    name = (tool_name or "").strip().lower()
+
+    if name in {"search", "web_search"}:
+        query = normalized.get("query")
+        if not isinstance(query, str) or not query.strip():
+            queries = normalized.get("queries")
+            if isinstance(queries, list):
+                for item in queries:
+                    if isinstance(item, str) and item.strip():
+                        normalized["query"] = item.strip()
+                        break
+
+    if name == "web_fetch":
+        url = normalized.get("url")
+        if not isinstance(url, str) or not url.strip():
+            urls = normalized.get("urls")
+            if isinstance(urls, list):
+                for item in urls:
+                    if isinstance(item, str) and item.strip():
+                        normalized["url"] = item.strip()
+                        break
+
+    return normalized
+
+
 @dataclass
 class ExecutionMetadata:
     """Metadata for action execution."""
@@ -113,7 +144,8 @@ class UnifiedActionExecutor:
             ToolCallResult with execution result and metadata
         """
         tool_name = action.tool
-        params = action.params
+        params = _normalize_action_params(tool_name or "", action.params)
+        action.params = params
 
         if not tool_name:
             await emit_runtime_event(
@@ -208,7 +240,7 @@ class UnifiedActionExecutor:
             )
 
         # Build execution metadata
-        metadata = self._build_metadata(capability, tool_name)
+        metadata = self._build_metadata(capability, tool_name, params)
 
         # Log action started
         if self.audit_logger:
@@ -433,7 +465,12 @@ class UnifiedActionExecutor:
                 success=False,
             )
 
-    def _build_metadata(self, capability: Any, tool_name: str) -> ExecutionMetadata:
+    def _build_metadata(
+        self,
+        capability: Any,
+        tool_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> ExecutionMetadata:
         """Build execution metadata from capability."""
         metadata_map = capability.metadata if isinstance(capability.metadata, dict) else {}
         raw_risk_level = metadata_map.get("risk_level")
@@ -447,6 +484,24 @@ class UnifiedActionExecutor:
         requires_approval = configured_requires_approval or (
             is_high_risk and self.runtime_context.runtime_policy.require_approval_for_high_risk
         )
+
+        normalized_params = params if isinstance(params, dict) else {}
+        if tool_name == "file_io":
+            action = str(
+                normalized_params.get("action")
+                or normalized_params.get("operation")
+                or ""
+            ).strip().lower()
+            if action in {"read", "read_skill_file", "list"}:
+                is_high_risk = False
+                requires_approval = False
+                risk_level = "low"
+            elif action == "write":
+                is_high_risk = True
+                requires_approval = configured_requires_approval or (
+                    self.runtime_context.runtime_policy.require_approval_for_high_risk
+                )
+                risk_level = "high"
 
         metadata = ExecutionMetadata(
             capability_type=capability.capability_type,
@@ -526,9 +581,11 @@ class UnifiedActionExecutor:
             )
 
         logger.debug(f"Executing skill: {tool_name}")
+        enriched_params = dict(params)
+        enriched_params.setdefault("_runtime_context", self.runtime_context)
 
         try:
-            result = await self.skill_registry.execute(tool_name, params)
+            result = await self.skill_registry.execute(tool_name, enriched_params)
             return ToolCallResult(
                 tool_name=tool_name,
                 params=params,

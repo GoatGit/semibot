@@ -9,8 +9,13 @@ import os
 from pathlib import Path
 from typing import Any
 
+from src.bootstrap import default_skills_path
 from src.server.config_store import RuntimeConfigStore
 from src.skills.base import BaseTool, ToolResult
+from src.skills.skill_injection_tracker import SkillInjectionTracker
+
+
+_ALLOWED_SKILL_RESOURCE_DIRS = {"reference", "references", "templates", "assets"}
 
 
 class FileIOTool(BaseTool):
@@ -25,7 +30,10 @@ class FileIOTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "Read/write/list local files under configured root directory."
+        return (
+            "Read/write/list local files under configured root directory. "
+            "Also supports action=read_skill_file to read a file from an installed skill package safely."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -34,12 +42,15 @@ class FileIOTool(BaseTool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["read", "write", "list"],
-                    "description": "File operation action",
+                    "enum": ["read", "write", "list", "read_skill_file"],
+                    "description": (
+                        "File operation action. "
+                        "Use read_skill_file with skill_name + file_path to read installed skill docs safely."
+                    ),
                 },
                 "operation": {
                     "type": "string",
-                    "enum": ["read", "write", "list"],
+                    "enum": ["read", "write", "list", "read_skill_file"],
                     "description": "Alias of action (compatibility)",
                 },
                 "path": {
@@ -55,6 +66,14 @@ class FileIOTool(BaseTool):
                     "type": "boolean",
                     "description": "Whether list should recurse into subdirectories",
                     "default": False,
+                },
+                "skill_name": {
+                    "type": "string",
+                    "description": "Installed skill name for action=read_skill_file, e.g. deep-research",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative file path under the skill directory for action=read_skill_file, e.g. SKILL.md",
                 },
             },
             "required": [],
@@ -94,13 +113,23 @@ class FileIOTool(BaseTool):
         path: str = ".",
         content: str | None = None,
         recursive: bool = False,
-        **_: Any,
+        skill_name: str | None = None,
+        file_path: str | None = None,
+        **kwargs: Any,
     ) -> ToolResult:
         resolved_action = (action or operation or "").strip().lower()
         if resolved_action == "ls":
             resolved_action = "list"
         if not resolved_action:
-            return ToolResult.error_result("action is required (read/write/list)")
+            return ToolResult.error_result("action is required (read/write/list/read_skill_file)")
+
+        if resolved_action == "read_skill_file":
+            runtime_context = kwargs.get("_runtime_context")
+            return self._execute_read_skill_file(
+                skill_name=skill_name,
+                file_path=file_path,
+                runtime_context=runtime_context,
+            )
 
         try:
             target = self._resolve_path(path)
@@ -152,3 +181,97 @@ class FileIOTool(BaseTool):
             return ToolResult.success_result({"root": str(self.root), "items": items})
 
         return ToolResult.error_result(f"Unsupported action: {resolved_action}")
+
+    @staticmethod
+    def _is_allowed_skill_resource(normalized_path: str) -> bool:
+        rel = normalized_path.strip().replace("\\", "/").lstrip("./")
+        if rel == "SKILL.md":
+            return True
+        first = rel.split("/", 1)[0]
+        return first in _ALLOWED_SKILL_RESOURCE_DIRS
+
+    @staticmethod
+    def _resolve_tracker(runtime_context: Any | None) -> SkillInjectionTracker | None:
+        tracker = getattr(runtime_context, "skill_injection_tracker", None)
+        if isinstance(tracker, SkillInjectionTracker):
+            return tracker
+        return None
+
+    def _execute_read_skill_file(
+        self,
+        skill_name: str | None,
+        file_path: str | None,
+        runtime_context: Any | None = None,
+    ) -> ToolResult:
+        skill = str(skill_name or "").strip()
+        rel = str(file_path or "").strip()
+        if not skill:
+            return ToolResult.error_result("skill_name is required for action=read_skill_file")
+        if not rel:
+            return ToolResult.error_result("file_path is required for action=read_skill_file")
+        if rel.startswith("/") or rel.startswith("~"):
+            return ToolResult.error_result("file_path must be a relative path inside the skill directory")
+        rel_posix = rel.replace("\\", "/")
+        if any(segment == ".." for segment in rel_posix.split("/")):
+            return ToolResult.error_result("file_path escapes skill directory")
+
+        skills_root = Path(os.getenv("SEMIBOT_SKILLS_PATH", str(default_skills_path()))).expanduser().resolve()
+        skill_root = (skills_root / skill).resolve()
+        if skill_root != skills_root and skills_root not in skill_root.parents:
+            return ToolResult.error_result("invalid skill_name")
+        if not skill_root.exists() or not skill_root.is_dir():
+            return ToolResult.error_result(f"skill not found: {skill}")
+
+        normalized = rel_posix.lstrip("./")
+        if not self._is_allowed_skill_resource(normalized):
+            return ToolResult.error_result(
+                "file_path is restricted to SKILL.md or files under reference/references/templates/assets"
+            )
+        target = (skill_root / normalized).resolve()
+        if target != skill_root and skill_root not in target.parents:
+            return ToolResult.error_result("file_path escapes skill directory")
+        if not target.exists() or not target.is_file():
+            return ToolResult.error_result(f"Skill file not found: {normalized}")
+
+        tracker = self._resolve_tracker(runtime_context)
+        current_mtime = None
+        try:
+            current_mtime = target.stat().st_mtime
+        except OSError:
+            current_mtime = None
+        if tracker:
+            cached = tracker.get_cached_resource(skill, normalized, current_mtime=current_mtime)
+            if cached is not None:
+                return ToolResult.success_result(
+                    {
+                        "skill_name": skill,
+                        "file_path": normalized,
+                        "content": cached,
+                        "truncated": False,
+                        "cached": True,
+                    }
+                )
+
+        data = target.read_bytes()
+        truncated = False
+        if len(data) > self.max_read_bytes:
+            data = data[: self.max_read_bytes]
+            truncated = True
+        content = data.decode("utf-8", errors="replace")
+        if tracker:
+            tracker.mark_resource_read(
+                skill,
+                normalized,
+                content,
+                content_mtime=current_mtime,
+            )
+
+        return ToolResult.success_result(
+            {
+                "skill_name": skill,
+                "file_path": normalized,
+                "content": content,
+                "truncated": truncated,
+                "cached": False,
+            }
+        )

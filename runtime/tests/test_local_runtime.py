@@ -8,12 +8,14 @@ import pytest
 
 from src.llm.base import LLMConfig
 from src.local_runtime import (
+    _build_skill_definitions,
     _build_approval_policy,
     _create_llm_provider,
     _guard_rule_authoring_success_claim,
     _maybe_bootstrap_llm_from_control_plane,
     _maybe_load_local_env_files,
 )
+from src.skills.bootstrap import create_default_registry
 
 
 def test_create_llm_provider_reads_env(monkeypatch) -> None:
@@ -65,6 +67,61 @@ def test_create_llm_provider_reads_config_when_env_missing(monkeypatch, tmp_path
     assert provider_cfg.api_key == "cfg-key"
     assert provider_cfg.model == "gpt-4o-mini"
     assert provider_cfg.base_url == "http://localhost:11434/v1"
+
+
+def test_create_llm_provider_prefers_kimi_instance_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "env-openai")
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "env-custom")
+    monkeypatch.setenv("CUSTOM_LLM_MODEL_NAME", "kimi-k2.5")
+    monkeypatch.setenv(
+        "LLM_PROVIDER_INSTANCES",
+        '[{"type":"kimi","id":"kimiprovider","apiKey":"env-kimi-instance","baseUrl":"https://api.moonshot.cn/v1"}]',
+    )
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "env-kimi-instance"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_honors_default_provider_key(monkeypatch) -> None:
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "env-custom")
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "kimi-k2.5")
+    monkeypatch.setenv("DEFAULT_LLM_PROVIDER_KEY", "kimi:kimiprovider")
+    monkeypatch.setenv(
+        "LLM_PROVIDER_INSTANCES",
+        '[{"type":"kimi","id":"kimiprovider","apiKey":"env-kimi-instance","baseUrl":"https://api.moonshot.cn/v1"}]',
+    )
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "env-kimi-instance"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_falls_back_to_default_model_when_explicit_model_provider_unavailable(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "env-custom")
+    monkeypatch.delenv("CUSTOM_LLM_MODEL_NAME", raising=False)
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "kimi-k2.5")
+    monkeypatch.setenv(
+        "LLM_PROVIDER_INSTANCES",
+        '[{"type":"kimi","id":"kimiprovider","apiKey":"env-kimi-instance","baseUrl":"https://api.moonshot.cn/v1"}]',
+    )
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider("gpt-4o")
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "env-kimi-instance"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
 
 
 @pytest.mark.asyncio
@@ -185,3 +242,28 @@ def test_guard_rule_authoring_success_claim_noop_when_successful() -> None:
     response = "规则已创建成功。"
     tool_results = [{"tool_name": "rule_authoring", "success": True}]
     assert _guard_rule_authoring_success_claim(response, tool_results) == response
+
+
+def test_build_skill_definitions_merges_external_skill_index() -> None:
+    registry = create_default_registry()
+    defs = _build_skill_definitions(
+        registry,
+        [
+            {
+                "id": "deep-research",
+                "name": "deep-research",
+                "description": "Deep research workflow",
+                "package": {
+                    "files": [
+                        {"path": "SKILL.md"},
+                        {"path": "scripts/research_engine.py"},
+                    ]
+                },
+            }
+        ],
+    )
+    names = [d.name for d in defs]
+    assert "deep-research" in names
+    deep_research = next(d for d in defs if d.name == "deep-research")
+    assert deep_research.metadata.get("has_skill_md") is True
+    assert deep_research.metadata.get("script_files") == ["scripts/research_engine.py"]

@@ -111,6 +111,27 @@ class TestOpenAIProviderChat:
         assert tools[0]["function"]["name"] == "web_search"
 
     @pytest.mark.asyncio
+    async def test_chat_normalizes_skill_context_tool_message(self, provider):
+        """Should downgrade synthetic skill-context tool message to user content."""
+        messages = [
+            {"role": "system", "content": "You are a planner."},
+            {
+                "role": "tool",
+                "name": "tools/skill_context/deep-research",
+                "tool_call_id": "skill_ctx_deep_research",
+                "content": "<skill_md>content</skill_md>",
+            },
+            {"role": "user", "content": "请规划执行步骤"},
+        ]
+
+        await provider.chat(messages)
+
+        call_args = provider.client.chat.completions.create.call_args
+        api_messages = call_args.kwargs["messages"]
+        assert api_messages[1]["role"] == "user"
+        assert "[TOOL_CONTEXT tools/skill_context/deep-research]" in api_messages[1]["content"]
+
+    @pytest.mark.asyncio
     async def test_chat_with_tool_calls_response(self, provider, sample_messages):
         """Should parse tool calls from response."""
         # Setup mock response with tool calls
@@ -149,6 +170,106 @@ class TestOpenAIProviderChat:
 
         with pytest.raises(Exception, match="API Error"):
             await provider.chat(sample_messages)
+
+    @pytest.mark.asyncio
+    async def test_chat_retries_without_temperature_after_constraint_error(
+        self, provider, sample_messages
+    ):
+        first_error = Exception(
+            "Error code: 400 - {'error': {'message': 'invalid temperature: only 1 is allowed for this model'}}"
+        )
+        second_error = Exception(
+            "Error code: 400 - {'error': {'message': 'invalid temperature: only 1 is allowed for this model'}}"
+        )
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "ok"
+        mock_response.choices[0].message.tool_calls = []
+        mock_response.choices[0].finish_reason = "stop"
+        mock_response.model = "kimi-k2.5"
+        mock_response.usage = MagicMock()
+        mock_response.usage.prompt_tokens = 1
+        mock_response.usage.completion_tokens = 1
+        mock_response.usage.total_tokens = 2
+        provider.client.chat.completions.create = AsyncMock(
+            side_effect=[first_error, second_error, mock_response]
+        )
+
+        response = await provider.chat(sample_messages, temperature=0.7)
+
+        assert response.content == "ok"
+        calls = provider.client.chat.completions.create.call_args_list
+        assert len(calls) == 3
+        assert calls[1].kwargs["temperature"] == 1
+        assert "temperature" not in calls[2].kwargs
+
+
+class TestOpenAIProviderChatStream:
+    """Tests for OpenAI provider chat_stream method."""
+
+    @pytest.fixture
+    def provider(self, mock_openai_client):
+        with patch("src.llm.openai_provider.AsyncOpenAI"):
+            config = LLMConfig(model="gpt-4o", api_key="sk-test")
+            provider = OpenAIProvider(config)
+            provider.client = mock_openai_client
+            return provider
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_retries_with_temperature_one_on_constraint_error(
+        self, provider, sample_messages
+    ):
+        async def stream_once(text: str):
+            chunk = MagicMock()
+            chunk.choices = [MagicMock()]
+            chunk.choices[0].delta.content = text
+            yield chunk
+
+        first_error = Exception(
+            "Error code: 400 - {'error': {'message': 'invalid temperature: only 1 is allowed for this model'}}"
+        )
+        provider.client.chat.completions.create = AsyncMock(
+            side_effect=[first_error, stream_once("ok")]
+        )
+
+        chunks = []
+        async for chunk in provider.chat_stream(sample_messages, temperature=0.7):
+            chunks.append(chunk)
+
+        assert "".join(chunks) == "ok"
+        calls = provider.client.chat.completions.create.call_args_list
+        assert len(calls) == 2
+        assert calls[1].kwargs["temperature"] == 1
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_retries_without_temperature_when_needed(
+        self, provider, sample_messages
+    ):
+        async def stream_once(text: str):
+            chunk = MagicMock()
+            chunk.choices = [MagicMock()]
+            chunk.choices[0].delta.content = text
+            yield chunk
+
+        first_error = Exception(
+            "Error code: 400 - {'error': {'message': 'invalid temperature: only 1 is allowed for this model'}}"
+        )
+        second_error = Exception(
+            "Error code: 400 - {'error': {'message': 'invalid temperature: only 1 is allowed for this model'}}"
+        )
+        provider.client.chat.completions.create = AsyncMock(
+            side_effect=[first_error, second_error, stream_once("ok2")]
+        )
+
+        chunks = []
+        async for chunk in provider.chat_stream(sample_messages, temperature=0.7):
+            chunks.append(chunk)
+
+        assert "".join(chunks) == "ok2"
+        calls = provider.client.chat.completions.create.call_args_list
+        assert len(calls) == 3
+        assert calls[1].kwargs["temperature"] == 1
+        assert "temperature" not in calls[2].kwargs
 
 
 class TestOpenAIProviderToolConversion:

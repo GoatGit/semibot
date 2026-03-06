@@ -46,6 +46,24 @@ function isLocalHostname(hostname: string): boolean {
   return safe === 'localhost' || safe === '127.0.0.1' || safe === '::1'
 }
 
+function rewriteLocalApiUrlToCurrentHost(envUrl: string): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const parsed = new URL(envUrl)
+    const currentHost = window.location.hostname
+    if (!isLocalHostname(parsed.hostname) || !isLocalHostname(currentHost)) {
+      return null
+    }
+    if (parsed.hostname === currentHost) {
+      return normalizeApiBase(envUrl)
+    }
+    const rebuilt = `${window.location.protocol}//${currentHost}:${parsed.port}${parsed.pathname}`
+    return normalizeApiBase(rebuilt)
+  } catch {
+    return null
+  }
+}
+
 function shouldUseEnvApiUrlInBrowser(envUrl: string): boolean {
   if (typeof window === 'undefined') return true
   try {
@@ -64,7 +82,7 @@ export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const envApiUrl = process.env.NEXT_PUBLIC_API_URL
     if (envApiUrl && shouldUseEnvApiUrlInBrowser(envApiUrl)) {
-      return normalizeApiBase(envApiUrl)
+      return rewriteLocalApiUrlToCurrentHost(envApiUrl) ?? normalizeApiBase(envApiUrl)
     }
     return API_BASE_PATH
   }
@@ -85,7 +103,7 @@ export function getDirectApiBaseUrlForBrowser(): string {
 
   const envApiUrl = process.env.NEXT_PUBLIC_API_URL
   if (envApiUrl && shouldUseEnvApiUrlInBrowser(envApiUrl)) {
-    return normalizeApiBase(envApiUrl)
+    return rewriteLocalApiUrlToCurrentHost(envApiUrl) ?? normalizeApiBase(envApiUrl)
   }
 
   // 远程访问场景下，避免直连访问者机器 localhost。

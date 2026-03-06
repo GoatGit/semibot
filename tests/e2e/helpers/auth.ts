@@ -12,7 +12,7 @@ export async function loginByApi(page: Page) {
       JSON.stringify({
         state: {
           user: {
-            id: 'e2e-single-user',
+            id: '22222222-2222-2222-2222-222222222222',
             email: 'admin@semibot.local',
             name: 'Semibot Admin',
             role: 'owner',

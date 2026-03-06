@@ -362,11 +362,15 @@ class CapabilityGraph:
         # Clear existing capabilities
         self.capabilities.clear()
 
-        # 1. Load skills
+        # 1. Load skills (non-executable in runtime v2; used as orchestration context only)
         for skill_def in self.context.available_skills:
-            capability = SkillCapability(skill_definition=skill_def)
-            self.capabilities[capability.name] = capability
-            logger.debug(f"Added skill capability: {capability.name}")
+            logger.debug(
+                "Skip skill from executable capabilities",
+                extra={
+                    "session_id": self.context.session_id,
+                    "skill_name": skill_def.name,
+                },
+            )
 
         # 2. Load tools
         for tool_def in self.context.available_tools:

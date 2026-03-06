@@ -1,13 +1,16 @@
-"""Local package-skill loader helpers."""
+"""Installed skill loader helpers.
+
+Installed skills are indexed for discovery and orchestration context only.
+They are no longer auto-registered as executable tools.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from src.skills.index_manager import SkillsIndexManager, resolve_skill_dir
-from src.skills.package_tool import PackagePythonTool
-from src.skills.registry import SkillMetadata, SkillRegistry
+from src.skills.index_manager import SkillsIndexManager
+from src.skills.registry import SkillRegistry
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -46,54 +49,20 @@ def register_installed_package_tools(
         if isinstance(row, dict) and str(row.get("skill_id") or "").strip()
     }
     disabled = _read_disabled_skill_names(root)
-    registered: list[str] = []
+    indexed: list[str] = []
     skipped: list[dict[str, str]] = []
-
-    for item in sorted(root.iterdir(), key=lambda p: p.name):
-        if not item.is_dir():
-            continue
-        skill_name = item.name
+    for skill_name, metadata_row in indexed_map.items():
         if skill_name in disabled:
             skipped.append({"name": skill_name, "reason": "disabled"})
             continue
-        if registry.get_tool(skill_name) is not None:
-            skipped.append({"name": skill_name, "reason": "already_registered"})
-            continue
-        metadata_row = indexed_map.get(skill_name, {})
-        kind = str(metadata_row.get("kind") or "package")
-        if kind == "instruction":
-            skipped.append({"name": skill_name, "reason": "instruction_skill_not_executable"})
-            continue
-        skill_dir = resolve_skill_dir(item)
-        if skill_dir is None:
-            skipped.append({"name": skill_name, "reason": "entry script missing"})
-            continue
-        script_file = skill_dir / "scripts" / "main.py"
-        script_content = script_file.read_text(encoding="utf-8")
-        description = str(metadata_row.get("description") or f"Execute installed package skill: {skill_name}")
-        tags = metadata_row.get("tags") if isinstance(metadata_row.get("tags"), list) else []
-        registry.register_tool(
-            PackagePythonTool(skill_name=skill_name, description=description, script_content=script_content),
-            metadata=SkillMetadata(
-                version=str(metadata_row.get("version") or "0.0.0-local"),
-                source=str(metadata_row.get("source") or "local"),
-                tags=[str(tag) for tag in tags if isinstance(tag, str)],
-                additional={
-                    "installed_path": str(item),
-                    "index_status": str(metadata_row.get("status") or "active"),
-                    "skill_kind": kind,
-                    "has_skill_md": bool(metadata_row.get("skill_md_path")),
-                    "requires": metadata_row.get("requires") if isinstance(metadata_row.get("requires"), dict) else {},
-                },
-            ),
-        )
-        registered.append(skill_name)
+        indexed.append(skill_name)
 
-    if registered:
-        logger.info("package_tools_registered", extra={"count": len(registered), "skills": registered})
+    if indexed:
+        logger.info("installed_skills_indexed", extra={"count": len(indexed), "skills": indexed})
     return {
         "skills_root": str(root),
-        "registered": registered,
+        "registered": [],
+        "indexed": indexed,
         "skipped": skipped,
         "index_total": len(indexed_rows),
     }

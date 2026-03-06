@@ -9,6 +9,7 @@ def test_default_registry_includes_core_builtin_tools() -> None:
     assert "search" in tools
     assert "code_executor" in tools
     assert "file_io" in tools
+    assert "skill_script_runner" in tools
     assert "browser_automation" in tools
     assert "http_client" in tools
     assert "web_fetch" in tools

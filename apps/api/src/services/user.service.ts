@@ -29,6 +29,37 @@ export interface UserPreferences {
   language: 'zh-CN' | 'en-US'
 }
 
+const SINGLE_USER_ORG_ID = process.env.SEMIBOT_SINGLE_ORG_ID || '11111111-1111-1111-1111-111111111111'
+
+function isSingleUserMode(): boolean {
+  const enableAuth = process.env.SEMIBOT_ENABLE_AUTH
+  const disableAuth = process.env.SEMIBOT_DISABLE_AUTH
+
+  if (enableAuth !== undefined) return enableAuth !== 'true'
+  if (disableAuth !== undefined) return disableAuth !== 'false'
+  return true
+}
+
+function normalizePreferences(settings: Record<string, unknown> | null | undefined): UserPreferences {
+  const safe = settings ?? {}
+  return {
+    theme: (safe.theme as UserPreferences['theme']) ?? 'dark',
+    language: (safe.language as UserPreferences['language']) ?? 'zh-CN',
+  }
+}
+
+async function getSingleUserOrgPreferences(): Promise<UserPreferences> {
+  const result = await sql`
+    SELECT settings
+    FROM organizations
+    WHERE id = ${SINGLE_USER_ORG_ID}
+    LIMIT 1
+  `
+
+  const row = result[0] as { settings: Record<string, unknown> | null } | undefined
+  return normalizePreferences(row?.settings)
+}
+
 /**
  * 获取当前用户资料
  */
@@ -119,16 +150,14 @@ export async function getUserPreferences(userId: string): Promise<UserPreference
   `
 
   if (result.length === 0) {
+    if (isSingleUserMode()) {
+      return getSingleUserOrgPreferences()
+    }
     throw createError(AUTH_USER_NOT_FOUND)
   }
 
   const row = result[0] as { settings: Record<string, unknown> | null }
-  const settings = row.settings ?? {}
-
-  return {
-    theme: (settings.theme as UserPreferences['theme']) ?? 'dark',
-    language: (settings.language as UserPreferences['language']) ?? 'zh-CN',
-  }
+  return normalizePreferences(row.settings)
 }
 
 /**
@@ -141,7 +170,7 @@ export async function updateUserPreferences(
   const theme = input.theme ?? null
   const language = input.language ?? null
 
-  const result = await sql`
+  let result = await sql`
     UPDATE organizations
     SET settings = COALESCE(settings, '{}'::jsonb) || jsonb_strip_nulls(
       jsonb_build_object(
@@ -157,17 +186,26 @@ export async function updateUserPreferences(
     RETURNING settings
   `
 
+  if (result.length === 0 && isSingleUserMode()) {
+    result = await sql`
+      UPDATE organizations
+      SET settings = COALESCE(settings, '{}'::jsonb) || jsonb_strip_nulls(
+        jsonb_build_object(
+          'theme', ${theme}::text,
+          'language', ${language}::text
+        )
+      )
+      WHERE id = ${SINGLE_USER_ORG_ID}
+      RETURNING settings
+    `
+  }
+
   if (result.length === 0) {
     throw createError(AUTH_USER_NOT_FOUND)
   }
 
   const row = result[0] as { settings: Record<string, unknown> | null }
-  const settings = row.settings ?? {}
-
-  return {
-    theme: (settings.theme as UserPreferences['theme']) ?? 'dark',
-    language: (settings.language as UserPreferences['language']) ?? 'zh-CN',
-  }
+  return normalizePreferences(row.settings)
 }
 
 /**

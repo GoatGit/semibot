@@ -9,14 +9,12 @@ import json
 import os
 import re
 import time
-import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
-from src.bootstrap import default_config_path
 from src.events.event_engine import EventEngine
 from src.events.event_router import EventRouter
 from src.events.event_store import EventStore
@@ -76,6 +74,30 @@ _APPROVAL_SUMMARY_IGNORED_PARAMS = {
     "input",
     "body",
 }
+_OPENAI_COMPATIBLE_PROVIDER_BASES = ("openai", "kimi", "qwen", "minimax", "xai", "custom")
+_MODEL_PROVIDER_HINTS: dict[str, tuple[str, ...]] = {
+    "kimi": ("kimi", "moonshot", "k1", "k2"),
+    "qwen": ("qwen", "qwq"),
+    "minimax": ("minimax", "abab", "m1", "m2"),
+    "xai": ("grok", "xai"),
+    "openai": ("gpt", "o1", "o3", "o4", "chatgpt"),
+}
+_PROVIDER_KEY_ENV_MAP: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "kimi": "KIMI_API_KEY",
+    "qwen": "QWEN_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "xai": "XAI_API_KEY",
+    "custom": "CUSTOM_LLM_API_KEY",
+}
+_PROVIDER_BASE_URL_ENV_MAP: dict[str, str] = {
+    "openai": "OPENAI_API_BASE_URL",
+    "kimi": "KIMI_API_BASE_URL",
+    "qwen": "QWEN_API_BASE_URL",
+    "minimax": "MINIMAX_API_BASE_URL",
+    "xai": "XAI_API_BASE_URL",
+    "custom": "CUSTOM_LLM_API_BASE_URL",
+}
 
 
 def _as_non_empty_str(value: Any) -> str | None:
@@ -83,6 +105,65 @@ def _as_non_empty_str(value: Any) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def _provider_base(provider_key: str) -> str:
+    return str(provider_key or "").strip().lower().split(":", 1)[0]
+
+
+def _provider_cfg_base_url(raw_cfg: Any) -> str | None:
+    if not isinstance(raw_cfg, dict):
+        return None
+    base_url = raw_cfg.get("base_url") or raw_cfg.get("baseUrl")
+    if not isinstance(base_url, str):
+        return None
+    trimmed = base_url.strip()
+    return trimmed or None
+
+
+def _infer_openai_compatible_provider_base(model: str) -> str | None:
+    model_lower = str(model or "").strip().lower()
+    if not model_lower:
+        return None
+    for base in ("kimi", "qwen", "minimax", "xai", "openai"):
+        hints = _MODEL_PROVIDER_HINTS.get(base, ())
+        if hints and any(token in model_lower for token in hints):
+            return base
+    return None
+
+
+def _pick_openai_compatible_provider_key(
+    model: str,
+    api_keys: dict[str, str],
+    *,
+    strict_preferred_base: bool = False,
+) -> str | None:
+    candidates = [
+        key
+        for key, value in api_keys.items()
+        if value and _provider_base(key) in _OPENAI_COMPATIBLE_PROVIDER_BASES
+    ]
+    if not candidates:
+        return None
+
+    preferred_base = _infer_openai_compatible_provider_base(model)
+    if preferred_base:
+        if preferred_base in api_keys and api_keys.get(preferred_base):
+            return preferred_base
+        scoped = sorted(key for key in candidates if key.startswith(f"{preferred_base}:"))
+        if scoped:
+            return scoped[0]
+        if strict_preferred_base:
+            return None
+
+    for base in _OPENAI_COMPATIBLE_PROVIDER_BASES:
+        if base in api_keys and api_keys.get(base):
+            return base
+        scoped = sorted(key for key in candidates if key.startswith(f"{base}:"))
+        if scoped:
+            return scoped[0]
+
+    return sorted(candidates)[0]
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -226,7 +307,11 @@ def _parse_env_value(raw: str) -> str:
     if " #" in value:
         value = value.split(" #", maxsplit=1)[0].strip()
     if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-        return value[1:-1]
+        inner = value[1:-1]
+        try:
+            return bytes(inner, "utf-8").decode("unicode_escape")
+        except Exception:
+            return inner
     return value
 
 
@@ -271,17 +356,9 @@ def _maybe_load_local_env_files() -> None:
 
 
 def _load_llm_config() -> dict[str, Any]:
-    config_path = os.getenv("SEMIBOT_CONFIG_PATH")
-    resolved_path = Path(config_path).expanduser() if config_path else default_config_path()
-    if not resolved_path.exists():
-        return {}
-    try:
-        with resolved_path.open("rb") as file:
-            parsed = tomllib.load(file)
-    except Exception:
-        return {}
-    llm = parsed.get("llm") if isinstance(parsed, dict) else None
-    return llm if isinstance(llm, dict) else {}
+    # LLM routing/model config must not be sourced from config.toml.
+    # Runtime LLM selection is driven by env vars and control-plane payloads only.
+    return {}
 
 
 def _set_env_if_missing(name: str, value: str | None) -> None:
@@ -297,26 +374,77 @@ def _apply_llm_config_to_env(llm_config: dict[str, Any]) -> None:
         return
 
     _set_env_if_missing("CUSTOM_LLM_MODEL_NAME", _as_non_empty_str(llm_config.get("default_model")))
+    _set_env_if_missing("DEFAULT_LLM_PROVIDER_KEY", _as_non_empty_str(llm_config.get("default_provider_key")))
+    _set_env_if_missing("FALLBACK_LLM_PROVIDER_KEY", _as_non_empty_str(llm_config.get("fallback_provider_key")))
 
     providers = llm_config.get("providers")
     if not isinstance(providers, dict):
         return
 
-    openai_cfg = providers.get("openai")
-    if isinstance(openai_cfg, dict):
-        openai_base_url = (
-            _as_non_empty_str(openai_cfg.get("base_url"))
-            or _as_non_empty_str(openai_cfg.get("baseUrl"))
-        )
-        _set_env_if_missing("OPENAI_API_BASE_URL", openai_base_url)
+    for provider_key, raw_cfg in providers.items():
+        base = _provider_base(str(provider_key))
+        env_name = _PROVIDER_BASE_URL_ENV_MAP.get(base)
+        if not env_name:
+            continue
+        _set_env_if_missing(env_name, _provider_cfg_base_url(raw_cfg))
 
-    custom_cfg = providers.get("custom")
-    if isinstance(custom_cfg, dict):
-        custom_base_url = (
-            _as_non_empty_str(custom_cfg.get("base_url"))
-            or _as_non_empty_str(custom_cfg.get("baseUrl"))
+
+def _set_instance_provider_env(
+    *,
+    api_keys: dict[str, Any],
+    llm_config: dict[str, Any] | None,
+) -> None:
+    instances: list[dict[str, str]] = []
+    providers_cfg = llm_config.get("providers") if isinstance(llm_config, dict) else {}
+    for provider_key, raw_value in api_keys.items():
+        key = str(provider_key or "").strip()
+        if ":" not in key:
+            continue
+        provider_type, provider_id = key.split(":", 1)
+        provider_type = provider_type.strip().lower()
+        provider_id = provider_id.strip()
+        api_key = _as_non_empty_str(raw_value)
+        if not provider_type or not provider_id or not api_key:
+            continue
+        base_url = None
+        if isinstance(providers_cfg, dict):
+            base_url = _provider_cfg_base_url(providers_cfg.get(key))
+        instance = {
+            "type": provider_type,
+            "id": provider_id,
+            "apiKey": api_key,
+        }
+        if base_url:
+            instance["baseUrl"] = base_url
+        instances.append(instance)
+
+    if not instances:
+        return
+
+    existing_raw = _as_non_empty_str(os.getenv("LLM_PROVIDER_INSTANCES"))
+    existing: list[dict[str, Any]] = []
+    if existing_raw:
+        try:
+            parsed = json.loads(existing_raw)
+            if isinstance(parsed, list):
+                existing = [item for item in parsed if isinstance(item, dict)]
+        except Exception:
+            existing = []
+
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in existing:
+        provider_type = str(item.get("type") or "").strip().lower()
+        provider_id = str(item.get("id") or "").strip()
+        if provider_type and provider_id:
+            merged[(provider_type, provider_id)] = item
+    for item in instances:
+        merged[(item["type"], item["id"])] = item
+
+    if not os.getenv("LLM_PROVIDER_INSTANCES"):
+        os.environ["LLM_PROVIDER_INSTANCES"] = json.dumps(
+            list(merged.values()),
+            ensure_ascii=False,
         )
-        _set_env_if_missing("CUSTOM_LLM_API_BASE_URL", custom_base_url)
 
 
 def _control_plane_bootstrap_lock() -> asyncio.Lock:
@@ -328,7 +456,11 @@ def _control_plane_bootstrap_lock() -> asyncio.Lock:
 
 async def _maybe_bootstrap_llm_from_control_plane() -> None:
     global _CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT
-    if os.getenv("OPENAI_API_KEY") or os.getenv("CUSTOM_LLM_API_KEY"):
+    has_local_key = any(
+        _as_non_empty_str(os.getenv(env_name))
+        for env_name in _PROVIDER_KEY_ENV_MAP.values()
+    )
+    if has_local_key:
         return
 
     vm_user_id = _as_non_empty_str(os.getenv("VM_USER_ID"))
@@ -337,7 +469,11 @@ async def _maybe_bootstrap_llm_from_control_plane() -> None:
         return
 
     async with _control_plane_bootstrap_lock():
-        if os.getenv("OPENAI_API_KEY") or os.getenv("CUSTOM_LLM_API_KEY"):
+        has_local_key = any(
+            _as_non_empty_str(os.getenv(env_name))
+            for env_name in _PROVIDER_KEY_ENV_MAP.values()
+        )
+        if has_local_key:
             return
         now = time.monotonic()
         if (
@@ -376,69 +512,212 @@ async def _maybe_bootstrap_llm_from_control_plane() -> None:
 
         api_keys = decrypt_api_keys(init_data.get("api_keys"), vm_token)
         if isinstance(api_keys, dict):
-            _set_env_if_missing("OPENAI_API_KEY", _as_non_empty_str(api_keys.get("openai")))
-            _set_env_if_missing("CUSTOM_LLM_API_KEY", _as_non_empty_str(api_keys.get("custom")))
+            for provider_base, env_name in _PROVIDER_KEY_ENV_MAP.items():
+                _set_env_if_missing(env_name, _as_non_empty_str(api_keys.get(provider_base)))
 
         llm_config = init_data.get("llm_config")
         if isinstance(llm_config, dict):
             _apply_llm_config_to_env(llm_config)
+        if isinstance(api_keys, dict):
+            _set_instance_provider_env(api_keys=api_keys, llm_config=llm_config if isinstance(llm_config, dict) else None)
 
         logger.debug(
             "control_plane_llm_bootstrap_complete",
             extra={
                 "has_openai": bool(os.getenv("OPENAI_API_KEY")),
+                "has_kimi": bool(os.getenv("KIMI_API_KEY")),
+                "has_qwen": bool(os.getenv("QWEN_API_KEY")),
+                "has_minimax": bool(os.getenv("MINIMAX_API_KEY")),
+                "has_xai": bool(os.getenv("XAI_API_KEY")),
                 "has_custom": bool(os.getenv("CUSTOM_LLM_API_KEY")),
             },
         )
 
 
-def _create_llm_provider(model: str | None = None) -> OpenAIProvider | None:
+def _create_llm_provider(
+    model: str | None = None,
+    *,
+    model_provider_key: str | None = None,
+    fallback_model: str | None = None,
+    fallback_provider_key: str | None = None,
+) -> OpenAIProvider | None:
     llm_config = _load_llm_config()
 
-    openai_key = (
-        _as_non_empty_str(os.getenv("OPENAI_API_KEY"))
-        or _as_non_empty_str(llm_config.get("openai_api_key"))
+    default_model = (
+        _as_non_empty_str(os.getenv("DEFAULT_LLM_MODEL"))
+        or
+        _as_non_empty_str(llm_config.get("default_model"))
+        or _as_non_empty_str(llm_config.get("model"))
     )
-    custom_key = (
-        _as_non_empty_str(os.getenv("CUSTOM_LLM_API_KEY"))
-        or _as_non_empty_str(llm_config.get("custom_api_key"))
+    configured_fallback_model = (
+        _as_non_empty_str(fallback_model)
+        or _as_non_empty_str(os.getenv("FALLBACK_LLM_MODEL"))
+        or _as_non_empty_str(llm_config.get("fallback_model"))
     )
-    generic_key = _as_non_empty_str(llm_config.get("api_key"))
-    api_key = openai_key or custom_key or generic_key
-    if not api_key:
-        return None
-
+    default_provider_key = (
+        _as_non_empty_str(model_provider_key)
+        or _as_non_empty_str(os.getenv("DEFAULT_LLM_PROVIDER_KEY"))
+        or _as_non_empty_str(llm_config.get("default_provider_key"))
+    )
+    configured_fallback_provider_key = (
+        _as_non_empty_str(fallback_provider_key)
+        or _as_non_empty_str(os.getenv("FALLBACK_LLM_PROVIDER_KEY"))
+        or _as_non_empty_str(llm_config.get("fallback_provider_key"))
+    )
     resolved_model = (
         model
         or _as_non_empty_str(os.getenv("CUSTOM_LLM_MODEL_NAME"))
-        or _as_non_empty_str(llm_config.get("default_model"))
-        or _as_non_empty_str(llm_config.get("model"))
-        or "gpt-4o"
+        or default_model
+        or configured_fallback_model
     )
 
-    openai_base_url = (
-        _as_non_empty_str(os.getenv("OPENAI_API_BASE_URL"))
-        or _as_non_empty_str(llm_config.get("openai_api_base_url"))
-        or _as_non_empty_str(llm_config.get("openai_base_url"))
-    )
-    custom_base_url = (
-        _as_non_empty_str(os.getenv("CUSTOM_LLM_API_BASE_URL"))
-        or _as_non_empty_str(llm_config.get("custom_api_base_url"))
-        or _as_non_empty_str(llm_config.get("custom_base_url"))
-    )
-    generic_base_url = (
-        _as_non_empty_str(llm_config.get("api_base_url"))
-        or _as_non_empty_str(llm_config.get("base_url"))
-    )
-    if openai_key:
-        base_url = openai_base_url or generic_base_url or custom_base_url
-    elif custom_key:
-        base_url = custom_base_url or generic_base_url or openai_base_url
-    else:
-        base_url = generic_base_url or openai_base_url or custom_base_url
+    api_keys: dict[str, str] = {}
+    instance_base_urls: dict[str, str] = {}
+    for provider_base, env_name in _PROVIDER_KEY_ENV_MAP.items():
+        env_key = _as_non_empty_str(os.getenv(env_name))
+        if env_key:
+            api_keys[provider_base] = env_key
+
+    raw_instances = _as_non_empty_str(os.getenv("LLM_PROVIDER_INSTANCES"))
+    if raw_instances:
+        try:
+            parsed_instances = json.loads(raw_instances)
+        except Exception:
+            parsed_instances = []
+        if isinstance(parsed_instances, list):
+            for item in parsed_instances:
+                if not isinstance(item, dict):
+                    continue
+                provider_type = _provider_base(str(item.get("type") or ""))
+                provider_id = str(item.get("id") or "").strip()
+                if not provider_id or provider_type not in _OPENAI_COMPATIBLE_PROVIDER_BASES:
+                    continue
+                provider_key = f"{provider_type}:{provider_id}"
+                instance_key = _as_non_empty_str(item.get("apiKey"))
+                if instance_key:
+                    api_keys[provider_key] = instance_key
+                instance_base_url = _as_non_empty_str(item.get("baseUrl"))
+                if instance_base_url:
+                    instance_base_urls[provider_key] = instance_base_url
+
+    legacy_custom_instances = _as_non_empty_str(os.getenv("CUSTOM_LLM_PROVIDERS"))
+    if legacy_custom_instances:
+        try:
+            parsed_legacy = json.loads(legacy_custom_instances)
+        except Exception:
+            parsed_legacy = []
+        if isinstance(parsed_legacy, list):
+            for item in parsed_legacy:
+                if not isinstance(item, dict):
+                    continue
+                provider_id = str(item.get("id") or "").strip()
+                if not provider_id:
+                    continue
+                provider_key = f"custom:{provider_id}"
+                instance_key = _as_non_empty_str(item.get("apiKey"))
+                if instance_key:
+                    api_keys[provider_key] = instance_key
+                instance_base_url = _as_non_empty_str(item.get("baseUrl"))
+                if instance_base_url:
+                    instance_base_urls[provider_key] = instance_base_url
+
+    if not api_keys:
+        openai_cfg_key = _as_non_empty_str(llm_config.get("openai_api_key"))
+        if openai_cfg_key:
+            api_keys["openai"] = openai_cfg_key
+        custom_cfg_key = _as_non_empty_str(llm_config.get("custom_api_key"))
+        if custom_cfg_key:
+            api_keys["custom"] = custom_cfg_key
+        generic_key = _as_non_empty_str(llm_config.get("api_key"))
+        if generic_key:
+            api_keys["custom"] = generic_key
+
+    selected_provider_key = None
+    if default_model and str(resolved_model).strip() == str(default_model).strip():
+        if default_provider_key and api_keys.get(default_provider_key):
+            selected_provider_key = default_provider_key
+    if configured_fallback_model and str(resolved_model).strip() == str(configured_fallback_model).strip():
+        if configured_fallback_provider_key and api_keys.get(configured_fallback_provider_key):
+            selected_provider_key = configured_fallback_provider_key
+    if not selected_provider_key:
+        selected_provider_key = _pick_openai_compatible_provider_key(str(resolved_model), api_keys)
+    explicit_model = _as_non_empty_str(model)
+    if explicit_model:
+        strict_provider_for_explicit_model = _pick_openai_compatible_provider_key(
+            explicit_model,
+            api_keys,
+            strict_preferred_base=True,
+        )
+        if strict_provider_for_explicit_model is None and default_model:
+            default_provider = (
+                default_provider_key
+                if default_provider_key and api_keys.get(default_provider_key)
+                else _pick_openai_compatible_provider_key(default_model, api_keys)
+            )
+            if default_provider:
+                logger.warning(
+                    "local_runtime_model_fallback_to_default_model",
+                    extra={
+                        "explicit_model": explicit_model,
+                        "default_model": default_model,
+                        "fallback_provider_key": default_provider,
+                    },
+                )
+                resolved_model = default_model
+                selected_provider_key = default_provider
+    if not selected_provider_key:
+        return None
+
+    api_key = api_keys.get(selected_provider_key)
+    if not api_key:
+        return None
+
+    provider_base = _provider_base(selected_provider_key)
+
+    base_url: str | None = instance_base_urls.get(selected_provider_key)
+    providers_cfg = llm_config.get("providers")
+    if isinstance(providers_cfg, dict):
+        if not base_url:
+            base_url = _provider_cfg_base_url(providers_cfg.get(selected_provider_key))
+        if not base_url:
+            base_url = _provider_cfg_base_url(providers_cfg.get(provider_base))
+
+    if not base_url:
+        env_base_name = _PROVIDER_BASE_URL_ENV_MAP.get(provider_base)
+        if env_base_name:
+            base_url = _as_non_empty_str(os.getenv(env_base_name))
+
+    if not base_url:
+        if provider_base == "openai":
+            base_url = (
+                _as_non_empty_str(llm_config.get("openai_api_base_url"))
+                or _as_non_empty_str(llm_config.get("openai_base_url"))
+            )
+        elif provider_base == "custom":
+            base_url = (
+                _as_non_empty_str(llm_config.get("custom_api_base_url"))
+                or _as_non_empty_str(llm_config.get("custom_base_url"))
+            )
+        else:
+            base_url = (
+                _as_non_empty_str(llm_config.get(f"{provider_base}_api_base_url"))
+                or _as_non_empty_str(llm_config.get(f"{provider_base}_base_url"))
+            )
+    if not base_url:
+        base_url = (
+            _as_non_empty_str(llm_config.get("api_base_url"))
+            or _as_non_empty_str(llm_config.get("base_url"))
+            or _as_non_empty_str(os.getenv("OPENAI_API_BASE_URL"))
+            or _as_non_empty_str(os.getenv("CUSTOM_LLM_API_BASE_URL"))
+        )
 
     if base_url and "openai.azure.com" not in base_url and not base_url.rstrip("/").endswith("/v1"):
         base_url = f"{base_url.rstrip('/')}/v1"
+
+    logger.info(
+        "local_runtime_llm_provider_selected",
+        extra={"model": resolved_model, "provider_key": selected_provider_key, "provider_base": provider_base},
+    )
 
     return OpenAIProvider(
         LLMConfig(
@@ -527,8 +806,12 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
     return tools
 
 
-def _build_skill_definitions(registry: SkillRegistry) -> list[SkillDefinition]:
+def _build_skill_definitions(
+    registry: SkillRegistry,
+    skill_index: list[dict[str, Any]] | None = None,
+) -> list[SkillDefinition]:
     skills: list[SkillDefinition] = []
+    seen: set[str] = set()
     for skill_name in registry.list_skills():
         skill = registry.get_skill(skill_name)
         if not skill:
@@ -543,6 +826,50 @@ def _build_skill_definitions(registry: SkillRegistry) -> list[SkillDefinition]:
                 metadata={},
             )
         )
+        seen.add(skill_name)
+
+    if not isinstance(skill_index, list):
+        return skills
+
+    for item in skill_index:
+        if not isinstance(item, dict):
+            continue
+        skill_id = str(item.get("id") or item.get("name") or "").strip()
+        if not skill_id or skill_id in seen:
+            continue
+        package = item.get("package")
+        package_files: list[str] = []
+        if isinstance(package, dict):
+            files = package.get("files")
+            if isinstance(files, list):
+                package_files = [
+                    str(f.get("path") or "")
+                    for f in files
+                    if isinstance(f, dict) and str(f.get("path") or "").strip()
+                ]
+        inventory = item.get("file_inventory") if isinstance(item.get("file_inventory"), dict) else {}
+        inventory_scripts = inventory.get("script_files")
+        normalized_inventory_scripts = {
+            str(path).strip()
+            for path in (inventory_scripts if isinstance(inventory_scripts, list) else [])
+            if str(path).strip()
+        }
+        skills.append(
+            SkillDefinition(
+                id=skill_id,
+                name=skill_id,
+                description=str(item.get("description") or "").strip() or None,
+                version=str(item.get("version") or "").strip() or None,
+                source=str(item.get("source") or "local"),
+                schema={},
+                metadata={
+                    "has_skill_md": "SKILL.md" in package_files,
+                    "package_files": package_files[:50],
+                    "script_files": sorted(normalized_inventory_scripts)[:50],
+                },
+            )
+        )
+        seen.add(skill_id)
     return skills
 
 
@@ -626,7 +953,11 @@ async def run_task_once(
     session_id: str | None = None,
     approval_scope_id: str | None = None,
     model: str | None = None,
+    model_provider_key: str | None = None,
+    fallback_model: str | None = None,
+    fallback_provider_key: str | None = None,
     system_prompt: str | None = None,
+    skill_index: list[dict[str, Any]] | None = None,
     runtime_event_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run one user task locally and return execution summary."""
@@ -656,20 +987,27 @@ async def run_task_once(
     tool_definitions = _build_tool_definitions(skill_registry, db_path)
 
     async def _capture_bus_event(event: Event) -> None:
-        runtime_events.append(
-            {
-                "event": event.event_type,
-                "source": event.source,
-                "subject": event.subject,
-                "data": event.payload,
-                "risk_hint": event.risk_hint,
-                "timestamp": event.timestamp.isoformat(),
-            }
-        )
+        payload = {
+            "event": event.event_type,
+            "source": event.source,
+            "subject": event.subject,
+            "data": event.payload,
+            "risk_hint": event.risk_hint,
+            "timestamp": event.timestamp.isoformat(),
+        }
+        runtime_events.append(payload)
+        if runtime_event_callback:
+            with suppress(Exception):
+                await runtime_event_callback(payload)
 
     event_engine.bus.subscribe(_capture_bus_event)
     event_engine.reload_rules()
-    llm_provider = _create_llm_provider(model)
+    llm_provider = _create_llm_provider(
+        model,
+        model_provider_key=model_provider_key,
+        fallback_model=fallback_model,
+        fallback_provider_key=fallback_provider_key,
+    )
 
     high_risk_tools = [
         tool.name
@@ -744,6 +1082,10 @@ async def run_task_once(
             "params": params,
         }
 
+    resolved_skill_index: list[dict[str, Any]] = []
+    if isinstance(skill_index, list):
+        resolved_skill_index = [row for row in skill_index if isinstance(row, dict)]
+
     runtime_context = RuntimeSessionContext(
         agent_id=agent_id,
         session_id=resolved_session_id,
@@ -753,8 +1095,12 @@ async def run_task_once(
             system_prompt=system_prompt,
             model=model,
         ),
-        metadata={"event_emitter": event_engine},
-        available_skills=_build_skill_definitions(skill_registry),
+        metadata={
+            "event_emitter": event_engine,
+            "skill_registry": skill_registry,
+            "skill_index": resolved_skill_index,
+        },
+        available_skills=_build_skill_definitions(skill_registry, resolved_skill_index),
         available_tools=tool_definitions,
         available_mcp_servers=[],
         available_sub_agents=[],

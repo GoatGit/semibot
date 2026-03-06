@@ -56,7 +56,9 @@ const providerConfigSchema = z.object({
 
 const updateLlmConfigSchema = z.object({
   defaultModel: z.string().optional(),
+  defaultProviderKey: z.string().optional(),
   fallbackModel: z.string().optional(),
+  fallbackProviderKey: z.string().optional(),
   providers: z.record(providerConfigSchema).optional(),
 })
 
@@ -114,7 +116,9 @@ function isManagedLlmEnvKey(key: string): boolean {
     'CUSTOM_LLM_API_KEY',
     'CUSTOM_LLM_API_BASE_URL',
     'DEFAULT_LLM_MODEL',
+    'DEFAULT_LLM_PROVIDER_KEY',
     'FALLBACK_LLM_MODEL',
+    'FALLBACK_LLM_PROVIDER_KEY',
     'LLM_PROVIDER_INSTANCES',
     'CUSTOM_LLM_PROVIDERS',
     CUSTOM_ENV_SENSITIVE_KEYS_VAR,
@@ -348,7 +352,9 @@ function buildProviderConfig() {
 
   return {
     defaultModel: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
+    defaultProviderKey: process.env.DEFAULT_LLM_PROVIDER_KEY ?? '',
     fallbackModel: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
+    fallbackProviderKey: process.env.FALLBACK_LLM_PROVIDER_KEY ?? '',
     providers,
   }
 }
@@ -389,7 +395,9 @@ function buildRuntimeLlmConfigPayload() {
 
   return {
     default_model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
+    default_provider_key: process.env.DEFAULT_LLM_PROVIDER_KEY ?? '',
     fallback_model: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
+    fallback_provider_key: process.env.FALLBACK_LLM_PROVIDER_KEY ?? '',
     providers,
   }
 }
@@ -725,9 +733,19 @@ router.put(
       updates.DEFAULT_LLM_MODEL = trimmed || null
     }
 
+    if (body.defaultProviderKey !== undefined) {
+      const trimmed = body.defaultProviderKey.trim()
+      updates.DEFAULT_LLM_PROVIDER_KEY = trimmed || null
+    }
+
     if (body.fallbackModel !== undefined) {
       const trimmed = body.fallbackModel.trim()
       updates.FALLBACK_LLM_MODEL = trimmed || null
+    }
+
+    if (body.fallbackProviderKey !== undefined) {
+      const trimmed = body.fallbackProviderKey.trim()
+      updates.FALLBACK_LLM_PROVIDER_KEY = trimmed || null
     }
 
     const mapProvider = (

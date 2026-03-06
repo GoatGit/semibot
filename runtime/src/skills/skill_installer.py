@@ -1,4 +1,4 @@
-"""Builtin tool to install package skills from folder/zip and refresh registry."""
+"""Builtin tool to install skills from folder/zip and refresh the local skill index."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ class SkillInstallerTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Install a package skill from local folder/zip (or remote zip URL) into ~/.semibot/skills "
-            "and refresh runtime tool index dynamically."
+            "Install a skill from local folder/zip (or remote zip URL) into ~/.semibot/skills "
+            "and refresh the local skill index."
         )
 
     @property
@@ -134,7 +134,7 @@ def install_or_refresh_skill(
                 source_kind = "local"
 
         if skill_dir is None:
-            raise ValueError("skill package invalid: scripts/main.py or SKILL.md not found")
+            raise ValueError("invalid skill: missing SKILL.md and scripts/")
 
         target_name = str(skill_name or default_name).strip()
         if not target_name:
@@ -158,7 +158,7 @@ def install_or_refresh_skill(
             "skill_name": target_name,
             "index_updated": True,
             "index_record": index_record,
-            "registered_in_runtime": target_name in (refresh.get("registered") or []),
+            "registered_in_runtime": False,
             "refresh": refresh,
         }
     finally:

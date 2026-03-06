@@ -5,7 +5,40 @@ All LLM provider implementations should inherit from this base class.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
+import json
+import os
+from pathlib import Path
 from typing import Any, AsyncIterator
+
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+def _unwrap_exception(exc: Exception) -> Exception:
+    current: Exception | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if current.__class__.__name__ == "RetryError":
+            last_attempt = getattr(current, "last_attempt", None)
+            if last_attempt is not None and hasattr(last_attempt, "exception"):
+                try:
+                    inner = last_attempt.exception()
+                except Exception:
+                    inner = None
+                if isinstance(inner, Exception):
+                    current = inner
+                    continue
+        if isinstance(getattr(current, "__cause__", None), Exception):
+            current = current.__cause__
+            continue
+        if isinstance(getattr(current, "__context__", None), Exception):
+            current = current.__context__
+            continue
+        break
+    return current or exc
 
 
 @dataclass
@@ -99,6 +132,46 @@ class LLMProvider(ABC):
             if "content" not in msg and "tool_calls" not in msg:
                 raise ValueError(f"Message {i} missing 'content' field")
 
+    def _dump_plan_prompt_snapshot(
+        self,
+        *,
+        debug_meta: dict[str, Any] | None,
+        planning_prompt: str,
+        all_messages: list[dict[str, Any]],
+        available_tools: list[dict[str, Any]] | None,
+        available_sub_agents: list[dict[str, Any]] | None,
+        memory: str,
+        model: str | None,
+    ) -> str:
+        enabled = str(os.getenv("SEMIBOT_DUMP_PLAN_PROMPTS", "true")).strip().lower() not in {"0", "false", "no"}
+        if not enabled:
+            return ""
+        dump_dir = Path(
+            os.getenv("SEMIBOT_PLAN_PROMPT_DUMP_DIR", "~/.semibot/debug/plan-prompts")
+        ).expanduser()
+        dump_dir.mkdir(parents=True, exist_ok=True)
+
+        meta = dict(debug_meta or {})
+        session_id = str(meta.get("session_id") or "unknown")
+        phase = str(meta.get("phase") or "plan")
+        iteration = str(meta.get("iteration") or "0")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        filename = f"{timestamp}_{session_id}_iter{iteration}_{phase}.json"
+        target = dump_dir / filename
+
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "meta": meta,
+            "model": model or self.model,
+            "system_prompt": planning_prompt,
+            "messages": all_messages,
+            "memory": memory,
+            "available_tools": available_tools or [],
+            "available_sub_agents": available_sub_agents or [],
+        }
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return str(target)
+
     @abstractmethod
     async def chat(
         self,
@@ -159,6 +232,7 @@ class LLMProvider(ABC):
         available_sub_agents: list[dict[str, Any]] | None = None,
         agent_system_prompt: str = "",
         model: str | None = None,
+        debug_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Generate an execution plan from user messages.
@@ -290,12 +364,92 @@ DELEGATION RULES:
 
         system_message = {"role": "system", "content": planning_prompt}
         all_messages = [system_message] + messages
-
-        response = await self.chat(
-            messages=all_messages,
-            temperature=0.3,
+        prompt_dump_path = self._dump_plan_prompt_snapshot(
+            debug_meta=debug_meta,
+            planning_prompt=planning_prompt,
+            all_messages=all_messages,
+            available_tools=available_tools,
+            available_sub_agents=available_sub_agents,
+            memory=memory,
             model=model,
         )
+        try:
+            response = await self.chat(
+                messages=all_messages,
+                temperature=0.3,
+                model=model,
+            )
+        except Exception as exc:
+            root_exc = _unwrap_exception(exc)
+            error_text = str(exc)
+            root_error_text = str(root_exc)
+            lowered = f"{error_text}\n{root_error_text}".lower()
+            is_bad_request = (
+                exc.__class__.__name__ == "BadRequestError"
+                or root_exc.__class__.__name__ == "BadRequestError"
+                or "400 bad request" in lowered
+                or "status code 400" in lowered
+                or "context length" in lowered
+                or "maximum context" in lowered
+            )
+            if not is_bad_request:
+                raise
+
+            compact_memory = (memory or "").strip()
+            if len(compact_memory) > 1200:
+                compact_memory = compact_memory[:1200] + "\n... (truncated)"
+            compact_messages = messages[-6:] if len(messages) > 6 else list(messages)
+            compact_prompt = f"""You are a task planner. Create an execution plan as JSON only.
+
+Current date: {today_str}
+
+Rules:
+1. Use only tools listed below; do not invent tool names.
+2. For research/report tasks, search first, then summarize/report.
+3. Keep steps executable and ordered by dependency.
+4. Output JSON object with keys: goal, steps, requires_delegation, delegate_to.
+5. Each step must include: id, title, tool, params, parallel.
+
+Available tools:
+{tools_text or "No tools available."}
+
+Memory context:
+{compact_memory or "No context."}
+"""
+            if agent_system_prompt:
+                compact_prompt = f"{agent_system_prompt}\n\n---\n\n{compact_prompt}"
+
+            compact_system_message = {"role": "system", "content": compact_prompt}
+            compact_all_messages = [compact_system_message] + compact_messages
+            fallback_prompt_dump_path = self._dump_plan_prompt_snapshot(
+                debug_meta={
+                    **(debug_meta or {}),
+                    "phase": "final_compact_retry",
+                    "trigger_error": f"{error_text} | root: {root_error_text}"[:400],
+                },
+                planning_prompt=compact_prompt,
+                all_messages=compact_all_messages,
+                available_tools=available_tools,
+                available_sub_agents=available_sub_agents,
+                memory=compact_memory,
+                model=model,
+            )
+            logger.warning(
+                "generate_plan_retry_with_compact_prompt_after_bad_request",
+                extra={
+                    "error": error_text,
+                    "root_error": root_error_text,
+                    "original_prompt_dump_path": prompt_dump_path,
+                    "fallback_prompt_dump_path": fallback_prompt_dump_path,
+                },
+            )
+            response = await self.chat(
+                messages=compact_all_messages,
+                temperature=0.2,
+                model=model,
+            )
+            if fallback_prompt_dump_path:
+                prompt_dump_path = fallback_prompt_dump_path
 
         # Parse JSON response — extract JSON from content which may contain
         # markdown fences or surrounding text from thinking models.
@@ -317,12 +471,15 @@ DELEGATION RULES:
             """Normalize parsed JSON into a planner object shape."""
             if isinstance(parsed, dict):
                 parsed["_thinking"] = thinking
+                if prompt_dump_path:
+                    parsed["_prompt_dump_path"] = prompt_dump_path
                 return parsed
             return {
                 "goal": "",
                 "steps": [],
                 "error": f"Plan must be a JSON object, got {type(parsed).__name__}",
                 "_thinking": thinking,
+                "_prompt_dump_path": prompt_dump_path,
             }
 
         # Try direct parse first
@@ -348,7 +505,13 @@ DELEGATION RULES:
                 return _normalize_plan_result(result, _extract_thinking(text, m.span()))
             except json.JSONDecodeError:
                 pass
-        return {"goal": "", "steps": [], "error": "Failed to parse plan", "_thinking": ""}
+        return {
+            "goal": "",
+            "steps": [],
+            "error": "Failed to parse plan",
+            "_thinking": "",
+            "_prompt_dump_path": prompt_dump_path,
+        }
 
     async def generate_response(
         self,
@@ -413,6 +576,7 @@ IMPORTANT RULES:
 7. If there were errors, explain what happened and suggest alternatives.
 8. If PDF/XLSX files were generated, mention them and describe ONLY sections that are explicitly present in tool outputs (no invented chapter names). If execution output contains a line like "report_summary_sections=...", you MUST use exactly those section names and MUST NOT add extra section names.
 9. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
+10. FINALITY (CRITICAL): This is the final response for the current run. Do NOT reply with promise-style text such as "我将…/稍后…/正在…/I will...". You MUST present concrete findings now.
 """,
         }
 
@@ -488,6 +652,7 @@ IMPORTANT RULES:
 7. If there were errors, explain what happened and suggest alternatives.
 8. If PDF/XLSX files were generated, mention them and describe ONLY sections that are explicitly present in tool outputs (no invented chapter names). If execution output contains a line like "report_summary_sections=...", you MUST use exactly those section names and MUST NOT add extra section names.
 9. Use the conversation memory and history to maintain context across turns. If the user refers to something from a previous message, use the memory to answer accurately.
+10. FINALITY (CRITICAL): This is the final response for the current run. Do NOT reply with promise-style text such as "我将…/稍后…/正在…/I will...". You MUST present concrete findings now.
 """,
         }
 

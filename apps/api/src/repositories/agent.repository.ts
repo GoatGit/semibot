@@ -170,6 +170,16 @@ export async function findSystemDefault(): Promise<AgentRow | null> {
  * 确保系统默认 Agent 存在（缺失时创建，已存在则恢复关键字段）
  */
 export async function ensureSystemDefault(): Promise<AgentRow> {
+  const systemConfig = {
+    model: process.env.DEFAULT_LLM_MODEL ?? '',
+    modelProviderKey: process.env.DEFAULT_LLM_PROVIDER_KEY ?? '',
+    temperature: 0.7,
+    maxTokens: 4096,
+    timeoutSeconds: 120,
+    fallbackModel: process.env.FALLBACK_LLM_MODEL ?? '',
+    fallbackProviderKey: process.env.FALLBACK_LLM_PROVIDER_KEY ?? '',
+  } as Parameters<typeof sql.json>[0]
+
   const result = await sql`
     INSERT INTO agents (
       id, org_id, name, description, system_prompt, config,
@@ -181,12 +191,7 @@ export async function ensureSystemDefault(): Promise<AgentRow> {
       '系统助手',
       '系统默认 AI 助手，可使用所有系统预装能力',
       'You are a helpful AI assistant with access to system tools and capabilities.',
-      ${sql.json({
-        model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
-        temperature: 0.7,
-        maxTokens: 4096,
-        timeoutSeconds: 120,
-      } as Parameters<typeof sql.json>[0])},
+      ${sql.json(systemConfig)},
       ${[]},
       ${[]},
       true,
@@ -197,6 +202,7 @@ export async function ensureSystemDefault(): Promise<AgentRow> {
     ON CONFLICT (id)
     DO UPDATE SET
       org_id = NULL,
+      config = ${sql.json(systemConfig)},
       is_system = true,
       is_active = true,
       is_public = true,

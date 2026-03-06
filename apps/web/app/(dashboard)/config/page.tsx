@@ -21,7 +21,9 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
-import { Select } from '@/components/ui/Select'
+<<<<<<< HEAD
+import { Select, type SelectGroup, type SelectOption } from '@/components/ui/Select'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { apiClient } from '@/lib/api'
 import { formatRuntimeStatusError } from '@/lib/runtime-status'
@@ -74,9 +76,26 @@ interface LlmProviderConfigEntry {
   displayName?: string
 }
 
+const MODEL_BINDING_DELIMITER = '::'
+
+function encodeModelBinding(providerKey: string, modelId: string): string {
+  return `${providerKey}${MODEL_BINDING_DELIMITER}${modelId}`
+}
+
+function decodeModelBinding(value: string): { providerKey: string; modelId: string } | null {
+  const idx = value.indexOf(MODEL_BINDING_DELIMITER)
+  if (idx <= 0) return null
+  const providerKey = value.slice(0, idx).trim()
+  const modelId = value.slice(idx + MODEL_BINDING_DELIMITER.length).trim()
+  if (!providerKey || !modelId) return null
+  return { providerKey, modelId }
+}
+
 interface LlmConfigData {
   defaultModel: string
+  defaultProviderKey?: string
   fallbackModel: string
+  fallbackProviderKey?: string
   providers: Record<string, LlmProviderConfigEntry>
 }
 
@@ -561,7 +580,12 @@ export default function ConfigPage() {
 
   const [llmProviders, setLlmProviders] = useState<LlmProviderStatus[]>([])
   const [llmConfig, setLlmConfig] = useState<LlmConfigData | null>(null)
-  const [modelDefaults, setModelDefaults] = useState({ defaultModel: '', fallbackModel: '' })
+  const [modelDefaults, setModelDefaults] = useState({
+    defaultModel: '',
+    defaultProviderKey: '',
+    fallbackModel: '',
+    fallbackProviderKey: '',
+  })
   const [savingModelDefaults, setSavingModelDefaults] = useState(false)
   const [showProviderConfigModal, setShowProviderConfigModal] = useState(false)
   const [providerConfigSaving, setProviderConfigSaving] = useState(false)
@@ -746,7 +770,9 @@ export default function ConfigPage() {
       setLlmConfig(configRes.data)
       setModelDefaults({
         defaultModel: configRes.data.defaultModel || '',
+        defaultProviderKey: configRes.data.defaultProviderKey || '',
         fallbackModel: configRes.data.fallbackModel || '',
+        fallbackProviderKey: configRes.data.fallbackProviderKey || '',
       })
       setSectionErrors((prev) => ({ ...prev, llm: null }))
     } catch (err) {
@@ -969,7 +995,9 @@ export default function ConfigPage() {
       setError(null)
       await apiClient.put('/llm-providers/config', {
         defaultModel: modelDefaults.defaultModel.trim(),
+        defaultProviderKey: modelDefaults.defaultProviderKey.trim(),
         fallbackModel: modelDefaults.fallbackModel.trim(),
+        fallbackProviderKey: modelDefaults.fallbackProviderKey.trim(),
       })
       await loadLlmData()
     } catch (err) {
@@ -2090,20 +2118,54 @@ export default function ConfigPage() {
     return entries.filter(([providerKey, cfg]) => providerKey.includes(':') || (providerKey === 'custom' && cfg.apiKeyConfigured))
   }, [llmConfig])
 
-  const availableModelOptions = useMemo(() => {
-    const unique = Array.from(new Set(llmProviders.flatMap((item) => item.models || []))).sort((a, b) =>
-      a.localeCompare(b)
-    )
-    return unique.map((model) => ({ value: model, label: model }))
+  const availableModelOptions = useMemo<(SelectOption | SelectGroup)[]>(() => {
+    const grouped = llmProviders
+      .map((provider) => {
+        const models = Array.from(new Set((provider.models || []).filter(Boolean))).sort((a, b) => a.localeCompare(b))
+        if (models.length === 0) return null
+        const providerName = provider.displayName?.trim() || provider.name
+        const providerKey = provider.name?.trim() || provider.displayName?.trim() || 'provider'
+        const label = providerName === providerKey ? providerName : `${providerName} (${providerKey})`
+        return {
+          label,
+          options: models.map((model) => ({ value: encodeModelBinding(providerKey, model), label: model })),
+        } satisfies SelectGroup
+      })
+      .filter((item): item is SelectGroup => Boolean(item))
+
+    grouped.sort((a, b) => a.label.localeCompare(b.label))
+    return grouped
   }, [llmProviders])
 
+  const availableModelValueSet = useMemo(() => {
+    const values = new Set<string>()
+    for (const item of availableModelOptions) {
+      if ('options' in item) {
+        for (const option of item.options) values.add(option.value)
+      } else {
+        values.add(item.value)
+      }
+    }
+    return values
+  }, [availableModelOptions])
+
+  const currentDefaultModelBinding = useMemo(() => {
+    if (!modelDefaults.defaultModel || !modelDefaults.defaultProviderKey) return ''
+    return encodeModelBinding(modelDefaults.defaultProviderKey, modelDefaults.defaultModel)
+  }, [modelDefaults.defaultModel, modelDefaults.defaultProviderKey])
+
+  const currentFallbackModelBinding = useMemo(() => {
+    if (!modelDefaults.fallbackModel || !modelDefaults.fallbackProviderKey) return ''
+    return encodeModelBinding(modelDefaults.fallbackProviderKey, modelDefaults.fallbackModel)
+  }, [modelDefaults.fallbackModel, modelDefaults.fallbackProviderKey])
+
   const isDefaultModelCustom = useMemo(
-    () => Boolean(modelDefaults.defaultModel) && !availableModelOptions.some((opt) => opt.value === modelDefaults.defaultModel),
-    [availableModelOptions, modelDefaults.defaultModel]
+    () => Boolean(modelDefaults.defaultModel) && !availableModelValueSet.has(currentDefaultModelBinding),
+    [availableModelValueSet, currentDefaultModelBinding, modelDefaults.defaultModel]
   )
   const isFallbackModelCustom = useMemo(
-    () => Boolean(modelDefaults.fallbackModel) && !availableModelOptions.some((opt) => opt.value === modelDefaults.fallbackModel),
-    [availableModelOptions, modelDefaults.fallbackModel]
+    () => Boolean(modelDefaults.fallbackModel) && !availableModelValueSet.has(currentFallbackModelBinding),
+    [availableModelValueSet, currentFallbackModelBinding, modelDefaults.fallbackModel]
   )
 
   const activeToolsCount = useMemo(
@@ -2231,13 +2293,17 @@ export default function ConfigPage() {
                       </p>
                       <Select
                         data-testid="llm-default-model-select"
-                        value={isDefaultModelCustom ? '__custom__' : modelDefaults.defaultModel}
-                        onChange={(value) =>
+                        value={isDefaultModelCustom ? '__custom__' : currentDefaultModelBinding}
+                        onChange={(value) => {
+                          if (value === '__custom__') return
+                          const binding = decodeModelBinding(value)
+                          if (!binding) return
                           setModelDefaults((prev) => ({
                             ...prev,
-                            defaultModel: value === '__custom__' ? prev.defaultModel : value,
+                            defaultModel: binding.modelId,
+                            defaultProviderKey: binding.providerKey,
                           }))
-                        }
+                        }}
                         options={[
                           ...availableModelOptions,
                           { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
@@ -2245,14 +2311,24 @@ export default function ConfigPage() {
                         placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
                       />
                       {(isDefaultModelCustom || modelDefaults.defaultModel === '') && (
-                        <Input
-                          data-testid="llm-default-model-input"
-                          placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
-                          value={modelDefaults.defaultModel}
-                          onChange={(e) =>
-                            setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
-                          }
-                        />
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <Input
+                            data-testid="llm-default-model-input"
+                            placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
+                            value={modelDefaults.defaultModel}
+                            onChange={(e) =>
+                              setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
+                            }
+                          />
+                          <Input
+                            data-testid="llm-default-provider-input"
+                            placeholder="DEFAULT_LLM_PROVIDER_KEY"
+                            value={modelDefaults.defaultProviderKey}
+                            onChange={(e) =>
+                              setModelDefaults((prev) => ({ ...prev, defaultProviderKey: e.target.value }))
+                            }
+                          />
+                        </div>
                       )}
                     </div>
                     <div className="space-y-2">
@@ -2261,13 +2337,17 @@ export default function ConfigPage() {
                       </p>
                       <Select
                         data-testid="llm-fallback-model-select"
-                        value={isFallbackModelCustom ? '__custom__' : modelDefaults.fallbackModel}
-                        onChange={(value) =>
+                        value={isFallbackModelCustom ? '__custom__' : currentFallbackModelBinding}
+                        onChange={(value) => {
+                          if (value === '__custom__') return
+                          const binding = decodeModelBinding(value)
+                          if (!binding) return
                           setModelDefaults((prev) => ({
                             ...prev,
-                            fallbackModel: value === '__custom__' ? prev.fallbackModel : value,
+                            fallbackModel: binding.modelId,
+                            fallbackProviderKey: binding.providerKey,
                           }))
-                        }
+                        }}
                         options={[
                           ...availableModelOptions,
                           { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
@@ -2275,14 +2355,24 @@ export default function ConfigPage() {
                         placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
                       />
                       {(isFallbackModelCustom || modelDefaults.fallbackModel === '') && (
-                        <Input
-                          data-testid="llm-fallback-model-input"
-                          placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
-                          value={modelDefaults.fallbackModel}
-                          onChange={(e) =>
-                            setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
-                          }
-                        />
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <Input
+                            data-testid="llm-fallback-model-input"
+                            placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
+                            value={modelDefaults.fallbackModel}
+                            onChange={(e) =>
+                              setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
+                            }
+                          />
+                          <Input
+                            data-testid="llm-fallback-provider-input"
+                            placeholder="FALLBACK_LLM_PROVIDER_KEY"
+                            value={modelDefaults.fallbackProviderKey}
+                            onChange={(e) =>
+                              setModelDefaults((prev) => ({ ...prev, fallbackProviderKey: e.target.value }))
+                            }
+                          />
+                        </div>
                       )}
                     </div>
                     <Button

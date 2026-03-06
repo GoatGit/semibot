@@ -39,6 +39,7 @@ import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/share
 import type { Agent } from './agent.service'
 import type { Session } from './session.service'
 import { getWSServer } from '../ws/ws-server'
+import { mapRuntimeEventToAgent2UI } from '../ws/message-router'
 import { registerSSEConnection, unregisterSSEConnection } from '../relay/sse-relay'
 import { ensureUserVM } from '../scheduler/vm-scheduler'
 
@@ -71,7 +72,24 @@ export interface SSEConnection {
 const sseConnections = new Map<string, SSEConnection>()
 const VM_READY_WAIT_MS = Math.max(0, Number(process.env.CHAT_VM_READY_WAIT_MS ?? 5000))
 const VM_READY_POLL_MS = Math.max(200, Number(process.env.CHAT_VM_READY_POLL_MS ?? 1000))
-const CHAT_DIRECT_RUNTIME = process.env.CHAT_DIRECT_RUNTIME !== 'false'
+
+function isAuthDisabledForChat(): boolean {
+  const enableAuth = process.env.SEMIBOT_ENABLE_AUTH
+  const disableAuth = process.env.SEMIBOT_DISABLE_AUTH
+  if (enableAuth !== undefined) return enableAuth !== 'true'
+  if (disableAuth !== undefined) return disableAuth !== 'false'
+  return true
+}
+
+function shouldUseDirectRuntime(): boolean {
+  const configured = process.env.CHAT_DIRECT_RUNTIME
+  if (configured !== undefined) return configured === 'true'
+  return isAuthDisabledForChat()
+}
+
+// 单用户无鉴权模式默认走共享 runtime HTTP。
+// 仅在显式设置 CHAT_DIRECT_RUNTIME=false 时才走 execution-plane / VM 调度。
+const CHAT_DIRECT_RUNTIME = shouldUseDirectRuntime()
 
 type ApprovalCommand =
   | { kind: 'approve'; approvalId: string }
@@ -105,6 +123,25 @@ type SkillRequires = {
   binaries: string[]
   env_vars: string[]
 }
+
+type RuntimeSkillMetadata = {
+  skill_id?: string
+  name?: string
+  description?: string
+  version?: string
+  source?: string
+  skill_md_path?: string
+  scripts_dir?: string
+  entry_script?: string
+  status?: string
+  enabled?: boolean
+  requires?: {
+    binaries?: string[]
+    env_vars?: string[]
+  }
+}
+
+type SkillIndexEntry = Record<string, unknown>
 
 const pendingApprovalResumes = new Map<string, PendingApprovalResumeContext>()
 const APPROVAL_RESUME_TTL_MS = 24 * 60 * 60 * 1000
@@ -249,6 +286,32 @@ function appendApprovalHints(
   return `操作需要人工审批。${hint}`
 }
 
+function normalizeSkillKey(raw: string): string {
+  const value = raw.trim()
+  if (value.startsWith('runtime:')) {
+    return value.slice('runtime:'.length)
+  }
+  return value
+}
+
+function toRuntimeSkillPrompt(metadata: RuntimeSkillMetadata[]): string {
+  if (metadata.length === 0) return ''
+  const rows = metadata.map((item) => {
+    const name = String(item.name || item.skill_id || '').trim()
+    if (!name) return ''
+    const desc = String(item.description || '').trim()
+    return desc ? `- ${name}: ${desc}` : `- ${name}`
+  }).filter(Boolean)
+  if (rows.length === 0) return ''
+  return [
+    '<available_skills>',
+    ...rows,
+    '</available_skills>',
+    '技能使用约束：先读取目标技能的 SKILL.md，再按文档执行；已有能力可完成时禁止安装新技能。',
+    '当用户明确要求“使用某技能”时，必须实际执行该技能流程并给出过程与结果，禁止仅回复将要执行。',
+  ].join('\n')
+}
+
 async function buildAgentSystemPrompt(orgId: string, agent: Agent): Promise<string> {
   const n = new Date()
   const d = `${n.getFullYear()}年${n.getMonth() + 1}月${n.getDate()}日`
@@ -346,6 +409,67 @@ async function resolveSkillMetadata(pkg: skillPackageRepo.SkillPackage): Promise
     },
     requires,
   }
+}
+
+async function buildAgentSkillIndex(
+  agent: Agent,
+  runtimeBaseUrls: string[]
+): Promise<{ skillIndex: SkillIndexEntry[]; runtimeSkillMetadata: RuntimeSkillMetadata[] }> {
+  const skillIndex: SkillIndexEntry[] = []
+  const skillKeys = new Set<string>()
+
+  for (const rawSkillDefId of agent.skills ?? []) {
+    const skillDefId = normalizeSkillKey(rawSkillDefId)
+    const def = await skillDefinitionRepo.findById(skillDefId) ?? await skillDefinitionRepo.findBySkillId(skillDefId)
+    if (!def || !def.isActive) continue
+    const pkg = await skillPackageRepo.findByDefinition(def.id)
+    if (!pkg) continue
+    const { fileInventory, requires } = await resolveSkillMetadata(pkg)
+    skillKeys.add(def.skillId)
+    skillIndex.push({
+      id: def.skillId,
+      name: def.name,
+      description: def.description ?? '',
+      version: 'current',
+      source: pkg.sourceType,
+      direct_executable: fileInventory.script_files.includes('scripts/main.py'),
+      file_inventory: fileInventory,
+      requires,
+    })
+  }
+
+  const runtimeSkillMetadata = agent.isSystem ? await getRuntimeSkillMetadata(runtimeBaseUrls) : []
+  if (agent.isSystem) {
+    for (const item of runtimeSkillMetadata) {
+      const skillId = String(item.skill_id || item.name || '').trim()
+      if (!skillId || skillKeys.has(skillId)) continue
+      const hasSkillMd = Boolean(item.skill_md_path)
+      const hasScripts = Boolean(item.entry_script) || Boolean(item.scripts_dir)
+      const entryScript = String(item.entry_script || '').trim()
+      skillKeys.add(skillId)
+      skillIndex.push({
+        id: skillId,
+        name: String(item.name || skillId),
+        description: String(item.description || ''),
+        version: String(item.version || 'current'),
+        source: String(item.source || 'runtime'),
+        direct_executable: entryScript === 'scripts/main.py',
+        file_inventory: {
+          has_skill_md: hasSkillMd,
+          has_scripts: hasScripts,
+          has_references: false,
+          script_files: entryScript ? [entryScript] : [],
+          reference_files: [],
+        },
+        requires: {
+          binaries: normalizeStringArray(item.requires?.binaries),
+          env_vars: normalizeStringArray(item.requires?.env_vars),
+        },
+      })
+    }
+  }
+
+  return { skillIndex, runtimeSkillMetadata }
 }
 
 export function createSSEConnection(
@@ -612,23 +736,8 @@ async function handleChatViaExecutionPlane(
     })
   }
 
-  const skillIndex: Array<Record<string, unknown>> = []
-  for (const skillDefId of agent.skills ?? []) {
-    const def = await skillDefinitionRepo.findById(skillDefId)
-    if (!def || !def.isActive) continue
-    const pkg = await skillPackageRepo.findByDefinition(skillDefId)
-    if (!pkg) continue
-    const { fileInventory, requires } = await resolveSkillMetadata(pkg)
-    skillIndex.push({
-      id: def.skillId,
-      name: def.name,
-      description: def.description ?? '',
-      version: 'current',
-      source: pkg.sourceType,
-      file_inventory: fileInventory,
-      requires,
-    })
-  }
+  const runtimeBaseUrls = getRuntimeBaseUrls()
+  const { skillIndex, runtimeSkillMetadata } = await buildAgentSkillIndex(agent, runtimeBaseUrls)
 
   const sessionRuntimeType = (_session.runtimeType ?? '').toLowerCase()
   const agentRuntimeType = (agent.runtimeType ?? '').toLowerCase()
@@ -639,7 +748,13 @@ async function handleChatViaExecutionPlane(
     })
   }
   const runtimeType: 'semigraph' = 'semigraph'
-  const systemPrompt = await buildAgentSystemPrompt(orgId, agent)
+  let systemPrompt = await buildAgentSystemPrompt(orgId, agent)
+  if (agent.isSystem && runtimeSkillMetadata.length > 0) {
+    const runtimeSkillPrompt = toRuntimeSkillPrompt(runtimeSkillMetadata)
+    if (runtimeSkillPrompt) {
+      systemPrompt = `${systemPrompt}\n\n${runtimeSkillPrompt}`
+    }
+  }
 
   wsServer.sendStartSession(userId, {
     session_id: sessionId,
@@ -649,8 +764,11 @@ async function handleChatViaExecutionPlane(
     agent_config: {
       system_prompt: systemPrompt,
       model: agent.config?.model,
+      model_provider_key: agent.config?.modelProviderKey,
       temperature: agent.config?.temperature ?? 0.7,
       max_tokens: agent.config?.maxTokens ?? 4096,
+      fallback_model: agent.config?.fallbackModel,
+      fallback_provider_key: agent.config?.fallbackProviderKey,
     },
     mcp_servers: mcpServers,
     skill_index: skillIndex,
@@ -716,6 +834,32 @@ function getRuntimeBaseUrls(): string[] {
   return [`http://127.0.0.1:${defaultPort}`]
 }
 
+async function getRuntimeSkillMetadata(baseUrls: string[]): Promise<RuntimeSkillMetadata[]> {
+  for (const baseUrl of baseUrls) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 1500)
+    try {
+      const response = await fetch(`${baseUrl}/v1/skills`, {
+        method: 'GET',
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+      if (!response.ok) continue
+      const payload = (await response.json()) as { metadata?: RuntimeSkillMetadata[] }
+      const rows = Array.isArray(payload.metadata) ? payload.metadata : []
+      return rows.filter((item) => {
+        const status = String(item.status || 'active')
+        const enabled = item.enabled !== false
+        return status === 'active' && enabled
+      })
+    } catch {
+      clearTimeout(timeout)
+      continue
+    }
+  }
+  return []
+}
+
 function buildEnhancedMessage(input: ChatInput): { text: string } {
   if (!input.attachments || input.attachments.length === 0) {
     return { text: input.message }
@@ -752,18 +896,291 @@ interface RuntimeDispatchResult {
   assistantMessageId?: string
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeDirectRuntimeEvent(input: unknown): Record<string, unknown> | null {
+  if (!isRecord(input)) return null
+  if (typeof input.type === 'string' && input.type.trim()) {
+    return input
+  }
+
+  const eventName = String(input.event || '').trim()
+  if (!eventName || eventName === 'start' || eventName === 'done') return null
+
+  const data = isRecord(input.data) ? input.data : {}
+  const get = (key: string): unknown => data[key] ?? input[key]
+
+  switch (eventName) {
+    case 'thinking':
+      return {
+        type: 'thinking',
+        content: String(get('content') || ''),
+        stage: get('stage'),
+      }
+    case 'plan_created':
+    case 'plan_version':
+      return {
+        type: eventName,
+        steps: Array.isArray(get('steps')) ? get('steps') : [],
+      }
+    case 'plan.step.started':
+      return {
+        type: 'plan_step_start',
+        step_id: get('step_id') ?? get('stepId') ?? get('id'),
+        title: get('title') ?? get('step_title') ?? get('action'),
+        tool: get('tool') ?? get('tool_name'),
+        params: get('params'),
+      }
+    case 'plan.step.completed':
+      return {
+        type: 'plan_step_complete',
+        step_id: get('step_id') ?? get('stepId') ?? get('id'),
+        title: get('title') ?? get('step_title') ?? get('action'),
+        result: get('result'),
+        duration_ms: get('duration_ms') ?? get('duration'),
+      }
+    case 'plan.step.failed':
+      return {
+        type: 'plan_step_failed',
+        step_id: get('step_id') ?? get('stepId') ?? get('id'),
+        title: get('title') ?? get('step_title') ?? get('action'),
+        error: get('error'),
+      }
+    case 'tool.exec.started':
+      return {
+        type: 'tool_call_start',
+        tool_name: get('tool_name') ?? input.subject,
+        arguments: get('params') ?? get('arguments') ?? {},
+      }
+    case 'tool.exec.completed':
+    case 'tool.exec.failed':
+      return {
+        type: 'tool_call_complete',
+        tool_name: get('tool_name') ?? input.subject,
+        result: get('result'),
+        success: eventName === 'tool.exec.completed' ? get('success') ?? true : false,
+        error: get('error'),
+        duration: get('duration_ms') ?? get('duration'),
+      }
+    case 'skill_orchestration_trace':
+      return {
+        type: 'skill_orchestration_trace',
+        ...data,
+      }
+    case 'text_chunk':
+    case 'text':
+      return {
+        type: eventName,
+        content: String(get('content') || ''),
+      }
+    case 'file_created':
+      return {
+        type: 'file_created',
+        url: get('url'),
+        filename: get('filename'),
+        mime_type: get('mime_type') ?? get('mimeType'),
+        size: get('size'),
+      }
+    default:
+      return null
+  }
+}
+
+function shouldBufferProcessMessage(type: string): boolean {
+  return (
+    type === 'thinking' ||
+    type === 'plan' ||
+    type === 'plan_step' ||
+    type === 'tool_call' ||
+    type === 'tool_result' ||
+    type === 'mcp_call' ||
+    type === 'mcp_result'
+  )
+}
+
 async function addAssistantTextMessage(
   orgId: string,
   sessionId: string,
   connection: SSEConnection,
-  content: string
+  content: string,
+  metadata?: Record<string, unknown>,
+  relayFinalText = true
 ): Promise<string> {
   const assistant = await sessionService.addMessage(orgId, sessionId, {
     role: 'assistant',
     content,
+    metadata,
   })
-  sendAgent2UIMessage(connection, 'text', { content })
+  if (relayFinalText) {
+    sendAgent2UIMessage(connection, 'text', { content })
+  }
   return assistant.id
+}
+
+async function relayRuntimeStreamToSSE(
+  connection: SSEConnection,
+  response: globalThis.Response,
+  orgId: string,
+  sessionId: string
+): Promise<{
+  status: string
+  finalResponse: string
+  error: string
+  runtimeEvents: Array<Record<string, unknown>>
+  processMessages: Agent2UIMessage[]
+  streamedFinalText: boolean
+}> {
+  const contentType = response.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    const payload = await response.json() as Record<string, unknown>
+    const runtimeEvents = Array.isArray(payload.runtime_events)
+      ? payload.runtime_events.filter(isRecord)
+      : []
+    const processMessages: Agent2UIMessage[] = []
+    let streamedFinalText = false
+
+    for (const event of runtimeEvents) {
+      const normalized = normalizeDirectRuntimeEvent(event)
+      const agentMessage = normalized ? mapRuntimeEventToAgent2UI(normalized) : null
+      if (!agentMessage) continue
+      if (shouldBufferProcessMessage(agentMessage.type)) {
+        processMessages.push(agentMessage)
+      }
+      if (agentMessage.type === 'file') {
+        await sessionService.addMessage(orgId, sessionId, {
+          role: 'assistant',
+          content: '',
+          metadata: {
+            agent2ui: agentMessage,
+          },
+        })
+      }
+      if (agentMessage.type === 'text' && String((agentMessage.data as { content?: string }).content || '').trim()) {
+        streamedFinalText = true
+      }
+      sendSSEEvent(connection, 'message', agentMessage)
+    }
+
+    return {
+      status: String(payload.status || ''),
+      finalResponse: String(payload.final_response || ''),
+      error: payload.error ? String(payload.error) : '',
+      runtimeEvents,
+      processMessages,
+      streamedFinalText,
+    }
+  }
+
+  if (!response.body) {
+    throw new Error('runtime stream body missing')
+  }
+
+  const runtimeEvents: Array<Record<string, unknown>> = []
+  const processMessages: Agent2UIMessage[] = []
+  let doneStatus = ''
+  let doneFinalResponse = ''
+  let doneError = ''
+  let streamedFinalText = false
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const handlePayload = async (payload: Record<string, unknown>) => {
+    const eventName = String(payload.event || '')
+    if (!eventName) return
+    if (eventName === 'start') return
+    if (eventName === 'done') {
+      doneStatus = String(payload.status || '')
+      doneFinalResponse = String(payload.final_response || '')
+      doneError = payload.error ? String(payload.error) : ''
+      return
+    }
+
+    runtimeEvents.push(payload)
+    const normalized = normalizeDirectRuntimeEvent(payload)
+    const agentMessage = normalized ? mapRuntimeEventToAgent2UI(normalized) : null
+    if (!agentMessage) return
+
+    if (shouldBufferProcessMessage(agentMessage.type)) {
+      processMessages.push(agentMessage)
+      if (processMessages.length > 500) {
+        processMessages.splice(0, processMessages.length - 500)
+      }
+    }
+
+    if (agentMessage.type === 'file') {
+      await sessionService.addMessage(orgId, sessionId, {
+        role: 'assistant',
+        content: '',
+        metadata: {
+          agent2ui: agentMessage,
+        },
+      })
+    }
+
+    if (agentMessage.type === 'text' && String((agentMessage.data as { content?: string }).content || '').trim()) {
+      streamedFinalText = true
+    }
+
+    sendSSEEvent(connection, 'message', agentMessage)
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary >= 0) {
+      const chunk = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      const dataLines = chunk
+        .split('\n')
+        .map((line) => line.trimEnd())
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+      if (dataLines.length > 0) {
+        const raw = dataLines.join('\n')
+        try {
+          const payload = JSON.parse(raw) as Record<string, unknown>
+          await handlePayload(payload)
+        } catch {
+          // ignore malformed streaming frame
+        }
+      }
+      boundary = buffer.indexOf('\n\n')
+    }
+
+    if (done) {
+      break
+    }
+  }
+
+  if (buffer.trim()) {
+    const dataLines = buffer
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+    if (dataLines.length > 0) {
+      try {
+        const payload = JSON.parse(dataLines.join('\n')) as Record<string, unknown>
+        await handlePayload(payload)
+      } catch {
+        // ignore malformed trailing frame
+      }
+    }
+  }
+
+  return {
+    status: doneStatus,
+    finalResponse: doneFinalResponse,
+    error: doneError,
+    runtimeEvents,
+    processMessages,
+    streamedFinalText,
+  }
 }
 
 async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promise<RuntimeDispatchResult> {
@@ -799,11 +1216,19 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
   }
 
   const enhanced = buildEnhancedMessage(input)
-  const systemPrompt = await buildAgentSystemPrompt(orgId, agent)
+  const runtimeBaseUrls = getRuntimeBaseUrls()
+  const { skillIndex, runtimeSkillMetadata } = await buildAgentSkillIndex(agent, runtimeBaseUrls)
+  let systemPrompt = await buildAgentSystemPrompt(orgId, agent)
+  if (agent.isSystem && runtimeSkillMetadata.length > 0) {
+    const runtimeSkillPrompt = toRuntimeSkillPrompt(runtimeSkillMetadata)
+    if (runtimeSkillPrompt) {
+      systemPrompt = `${systemPrompt}\n\n${runtimeSkillPrompt}`
+    }
+  }
   const runtimeErrors: string[] = []
-  let runtimeResult: Record<string, unknown> | null = null
+  let runtimeResponse: globalThis.Response | null = null
 
-  for (const baseUrl of getRuntimeBaseUrls()) {
+  for (const baseUrl of runtimeBaseUrls) {
     try {
       const response = await fetch(`${baseUrl}/api/v1/chat/sessions/${sessionId}`, {
         method: 'POST',
@@ -812,8 +1237,12 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
           message: enhanced.text,
           agent_id: agent.id,
           model: agent.config?.model,
+          model_provider_key: agent.config?.modelProviderKey,
+          fallback_model: agent.config?.fallbackModel,
+          fallback_provider_key: agent.config?.fallbackProviderKey,
           system_prompt: systemPrompt,
-          stream: false,
+          skill_index: skillIndex,
+          stream: true,
         }),
       })
 
@@ -823,14 +1252,14 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
         continue
       }
 
-      runtimeResult = (await response.json()) as Record<string, unknown>
+      runtimeResponse = response
       break
     } catch (error) {
       runtimeErrors.push(`${baseUrl}: ${(error as Error).message}`)
     }
   }
 
-  if (!runtimeResult) {
+  if (!runtimeResponse) {
     const runtimeError = `Runtime 不可用: ${runtimeErrors.join('; ') || 'unknown error'}`
     if (runtimeErrorMode === 'assistant_message') {
       const assistantMessageId = await addAssistantTextMessage(
@@ -848,10 +1277,16 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
     return { ok: false }
   }
 
-  const status = String(runtimeResult.status || '')
-  const rawFinalResponse = String(runtimeResult.final_response || '')
-  const error = runtimeResult.error ? String(runtimeResult.error) : ''
-  const runtimeEvents = runtimeResult.runtime_events
+  const streamOutcome = await relayRuntimeStreamToSSE(
+    connection,
+    runtimeResponse,
+    orgId,
+    sessionId
+  )
+  const status = streamOutcome.status
+  const rawFinalResponse = streamOutcome.finalResponse
+  const error = streamOutcome.error
+  const runtimeEvents = streamOutcome.runtimeEvents
   const approvalIds = extractApprovalIds(runtimeEvents)
   const finalResponse = appendApprovalHints(rawFinalResponse, runtimeEvents)
 
@@ -888,7 +1323,24 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
       ? `该请求包含高风险操作，等待审批：${approvalIds.join(', ')}。`
       : '任务已执行完成。')
 
-  const assistantMessageId = await addAssistantTextMessage(orgId, sessionId, connection, content)
+  if (!streamOutcome.streamedFinalText && content.trim()) {
+    sendAgent2UIMessage(connection, 'text', { content })
+  }
+  const assistantMessageId = await addAssistantTextMessage(
+    orgId,
+    sessionId,
+    connection,
+    content,
+    streamOutcome.processMessages.length > 0
+      ? {
+          execution_process: {
+            version: 1,
+            messages: streamOutcome.processMessages,
+          },
+        }
+      : undefined,
+    false
+  )
   return { ok: true, assistantMessageId }
 }
 

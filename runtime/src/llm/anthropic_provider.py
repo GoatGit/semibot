@@ -48,6 +48,17 @@ class AnthropicProvider(LLMProvider):
             max_retries=config.max_retries,
         )
 
+    @staticmethod
+    def _is_skill_context_tool_message(message: dict[str, Any]) -> bool:
+        role = str(message.get("role") or "").strip().lower()
+        if role != "tool":
+            return False
+        tool_call_id = str(message.get("tool_call_id") or "").strip().lower()
+        if tool_call_id.startswith("skill_ctx_"):
+            return True
+        name = str(message.get("name") or "").strip().lower()
+        return name.startswith("tools/skill_context/")
+
     @retry(
         stop=stop_after_attempt(LLM_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=LLM_RETRY_DELAY_BASE, max=LLM_RETRY_DELAY_MAX),
@@ -225,6 +236,13 @@ class AnthropicProvider(LLMProvider):
         elif role == "user":
             return {"role": "user", "content": message["content"]}
         elif role == "tool":
+            if self._is_skill_context_tool_message(message):
+                tool_name = str(message.get("name") or "tools/skill_context")
+                payload = str(message.get("content") or "")
+                return {
+                    "role": "user",
+                    "content": f"[TOOL_CONTEXT {tool_name}]\n{payload}",
+                }
             # Tool result format
             return {
                 "role": "user",

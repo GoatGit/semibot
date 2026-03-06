@@ -188,6 +188,19 @@ class TestAnthropicProviderMessageConversion:
         assert result["content"][0]["type"] == "tool_result"
         assert result["content"][0]["tool_use_id"] == "call_123"
 
+    def test_convert_skill_context_tool_message(self, provider):
+        """Should downgrade synthetic skill-context tool message to user content."""
+        msg = {
+            "role": "tool",
+            "name": "tools/skill_context/deep-research",
+            "tool_call_id": "skill_ctx_deep_research",
+            "content": "<skill_md>...</skill_md>",
+        }
+        result = provider._convert_message(msg)
+
+        assert result["role"] == "user"
+        assert "[TOOL_CONTEXT tools/skill_context/deep-research]" in result["content"]
+
 
 class TestAnthropicProviderToolConversion:
     """Tests for Anthropic tool conversion."""

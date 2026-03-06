@@ -45,6 +45,14 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
       })
     }
 
+    case 'plan_version': {
+      const steps = (event.steps as Array<{ id: string; title: string }> | undefined) ?? []
+      return mkMessage('plan', {
+        steps: steps.map((s) => ({ id: s.id, title: s.title, status: 'pending' })),
+        currentStep: '',
+      })
+    }
+
     case 'plan_step_start':
       return mkMessage('plan_step', {
         stepId: (event.step_id as string) ?? '',
@@ -94,7 +102,10 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
           selected_skill: event.selected_skill,
           selected_skill_kind: event.selected_skill_kind,
           has_skill_md: event.has_skill_md,
-          skill_md_gate_injected: event.skill_md_gate_injected,
+          skill_md_prompt_injected: event.skill_md_prompt_injected ?? event.skill_md_gate_injected,
+          preplan_generated: event.preplan_generated,
+          preview_prompt_dump_path: event.preview_prompt_dump_path,
+          final_prompt_dump_path: event.final_prompt_dump_path,
           installer_gate: event.installer_gate,
         },
         success: true,

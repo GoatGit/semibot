@@ -40,6 +40,34 @@ class DummyGraph:
         }
 
 
+class DummyGraphPrematureResponse:
+    async def ainvoke(self, _state):
+        return {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "好的，我将使用深度研究技能分析拼多多股票，重点关注其财务表现、市场趋势以及投资价值。稍等，我会提供详细的结果。",
+                }
+            ],
+            "tool_results": [
+                {
+                    "tool_name": "search",
+                    "params": {"query": "拼多多股票 最新 财报"},
+                    "result": {
+                        "results": [
+                            {
+                                "title": "PDD Investor Relations",
+                                "url": "https://investor.pddholdings.com",
+                                "content": "Contains financial reports and earnings releases.",
+                            }
+                        ]
+                    },
+                    "success": True,
+                }
+            ],
+        }
+
+
 @pytest.mark.asyncio
 async def test_semigraph_adapter_emits_completion(monkeypatch):
     import src.session.semigraph_adapter as mod
@@ -72,6 +100,38 @@ async def test_semigraph_adapter_emits_completion(monkeypatch):
     cp_dir = Path(memory_dir) / "sess-1" / "checkpoints"
     files = list(cp_dir.glob("*.json"))
     assert len(files) >= 1
+
+
+@pytest.mark.asyncio
+async def test_semigraph_adapter_rewrites_premature_final_response(monkeypatch):
+    import src.session.semigraph_adapter as mod
+
+    monkeypatch.setattr(mod, "create_agent_graph", lambda context, runtime_context: DummyGraphPrematureResponse())
+
+    client = DummyClient()
+    adapter = SemiGraphAdapter(
+        client=client,
+        session_id="sess-premature",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={"api_keys": {}, "memory_dir": "/tmp/semibot-test-memory"},
+        start_payload={
+            "agent_id": "agent-1",
+            "agent_config": {"model": "gpt-4o"},
+            "mcp_servers": [],
+        },
+    )
+
+    await adapter.start()
+    await adapter.handle_user_message({"message": "使用深度研究技能研究拼多多股票", "history": []})
+    assert adapter._task is not None
+    await asyncio.wait_for(adapter._task, timeout=3)
+
+    completion_events = [payload for _, payload in client.sse_events if payload.get("type") == "execution_complete"]
+    assert completion_events
+    final_response = str(completion_events[-1].get("final_response") or "")
+    assert "我将使用深度研究技能" not in final_response
+    assert "已完成对" in final_response
 
 
 @pytest.mark.asyncio
@@ -142,7 +202,7 @@ async def test_semigraph_adapter_restores_history_from_checkpoint(monkeypatch):
     assert captured_histories[1] == [{"role": "assistant", "content": "done"}]
 
 
-def test_semigraph_adapter_filters_unregistered_skills():
+def test_semigraph_adapter_keeps_skill_index_skills_in_capabilities():
     adapter = SemiGraphAdapter(
         client=DummyClient(),
         session_id="sess-skill-filter",
@@ -162,11 +222,11 @@ def test_semigraph_adapter_filters_unregistered_skills():
 
     defs = adapter._build_skill_definitions()
     names = [d.name for d in defs]
-    assert "unregistered-demo-skill" not in names
+    assert "unregistered-demo-skill" in names
     assert "code_executor" in names
 
 
-def test_semigraph_adapter_registers_package_python_tool():
+def test_semigraph_adapter_does_not_register_skill_as_tool():
     adapter = SemiGraphAdapter(
         client=DummyClient(),
         session_id="sess-package-tool",
@@ -191,11 +251,11 @@ def test_semigraph_adapter_registers_package_python_tool():
         },
     )
 
-    adapter._register_package_tools()
-    assert adapter.skill_registry.get_tool("pkg-skill-demo") is not None
+    adapter._register_skill_tools()
+    assert adapter.skill_registry.get_tool("pkg-skill-demo") is None
 
 
-def test_semigraph_adapter_instruction_skill_not_registered_as_tool():
+def test_semigraph_adapter_doc_only_skill_not_registered_as_tool():
     adapter = SemiGraphAdapter(
         client=DummyClient(),
         session_id="sess-instruction-skill",
@@ -220,7 +280,7 @@ def test_semigraph_adapter_instruction_skill_not_registered_as_tool():
         },
     )
 
-    adapter._register_package_tools()
+    adapter._register_skill_tools()
     assert adapter.skill_registry.get_tool("instruction-only") is None
 
 
@@ -248,6 +308,100 @@ def test_semigraph_adapter_uses_runtime_init_llm_config_for_custom_provider():
     assert adapter.llm_provider is not None
     assert adapter.llm_provider.config.model == "qwen-plus"
     assert adapter.llm_provider.config.base_url == "https://custom.example.com/v1"
+
+
+def test_semigraph_adapter_prefers_kimi_instance_when_model_is_kimi():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-llm-kimi",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={
+            "api_keys": {
+                "openai": "sk-openai",
+                "custom": "sk-custom",
+                "kimi:kimiprovider": "sk-kimi-instance",
+            },
+            "llm_config": {
+                "default_model": "kimi-k2.5",
+                "providers": {
+                    "openai": {"base_url": "https://api.openai.com/v1"},
+                    "custom": {"base_url": "https://custom.example.com/v1"},
+                    "kimi:kimiprovider": {"base_url": "https://api.moonshot.cn/v1"},
+                },
+            },
+            "memory_dir": "/tmp/semibot-test-memory",
+        },
+        start_payload={"agent_id": "agent-1", "agent_config": {}, "mcp_servers": []},
+    )
+
+    assert adapter.llm_provider is not None
+    assert adapter.llm_provider.config.model == "kimi-k2.5"
+    assert adapter.llm_provider.config.api_key == "sk-kimi-instance"
+    assert adapter.llm_provider.config.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_semigraph_adapter_falls_back_to_default_model_when_agent_model_provider_unavailable():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-llm-fallback-default",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={
+            "api_keys": {
+                "custom": "sk-custom",
+                "kimi:kimiprovider": "sk-kimi-instance",
+            },
+            "llm_config": {
+                "default_model": "kimi-k2.5",
+                "providers": {
+                    "custom": {"base_url": "https://custom.example.com/v1"},
+                    "kimi:kimiprovider": {"base_url": "https://api.moonshot.cn/v1"},
+                },
+            },
+            "memory_dir": "/tmp/semibot-test-memory",
+        },
+        start_payload={
+            "agent_id": "agent-1",
+            "agent_config": {"model": "gpt-4o"},
+            "mcp_servers": [],
+        },
+    )
+
+    assert adapter.llm_provider is not None
+    assert adapter.llm_provider.config.model == "kimi-k2.5"
+    assert adapter.llm_provider.config.api_key == "sk-kimi-instance"
+    assert adapter.llm_provider.config.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_semigraph_adapter_honors_default_provider_key():
+    adapter = SemiGraphAdapter(
+        client=DummyClient(),
+        session_id="sess-llm-default-provider",
+        org_id="org-1",
+        user_id="user-1",
+        init_data={
+            "api_keys": {
+                "custom": "sk-custom",
+                "kimi:kimiprovider": "sk-kimi-instance",
+            },
+            "llm_config": {
+                "default_model": "kimi-k2.5",
+                "default_provider_key": "kimi:kimiprovider",
+                "providers": {
+                    "custom": {"base_url": "https://custom.example.com/v1"},
+                    "kimi:kimiprovider": {"base_url": "https://api.moonshot.cn/v1"},
+                },
+            },
+            "memory_dir": "/tmp/semibot-test-memory",
+        },
+        start_payload={"agent_id": "agent-1", "agent_config": {}, "mcp_servers": []},
+    )
+
+    assert adapter.llm_provider is not None
+    assert adapter.llm_provider.config.model == "kimi-k2.5"
+    assert adapter.llm_provider.config.api_key == "sk-kimi-instance"
+    assert adapter.llm_provider.config.base_url == "https://api.moonshot.cn/v1"
 
 
 @pytest.mark.asyncio

@@ -221,12 +221,42 @@ def test_capability_graph_build():
     graph = CapabilityGraph(runtime_context)
     graph.build()
 
-    # Verify capabilities were loaded
-    assert len(graph.capabilities) == 4
-    assert "web_search" in graph.capabilities
-    assert "code_executor" in graph.capabilities
+    # Verify only executable capabilities were loaded (skills are orchestration-only)
+    assert len(graph.capabilities) == 2
+    assert "web_search" not in graph.capabilities
+    assert "code_executor" not in graph.capabilities
     assert "calculator" in graph.capabilities
     assert "github_create_issue" in graph.capabilities
+
+
+def test_capability_graph_skips_skills_from_executable_capabilities():
+    """Skills should not be exposed as executable capabilities."""
+    doc_skill = SkillDefinition(
+        id="skill_instruction",
+        name="deep-research",
+        description="Doc skill",
+    )
+    script_skill = SkillDefinition(
+        id="skill_package",
+        name="pdf",
+        description="Script-backed skill",
+        metadata={"has_skill_md": True, "script_files": ["scripts/render.py"]},
+    )
+
+    runtime_context = RuntimeSessionContext(
+        org_id="org_123",
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_skills=[doc_skill, script_skill],
+    )
+
+    graph = CapabilityGraph(runtime_context)
+    graph.build()
+
+    assert "deep-research" not in graph.capabilities
+    assert "pdf" not in graph.capabilities
 
 
 def test_capability_graph_get_schemas_for_planner():
@@ -257,10 +287,7 @@ def test_capability_graph_get_schemas_for_planner():
     graph = CapabilityGraph(runtime_context)
     schemas = graph.get_schemas_for_planner()
 
-    assert len(schemas) == 1
-    assert schemas[0]["type"] == "function"
-    assert schemas[0]["function"]["name"] == "web_search"
-    assert "parameters" in schemas[0]["function"]
+    assert schemas == []
 
 
 def test_capability_graph_validate_action():
@@ -282,8 +309,8 @@ def test_capability_graph_validate_action():
 
     graph = CapabilityGraph(runtime_context)
 
-    # Valid action
-    assert graph.validate_action("web_search") is True
+    # Skill names are non-executable in capability graph
+    assert graph.validate_action("web_search") is False
 
     # Invalid action
     assert graph.validate_action("nonexistent_tool") is False
@@ -308,11 +335,9 @@ def test_capability_graph_get_capability():
 
     graph = CapabilityGraph(runtime_context)
 
-    # Get existing capability
+    # Skill names are non-executable in capability graph
     capability = graph.get_capability("web_search")
-    assert capability is not None
-    assert capability.name == "web_search"
-    assert isinstance(capability, SkillCapability)
+    assert capability is None
 
     # Get non-existent capability
     capability = graph.get_capability("nonexistent")
@@ -337,8 +362,8 @@ def test_capability_graph_list_capabilities():
     graph = CapabilityGraph(runtime_context)
     capabilities = graph.list_capabilities()
 
-    assert len(capabilities) == 2
-    assert "web_search" in capabilities
+    assert len(capabilities) == 1
+    assert "web_search" not in capabilities
     assert "calculator" in capabilities
 
 
@@ -360,10 +385,9 @@ def test_capability_graph_get_capabilities_by_type():
 
     graph = CapabilityGraph(runtime_context)
 
-    # Get skills
+    # Get skills (runtime should expose none)
     skills = graph.get_capabilities_by_type("skill")
-    assert len(skills) == 2
-    assert all(c.capability_type == "skill" for c in skills)
+    assert len(skills) == 0
 
     # Get tools
     tools = graph.get_capabilities_by_type("tool")

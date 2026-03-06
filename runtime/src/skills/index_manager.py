@@ -1,4 +1,4 @@
-"""Skills metadata index manager for installed package skills."""
+"""Skills metadata index manager for installed skills."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ logger = get_logger(__name__)
 
 INDEX_FILENAME = ".index.json"
 STATE_FILENAME = ".state.json"
+INDEX_SCHEMA_VERSION = 2
 
 
 def _iso_now() -> str:
@@ -31,7 +32,7 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
 def _read_description(skill_dir: Path, fallback_name: str) -> str:
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
-        return f"Execute installed package skill: {fallback_name}"
+        return f"Installed skill: {fallback_name}"
     lines = skill_md.read_text(encoding="utf-8", errors="ignore").splitlines()
     frontmatter_lines: list[str] = []
     body_start = 0
@@ -70,7 +71,7 @@ def _read_description(skill_dir: Path, fallback_name: str) -> str:
             line = line.lstrip("#").strip()
         if line:
             return line
-    return f"Execute installed package skill: {fallback_name}"
+    return f"Installed skill: {fallback_name}"
 
 
 def _read_manifest(skill_dir: Path) -> dict[str, Any]:
@@ -79,6 +80,17 @@ def _read_manifest(skill_dir: Path) -> dict[str, Any]:
         if payload:
             return payload
     return {}
+
+
+def _scan_script_files(skill_dir: Path) -> list[str]:
+    scripts_dir = skill_dir / "scripts"
+    if not scripts_dir.exists() or not scripts_dir.is_dir():
+        return []
+    return sorted(
+        str(path.relative_to(skill_dir)).replace("\\", "/")
+        for path in scripts_dir.rglob("*")
+        if path.is_file()
+    )
 
 
 def _parse_requires(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -128,18 +140,43 @@ def _content_hash(skill_dir: Path) -> str:
 
 
 def resolve_skill_dir(candidate: Path) -> Path | None:
-    """Resolve to a directory that contains executable scripts/main.py."""
+    """Resolve to a directory that looks like an installed skill."""
     if not candidate.exists() or candidate.is_file():
         return None
-    direct = candidate / "scripts" / "main.py"
-    if direct.exists():
+    if (candidate / "SKILL.md").exists():
+        return candidate
+    direct_scripts = candidate / "scripts"
+    if direct_scripts.exists() and direct_scripts.is_dir():
         return candidate
     for child in candidate.iterdir():
         if not child.is_dir():
             continue
-        nested = child / "scripts" / "main.py"
-        if nested.exists():
+        if (child / "SKILL.md").exists():
             return child
+        nested_scripts = child / "scripts"
+        if nested_scripts.exists() and nested_scripts.is_dir():
+            return child
+    return None
+
+
+def resolve_skill_scripts_dir(candidate: Path) -> Path | None:
+    """Resolve to a directory that contains at least one file under scripts/."""
+    if not candidate.exists() or candidate.is_file():
+        return None
+    direct_scripts = candidate / "scripts"
+    if direct_scripts.exists() and direct_scripts.is_dir():
+        for child in direct_scripts.iterdir():
+            if child.is_file():
+                return candidate
+    for child in candidate.iterdir():
+        if not child.is_dir():
+            continue
+        nested_scripts = child / "scripts"
+        if not nested_scripts.exists() or not nested_scripts.is_dir():
+            continue
+        for nested_file in nested_scripts.iterdir():
+            if nested_file.is_file():
+                return child
     return None
 
 
@@ -167,18 +204,19 @@ class SkillsIndexManager:
 
     def read_index(self) -> dict[str, Any]:
         if not self.index_path.exists():
-            return {"schema_version": 1, "generated_at": _iso_now(), "skills": []}
+            return {"schema_version": INDEX_SCHEMA_VERSION, "generated_at": _iso_now(), "skills": []}
         payload = _read_json_file(self.index_path)
         if not payload:
-            return {"schema_version": 1, "generated_at": _iso_now(), "skills": []}
+            return {"schema_version": INDEX_SCHEMA_VERSION, "generated_at": _iso_now(), "skills": []}
         rows = payload.get("skills")
         if not isinstance(rows, list):
             payload["skills"] = []
+        payload["schema_version"] = int(payload.get("schema_version") or INDEX_SCHEMA_VERSION)
         return payload
 
     def write_index(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         payload = {
-            "schema_version": 1,
+            "schema_version": INDEX_SCHEMA_VERSION,
             "generated_at": _iso_now(),
             "skills": rows,
         }
@@ -224,10 +262,12 @@ class SkillsIndexManager:
             "version": str(manifest.get("version") or previous.get("version") or "0.0.0-local"),
             "source": source or str(previous.get("source") or "manual"),
             "installed_path": str(skill_dir),
-            "entry_script": str(manifest.get("entry_script") or previous.get("entry_script") or "scripts/main.py"),
-            "skill_md_path": str(manifest.get("skill_md_path") or previous.get("skill_md_path") or "SKILL.md"),
             "tags": manifest.get("tags") if isinstance(manifest.get("tags"), list) else previous.get("tags") or [],
             "requires": _parse_requires(manifest) if manifest else previous.get("requires") or {"binaries": [], "env_vars": [], "python": []},
+            "script_files": _scan_script_files(skill_dir),
+            "has_skill_md": (skill_dir / "SKILL.md").exists(),
+            "has_references": (skill_dir / "reference").is_dir() or (skill_dir / "references").is_dir(),
+            "has_templates": (skill_dir / "templates").is_dir(),
             "enabled": bool(previous.get("enabled", True)),
             "status": "active",
             "hash": current_hash,
@@ -263,63 +303,20 @@ class SkillsIndexManager:
             skill_id = item.name
             seen.add(skill_id)
             previous = current_map.get(skill_id)
-            resolved = resolve_skill_dir(item)
+            scripts_dir = resolve_skill_scripts_dir(item)
             skill_md_dir = resolve_skill_md_dir(item)
-            kind: str | None = None
-            if resolved is not None and skill_md_dir is not None:
-                kind = "hybrid"
-            elif resolved is not None:
-                kind = "package"
-            elif skill_md_dir is not None:
-                kind = "instruction"
-            if kind is None:
+            skill_root = skill_md_dir or scripts_dir
+            if skill_root is None:
                 invalid += 1
                 # Non-skill directories are ignored.
                 continue
-            if kind == "instruction":
-                now = _iso_now()
-                current_hash = _content_hash(skill_md_dir)
-                mtime = int(skill_md_dir.stat().st_mtime)
-                hash_unchanged = str(previous.get("hash") or "") == current_hash if isinstance(previous, dict) else False
-                mtime_unchanged = int(previous.get("mtime") or 0) == mtime if isinstance(previous, dict) else False
-                changed = mode == "full" or not (hash_unchanged and mtime_unchanged)
-                next_rows.append(
-                    {
-                        "skill_id": skill_id,
-                        "name": str(previous.get("name") if isinstance(previous, dict) and previous.get("name") else skill_id),
-                        "description": _read_description(skill_md_dir, skill_id),
-                        "version": str(previous.get("version") if isinstance(previous, dict) and previous.get("version") else "0.0.0-local"),
-                        "source": str(previous.get("source") if isinstance(previous, dict) and previous.get("source") else "manual"),
-                        "installed_path": str(skill_md_dir),
-                        "entry_script": "",
-                        "skill_md_path": "SKILL.md",
-                        "tags": previous.get("tags") if isinstance(previous, dict) and isinstance(previous.get("tags"), list) else [],
-                        "requires": previous.get("requires") if isinstance(previous, dict) and isinstance(previous.get("requires"), dict) else {"binaries": [], "env_vars": [], "python": []},
-                        "enabled": bool(previous.get("enabled", True)) if isinstance(previous, dict) else True,
-                        "status": "active",
-                        "kind": "instruction",
-                        "hash": current_hash,
-                        "mtime": mtime,
-                        "created_at": str(previous.get("created_at") if isinstance(previous, dict) and previous.get("created_at") else now),
-                        "updated_at": now if changed else str(previous.get("updated_at") if isinstance(previous, dict) and previous.get("updated_at") else now),
-                    }
-                )
-                if previous is None:
-                    added += 1
-                elif changed:
-                    updated += 1
-                continue
-
-            assert resolved is not None
             record, changed = self._build_record(
                 skill_id=skill_id,
-                skill_dir=resolved,
+                skill_dir=skill_root,
                 source=str(previous.get("source") if isinstance(previous, dict) and previous.get("source") else "manual"),
                 previous=previous,
                 force=(mode == "full"),
             )
-            record["kind"] = kind
-            record["skill_md_path"] = "SKILL.md" if kind == "hybrid" else ""
             next_rows.append(record)
             if previous is None:
                 added += 1
@@ -345,10 +342,11 @@ class SkillsIndexManager:
 
     def upsert_after_install(self, skill_id: str, *, source: str = "manual") -> dict[str, Any]:
         candidate = self.skills_root / skill_id
-        resolved = resolve_skill_dir(candidate)
+        scripts_dir = resolve_skill_scripts_dir(candidate)
         skill_md_dir = resolve_skill_md_dir(candidate)
-        if resolved is None and skill_md_dir is None:
-            raise ValueError(f"invalid skill package: {skill_id} missing scripts/main.py and SKILL.md")
+        skill_root = skill_md_dir or scripts_dir
+        if skill_root is None:
+            raise ValueError(f"invalid skill package: {skill_id} missing scripts/ and SKILL.md")
 
         current_rows = self.list_records()
         current_map = {
@@ -357,40 +355,13 @@ class SkillsIndexManager:
             if isinstance(row, dict) and str(row.get("skill_id") or "").strip()
         }
         previous = current_map.get(skill_id)
-        if resolved is not None:
-            record, _ = self._build_record(
-                skill_id=skill_id,
-                skill_dir=resolved,
-                source=source,
-                previous=previous if isinstance(previous, dict) else None,
-                force=True,
-            )
-            record["kind"] = "hybrid" if skill_md_dir is not None else "package"
-            record["skill_md_path"] = "SKILL.md" if skill_md_dir is not None else ""
-        else:
-            assert skill_md_dir is not None
-            now = _iso_now()
-            current_hash = _content_hash(skill_md_dir)
-            mtime = int(skill_md_dir.stat().st_mtime)
-            record = {
-                "skill_id": skill_id,
-                "name": str(previous.get("name") if isinstance(previous, dict) and previous.get("name") else skill_id),
-                "description": _read_description(skill_md_dir, skill_id),
-                "version": str(previous.get("version") if isinstance(previous, dict) and previous.get("version") else "0.0.0-local"),
-                "source": source,
-                "installed_path": str(skill_md_dir),
-                "entry_script": "",
-                "skill_md_path": "SKILL.md",
-                "tags": previous.get("tags") if isinstance(previous, dict) and isinstance(previous.get("tags"), list) else [],
-                "requires": previous.get("requires") if isinstance(previous, dict) and isinstance(previous.get("requires"), dict) else {"binaries": [], "env_vars": [], "python": []},
-                "enabled": bool(previous.get("enabled", True)) if isinstance(previous, dict) else True,
-                "status": "active",
-                "kind": "instruction",
-                "hash": current_hash,
-                "mtime": mtime,
-                "created_at": str(previous.get("created_at") if isinstance(previous, dict) and previous.get("created_at") else now),
-                "updated_at": now,
-            }
+        record, _ = self._build_record(
+            skill_id=skill_id,
+            skill_dir=skill_root,
+            source=source,
+            previous=previous if isinstance(previous, dict) else None,
+            force=True,
+        )
         current_map[skill_id] = record
         self.write_index(list(current_map.values()))
         return record

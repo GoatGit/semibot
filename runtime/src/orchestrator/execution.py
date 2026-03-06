@@ -130,6 +130,7 @@ def parse_plan_response(response: dict[str, Any]) -> ExecutionPlan:
             title=step.get("title", ""),
             tool=step.get("tool"),
             params=step.get("params", {}),
+            skill_source=step.get("skill_source"),
             parallel=step.get("parallel", False),
         )
         for i, step in enumerate(content.get("steps", []))

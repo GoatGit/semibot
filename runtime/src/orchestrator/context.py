@@ -126,6 +126,7 @@ class RuntimeSessionContext:
 
     # Additional metadata
     metadata: dict[str, Any] = field(default_factory=dict)
+    skill_injection_tracker: Any = None
 
     def get_all_capability_names(self) -> list[str]:
         """Get names of all available capabilities."""

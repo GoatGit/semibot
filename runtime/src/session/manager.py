@@ -38,7 +38,7 @@ class SessionManager:
             return
 
         data = self._filter_skill_index_by_requirements(data)
-        data = await self._enrich_skill_packages(session_id, data)
+        data = await self._enrich_skill_payloads(session_id, data)
 
         runtime_type = str(data.get("runtime_type", "semigraph"))
         adapter = self._create_adapter(runtime_type, session_id, data)
@@ -63,7 +63,7 @@ class SessionManager:
             self.session_ready_events.pop(session_id, None)
             raise
 
-    async def _enrich_skill_packages(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def _enrich_skill_payloads(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
         raw_skills = data.get("skill_index")
         if not isinstance(raw_skills, list):
             return data
@@ -91,13 +91,13 @@ class SessionManager:
                         loaded_count += 1
             except Exception as exc:
                 logger.warning(
-                    "skill_package_load_failed",
+                    "skill_payload_load_failed",
                     extra={"session_id": session_id, "skill_id": skill_id, "error": str(exc)},
                 )
             enriched.append(copied)
 
         logger.info(
-            "skill_packages_enriched",
+            "skill_payloads_enriched",
             extra={
                 "session_id": session_id,
                 "requested": len(raw_skills),

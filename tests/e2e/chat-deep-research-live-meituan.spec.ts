@@ -16,7 +16,10 @@ function resolveApiBase(): string {
 
 function extractSessionId(url: string): string {
   const match = url.match(/\/chat\/([^/?#]+)/)
-  return match?.[1] ?? ''
+  const candidate = match?.[1] ?? ''
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate)
+    ? candidate
+    : ''
 }
 
 test('live: 新建会话并使用 deep-research 研究美团股票', async ({ page, browserName }) => {
@@ -45,7 +48,7 @@ test('live: 新建会话并使用 deep-research 研究美团股票', async ({ pa
   await page.getByPlaceholder('输入您的问题或任务描述...').fill(prompt)
   await page.getByRole('button', { name: /(开始对话|开始)/i }).click()
 
-  await expect(page).toHaveURL(/\/chat\//, { timeout: 20_000 })
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}(?:\?|$)/i, { timeout: 20_000 })
 
   const sessionId = extractSessionId(page.url())
   expect(sessionId).toBeTruthy()

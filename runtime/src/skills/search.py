@@ -32,6 +32,11 @@ class SearchTool(BaseTool):
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
+                "queries": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Batch search queries. Alias-compatible with older plans.",
+                },
                 "max_results": {
                     "type": "integer",
                     "description": "Maximum number of results",
@@ -52,7 +57,7 @@ class SearchTool(BaseTool):
                     "description": "Restrict to the last N days for freshness-sensitive queries.",
                 },
             },
-            "required": ["query"],
+            "required": [],
         }
 
     def _resolve_config_from_store(self) -> dict[str, Any]:
@@ -106,10 +111,72 @@ class SearchTool(BaseTool):
         self._delegate = WebSearchTool(api_key=api_key, api_type=api_type, timeout=timeout_seconds)
         return self._delegate
 
-    async def execute(self, query: str, **kwargs: Any) -> ToolResult:
+    def _normalize_queries(self, query: str | None, queries: Any) -> list[str]:
+        normalized: list[str] = []
+        if isinstance(query, str) and query.strip():
+            normalized.append(query.strip())
+        if isinstance(queries, list):
+            for item in queries:
+                if not isinstance(item, str):
+                    continue
+                q = item.strip()
+                if not q:
+                    continue
+                if q not in normalized:
+                    normalized.append(q)
+        # Keep bounded to avoid accidental large fan-out from malformed plans.
+        return normalized[:12]
+
+    async def execute(self, query: str | None = None, queries: Any = None, **kwargs: Any) -> ToolResult:
         delegate = self._get_delegate()
         if delegate is None:
             return ToolResult.error_result(
                 "Search API key not configured. Please set it in Config -> Tools -> search (apiKey) or via TAVILY_API_KEY / SERPAPI_API_KEY."
             )
-        return await delegate.execute(query=query, **kwargs)
+
+        normalized_queries = self._normalize_queries(query, queries)
+        if not normalized_queries:
+            return ToolResult.error_result("Missing required parameter: query")
+
+        if len(normalized_queries) == 1:
+            return await delegate.execute(query=normalized_queries[0], **kwargs)
+
+        merged_results: list[dict[str, Any]] = []
+        per_query: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for q in normalized_queries:
+            result = await delegate.execute(query=q, **kwargs)
+            if not result.success:
+                errors.append(f"{q}: {result.error or 'unknown error'}")
+                continue
+
+            payload = result.result if isinstance(result.result, dict) else {"raw": result.result}
+            rows = payload.get("results", []) if isinstance(payload, dict) else []
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, dict):
+                        enriched = dict(row)
+                        enriched.setdefault("query", q)
+                        merged_results.append(enriched)
+
+            per_query.append({
+                "query": q,
+                "answer": payload.get("answer") if isinstance(payload, dict) else None,
+                "results_count": len(rows) if isinstance(rows, list) else 0,
+            })
+
+        if not per_query:
+            return ToolResult.error_result("; ".join(errors) if errors else "Search failed")
+
+        return ToolResult.success_result(
+            result={
+                "query": normalized_queries[0],
+                "queries": normalized_queries,
+                "results": merged_results,
+                "per_query": per_query,
+                "errors": errors,
+            },
+            source="search-batch",
+            mode="batch",
+            query_count=len(normalized_queries),
+        )

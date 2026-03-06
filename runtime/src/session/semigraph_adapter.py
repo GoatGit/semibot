@@ -28,16 +28,36 @@ from src.orchestrator.context import (
     ToolDefinition,
 )
 from src.orchestrator.graph import create_agent_graph
-from src.orchestrator.state import create_initial_state
+from src.orchestrator.nodes import (
+    _build_tool_result_fallback_response,
+    _looks_like_premature_final_response,
+)
+from src.orchestrator.state import ToolCallResult, create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
 from src.session.runtime_adapter import RuntimeAdapter
 from src.skills.bootstrap import create_default_registry
-from src.skills.package_tool import PackagePythonTool
 from src.utils.logging import get_logger
 from src.ws.client import ControlPlaneClient
 from src.ws.event_emitter import EventEmitter
 
 logger = get_logger(__name__)
+
+_OPENAI_COMPATIBLE_PROVIDER_BASES = ("openai", "kimi", "qwen", "minimax", "xai", "custom")
+_MODEL_PROVIDER_HINTS: dict[str, tuple[str, ...]] = {
+    "kimi": ("kimi", "moonshot", "k1", "k2"),
+    "qwen": ("qwen", "qwq"),
+    "minimax": ("minimax", "abab", "m1", "m2"),
+    "xai": ("grok", "xai"),
+    "openai": ("gpt", "o1", "o3", "o4", "chatgpt"),
+}
+_PROVIDER_BASE_URL_ENV_MAP: dict[str, str] = {
+    "openai": "OPENAI_API_BASE_URL",
+    "kimi": "KIMI_API_BASE_URL",
+    "qwen": "QWEN_API_BASE_URL",
+    "minimax": "MINIMAX_API_BASE_URL",
+    "xai": "XAI_API_BASE_URL",
+    "custom": "CUSTOM_LLM_API_BASE_URL",
+}
 
 
 @dataclass
@@ -137,69 +157,280 @@ class SemiGraphAdapter(RuntimeAdapter):
         self._rule_jobs_completed = 0
         self._rule_jobs_failed = 0
 
+    @staticmethod
+    def _extract_final_response(result: dict[str, Any]) -> str:
+        final_response = ""
+        messages = result.get("messages", [])
+        if messages:
+            last_msg = messages[-1]
+            if isinstance(last_msg, dict):
+                final_response = str(last_msg.get("content", ""))
+            else:
+                final_response = str(getattr(last_msg, "content", ""))
+        return final_response
+
+    @staticmethod
+    def _normalize_tool_results(raw_results: Any) -> list[ToolCallResult]:
+        if not isinstance(raw_results, list):
+            return []
+        normalized: list[ToolCallResult] = []
+        for row in raw_results:
+            if isinstance(row, ToolCallResult):
+                normalized.append(row)
+                continue
+            if not isinstance(row, dict):
+                continue
+            tool_name = str(row.get("tool_name") or "").strip()
+            params = row.get("params") if isinstance(row.get("params"), dict) else {}
+            result = row.get("result")
+            error = str(row.get("error") or "") or None
+            duration_ms_raw = row.get("duration_ms")
+            duration_ms = int(duration_ms_raw) if isinstance(duration_ms_raw, (int, float)) else 0
+            success_raw = row.get("success")
+            success = bool(success_raw) if isinstance(success_raw, bool) else error is None
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            normalized.append(
+                ToolCallResult(
+                    tool_name=tool_name or "unknown",
+                    params=params,
+                    result=result,
+                    error=error,
+                    duration_ms=duration_ms,
+                    success=success,
+                    metadata=metadata,
+                )
+            )
+        return normalized
+
+    @classmethod
+    def _final_response_with_guard(cls, result: dict[str, Any]) -> str:
+        final_response = cls._extract_final_response(result)
+        if not _looks_like_premature_final_response(final_response):
+            return final_response
+
+        tool_results = cls._normalize_tool_results(result.get("tool_results"))
+        if not any(r.success for r in tool_results):
+            return final_response
+
+        fallback = _build_tool_result_fallback_response(
+            tool_results=tool_results,
+            messages=result.get("messages") if isinstance(result.get("messages"), list) else [],
+        )
+        fallback = str(fallback or "").strip()
+        if not fallback:
+            return final_response
+        if fallback == final_response.strip():
+            return final_response
+        logger.warning("semigraph_premature_final_response_rewritten")
+        return fallback
+
+    @staticmethod
+    def _provider_base(provider_key: str) -> str:
+        return str(provider_key or "").strip().lower().split(":", 1)[0]
+
+    @classmethod
+    def _infer_openai_compatible_provider_base(cls, model: str) -> str | None:
+        model_lower = str(model or "").strip().lower()
+        if not model_lower:
+            return None
+        for base in ("kimi", "qwen", "minimax", "xai", "openai"):
+            hints = _MODEL_PROVIDER_HINTS.get(base, ())
+            if hints and any(token in model_lower for token in hints):
+                return base
+        return None
+
+    @classmethod
+    def _pick_openai_compatible_provider_key(
+        cls,
+        model: str,
+        api_keys: dict[str, str],
+        *,
+        strict_preferred_base: bool = False,
+    ) -> str | None:
+        candidates = [
+            key
+            for key, value in api_keys.items()
+            if value and cls._provider_base(key) in _OPENAI_COMPATIBLE_PROVIDER_BASES
+        ]
+        if not candidates:
+            return None
+
+        preferred_base = cls._infer_openai_compatible_provider_base(model)
+        if preferred_base:
+            if preferred_base in api_keys and api_keys.get(preferred_base):
+                return preferred_base
+            scoped = sorted(
+                key for key in candidates if key.startswith(f"{preferred_base}:")
+            )
+            if scoped:
+                return scoped[0]
+            if strict_preferred_base:
+                return None
+
+        for base in _OPENAI_COMPATIBLE_PROVIDER_BASES:
+            if base in api_keys and api_keys.get(base):
+                return base
+            scoped = sorted(key for key in candidates if key.startswith(f"{base}:"))
+            if scoped:
+                return scoped[0]
+
+        return sorted(candidates)[0]
+
+    @staticmethod
+    def _provider_cfg_base_url(raw_cfg: Any) -> str | None:
+        if not isinstance(raw_cfg, dict):
+            return None
+        base_url = raw_cfg.get("base_url") or raw_cfg.get("baseUrl")
+        if not isinstance(base_url, str):
+            return None
+        trimmed = base_url.strip()
+        return trimmed or None
+
     def _create_llm_provider(self) -> OpenAIProvider | None:
-        api_keys = self.init_data.get("api_keys") or {}
+        api_keys_raw = self.init_data.get("api_keys") or {}
         llm_config = self.init_data.get("llm_config") or {}
         providers_cfg = llm_config.get("providers") if isinstance(llm_config, dict) else {}
 
-        extra_prefixed_keys: list[tuple[str, str]] = []
-        if isinstance(api_keys, dict):
-            for key, value in api_keys.items():
-                key_name = str(key or "")
-                key_value = str(value or "")
-                if ":" in key_name and key_value.strip():
-                    extra_prefixed_keys.append((key_name, key_value))
+        api_keys: dict[str, str] = {}
+        if isinstance(api_keys_raw, dict):
+            for key, value in api_keys_raw.items():
+                key_name = str(key or "").strip()
+                key_value = str(value or "").strip()
+                if key_name and key_value:
+                    api_keys[key_name] = key_value
 
-        openai_key = api_keys.get("openai") or os.getenv("OPENAI_API_KEY")
-        custom_key = api_keys.get("custom") or os.getenv("CUSTOM_LLM_API_KEY")
-        api_key = openai_key or custom_key or (extra_prefixed_keys[0][1] if extra_prefixed_keys else None)
+        for provider_base, env_name in (
+            ("openai", "OPENAI_API_KEY"),
+            ("kimi", "KIMI_API_KEY"),
+            ("qwen", "QWEN_API_KEY"),
+            ("minimax", "MINIMAX_API_KEY"),
+            ("xai", "XAI_API_KEY"),
+            ("custom", "CUSTOM_LLM_API_KEY"),
+        ):
+            if provider_base in api_keys:
+                continue
+            env_value = str(os.getenv(env_name) or "").strip()
+            if env_value:
+                api_keys[provider_base] = env_value
+
+        cfg = self.start_payload.get("agent_config") or {}
+        agent_model_provider_key = str(
+            cfg.get("model_provider_key") or cfg.get("modelProviderKey") or ""
+        ).strip()
+        agent_fallback_model = str(
+            cfg.get("fallback_model") or cfg.get("fallbackModel") or ""
+        ).strip()
+        agent_fallback_provider_key = str(
+            cfg.get("fallback_provider_key") or cfg.get("fallbackProviderKey") or ""
+        ).strip()
+        default_model = (
+            (llm_config.get("default_model") if isinstance(llm_config, dict) else None)
+            or os.getenv("DEFAULT_LLM_MODEL")
+        )
+        default_provider_key = (
+            agent_model_provider_key
+            or
+            (llm_config.get("default_provider_key") if isinstance(llm_config, dict) else None)
+            or os.getenv("DEFAULT_LLM_PROVIDER_KEY")
+        )
+        fallback_provider_key = (
+            agent_fallback_provider_key
+            or
+            (llm_config.get("fallback_provider_key") if isinstance(llm_config, dict) else None)
+            or os.getenv("FALLBACK_LLM_PROVIDER_KEY")
+        )
+        agent_model = cfg.get("model")
+        model = (
+            agent_model
+            or default_model
+            or agent_fallback_model
+            or (llm_config.get("fallback_model") if isinstance(llm_config, dict) else None)
+            or os.getenv("CUSTOM_LLM_MODEL_NAME")
+        )
+
+        selected_provider_key = None
+        if default_model and str(model or "").strip() == str(default_model).strip():
+            if isinstance(default_provider_key, str) and default_provider_key.strip() and api_keys.get(default_provider_key.strip()):
+                selected_provider_key = default_provider_key.strip()
+        fallback_model = (
+            agent_fallback_model
+            or (llm_config.get("fallback_model") if isinstance(llm_config, dict) else None)
+            or os.getenv("FALLBACK_LLM_MODEL")
+        )
+        if fallback_model and str(model or "").strip() == str(fallback_model).strip():
+            if isinstance(fallback_provider_key, str) and fallback_provider_key.strip() and api_keys.get(fallback_provider_key.strip()):
+                selected_provider_key = fallback_provider_key.strip()
+        if not selected_provider_key:
+            selected_provider_key = self._pick_openai_compatible_provider_key(str(model or ""), api_keys)
+        if agent_model:
+            strict_provider_for_agent_model = self._pick_openai_compatible_provider_key(
+                str(agent_model),
+                api_keys,
+                strict_preferred_base=True,
+            )
+            default_model_text = str(default_model or "").strip()
+            if (
+                strict_provider_for_agent_model is None
+                and default_model_text
+            ):
+                default_provider = (
+                    default_provider_key.strip()
+                    if isinstance(default_provider_key, str)
+                    and default_provider_key.strip()
+                    and api_keys.get(default_provider_key.strip())
+                    else self._pick_openai_compatible_provider_key(default_model_text, api_keys)
+                )
+                if default_provider:
+                    logger.warning(
+                        "semigraph_agent_model_fallback_to_default_model",
+                        extra={
+                            "session_id": self.session_id,
+                            "agent_model": str(agent_model),
+                            "default_model": default_model_text,
+                            "fallback_provider_key": default_provider,
+                        },
+                    )
+                    model = default_model_text
+                    selected_provider_key = default_provider
+        if not selected_provider_key:
+            return None
+
+        api_key = api_keys.get(selected_provider_key)
         if not api_key:
             return None
 
-        cfg = self.start_payload.get("agent_config") or {}
-        model = (
-            cfg.get("model")
-            or (llm_config.get("default_model") if isinstance(llm_config, dict) else None)
-            or os.getenv("CUSTOM_LLM_MODEL_NAME")
-            or "gpt-4o"
-        )
-
-        openai_cfg = providers_cfg.get("openai") if isinstance(providers_cfg, dict) else {}
-        custom_cfg = providers_cfg.get("custom") if isinstance(providers_cfg, dict) else {}
-
+        provider_base = self._provider_base(selected_provider_key)
         base_url: str | None = None
-        if openai_key:
-            if isinstance(openai_cfg, dict):
-                base_url = (
-                    openai_cfg.get("base_url")
-                    or openai_cfg.get("baseUrl")
-                    or None
-                )
-            base_url = base_url or os.getenv("OPENAI_API_BASE_URL")
-        else:
-            if isinstance(custom_cfg, dict):
-                base_url = (
-                    custom_cfg.get("base_url")
-                    or custom_cfg.get("baseUrl")
-                    or None
-                )
-            if not base_url and extra_prefixed_keys and isinstance(providers_cfg, dict):
-                custom_provider_cfg = providers_cfg.get(extra_prefixed_keys[0][0])
-                if isinstance(custom_provider_cfg, dict):
-                    base_url = (
-                        custom_provider_cfg.get("base_url")
-                        or custom_provider_cfg.get("baseUrl")
-                        or None
-                    )
-            base_url = base_url or os.getenv("CUSTOM_LLM_API_BASE_URL")
+        if isinstance(providers_cfg, dict):
+            base_url = self._provider_cfg_base_url(providers_cfg.get(selected_provider_key))
+            if not base_url:
+                base_url = self._provider_cfg_base_url(providers_cfg.get(provider_base))
 
-        base_url = base_url or os.getenv("OPENAI_API_BASE_URL") or os.getenv("CUSTOM_LLM_API_BASE_URL") or None
+        if not base_url:
+            env_base_name = _PROVIDER_BASE_URL_ENV_MAP.get(provider_base)
+            if env_base_name:
+                base_url = str(os.getenv(env_base_name) or "").strip() or None
+        if not base_url and provider_base != "custom":
+            base_url = str(os.getenv("OPENAI_API_BASE_URL") or "").strip() or None
+        if not base_url:
+            base_url = str(os.getenv("CUSTOM_LLM_API_BASE_URL") or "").strip() or None
+
         if (
             base_url
             and "openai.azure.com" not in base_url
             and not base_url.rstrip("/").endswith("/v1")
         ):
             base_url = f"{base_url.rstrip('/')}/v1"
+
+        logger.info(
+            "semigraph_llm_provider_selected",
+            extra={
+                "session_id": self.session_id,
+                "model": str(model),
+                "provider_key": selected_provider_key,
+                "provider_base": provider_base,
+            },
+        )
 
         return OpenAIProvider(
             LLMConfig(
@@ -255,7 +486,7 @@ class SemiGraphAdapter(RuntimeAdapter):
             agent_cfg = self.start_payload.get("agent_config") or {}
             agent_id = str(self.start_payload.get("agent_id") or self.session_id)
             mcp_servers_raw = self.start_payload.get("mcp_servers") or []
-            self._register_package_tools()
+            self._register_skill_tools()
 
             mcp_servers = [
                 McpServerDefinition(
@@ -277,6 +508,24 @@ class SemiGraphAdapter(RuntimeAdapter):
                 for server in mcp_servers:
                     server.is_connected = mcp_client.is_connected(server.id)
 
+            configured_model = agent_cfg.get("model")
+            effective_model = configured_model
+            runtime_llm_model = (
+                str(getattr(getattr(self.llm_provider, "config", None), "model", "") or "").strip()
+                if self.llm_provider
+                else ""
+            )
+            if runtime_llm_model and runtime_llm_model != str(configured_model or "").strip():
+                logger.warning(
+                    "semigraph_runtime_context_model_overridden",
+                    extra={
+                        "session_id": self.session_id,
+                        "configured_model": str(configured_model or ""),
+                        "runtime_llm_model": runtime_llm_model,
+                    },
+                )
+                effective_model = runtime_llm_model
+
             runtime_context = RuntimeSessionContext(
                 org_id=self.org_id,
                 user_id=self.user_id,
@@ -286,7 +535,7 @@ class SemiGraphAdapter(RuntimeAdapter):
                     id=agent_id,
                     name=agent_id,
                     system_prompt=agent_cfg.get("system_prompt"),
-                    model=agent_cfg.get("model"),
+                    model=effective_model,
                     temperature=float(agent_cfg.get("temperature", 0.7)),
                     max_tokens=int(agent_cfg.get("max_tokens", 4096)),
                 ),
@@ -345,14 +594,7 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
             result = await graph.ainvoke(initial_state)
 
-            final_response = ""
-            messages = result.get("messages", [])
-            if messages:
-                last_msg = messages[-1]
-                if isinstance(last_msg, dict):
-                    final_response = str(last_msg.get("content", ""))
-                else:
-                    final_response = str(getattr(last_msg, "content", ""))
+            final_response = self._final_response_with_guard(result)
 
             await self.client.send_sse_event(
                 self.session_id,
@@ -834,14 +1076,7 @@ class SemiGraphAdapter(RuntimeAdapter):
         )
 
         result = await graph.ainvoke(initial_state)
-        final_response = ""
-        messages = result.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            if isinstance(last_msg, dict):
-                final_response = str(last_msg.get("content", ""))
-            else:
-                final_response = str(getattr(last_msg, "content", ""))
+        final_response = self._final_response_with_guard(result)
 
         await self.client.send_runtime_event(
             self.session_id,
@@ -952,24 +1187,12 @@ class SemiGraphAdapter(RuntimeAdapter):
         if not isinstance(raw_index, list):
             return definitions
 
-        registered_names = set(self.skill_registry.list_skills()) | set(
-            self.skill_registry.list_tools()
-        )
-
         for item in raw_index:
             if not isinstance(item, dict):
                 continue
             skill_id = str(item.get("id") or item.get("name") or "").strip()
             if not skill_id:
                 continue
-
-            if skill_id not in registered_names:
-                logger.debug(
-                    "skip_unregistered_skill_capability",
-                    extra={"session_id": self.session_id, "skill_id": skill_id},
-                )
-                continue
-            kind = self._resolve_skill_kind(item)
             package = item.get("package")
             package_files: list[str] = []
             if isinstance(package, dict):
@@ -980,6 +1203,13 @@ class SemiGraphAdapter(RuntimeAdapter):
                         for f in files
                         if isinstance(f, dict) and str(f.get("path") or "").strip()
                     ]
+            inventory = item.get("file_inventory") if isinstance(item.get("file_inventory"), dict) else {}
+            inventory_scripts = inventory.get("script_files")
+            normalized_inventory_scripts = {
+                str(path).strip()
+                for path in (inventory_scripts if isinstance(inventory_scripts, list) else [])
+                if str(path).strip()
+            }
             definitions.append(
                 SkillDefinition(
                     id=skill_id,
@@ -989,10 +1219,9 @@ class SemiGraphAdapter(RuntimeAdapter):
                     source=str(item.get("source") or "local"),
                     schema={},
                     metadata={
-                        "kind": kind,
                         "has_skill_md": "SKILL.md" in package_files,
                         "package_files": package_files[:50],
-                        "legacy_package": kind == "package" and "SKILL.md" not in package_files,
+                        "script_files": sorted(normalized_inventory_scripts)[:50],
                     },
                 )
             )
@@ -1025,85 +1254,11 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
         return defs
 
-    def _resolve_skill_kind(self, item: dict[str, Any]) -> str:
-        explicit = str(item.get("kind") or "").strip().lower()
-        if explicit in {"instruction", "package", "hybrid"}:
-            return explicit
-        pkg = item.get("package")
-        files: list[str] = []
-        if isinstance(pkg, dict) and isinstance(pkg.get("files"), list):
-            files = [
-                str(f.get("path") or "")
-                for f in pkg.get("files", [])
-                if isinstance(f, dict) and str(f.get("path") or "").strip()
-            ]
-        has_skill_md = "SKILL.md" in files
-        has_entry = "scripts/main.py" in files
-        if has_skill_md and has_entry:
-            return "hybrid"
-        if has_entry:
-            return "package"
-        return "instruction"
-
-    def _register_package_tools(self) -> None:
-        raw_index = self.start_payload.get("skill_index")
-        if not isinstance(raw_index, list):
-            return
-
-        for item in raw_index:
-            if not isinstance(item, dict):
-                continue
-            skill_name = str(item.get("id") or item.get("name") or "").strip()
-            if not skill_name:
-                continue
-            if self.skill_registry.get_tool(skill_name) is not None:
-                continue
-
-            kind = self._resolve_skill_kind(item)
-            if kind == "instruction":
-                logger.info(
-                    "instruction_skill_skip_registration",
-                    extra={"session_id": self.session_id, "skill_name": skill_name},
-                )
-                continue
-
-            pkg = item.get("package")
-            if not isinstance(pkg, dict):
-                continue
-            files = pkg.get("files")
-            if not isinstance(files, list):
-                continue
-
-            script_content: str | None = None
-            for f in files:
-                if not isinstance(f, dict):
-                    continue
-                rel_path = str(f.get("path") or "")
-                if rel_path == "scripts/main.py":
-                    content = f.get("content")
-                    if isinstance(content, str) and content.strip():
-                        script_content = content
-                        break
-
-            if not script_content:
-                logger.warning(
-                    "skill_entry_script_missing",
-                    extra={"session_id": self.session_id, "skill_name": skill_name, "kind": kind},
-                )
-                continue
-
-            description = str(item.get("description") or "").strip() or None
-            self.skill_registry.register_tool(
-                PackagePythonTool(
-                    skill_name=skill_name,
-                    description=description,
-                    script_content=script_content,
-                )
-            )
-            logger.info(
-                "package_tool_registered",
-                extra={"session_id": self.session_id, "skill_name": skill_name},
-            )
+    def _register_skill_tools(self) -> None:
+        logger.info(
+            "skill_tool_registration_skipped",
+            extra={"session_id": self.session_id, "reason": "skills_are_not_registered_as_tools"},
+        )
 
     async def update_config(self, payload: dict[str, Any]) -> None:
         if not isinstance(payload, dict):
