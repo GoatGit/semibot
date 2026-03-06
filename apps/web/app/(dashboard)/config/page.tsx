@@ -220,6 +220,7 @@ type GatewayForm = {
   id?: string
   instanceKey: string
   provider: GatewayProvider
+  mode: 'webhook' | 'long_connection'
   isDefault: boolean
   displayName: string
   agentId: string
@@ -227,6 +228,13 @@ type GatewayForm = {
   verifyToken: string
   clearVerifyToken: boolean
   webhookUrl: string
+  sdkEnabled: boolean
+  appId: string
+  appSecret: string
+  clearAppSecret: boolean
+  receiveIdType: 'chat_id' | 'open_id' | 'user_id' | 'union_id' | 'email'
+  defaultReceiveId: string
+  sdkDomain: 'feishu' | 'lark'
   botToken: string
   clearBotToken: boolean
   webhookSecret: string
@@ -625,6 +633,7 @@ export default function ConfigPage() {
     id: undefined,
     instanceKey: '',
     provider: 'feishu',
+    mode: 'long_connection',
     isDefault: false,
     displayName: '',
     agentId: 'semibot',
@@ -632,6 +641,13 @@ export default function ConfigPage() {
     verifyToken: '',
     clearVerifyToken: false,
     webhookUrl: '',
+    sdkEnabled: false,
+    appId: '',
+    appSecret: '',
+    clearAppSecret: false,
+    receiveIdType: 'chat_id',
+    defaultReceiveId: '',
+    sdkDomain: 'feishu',
     botToken: '',
     clearBotToken: false,
     webhookSecret: '',
@@ -1464,10 +1480,22 @@ export default function ConfigPage() {
     const commandPrefixes = Array.isArray(addressingPolicyRaw?.commandPrefixes)
       ? (addressingPolicyRaw?.commandPrefixes || []).map((item) => String(item)).join(',')
       : '/ask,/run,/approve,/reject'
+    const receiveIdTypeRaw = String(cfg.receiveIdType || 'chat_id').trim().toLowerCase()
+    const receiveIdType: GatewayForm['receiveIdType'] =
+      receiveIdTypeRaw === 'open_id' ||
+      receiveIdTypeRaw === 'user_id' ||
+      receiveIdTypeRaw === 'union_id' ||
+      receiveIdTypeRaw === 'email'
+        ? receiveIdTypeRaw
+        : 'chat_id'
     setGatewayForm({
       id: gateway.id,
       instanceKey: gateway.instanceKey || '',
       provider: gateway.provider,
+      mode:
+        String(gateway.mode || '').trim().toLowerCase() === 'long_connection'
+          ? 'long_connection'
+          : 'webhook',
       isDefault: gateway.isDefault === true,
       displayName: gateway.displayName || gateway.provider,
       agentId: String(cfg.agentId || cfg.defaultAgentId || 'semibot'),
@@ -1475,6 +1503,13 @@ export default function ConfigPage() {
       verifyToken: '',
       clearVerifyToken: false,
       webhookUrl: String(cfg.webhookUrl || ''),
+      sdkEnabled: Boolean(cfg.sdkEnabled),
+      appId: String(cfg.appId || ''),
+      appSecret: '',
+      clearAppSecret: false,
+      receiveIdType,
+      defaultReceiveId: String(cfg.defaultReceiveId || ''),
+      sdkDomain: String(cfg.sdkDomain || 'feishu') === 'lark' ? 'lark' : 'feishu',
       botToken: '',
       clearBotToken: false,
       webhookSecret: '',
@@ -1505,6 +1540,7 @@ export default function ConfigPage() {
       id: undefined,
       instanceKey: '',
       provider,
+      mode: provider === 'feishu' ? 'long_connection' : 'webhook',
       isDefault: false,
       displayName: defaultDisplayName,
       agentId: 'semibot',
@@ -1512,6 +1548,13 @@ export default function ConfigPage() {
       verifyToken: '',
       clearVerifyToken: false,
       webhookUrl: '',
+      sdkEnabled: true,
+      appId: '',
+      appSecret: '',
+      clearAppSecret: false,
+      receiveIdType: 'chat_id',
+      defaultReceiveId: '',
+      sdkDomain: 'feishu',
       botToken: '',
       clearBotToken: false,
       webhookSecret: '',
@@ -1547,6 +1590,25 @@ export default function ConfigPage() {
     }
 
     const isTelegram = gatewayForm.provider === 'telegram'
+    const isFeishu = gatewayForm.provider === 'feishu'
+    if (isFeishu && gatewayForm.mode === 'long_connection' && !gatewayForm.sdkEnabled) {
+      setError(tSafe('config.errors.feishuLongConnectionRequiresSdk', '长连接模式需要启用 Feishu SDK'))
+      return
+    }
+    if (isFeishu && gatewayForm.sdkEnabled) {
+      if (!gatewayForm.appId.trim()) {
+        setError(tSafe('config.errors.feishuAppIdRequired', '启用 Feishu SDK 时必须填写 App ID'))
+        return
+      }
+      if (!gatewayForm.appSecret.trim() && !gatewayForm.id) {
+        setError(tSafe('config.errors.feishuAppSecretRequired', '启用 Feishu SDK 时必须填写 App Secret'))
+        return
+      }
+      if (!gatewayForm.defaultReceiveId.trim()) {
+        setError(tSafe('config.errors.feishuDefaultReceiveIdRequired', '启用 Feishu SDK 时建议填写默认接收 ID'))
+        return
+      }
+    }
     const normalizedAgentId = gatewayForm.agentId.trim()
     const chatBindingInput = gatewayForm.chatBindings.map((row) => ({
       chatId: row.chatId.trim(),
@@ -1587,6 +1649,7 @@ export default function ConfigPage() {
       displayName: gatewayForm.displayName.trim() || gatewayForm.provider,
       isDefault: gatewayForm.isDefault,
       isActive: gatewayForm.isActive,
+      mode: gatewayForm.mode,
       config: {
         ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
         ...(isTelegram
@@ -1607,6 +1670,14 @@ export default function ConfigPage() {
                 ? { verifyToken: gatewayForm.verifyToken.trim() }
                 : {}),
               ...(gatewayForm.webhookUrl.trim() ? { webhookUrl: gatewayForm.webhookUrl.trim() } : {}),
+              sdkEnabled: gatewayForm.sdkEnabled,
+              ...(gatewayForm.appId.trim() ? { appId: gatewayForm.appId.trim() } : {}),
+              ...(gatewayForm.appSecret.trim() && !gatewayForm.clearAppSecret
+                ? { appSecret: gatewayForm.appSecret.trim() }
+                : {}),
+              receiveIdType: gatewayForm.receiveIdType,
+              ...(gatewayForm.defaultReceiveId.trim() ? { defaultReceiveId: gatewayForm.defaultReceiveId.trim() } : {}),
+              sdkDomain: gatewayForm.sdkDomain,
               chatBindings: normalizedBindingsResult.normalized,
               notifyEventTypes: parseCommaList(gatewayForm.notifyEventTypes),
             }),
@@ -1633,6 +1704,7 @@ export default function ConfigPage() {
       clearFields.push('agentId', 'defaultAgentId')
     }
     if (!isTelegram && gatewayForm.clearVerifyToken) clearFields.push('verifyToken')
+    if (!isTelegram && gatewayForm.clearAppSecret) clearFields.push('appSecret')
     if (isTelegram && gatewayForm.clearBotToken) clearFields.push('botToken')
     if (isTelegram && gatewayForm.clearWebhookSecret) clearFields.push('webhookSecret')
     if (clearFields.length > 0) {
@@ -3619,6 +3691,28 @@ export default function ConfigPage() {
             />
             {t('config.modals.gateway.enabled')}
           </label>
+          {gatewayForm.provider === 'feishu' ? (
+            <div className="space-y-1">
+              <p className="text-xs text-text-tertiary">
+                {tSafe('config.modals.gateway.feishu.modeLabel', '接入模式')}
+              </p>
+              <select
+                className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                value={gatewayForm.mode}
+                onChange={(e) =>
+                  setGatewayForm((prev) => ({
+                    ...prev,
+                    mode: e.target.value === 'webhook' ? 'webhook' : 'long_connection',
+                  }))
+                }
+              >
+                <option value="long_connection">
+                  {tSafe('config.modals.gateway.feishu.modeLongConnection', '长连接（推荐）')}
+                </option>
+                <option value="webhook">{tSafe('config.modals.gateway.feishu.modeWebhook', 'Webhook')}</option>
+              </select>
+            </div>
+          ) : null}
           {gatewayForm.provider === 'telegram' ? (
             <>
               <div className="space-y-1">
@@ -3715,6 +3809,100 @@ export default function ConfigPage() {
                   placeholder={t('config.modals.gateway.feishu.webhookUrlPlaceholder')}
                   value={gatewayForm.webhookUrl}
                   onChange={(e) => setGatewayForm((prev) => ({ ...prev, webhookUrl: e.target.value }))}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={gatewayForm.sdkEnabled}
+                  onChange={(e) =>
+                    setGatewayForm((prev) => ({
+                      ...prev,
+                      sdkEnabled: e.target.checked,
+                    }))
+                  }
+                />
+                {tSafe('config.modals.gateway.feishu.sdkEnabledLabel', '启用 Feishu Node SDK')}
+              </label>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.feishu.appIdLabel', 'appId')}</p>
+                <Input
+                  placeholder={tSafe('config.modals.gateway.feishu.appIdPlaceholder', 'cli_a***')}
+                  value={gatewayForm.appId}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, appId: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">{tSafe('config.modals.gateway.feishu.appSecretLabel', 'appSecret')}</p>
+                <Input
+                  type="password"
+                  placeholder={tSafe('config.modals.gateway.feishu.appSecretPlaceholder', '输入 App Secret（留空保持不变）')}
+                  value={gatewayForm.appSecret}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, appSecret: e.target.value }))}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={gatewayForm.clearAppSecret}
+                  onChange={(e) =>
+                    setGatewayForm((prev) => ({
+                      ...prev,
+                      clearAppSecret: e.target.checked,
+                    }))
+                  }
+                />
+                {tSafe('config.modals.gateway.feishu.clearAppSecret', '清空已有 App Secret')}
+              </label>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-xs text-text-tertiary">
+                    {tSafe('config.modals.gateway.feishu.receiveIdTypeLabel', 'receiveIdType')}
+                  </p>
+                  <select
+                    className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                    value={gatewayForm.receiveIdType}
+                    onChange={(e) =>
+                      setGatewayForm((prev) => ({
+                        ...prev,
+                        receiveIdType: e.target.value as GatewayForm['receiveIdType'],
+                      }))
+                    }
+                  >
+                    <option value="chat_id">chat_id</option>
+                    <option value="open_id">open_id</option>
+                    <option value="user_id">user_id</option>
+                    <option value="union_id">union_id</option>
+                    <option value="email">email</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-text-tertiary">
+                    {tSafe('config.modals.gateway.feishu.sdkDomainLabel', 'sdkDomain')}
+                  </p>
+                  <select
+                    className="w-full rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                    value={gatewayForm.sdkDomain}
+                    onChange={(e) =>
+                      setGatewayForm((prev) => ({
+                        ...prev,
+                        sdkDomain: e.target.value === 'lark' ? 'lark' : 'feishu',
+                      }))
+                    }
+                  >
+                    <option value="feishu">feishu</option>
+                    <option value="lark">lark</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-text-tertiary">
+                  {tSafe('config.modals.gateway.feishu.defaultReceiveIdLabel', 'defaultReceiveId')}
+                </p>
+                <Input
+                  placeholder={tSafe('config.modals.gateway.feishu.defaultReceiveIdPlaceholder', '默认接收对象 ID（chat/user）')}
+                  value={gatewayForm.defaultReceiveId}
+                  onChange={(e) => setGatewayForm((prev) => ({ ...prev, defaultReceiveId: e.target.value }))}
                 />
               </div>
             </>

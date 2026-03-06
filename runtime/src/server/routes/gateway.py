@@ -18,7 +18,12 @@ from src.server.routes.gateway_schemas import (
 )
 
 
-def register_gateway_routes(app: FastAPI, gateway_manager: GatewayManager) -> None:
+def register_gateway_routes(
+    app: FastAPI,
+    gateway_manager: GatewayManager,
+    *,
+    feishu_longconn_internal_token: str | None = None,
+) -> None:
     @app.get("/v1/config/gateways")
     async def list_config_gateways() -> dict[str, Any]:
         return {"data": gateway_manager.list_gateway_configs()}
@@ -124,6 +129,25 @@ def register_gateway_routes(app: FastAPI, gateway_manager: GatewayManager) -> No
             return await gateway_manager.ingest_feishu_events(
                 payload if isinstance(payload, dict) else {},
                 query_params=request.query_params,
+            )
+        except GatewayManagerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    @app.post("/v1/integrations/feishu/events/internal")
+    async def ingest_feishu_events_internal(request: Request) -> dict[str, Any]:
+        expected = str(feishu_longconn_internal_token or "").strip()
+        provided = str(request.headers.get("x-semibot-internal-token", "")).strip()
+        if not expected or provided != expected:
+            raise HTTPException(status_code=401, detail="invalid_internal_token")
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        try:
+            return await gateway_manager.ingest_feishu_events(
+                payload if isinstance(payload, dict) else {},
+                query_params=request.query_params,
+                verify_signature=False,
             )
         except GatewayManagerError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

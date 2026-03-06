@@ -208,6 +208,7 @@
   --bg-surface: var(--color-neutral-900);
   --bg-elevated: var(--color-neutral-800);
   --bg-overlay: rgba(0, 0, 0, 0.6);
+  --dashboard-title-gradient: linear-gradient(135deg, rgba(52, 39, 60, 0.92) 0%, rgba(35, 45, 68, 0.9) 100%);
 
   --text-primary: var(--color-neutral-50);
   --text-secondary: var(--color-neutral-400);
@@ -232,6 +233,7 @@
   --bg-surface: var(--color-neutral-0);
   --bg-elevated: var(--color-neutral-0);
   --bg-overlay: rgba(0, 0, 0, 0.4);
+  --dashboard-title-gradient: linear-gradient(135deg, rgba(245, 239, 250, 0.95) 0%, rgba(238, 244, 255, 0.92) 100%);
 
   --text-primary: var(--color-neutral-900);
   --text-secondary: var(--color-neutral-600);

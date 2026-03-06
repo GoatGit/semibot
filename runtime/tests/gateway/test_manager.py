@@ -52,6 +52,8 @@ def _build_manager(
     *,
     db_path: Path,
     rules_path: Path,
+    feishu_send_fn=None,
+    feishu_sdk_send_fn=None,
     telegram_send_fn=None,
     telegram_send_document_fn=None,
 ) -> GatewayManager:
@@ -85,6 +87,8 @@ def _build_manager(
         config_store=config_store,
         gateway_context=gateway_context,
         engine=engine,
+        feishu_send_fn=feishu_send_fn,
+        feishu_sdk_send_fn=feishu_sdk_send_fn,
         telegram_send_fn=telegram_send_fn,
         telegram_send_document_fn=telegram_send_document_fn,
     )
@@ -162,6 +166,64 @@ async def test_gateway_manager_notify_routes_by_gateway_id_for_telegram(tmp_path
     assert len(sent) == 1
     assert sent[0]["payload"]["chat_id"] == "-200002"
     assert sent[0]["payload"]["text"] == "notify by gateway id"
+
+
+@pytest.mark.asyncio
+async def test_gateway_manager_feishu_sdk_test_send(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    rules_path = tmp_path / "rules.json"
+    _write_rules(rules_path)
+
+    calls: list[dict[str, Any]] = []
+
+    async def _sdk_send(
+        app_id: str,
+        app_secret: str,
+        receive_id_type: str,
+        receive_id: str,
+        text: str,
+        domain: str | None,
+    ) -> bool:
+        calls.append(
+            {
+                "app_id": app_id,
+                "app_secret": app_secret,
+                "receive_id_type": receive_id_type,
+                "receive_id": receive_id,
+                "text": text,
+                "domain": domain,
+            }
+        )
+        return True
+
+    manager = _build_manager(
+        db_path=db_path,
+        rules_path=rules_path,
+        feishu_sdk_send_fn=_sdk_send,
+    )
+    updated = manager.upsert_gateway_config(
+        "feishu",
+        {
+            "isActive": True,
+            "config": {
+                "sdkEnabled": True,
+                "appId": "cli_test",
+                "appSecret": "secret_test",
+                "receiveIdType": "chat_id",
+                "defaultReceiveId": "oc_test_chat",
+                "sdkDomain": "feishu",
+            },
+        },
+    )
+    assert updated["status"] == "ready"
+    assert updated["config"]["appSecret"] == "***"
+
+    result = await manager.test_gateway("feishu", {"title": "SDK", "content": "hello sdk", "channel": "default"})
+    assert result["sent"] is True
+    assert len(calls) == 1
+    assert calls[0]["app_id"] == "cli_test"
+    assert calls[0]["receive_id"] == "oc_test_chat"
+    assert "hello sdk" in calls[0]["text"]
 
 
 @pytest.mark.asyncio

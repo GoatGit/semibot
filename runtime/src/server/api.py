@@ -24,6 +24,7 @@ from src.events.event_store import EventStore
 from src.events.models import Event
 from src.events.runtime_action_executor import RuntimeActionExecutor
 from src.gateway.context_service import GatewayContextService
+from src.gateway.feishu_long_connection import FeishuLongConnectionSupervisor
 from src.gateway.manager import GatewayManager
 from src.services.rule_service import RuleService, RuleServiceError
 from src.gateway.notifiers.feishu_notifier import SendFn
@@ -237,6 +238,19 @@ def create_app(
         telegram_notify_event_types=telegram_notify_event_types,
         telegram_send_fn=telegram_send_fn,
     )
+    runtime_base_url = str(
+        os.getenv("SEMIBOT_RUNTIME_URL")
+        or f"http://127.0.0.1:{str(os.getenv('SEMIBOT_RUNTIME_PORT', '8765')).strip() or '8765'}"
+    ).rstrip("/")
+    feishu_longconn_internal_token = str(
+        os.getenv("SEMIBOT_FEISHU_LONGCONN_INTERNAL_TOKEN") or uuid4().hex
+    ).strip()
+    feishu_longconn_supervisor = FeishuLongConnectionSupervisor(
+        gateway_manager=gateway_manager,
+        runtime_base_url=runtime_base_url,
+        internal_token=feishu_longconn_internal_token,
+        poll_interval_seconds=5.0,
+    )
 
     async def _gateway_event_sink(event: Event) -> None:
         if gateway_manager:
@@ -290,6 +304,7 @@ def create_app(
     async def lifespan(_app: FastAPI):
         engine.start_rule_watch(poll_interval=1.0)
         cron_sync_task = asyncio.create_task(_cron_sync_loop())
+        feishu_longconn_task = asyncio.create_task(feishu_longconn_supervisor.run())
         if heartbeat_interval_seconds and heartbeat_interval_seconds > 0:
             engine.start_heartbeat(interval_seconds=heartbeat_interval_seconds)
         persisted_cron_jobs = config_store.list_cron_jobs(active_only=True)
@@ -306,12 +321,16 @@ def create_app(
         try:
             yield
         finally:
+            feishu_longconn_task.cancel()
+            await asyncio.gather(feishu_longconn_task, return_exceptions=True)
+            await feishu_longconn_supervisor.stop()
             cron_sync_task.cancel()
             await asyncio.gather(cron_sync_task, return_exceptions=True)
             await engine.stop_triggers()
             await engine.stop_rule_watch()
 
     app = FastAPI(title="Semibot Event API", version="2.0.0", lifespan=lifespan)
+    app.state.feishu_longconn_internal_token = feishu_longconn_internal_token
     app.state.skill_registry = create_default_registry()
     app.state.skills_index = SkillsIndexManager(os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"))
 
@@ -437,7 +456,11 @@ def create_app(
             agents.add("semibot")
         return sessions, agents
 
-    register_gateway_routes(app, gateway_manager)
+    register_gateway_routes(
+        app,
+        gateway_manager,
+        feishu_longconn_internal_token=feishu_longconn_internal_token,
+    )
 
     @app.post("/v1/control/{domain}/{action}")
     async def control_plane_action(

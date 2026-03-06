@@ -323,7 +323,7 @@ export default function DashboardPage() {
               className="absolute inset-0 bg-no-repeat"
               style={{
                 backgroundImage:
-                  "url('/dashboard-title-bg.svg'), linear-gradient(135deg, rgba(245, 239, 250, 0.95) 0%, rgba(238, 244, 255, 0.92) 100%)",
+                  "url('/dashboard-title-bg.svg'), var(--dashboard-title-gradient)",
                 backgroundPosition: 'center center, center center',
                 backgroundSize: 'auto 100%, cover',
               }}

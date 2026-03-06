@@ -19,6 +19,9 @@
     "ralph": "pnpm tsx scripts/ralph/runner.ts",
     "ralph:verify": "pnpm tsx scripts/ralph/verify.ts"
   },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0"
+  },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@types/node": "^20.11.0",

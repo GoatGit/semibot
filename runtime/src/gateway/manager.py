@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import mimetypes
 import os
 import re
@@ -30,7 +32,7 @@ from src.gateway.adapters.telegram_adapter import (
     verify_webhook_secret as verify_telegram_webhook_secret,
 )
 from src.gateway.context_service import GatewayContextService
-from src.gateway.notifiers.feishu_notifier import FeishuNotifier, SendFn
+from src.gateway.notifiers.feishu_notifier import FeishuNotifier, SdkSendFn, SendFn
 from src.gateway.notifiers.telegram_notifier import SendDocumentFn as TelegramSendDocumentFn
 from src.gateway.notifiers.telegram_notifier import SendFn as TelegramSendFn
 from src.gateway.notifiers.telegram_notifier import TelegramNotifier
@@ -56,6 +58,7 @@ class GatewayManager:
     feishu_notify_event_types: set[str] | None = None
     feishu_templates: dict[str, dict[str, str]] | None = None
     feishu_send_fn: SendFn | None = None
+    feishu_sdk_send_fn: SdkSendFn | None = None
     telegram_bot_token: str | None = None
     telegram_default_chat_id: str | None = None
     telegram_webhook_secret: str | None = None
@@ -267,6 +270,75 @@ class GatewayManager:
         base = str(os.getenv("SEMIBOT_TELEGRAM_INBOUND_DIR", "~/.semibot/inbound/telegram")).strip()
         return Path(base).expanduser()
 
+    async def _send_feishu_via_node_sdk(
+        self,
+        app_id: str,
+        app_secret: str,
+        receive_id_type: str,
+        receive_id: str,
+        text: str,
+        domain: str | None = None,
+    ) -> bool:
+        if self.feishu_sdk_send_fn:
+            return await self.feishu_sdk_send_fn(
+                app_id,
+                app_secret,
+                receive_id_type,
+                receive_id,
+                text,
+                domain,
+            )
+
+        runtime_root = Path(__file__).resolve().parents[2]
+        script_path = runtime_root / "scripts" / "feishu_sdk_send.mjs"
+        if not script_path.exists():
+            raise RuntimeError(f"missing_feishu_sdk_script: {script_path}")
+
+        node_bin = str(os.getenv("SEMIBOT_NODE_BIN", "node")).strip() or "node"
+        cmd = [
+            node_bin,
+            str(script_path),
+            "--app-id",
+            app_id,
+            "--app-secret",
+            app_secret,
+            "--receive-id-type",
+            receive_id_type,
+            "--receive-id",
+            receive_id,
+            "--text",
+            text,
+        ]
+        if domain:
+            cmd.extend(["--domain", domain])
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        out_text = stdout.decode("utf-8", errors="ignore").strip()
+        err_text = stderr.decode("utf-8", errors="ignore").strip()
+        if proc.returncode != 0:
+            raise RuntimeError(f"feishu_sdk_send_failed: {err_text or out_text or proc.returncode}")
+        if not out_text:
+            return False
+        # Feishu Node SDK may print info logs (e.g. "[info]: ['client ready']") to stdout
+        # before the final JSON payload. Parse the last valid JSON line defensively.
+        json_candidate = out_text
+        if "\n" in out_text:
+            lines = [line.strip() for line in out_text.splitlines() if line.strip()]
+            for line in reversed(lines):
+                if line.startswith("{") and line.endswith("}"):
+                    json_candidate = line
+                    break
+        try:
+            parsed = json.loads(json_candidate)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"feishu_sdk_invalid_json: {out_text}") from exc
+        return bool(parsed.get("ok"))
+
     async def _telegram_get_file_path(self, *, token: str, file_id: str) -> str:
         endpoint = f"https://api.telegram.org/bot{token}/getFile"
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -381,8 +453,14 @@ class GatewayManager:
 
         templates_cfg = cfg.get("templates")
         templates = templates_cfg if isinstance(templates_cfg, dict) else self.feishu_templates
+        sdk_enabled = self._to_bool(cfg.get("sdkEnabled"), False)
+        sdk_app_id = str(cfg.get("appId") or "").strip()
+        sdk_app_secret = str(cfg.get("appSecret") or "").strip()
+        sdk_default_receive_id = str(cfg.get("defaultReceiveId") or cfg.get("defaultChatId") or "").strip()
+        sdk_receive_id_type = str(cfg.get("receiveIdType") or "chat_id").strip().lower()
+        sdk_domain = str(cfg.get("sdkDomain") or "").strip() or None
 
-        if not webhook_url and not webhook_urls:
+        if not webhook_url and not webhook_urls and not (sdk_enabled and sdk_app_id and sdk_app_secret):
             return None
         return FeishuNotifier(
             webhook_url=webhook_url,
@@ -390,6 +468,13 @@ class GatewayManager:
             subscribed_event_types=subscribed,
             templates=templates if isinstance(templates, dict) else None,
             send_fn=self.feishu_send_fn,
+            sdk_enabled=sdk_enabled,
+            sdk_app_id=sdk_app_id or None,
+            sdk_app_secret=sdk_app_secret or None,
+            sdk_default_receive_id=sdk_default_receive_id or None,
+            sdk_receive_id_type=sdk_receive_id_type or "chat_id",
+            sdk_domain=sdk_domain,
+            sdk_send_fn=self._send_feishu_via_node_sdk,
         )
 
     def build_telegram_notifier(self, instance: dict[str, Any] | None = None) -> TelegramNotifier | None:
@@ -449,10 +534,23 @@ class GatewayManager:
             feishu_items = self.list_provider_instances("feishu", active_only=True)
             if not feishu_items and self.provider_active("feishu"):
                 feishu_items = [{}]
-            send_payload = dict(payload)
-            if target_chat_id and not str(send_payload.get("channel") or "").strip():
-                send_payload["channel"] = target_chat_id
+            narrowed: list[dict[str, Any]] = []
             for item in feishu_items:
+                cfg = item.get("config") if isinstance(item, dict) else self.provider_config("feishu")
+                cfg = cfg if isinstance(cfg, dict) else {}
+                app_id = str(cfg.get("appId") or "").strip()
+                if target_bot_id and app_id and app_id != target_bot_id:
+                    continue
+                narrowed.append(item)
+            send_payload = dict(payload)
+            if target_chat_id:
+                if not str(send_payload.get("channel") or "").strip():
+                    send_payload["channel"] = target_chat_id
+                if not str(send_payload.get("receive_id") or send_payload.get("receiveId") or "").strip():
+                    send_payload["receive_id"] = target_chat_id
+                if not str(send_payload.get("receive_id_type") or send_payload.get("receiveIdType") or "").strip():
+                    send_payload["receive_id_type"] = "chat_id"
+            for item in narrowed:
                 feishu_notifier = self.build_feishu_notifier(item)
                 if feishu_notifier:
                     await feishu_notifier.send_notify_payload(send_payload)
@@ -514,7 +612,11 @@ class GatewayManager:
             has_channel = isinstance(webhook_channels, dict) and any(
                 isinstance(v, str) and v.strip() for v in webhook_channels.values()
             )
-            return "ready" if (verify_token or webhook_url or has_channel) else "not_configured"
+            sdk_enabled = self._to_bool(config.get("sdkEnabled"), False)
+            sdk_app_id = str(config.get("appId") or "").strip()
+            sdk_app_secret = str(config.get("appSecret") or "").strip()
+            sdk_ready = sdk_enabled and sdk_app_id and sdk_app_secret
+            return "ready" if (verify_token or webhook_url or has_channel or sdk_ready) else "not_configured"
         return "ready"
 
     def serialize_gateway_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -1211,6 +1313,7 @@ class GatewayManager:
         payload: dict[str, Any],
         *,
         query_params: Mapping[str, str] | None = None,
+        verify_signature: bool = True,
     ) -> dict[str, Any]:
         data = payload if isinstance(payload, dict) else {}
         target_instance = self._resolve_feishu_instance_for_ingest(data, query_params)
@@ -1227,11 +1330,11 @@ class GatewayManager:
 
         challenge = maybe_url_verification(data)
         if challenge:
-            if not verify_callback_token(data, verify_token):
+            if verify_signature and not verify_callback_token(data, verify_token):
                 raise GatewayManagerError("invalid_feishu_token", status_code=401)
             return {"challenge": challenge}
 
-        if not verify_callback_token(data, verify_token):
+        if verify_signature and not verify_callback_token(data, verify_token):
             raise GatewayManagerError("invalid_feishu_token", status_code=401)
 
         normalized = normalize_message_event(data)
@@ -1272,11 +1375,14 @@ class GatewayManager:
                     return False
                 context_map = _context if isinstance(_context, dict) else {}
                 files = context_map.get("files")
+                chat_id = str(event.payload.get("chat_id") or "").strip()
                 return await notifier.send_notify_payload(
                     {
                         "title": "Semibot",
                         "content": reply_text,
-                        "channel": "default",
+                        "channel": chat_id or "default",
+                        "receive_id_type": "chat_id" if chat_id else None,
+                        "receive_id": chat_id or None,
                         "files": files if isinstance(files, list) else [],
                     }
                 )
@@ -1386,7 +1492,7 @@ class GatewayManager:
     ) -> dict[str, Any]:
         notifier = self.build_feishu_notifier()
         if not notifier:
-            raise GatewayManagerError("feishu_webhook_not_configured")
+            raise GatewayManagerError("feishu_not_configured")
         sent = await notifier.send_markdown(title=title, content=content, channel=channel)
         return {"sent": sent}
 

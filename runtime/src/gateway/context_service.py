@@ -272,10 +272,15 @@ class GatewayContextService:
         text: str,
         is_mention: bool,
         is_reply_to_bot: bool,
+        chat_type: str | None = None,
         force_execute: bool = False,
     ) -> AddressingDecision:
         if force_execute:
             return AddressingDecision(addressed=True, should_execute=True, reason="forced")
+        # In Feishu p2p (single chat), treat user message as addressed by default.
+        # This avoids requiring explicit @mention in direct conversations.
+        if provider == "feishu" and str(chat_type or "").strip().lower() == "p2p":
+            return AddressingDecision(addressed=True, should_execute=True, reason="feishu_p2p")
         policy = self._addressing_policy(provider)
         continuation_hit = self._continuation_hit(conversation_id, policy)
         return decide_addressing(
@@ -313,6 +318,7 @@ class GatewayContextService:
             text=text,
             is_mention=bool(event_payload.get("is_mention")),
             is_reply_to_bot=bool(event_payload.get("is_reply_to_bot")),
+            chat_type=str(event_payload.get("chat_type") or ""),
             force_execute=force_execute,
         )
 

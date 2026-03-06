@@ -10,6 +10,10 @@ import httpx
 from src.events.models import Event
 
 SendFn = Callable[[str, dict[str, Any], float], Awaitable[None]]
+SdkSendFn = Callable[
+    [str, str, str, str, str, str | None],
+    Awaitable[bool],
+]
 
 
 class _SafeDict(dict[str, str]):
@@ -34,6 +38,13 @@ class FeishuNotifier:
         send_fn: SendFn | None = None,
         subscribed_event_types: set[str] | None = None,
         templates: dict[str, dict[str, str]] | None = None,
+        sdk_enabled: bool = False,
+        sdk_app_id: str | None = None,
+        sdk_app_secret: str | None = None,
+        sdk_default_receive_id: str | None = None,
+        sdk_receive_id_type: str | None = None,
+        sdk_domain: str | None = None,
+        sdk_send_fn: SdkSendFn | None = None,
     ):
         self.webhook_url = webhook_url
         self.webhook_urls = webhook_urls or {}
@@ -45,8 +56,47 @@ class FeishuNotifier:
             "rule.run_agent.executed",
         }
         self.templates = templates or {}
+        self.sdk_enabled = bool(sdk_enabled)
+        self.sdk_app_id = str(sdk_app_id or "").strip() or None
+        self.sdk_app_secret = str(sdk_app_secret or "").strip() or None
+        self.sdk_default_receive_id = str(sdk_default_receive_id or "").strip() or None
+        receive_id_type = str(sdk_receive_id_type or "").strip().lower()
+        self.sdk_receive_id_type = receive_id_type or "chat_id"
+        self.sdk_domain = str(sdk_domain or "").strip() or None
+        self.sdk_send_fn = sdk_send_fn
 
-    async def send_markdown(self, *, title: str, content: str, channel: str = "default") -> bool:
+    async def send_markdown(
+        self,
+        *,
+        title: str,
+        content: str,
+        channel: str = "default",
+        receive_id: str | None = None,
+        receive_id_type: str | None = None,
+    ) -> bool:
+        normalized_receive_id = str(receive_id or "").strip()
+        normalized_receive_type = str(receive_id_type or "").strip().lower() or self.sdk_receive_id_type
+        sdk_receive_id = (
+            normalized_receive_id
+            or (channel if channel and channel != "default" else (self.sdk_default_receive_id or ""))
+        )
+        if (
+            self.sdk_enabled
+            and self.sdk_send_fn
+            and self.sdk_app_id
+            and self.sdk_app_secret
+            and sdk_receive_id
+        ):
+            merged_text = f"{title}\n\n{content}".strip()
+            return await self.sdk_send_fn(
+                self.sdk_app_id,
+                self.sdk_app_secret,
+                normalized_receive_type,
+                sdk_receive_id,
+                merged_text,
+                self.sdk_domain,
+            )
+
         webhook = self._resolve_webhook(channel)
         if not webhook:
             return False
@@ -62,6 +112,13 @@ class FeishuNotifier:
 
     async def send_notify_payload(self, payload: dict[str, Any]) -> bool:
         channel = str(payload.get("channel") or "default")
+        receive_id = (
+            payload.get("receive_id")
+            or payload.get("receiveId")
+            or payload.get("chat_id")
+            or payload.get("chatId")
+        )
+        receive_id_type = payload.get("receive_id_type") or payload.get("receiveIdType")
         title = str(payload.get("title") or "Semibot 通知")
         content = str(
             payload.get("content")
@@ -83,7 +140,13 @@ class FeishuNotifier:
                 else:
                     file_lines.append(f"- {name}")
             content = f"{content}\n" + "\n".join(file_lines)
-        return await self.send_markdown(title=title, content=content, channel=channel)
+        return await self.send_markdown(
+            title=title,
+            content=content,
+            channel=channel,
+            receive_id=str(receive_id or "").strip() or None,
+            receive_id_type=str(receive_id_type or "").strip() or None,
+        )
 
     async def handle_event(self, event: Event) -> None:
         if event.event_type not in self.subscribed_event_types:
@@ -92,15 +155,12 @@ class FeishuNotifier:
         channel = "default"
         if isinstance(event.payload, dict):
             channel = str(event.payload.get("channel") or "default")
-        webhook = self._resolve_webhook(channel)
-        if not webhook:
-            return
 
         if event.event_type == "approval.requested":
-            payload = self._approval_card(event)
+            title, content = self._approval_markdown(event)
         else:
-            payload = self._result_card(event)
-        await self.send_fn(webhook, payload, self.timeout)
+            title, content = self._result_markdown(event)
+        await self.send_markdown(title=title, content=content, channel=channel)
 
     def _resolve_webhook(self, channel: str) -> str | None:
         if channel and channel in self.webhook_urls:
@@ -110,11 +170,14 @@ class FeishuNotifier:
         return self.webhook_url
 
     def _approval_card(self, event: Event) -> dict[str, Any]:
+        title, content = self._approval_markdown(event)
+        return self._build_card(event, fallback_title=title, fallback_content=content)
+
+    def _approval_markdown(self, event: Event) -> tuple[str, str]:
         context = self._template_context(event)
-        return self._build_card(
-            event,
-            fallback_title="Semibot 审批请求",
-            fallback_content=(
+        return (
+            "Semibot 审批请求",
+            (
                 f"审批ID: {context['approval_id']}\n"
                 f"规则: {context['rule_id']}\n"
                 f"事件: {context['source_event_id']}\n"
@@ -124,14 +187,20 @@ class FeishuNotifier:
         )
 
     def _result_card(self, event: Event) -> dict[str, Any]:
+        title, content = self._result_markdown(event)
+        return self._build_card(event, fallback_title=title, fallback_content=content)
+
+    def _result_markdown(self, event: Event) -> tuple[str, str]:
         context = self._template_context(event)
-        content = (
-            f"类型: {context['event_type']}\n"
-            f"对象: {context['subject']}\n"
-            f"trace_id: {context['trace_id']}\n"
-            f"摘要: {context['summary']}"
+        return (
+            "Semibot 执行结果",
+            (
+                f"类型: {context['event_type']}\n"
+                f"对象: {context['subject']}\n"
+                f"trace_id: {context['trace_id']}\n"
+                f"摘要: {context['summary']}"
+            ),
         )
-        return self._build_card(event, fallback_title="Semibot 执行结果", fallback_content=content)
 
     def _build_card(self, event: Event, *, fallback_title: str, fallback_content: str) -> dict[str, Any]:
         context = self._template_context(event)
