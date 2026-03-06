@@ -79,6 +79,7 @@ function extractExecutionProcess(metadata: Record<string, unknown>): Agent2UIMes
 }
 
 function buildProcessState(messages: Agent2UIMessage[]): {
+  messages: Agent2UIMessage[]
   thinking: ThinkingData | null
   plan: PlanData | null
   toolCalls: ToolCallData[]
@@ -157,7 +158,7 @@ function buildProcessState(messages: Agent2UIMessage[]): {
     }
   }
 
-  return { thinking, plan, toolCalls }
+  return { messages, thinking, plan, toolCalls }
 }
 
 function normalizePendingApprovals(raw: unknown, sessionId: string): PendingApproval[] {
@@ -466,10 +467,7 @@ export default function ChatSessionPage() {
               const historicalProcessMessages = extractExecutionProcess(metadata)
               const processData =
                 historicalProcessMessages.length > 0
-                  ? {
-                      messages: historicalProcessMessages,
-                      ...buildProcessState(historicalProcessMessages),
-                    }
+                  ? buildProcessState(historicalProcessMessages)
                   : undefined
 
               return {

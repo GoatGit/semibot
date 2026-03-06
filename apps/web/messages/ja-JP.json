@@ -678,6 +678,13 @@
       "action": "アクション {action}",
       "target": "対象 {target}"
     },
+    "trace": {
+      "title": "スキル実行トレース",
+      "selectedSkill": "選択されたスキル",
+      "skillKind": "スキル種別",
+      "skillMdGate": "SKILL.md 初手ゲート",
+      "raw": "生トレースを表示"
+    },
     "scopeGroups": {
       "title": "タスクスコープ別グループ",
       "scopeLabel": "スコープ: {id}",
