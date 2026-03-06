@@ -205,11 +205,6 @@ export default function AgentsPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Link href="/help" className="inline-flex">
-                <Button variant="tertiary" leftIcon={<CircleHelp size={16} />} title={t('help.nav.helpCenter')}>
-                  {t('nav.helpCenter')}
-                </Button>
-              </Link>
               <Tooltip content={t('help.nav.agents')}>
                 <div>
                   <Button

@@ -151,11 +151,6 @@ export default function ApprovalsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap justify-end">
-                <Link href="/help" className="inline-flex">
-                  <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
-                    {t('nav.helpCenter')}
-                  </Button>
-                </Link>
                 <Button
                   variant="secondary"
                   leftIcon={<RefreshCw size={16} />}
@@ -317,11 +312,6 @@ export default function ApprovalsPage() {
                 <EmptyStateActions
                   className="text-center"
                   message={t('approvals.empty')}
-                  actions={(
-                    <Link href="/help" className="inline-flex">
-                      <Button size="sm" variant="tertiary">{t('nav.helpCenter')}</Button>
-                    </Link>
-                  )}
                 />
               </CardContent>
             </Card>

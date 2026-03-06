@@ -246,11 +246,6 @@ export default function NewChatPage() {
               {t('chatNew.subtitle')}
             </p>
             <div className="mt-4 inline-flex">
-              <Link href="/help">
-                <Button variant="tertiary" size="sm" leftIcon={<CircleHelp size={14} />}>
-                  {t('nav.helpCenter')}
-                </Button>
-              </Link>
             </div>
           </div>
 
@@ -311,9 +306,6 @@ export default function NewChatPage() {
                     <a href="/agents" className="underline underline-offset-4">
                       {t('chatNew.warning.goCreateAgent')}
                     </a>
-                    <Link href="/help" className="inline-flex">
-                      <Button size="xs" variant="tertiary">{t('nav.helpCenter')}</Button>
-                    </Link>
                   </div>
                 </div>
               </div>

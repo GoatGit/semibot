@@ -747,11 +747,6 @@ export default function ChatSessionPage() {
             >
               {sessionMeta?.status || 'active'}
             </span>
-            <Link href="/help" className="inline-flex">
-              <Button size="xs" variant="tertiary" leftIcon={<CircleHelp size={12} />}>
-                {t('nav.helpCenter')}
-              </Button>
-            </Link>
           </div>
         </div>
       </div>
@@ -840,9 +835,6 @@ export default function ChatSessionPage() {
             <div className="rounded-xl border border-primary-500/20 bg-gradient-to-r from-primary-500/10 via-bg-surface to-bg-surface px-3 py-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-text-secondary">{t('help.nav.sessions')}</p>
-                <Link href="/help" className="inline-flex">
-                  <Button size="xs" variant="tertiary">{t('nav.helpCenter')}</Button>
-                </Link>
               </div>
             </div>
           </div>

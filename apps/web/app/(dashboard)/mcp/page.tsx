@@ -644,11 +644,6 @@ export default function McpPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Link href="/help" className="inline-flex">
-                <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
-                  {t('nav.helpCenter')}
-                </Button>
-              </Link>
               <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={loadServers}>
                 {t('common.refresh')}
               </Button>
@@ -746,9 +741,6 @@ export default function McpPage() {
                       actions={(
                         <>
                           <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreate(true)}>{t('mcp.addServer')}</Button>
-                          <Link href="/help" className="inline-flex">
-                            <Button variant="tertiary">{t('nav.helpCenter')}</Button>
-                          </Link>
                         </>
                       )}
                     />

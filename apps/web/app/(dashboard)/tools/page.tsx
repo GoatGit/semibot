@@ -169,11 +169,6 @@ export default function ToolsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Link href="/help" className="inline-flex">
-                  <Button variant="tertiary" leftIcon={<CircleHelp size={16} />} title={t('help.nav.helpCenter')}>
-                    {t('nav.helpCenter')}
-                  </Button>
-                </Link>
                 <Button
                   variant="secondary"
                   leftIcon={<RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />}
@@ -263,9 +258,6 @@ export default function ToolsPage() {
                     actions={(
                       <>
                         <Button size="xs" onClick={() => router.push('/config')}>{t('toolsPage.openConfig')}</Button>
-                        <Link href="/help" className="inline-flex">
-                          <Button size="xs" variant="tertiary">{t('nav.helpCenter')}</Button>
-                        </Link>
                       </>
                     )}
                   />

@@ -128,6 +128,38 @@ const EVENT_TYPE_GROUPS: Array<{ key: 'chat' | 'tool' | 'approval' | 'gateway' |
   },
 ]
 
+const EVENT_TYPE_DISPLAY_NAME: Record<string, string> = {
+  'chat.message.received': '收到聊天消息',
+  'chat.card.action': '卡片交互动作',
+  'tool.exec.started': '工具开始执行',
+  'tool.exec.completed': '工具执行完成',
+  'tool.exec.failed': '工具执行失败',
+  'approval.requested': '创建审批请求',
+  'approval.approved': '审批通过',
+  'approval.rejected': '审批拒绝',
+  'approval.action': '审批动作回调',
+  'session.deleted': '会话删除',
+  'cron.job.tick': 'Cron 调度触发',
+  'task.completed': '任务完成',
+  'task.failed': '任务失败',
+  'task.cancelled': '任务取消',
+  'health.heartbeat.tick': '心跳自动巡检',
+  'health.heartbeat.manual': '心跳手动触发',
+  'rule.queue.accepted': '规则队列接收',
+  'rule.queue.dropped': '规则队列丢弃',
+  'rule.queue.telemetry': '规则队列遥测',
+  'rule.worker.started': '规则工作器启动',
+  'rule.worker.completed': '规则工作器完成',
+  'rule.worker.failed': '规则工作器失败',
+  'memory.write.manual': '记忆手动写入',
+  'memory.write.important': '关键记忆写入',
+  'agent.lifecycle.pre_execute': 'Agent 执行前',
+  'agent.lifecycle.post_execute': 'Agent 执行后',
+  'agent.lifecycle.failed': 'Agent 执行失败',
+  sandbox_execution: '沙箱执行',
+  policy_violation: '策略违规',
+}
+
 function buildConditionsFromPreset(preset: ConditionPreset): Record<string, unknown> {
   return CONDITION_PRESET_DEFINITIONS[preset]?.condition ?? { all: [] }
 }
@@ -207,7 +239,10 @@ export default function RulesPage() {
   const actionTypeOptions = ACTION_TYPE_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))
   const eventTypeOptions = EVENT_TYPE_GROUPS.map((group) => ({
     label: t(`rules.form.eventTypeGroups.${group.key}`),
-    options: group.options.map((item) => ({ value: item, label: item })),
+    options: group.options.map((item) => ({
+      value: item,
+      label: `${item} · ${EVENT_TYPE_DISPLAY_NAME[item] || '未命名事件'}`,
+    })),
   }))
   const defaultEventType = EVENT_TYPE_GROUPS[0]?.options[0] || 'chat.message.received'
   const riskOptions = RISK_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))
@@ -594,11 +629,6 @@ export default function RulesPage() {
                 </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Link href="/help" className="inline-flex">
-                    <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
-                      {t('nav.helpCenter')}
-                    </Button>
-                  </Link>
                   <Button
                     variant="secondary"
                     leftIcon={<RefreshCw size={16} />}
@@ -715,9 +745,6 @@ export default function RulesPage() {
                       <Button size="sm" onClick={openCreateEditor} disabled={!apiAvailable}>
                         {t('rules.new')}
                       </Button>
-                      <Link href="/help" className="inline-flex">
-                        <Button size="sm" variant="tertiary">{t('nav.helpCenter')}</Button>
-                      </Link>
                     </>
                   )}
                 />
@@ -754,16 +781,22 @@ export default function RulesPage() {
         )}
       >
         <div className="space-y-3">
-          <Input
-            value={form.name}
-            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-            placeholder={t('rules.form.ruleName')}
-          />
-          <Select
-            value={form.eventType}
-            options={eventTypeOptions}
-            onChange={(value) => setForm((prev) => ({ ...prev, eventType: value }))}
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{t('rules.form.ruleName')}</p>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder={t('rules.form.ruleName')}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-text-tertiary">{t('rules.form.eventType')}</p>
+            <Select
+              value={form.eventType}
+              options={eventTypeOptions}
+              onChange={(value) => setForm((prev) => ({ ...prev, eventType: value }))}
+            />
+          </div>
           {isCronEventType(form.eventType) && (
             <div className="space-y-2 rounded-md border border-border-default p-3">
               <label className="flex items-center gap-2 text-sm text-text-secondary">

@@ -462,7 +462,6 @@ export default function DashboardPage() {
                 <QuickLink href="/tools" title={t('dashboard.quickLinks.items.tools.title')} desc={t('dashboard.quickLinks.items.tools.desc')} />
                 <QuickLink href="/config" title={t('dashboard.quickLinks.items.config.title')} desc={t('dashboard.quickLinks.items.config.desc')} />
                 <QuickLink href="/mcp" title={t('dashboard.quickLinks.items.mcp.title')} desc={t('dashboard.quickLinks.items.mcp.desc')} />
-                <QuickLink href="/help" title={t('nav.helpCenter')} desc={t('help.nav.helpCenter')} />
               </div>
               <div className="mt-5 rounded-lg border border-border-subtle bg-bg-elevated/70 p-3 text-xs text-text-secondary">
                 <div className="flex items-center gap-2">

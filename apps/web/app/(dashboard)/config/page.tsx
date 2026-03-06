@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
-import Link from 'next/link'
 import {
   Cpu,
   KeyRound,
@@ -16,8 +15,6 @@ import {
   TestTube2,
   Pencil,
   MessageSquare,
-  CircleHelp,
-  ExternalLink,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -25,9 +22,7 @@ import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
-import { Tooltip } from '@/components/ui/Tooltip'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
-import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
 import { apiClient } from '@/lib/api'
 import { formatRuntimeStatusError } from '@/lib/runtime-status'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -1814,8 +1809,8 @@ export default function ConfigPage() {
       setError(null)
       const isTelegram = gateway.provider === 'telegram'
       const payload = isTelegram
-        ? { text: 'Semibot gateway test' }
-        : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
+        ? { text: 'Semibot 通道连通性测试' }
+        : { title: 'Semibot 通道连通性测试', content: '这是一次通道连通性测试消息。' }
       await apiClient.post(`/channels/${gateway.id}/test`, payload)
     } catch (err) {
       setError(getErrorMessage(err, t('config.errors.testGateway')))
@@ -2046,8 +2041,8 @@ export default function ConfigPage() {
         selectedGatewayItems.map((item) => {
           const payload =
             item.provider === 'telegram'
-              ? { text: 'Semibot gateway test' }
-              : { title: 'Semibot gateway test', content: 'Gateway connectivity test' }
+              ? { text: 'Semibot 通道连通性测试' }
+              : { title: 'Semibot 通道连通性测试', content: '这是一次通道连通性测试消息。' }
           return apiClient.post(`/channels/${item.id}/test`, payload)
         })
       )
@@ -2147,9 +2142,9 @@ export default function ConfigPage() {
 
   const toolsQuickTips = useMemo(
     () => [
-      tSafe('config.tools.quickTips.fields', 'Use explicit field names to avoid config mistakes.'),
-      tSafe('config.tools.quickTips.scope', 'For high-risk tools, keep approval scope at session or session_action.'),
-      tSafe('config.tools.quickTips.domains', 'Domain allow/block lists are comma-separated and apply to subdomains.'),
+      tSafe('config.tools.quickTips.fields', '请使用明确字段名，避免配置误填。'),
+      tSafe('config.tools.quickTips.scope', '高风险工具建议使用会话级或会话+动作级审批范围。'),
+      tSafe('config.tools.quickTips.domains', '域名白名单/黑名单使用逗号分隔，自动匹配子域名。'),
     ],
     [tSafe]
   )
@@ -2167,14 +2162,6 @@ export default function ConfigPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/help" className="inline-flex">
-              <Button
-                variant="tertiary"
-                leftIcon={<CircleHelp size={16} />}
-              >
-                {tSafe('common.helpCenter', 'Help Center')}
-              </Button>
-            </Link>
             <Button
               variant="secondary"
               onClick={loadData}
@@ -2184,11 +2171,6 @@ export default function ConfigPage() {
             </Button>
           </div>
         </div>
-
-        <PageHelpStrip
-          text={tSafe('config.header.helpHint', 'Need setup guidance or troubleshooting? Open Help Center for walkthroughs and FAQ.')}
-          ctaLabel={tSafe('config.header.openHelpCenter', 'Open Help Center')}
-        />
 
         {error && (
           <InlineErrorAlert message={error} />
@@ -2416,7 +2398,7 @@ export default function ConfigPage() {
 
                   <div className="rounded-md border border-border-subtle bg-bg-elevated/80 px-3 py-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">
-                      {tSafe('config.tools.quickTips.title', 'Quick Tips')}
+                      {tSafe('config.tools.quickTips.title', '使用提示')}
                     </p>
                     <ul className="mt-2 space-y-1.5 text-xs text-text-secondary">
                       {toolsQuickTips.map((tip, idx) => (
@@ -2465,15 +2447,6 @@ export default function ConfigPage() {
                                 </p>
                               </div>
                               <div className="flex items-center gap-1">
-                                <Tooltip content={tSafe('config.tools.toolCardHint', 'Configure risk, approval scope, and runtime parameters here.')}>
-                                  <button
-                                    type="button"
-                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-border-subtle text-text-tertiary hover:text-text-primary"
-                                    aria-label={tSafe('config.tools.toolCardHintAria', 'Tool config help')}
-                                  >
-                                    <CircleHelp size={13} />
-                                  </button>
-                                </Tooltip>
                                 {tool.isBuiltin && <Badge variant="outline">{t('config.tools.builtIn')}</Badge>}
                                 <Badge variant={tool.isActive ? 'success' : 'outline'}>
                                   {tool.isActive ? t('config.status.enabled') : t('config.status.disabled')}
@@ -2677,7 +2650,7 @@ export default function ConfigPage() {
                                   <p className="truncate text-sm font-medium text-text-primary">{item.displayName}</p>
                                   <p className="mt-1 text-xs text-text-tertiary">
                                     {item.provider}
-                                    {item.instanceKey ? ` · ${item.instanceKey}` : ''} · status: {item.status} ·{' '}
+                                    {item.instanceKey ? ` · ${item.instanceKey}` : ''} · {tSafe('config.common.status', '状态')}: {item.status} ·{' '}
                                     {t('config.channels.agent')}: {defaultAgentId} · {t('config.channels.updatedAt')}:{' '}
                                     {formatDate(item.updatedAt, locale, t)}
                                   </p>
@@ -2769,13 +2742,15 @@ export default function ConfigPage() {
                                     </Button>
                                   </div>
                                   {quickBindingsDraft.map((row, index) => (
-                                    <div key={`quick-binding-${item.id}-${index}`} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+                                    <div key={`quick-binding-${item.id}-${index}`} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto] md:items-center">
+                                      <p className="text-xs text-text-tertiary md:hidden">{tSafe('config.modals.gateway.chatIdLabel', 'chatId')}</p>
                                       <Input
                                         data-testid={`gateway-quick-chat-${item.id}-${index}`}
                                         placeholder={t('config.modals.gateway.chatIdPlaceholder')}
                                         value={row.chatId}
                                         onChange={(e) => updateQuickBindingsRow(index, 'chatId', e.target.value)}
                                       />
+                                      <p className="text-xs text-text-tertiary md:hidden">{tSafe('config.modals.gateway.chatBindingAgentLabel', 'agentId')}</p>
                                       <Input
                                         data-testid={`gateway-quick-agent-${item.id}-${index}`}
                                         placeholder={t('config.modals.gateway.chatBindingAgentPlaceholder')}
@@ -4042,6 +4017,7 @@ export default function ConfigPage() {
               <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.addressing.sessionContinuationWindowSecLabel', 'sessionContinuationWindowSec')}</p>
               <Input
                 data-testid="gateway-session-window-input"
+                type="number"
                 placeholder={t('config.modals.gateway.addressing.sessionContinuationWindowSecPlaceholder')}
                 value={gatewayForm.sessionContinuationWindowSec}
                 onChange={(e) =>
@@ -4099,6 +4075,7 @@ export default function ConfigPage() {
               <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.ttlDaysLabel', 'ttlDays')}</p>
               <Input
                 data-testid="gateway-context-ttl-days-input"
+                type="number"
                 placeholder={t('config.modals.gateway.context.ttlDaysPlaceholder')}
                 value={gatewayForm.contextTtlDays}
                 onChange={(e) => setGatewayForm((prev) => ({ ...prev, contextTtlDays: e.target.value }))}
@@ -4108,6 +4085,7 @@ export default function ConfigPage() {
               <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.maxRecentMessagesLabel', 'maxRecentMessages')}</p>
               <Input
                 data-testid="gateway-context-max-recent-input"
+                type="number"
                 placeholder={t('config.modals.gateway.context.maxRecentMessagesPlaceholder')}
                 value={gatewayForm.contextMaxRecentMessages}
                 onChange={(e) =>
@@ -4122,6 +4100,7 @@ export default function ConfigPage() {
               <p className="text-xs text-text-secondary">{tSafe('config.modals.gateway.context.summarizeEveryNMessagesLabel', 'summarizeEveryNMessages')}</p>
               <Input
                 data-testid="gateway-context-summarize-every-n-input"
+                type="number"
                 placeholder={t('config.modals.gateway.context.summarizeEveryNMessagesPlaceholder')}
                 value={gatewayForm.contextSummarizeEveryNMessages}
                 onChange={(e) =>

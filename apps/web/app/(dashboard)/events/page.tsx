@@ -254,11 +254,6 @@ export default function EventsPage() {
                 <p className="mt-1 text-xs text-text-tertiary">{t('events.capabilities')}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Link href="/help" className="inline-flex">
-                    <Button variant="tertiary" leftIcon={<CircleHelp size={16} />}>
-                      {t('nav.helpCenter')}
-                    </Button>
-                  </Link>
                   <Button
                     variant="secondary"
                     leftIcon={<RefreshCw size={16} />}
@@ -451,9 +446,6 @@ export default function EventsPage() {
                       <Button size="sm" variant="secondary" onClick={() => router.push('/rules?create=1')}>
                         {t('events.newRule')}
                       </Button>
-                      <Link href="/help" className="inline-flex">
-                        <Button size="sm" variant="tertiary">{t('nav.helpCenter')}</Button>
-                      </Link>
                     </>
                   )}
                 />

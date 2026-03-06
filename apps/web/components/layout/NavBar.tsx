@@ -18,7 +18,6 @@ import {
   Workflow,
   ShieldCheck,
   Languages,
-  CircleHelp,
 } from 'lucide-react'
 import { LANGUAGES } from '@/constants/config'
 import { useLocale } from '@/components/providers/LocaleProvider'
@@ -167,17 +166,6 @@ export function NavBar() {
             expanded={isExpanded}
           />
         ))}
-      </div>
-      <div className="px-2 py-3 border-t border-border-subtle">
-        <NavButton
-          icon={<CircleHelp size={20} />}
-          label={t('nav.helpCenter')}
-          description={t('help.nav.helpCenter')}
-          href="/help"
-          active={pathname === '/help' || pathname.startsWith('/help/')}
-          expanded={isExpanded}
-          variant="primary"
-        />
       </div>
     </nav>
   )
