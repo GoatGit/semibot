@@ -7,6 +7,7 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import { sql } from '../lib/db'
+import { isDatabaseUnavailable, isSingleUserMode } from '../lib/local-mode'
 
 type RiskLevel = 'low' | 'medium' | 'high'
 type RuleActionMode = 'ask' | 'suggest' | 'auto' | 'skip'
@@ -274,15 +275,22 @@ function normalizeDictionary(value: unknown): EventPresentationDictionary {
 }
 
 export async function getEventPresentationDictionary(orgId: string): Promise<EventPresentationDictionary> {
-  const rows = await sql<Array<{ settings: Record<string, unknown> | null }>>`
-    SELECT settings
-    FROM organizations
-    WHERE id = ${orgId}
-    LIMIT 1
-  `
-  const settings = rows[0]?.settings ?? {}
-  const rawDictionary = (settings as Record<string, unknown>).eventPresentation
-  return normalizeDictionary(rawDictionary)
+  try {
+    const rows = await sql<Array<{ settings: Record<string, unknown> | null }>>`
+      SELECT settings
+      FROM organizations
+      WHERE id = ${orgId}
+      LIMIT 1
+    `
+    const settings = rows[0]?.settings ?? {}
+    const rawDictionary = (settings as Record<string, unknown>).eventPresentation
+    return normalizeDictionary(rawDictionary)
+  } catch (error) {
+    if (isSingleUserMode() && isDatabaseUnavailable(error)) {
+      return normalizeDictionary(null)
+    }
+    throw error
+  }
 }
 
 export async function updateEventPresentationDictionary(

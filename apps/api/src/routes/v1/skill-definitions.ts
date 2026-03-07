@@ -22,6 +22,7 @@ import { installWithRetry } from '../../services/skill-retry-rollback.service'
 import { uploadAndInstall, uploadCreateAndInstall } from '../../services/skill-upload.service'
 import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
 import { createLogger } from '../../lib/logger'
+import { isDatabaseUnavailable, isSingleUserMode } from '../../lib/local-mode'
 
 const router: Router = Router()
 const skillDefinitionsLogger = createLogger('skill-definitions-route')
@@ -212,13 +213,29 @@ router.get(
     const limit = parseInt(req.query.limit as string) || parseInt(req.query.pageSize as string) || 20
     const search = req.query.search as string
     const isActive = req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined
-
-    const result = await skillDefinitionRepo.findAll({
-      page,
-      pageSize: limit,
-      search,
-      isActive,
-    })
+    let result
+    try {
+      result = await skillDefinitionRepo.findAll({
+        page,
+        pageSize: limit,
+        search,
+        isActive,
+      })
+    } catch (error) {
+      if (!isSingleUserMode() || !isDatabaseUnavailable(error)) throw error
+      skillDefinitionsLogger.warn('技能定义数据库不可用，单用户模式回退为空列表', {
+        page,
+        limit,
+        search,
+        isActive,
+      })
+      result = {
+        data: [],
+        total: 0,
+        page,
+        pageSize: limit,
+      }
+    }
 
     res.json({
       success: true,

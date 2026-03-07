@@ -544,6 +544,35 @@ def create_app(
         )
         return result
 
+    @app.get("/v1/config/llm")
+    async def get_config_llm() -> dict[str, Any]:
+        return {"data": config_store.get_llm_settings()}
+
+    @app.put("/v1/config/llm")
+    async def update_config_llm(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid_llm_payload")
+        patch: dict[str, Any] = {}
+        for key in ("default_model", "default_provider_key", "fallback_model", "fallback_provider_key"):
+            if key in payload:
+                patch[key] = str(payload.get(key) or "").strip()
+        providers_payload = payload.get("providers")
+        if providers_payload is not None:
+            if not isinstance(providers_payload, dict):
+                raise HTTPException(status_code=400, detail="invalid_llm_providers")
+            providers_patch: dict[str, Any] = {}
+            for provider_key, raw_item in providers_payload.items():
+                if not isinstance(raw_item, dict):
+                    continue
+                providers_patch[str(provider_key)] = {
+                    "display_name": str(raw_item.get("display_name") or raw_item.get("displayName") or "").strip(),
+                    "api_key": str(raw_item.get("api_key") or raw_item.get("apiKey") or "").strip(),
+                    "base_url": str(raw_item.get("base_url") or raw_item.get("baseUrl") or "").strip(),
+                }
+            patch["providers"] = providers_patch
+        return {"data": config_store.update_llm_settings(patch)}
+
     @app.post("/v1/config/tools")
     async def create_config_tool(request: Request) -> dict[str, Any]:
         payload = await request.json()
@@ -757,6 +786,41 @@ def create_app(
     async def list_agents(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
         _, agents = _collect_runtime_index(limit=limit * 10)
         return {"items": [{"agent_id": agent_id} for agent_id in sorted(agents)[:limit]]}
+
+    @app.get("/v1/config/agents")
+    async def list_config_agents(include_inactive: bool = Query(default=True)) -> dict[str, Any]:
+        return {"items": config_store.list_agent_profiles(include_inactive=include_inactive)}
+
+    @app.get("/v1/config/agents/{agent_id}")
+    async def get_config_agent(agent_id: str) -> dict[str, Any]:
+        item = config_store.get_agent_profile(agent_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="agent_profile_not_found")
+        return {"item": item}
+
+    @app.post("/v1/config/agents")
+    async def create_config_agent(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid_agent_payload")
+        return {"item": config_store.create_agent_profile(payload)}
+
+    @app.put("/v1/config/agents/{agent_id}")
+    async def update_config_agent(agent_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid_agent_payload")
+        item = config_store.update_agent_profile(agent_id, payload)
+        if not item:
+            raise HTTPException(status_code=404, detail="agent_profile_not_found")
+        return {"item": item}
+
+    @app.delete("/v1/config/agents/{agent_id}")
+    async def delete_config_agent(agent_id: str) -> dict[str, Any]:
+        deleted = config_store.soft_delete_agent_profile(agent_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="agent_profile_not_found")
+        return {"deleted": True, "agent_id": agent_id}
 
     @app.get("/v1/memories/search")
     async def memories_search(

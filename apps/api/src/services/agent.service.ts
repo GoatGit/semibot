@@ -13,6 +13,17 @@ import {
   LLM_UNAVAILABLE,
 } from '../constants/errorCodes'
 import { MAX_AGENTS_PER_ORG } from '../constants/config'
+import { SYSTEM_DEFAULT_AGENT_ID } from '../constants/config'
+import { isDatabaseUnavailable, isSingleUserMode } from '../lib/local-mode'
+import {
+  createRuntimeAgentProfile,
+  deleteRuntimeAgentProfile,
+  getRuntimeAgentProfile,
+  getRuntimeLlmConfig,
+  listRuntimeAgentProfiles,
+  updateRuntimeAgentProfile,
+  type RuntimeAgentProfile,
+} from '../lib/runtime-config-client'
 import * as agentRepository from '../repositories/agent.repository'
 import { generate, getAvailableModels } from './llm.service'
 import * as mcpService from './mcp.service'
@@ -172,6 +183,113 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
   }
 }
 
+async function getLocalDefaultAgentConfig(): Promise<AgentConfig> {
+  const llm = await getRuntimeLlmConfig().catch(() => null)
+  return {
+    ...DEFAULT_AGENT_CONFIG,
+    model: llm?.default_model || DEFAULT_AGENT_CONFIG.model || 'kimi-k2.5',
+    modelProviderKey: llm?.default_provider_key || DEFAULT_AGENT_CONFIG.modelProviderKey || 'kimi:kimiprovider',
+    fallbackModel: llm?.fallback_model || DEFAULT_AGENT_CONFIG.fallbackModel || '',
+    fallbackProviderKey: llm?.fallback_provider_key || DEFAULT_AGENT_CONFIG.fallbackProviderKey || '',
+  }
+}
+
+async function buildLocalSystemAgent(): Promise<Agent> {
+  const config = await getLocalDefaultAgentConfig()
+  return {
+    id: SYSTEM_DEFAULT_AGENT_ID,
+    orgId: null,
+    name: '系统助手',
+    description: '系统默认 AI 助手，可使用所有系统预装能力',
+    systemPrompt: 'You are a helpful AI assistant with access to system tools and capabilities.',
+    config: {
+      ...config,
+    },
+    skills: [],
+    subAgents: [],
+    version: 1,
+    isActive: true,
+    isPublic: true,
+    isSystem: true,
+    runtimeType: 'semigraph',
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  }
+}
+
+function runtimeProfileToAgent(profile: RuntimeAgentProfile, orgId: string | null): Agent {
+  const metadata = (profile.metadata && typeof profile.metadata === 'object'
+    ? profile.metadata
+    : {}) as Record<string, unknown>
+  const configExtra = (metadata.config && typeof metadata.config === 'object'
+    ? metadata.config
+    : {}) as Record<string, unknown>
+  return {
+    id: profile.id,
+    orgId: (metadata.orgId as string | null | undefined) ?? orgId,
+    name: profile.name,
+    description: profile.description ?? undefined,
+    systemPrompt: profile.system_prompt || 'You are a helpful AI assistant.',
+    config: {
+      model: profile.model || DEFAULT_AGENT_CONFIG.model,
+      modelProviderKey: String(configExtra.modelProviderKey || DEFAULT_AGENT_CONFIG.modelProviderKey || ''),
+      temperature: Number(profile.temperature ?? DEFAULT_AGENT_CONFIG.temperature),
+      maxTokens: Number(profile.max_tokens ?? DEFAULT_AGENT_CONFIG.maxTokens),
+      timeoutSeconds: Number(configExtra.timeoutSeconds ?? DEFAULT_AGENT_CONFIG.timeoutSeconds),
+      retryAttempts: Number(configExtra.retryAttempts ?? DEFAULT_AGENT_CONFIG.retryAttempts ?? 3),
+      fallbackModel: String(configExtra.fallbackModel || DEFAULT_AGENT_CONFIG.fallbackModel || ''),
+      fallbackProviderKey: String(configExtra.fallbackProviderKey || DEFAULT_AGENT_CONFIG.fallbackProviderKey || ''),
+    },
+    skills: Array.isArray(metadata.skills) ? metadata.skills.map(String) : [],
+    subAgents: Array.isArray(metadata.subAgents) ? metadata.subAgents.map(String) : [],
+    version: Number(metadata.version ?? 1),
+    isActive: Boolean(profile.is_active),
+    isPublic: Boolean(metadata.isPublic ?? false),
+    isSystem: Boolean(metadata.isSystem ?? false),
+    runtimeType: 'semigraph',
+    openclawConfig:
+      metadata.openclawConfig && typeof metadata.openclawConfig === 'object'
+        ? (metadata.openclawConfig as Record<string, unknown>)
+        : undefined,
+    createdAt: profile.created_at,
+    updatedAt: profile.updated_at,
+  }
+}
+
+function agentToRuntimeProfilePayload(orgId: string, input: CreateAgentInput | UpdateAgentInput, existing?: Agent): Record<string, unknown> {
+  const mergedConfig = input.config ? { ...(existing?.config || DEFAULT_AGENT_CONFIG), ...input.config } : existing?.config || DEFAULT_AGENT_CONFIG
+  const nextIsActive =
+    'isActive' in input && typeof input.isActive === 'boolean'
+      ? input.isActive
+      : existing?.isActive
+  return {
+    ...(existing ? {} : { name: (input as CreateAgentInput).name }),
+    ...(input.description !== undefined ? { description: input.description } : existing ? { description: existing.description } : {}),
+    ...(input.systemPrompt !== undefined ? { system_prompt: input.systemPrompt } : existing ? { system_prompt: existing.systemPrompt } : {}),
+    model: mergedConfig.model,
+    temperature: mergedConfig.temperature,
+    max_tokens: mergedConfig.maxTokens,
+    ...(typeof nextIsActive === 'boolean' ? { is_active: nextIsActive } : {}),
+    metadata: {
+      orgId,
+      skills: input.skills ?? existing?.skills ?? [],
+      subAgents: input.subAgents ?? existing?.subAgents ?? [],
+      version: existing?.version ?? 1,
+      isPublic: input.isPublic ?? existing?.isPublic ?? false,
+      isSystem: existing?.isSystem ?? false,
+      runtimeType: 'semigraph',
+      openclawConfig: input.openclawConfig ?? existing?.openclawConfig ?? {},
+      config: {
+        modelProviderKey: mergedConfig.modelProviderKey || '',
+        timeoutSeconds: mergedConfig.timeoutSeconds,
+        retryAttempts: mergedConfig.retryAttempts,
+        fallbackModel: mergedConfig.fallbackModel || '',
+        fallbackProviderKey: mergedConfig.fallbackProviderKey || '',
+      },
+    },
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 服务方法
 // ═══════════════════════════════════════════════════════════════
@@ -180,6 +298,28 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
  * 创建 Agent
  */
 export async function createAgent(orgId: string, input: CreateAgentInput): Promise<Agent> {
+  if (isSingleUserMode()) {
+    const availableModels = await getAvailableModels().catch(() => [] as string[])
+    if (availableModels.length === 0) {
+      throw createError(LLM_UNAVAILABLE, '当前没有可用模型，无法创建 Agent')
+    }
+    const primaryModel = input.config?.model || availableModels[0] || (await getLocalDefaultAgentConfig()).model
+    const fallbackModel =
+      input.config?.fallbackModel ||
+      availableModels.find((model) => model !== primaryModel) ||
+      (await getLocalDefaultAgentConfig()).fallbackModel
+    const payload = agentToRuntimeProfilePayload(orgId, {
+      ...input,
+      config: {
+        ...(input.config || {}),
+        model: primaryModel,
+        fallbackModel,
+      },
+      systemPrompt: input.systemPrompt?.trim() || 'You are a helpful AI assistant.',
+    })
+    const item = await createRuntimeAgentProfile(payload)
+    return runtimeProfileToAgent(item, orgId)
+  }
   // 检查配额
   const count = await agentRepository.countByOrg(orgId)
 
@@ -239,24 +379,49 @@ export async function createAgent(orgId: string, input: CreateAgentInput): Promi
  * 获取 Agent
  */
 export async function getAgent(orgId: string, agentId: string): Promise<Agent> {
-  const row = await agentRepository.findByIdAndOrg(agentId, orgId)
-
-  if (!row) {
-    throw createError(AGENT_NOT_FOUND)
+  if (isSingleUserMode()) {
+    if (agentId === SYSTEM_DEFAULT_AGENT_ID) {
+      return buildLocalSystemAgent()
+    }
+    const item = await getRuntimeAgentProfile(agentId)
+    if (!item) throw createError(AGENT_NOT_FOUND)
+    return runtimeProfileToAgent(item, orgId)
   }
+  try {
+    const row = await agentRepository.findByIdAndOrg(agentId, orgId)
 
-  return rowToAgent(row)
+    if (!row) {
+      throw createError(AGENT_NOT_FOUND)
+    }
+
+    return rowToAgent(row)
+  } catch (error) {
+    if (isSingleUserMode() && isDatabaseUnavailable(error) && agentId === SYSTEM_DEFAULT_AGENT_ID) {
+      return buildLocalSystemAgent()
+    }
+    throw error
+  }
 }
 
 /**
  * 获取系统默认 Agent
  */
 export async function getSystemDefaultAgent(): Promise<Agent> {
-  let row = await agentRepository.findSystemDefault()
-  if (!row) {
-    row = await agentRepository.ensureSystemDefault()
+  if (isSingleUserMode()) {
+    return buildLocalSystemAgent()
   }
-  return rowToAgent(row)
+  try {
+    let row = await agentRepository.findSystemDefault()
+    if (!row) {
+      row = await agentRepository.ensureSystemDefault()
+    }
+    return rowToAgent(row)
+  } catch (error) {
+    if (isSingleUserMode() && isDatabaseUnavailable(error)) {
+      return buildLocalSystemAgent()
+    }
+    throw error
+  }
 }
 
 /**
@@ -283,38 +448,85 @@ export async function listAgents(
   orgId: string,
   options: ListAgentsOptions = {}
 ): Promise<PaginatedResult<Agent>> {
-  const shouldEnsureSystemDefault =
-    !options.search &&
-    options.isActive !== false &&
-    (options.page === undefined || options.page === 1)
-  if (shouldEnsureSystemDefault) {
-    await agentRepository.ensureSystemDefault()
+  if (isSingleUserMode()) {
+    const items = await listRuntimeAgentProfiles(true)
+    const mapped = items.map((item) => runtimeProfileToAgent(item, orgId))
+    const systemAgent = await buildLocalSystemAgent()
+    const withSystem = mapped.some((item) => item.id === SYSTEM_DEFAULT_AGENT_ID) ? mapped : [systemAgent, ...mapped]
+    const filtered = withSystem.filter((item) => {
+      if (options.isActive !== undefined && item.isActive !== options.isActive) return false
+      if (options.search) {
+        const keyword = options.search.toLowerCase()
+        const haystack = `${item.name} ${item.description || ''}`.toLowerCase()
+        if (!haystack.includes(keyword)) return false
+      }
+      return true
+    })
+    filtered.sort((a, b) => {
+      if (a.isSystem !== b.isSystem) return a.isSystem ? -1 : 1
+      return b.updatedAt.localeCompare(a.updatedAt)
+    })
+    const page = options.page || 1
+    const limit = options.limit || 20
+    const start = (page - 1) * limit
+    const data = filtered.slice(start, start + limit)
+    return {
+      data,
+      meta: {
+        total: filtered.length,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(filtered.length / limit)),
+      },
+    }
   }
+  try {
+    const shouldEnsureSystemDefault =
+      !options.search &&
+      options.isActive !== false &&
+      (options.page === undefined || options.page === 1)
+    if (shouldEnsureSystemDefault) {
+      await agentRepository.ensureSystemDefault()
+    }
 
-  let result = await agentRepository.findByOrg({
-    orgId,
-    page: options.page,
-    limit: options.limit,
-    isActive: options.isActive,
-    search: options.search,
-  })
-
-  // 启动兜底：当系统默认 Agent 丢失时自动补齐，避免新环境空列表。
-  const hasFilter = Boolean(options.search) || options.isActive === false
-  if (result.data.length === 0 && !hasFilter) {
-    await agentRepository.ensureSystemDefault()
-    result = await agentRepository.findByOrg({
+    let result = await agentRepository.findByOrg({
       orgId,
       page: options.page,
       limit: options.limit,
       isActive: options.isActive,
       search: options.search,
     })
-  }
 
-  return {
-    data: result.data.map(rowToAgent),
-    meta: result.meta,
+    const hasFilter = Boolean(options.search) || options.isActive === false
+    if (result.data.length === 0 && !hasFilter) {
+      await agentRepository.ensureSystemDefault()
+      result = await agentRepository.findByOrg({
+        orgId,
+        page: options.page,
+        limit: options.limit,
+        isActive: options.isActive,
+        search: options.search,
+      })
+    }
+
+    return {
+      data: result.data.map(rowToAgent),
+      meta: result.meta,
+    }
+  } catch (error) {
+    if (isSingleUserMode() && isDatabaseUnavailable(error)) {
+      const fallback = await buildLocalSystemAgent()
+      return {
+        data: [fallback],
+        meta: {
+          total: 1,
+          page: options.page || 1,
+          limit: options.limit || 20,
+          totalPages: 1,
+        },
+      }
+    }
+    throw error
   }
 }
 
@@ -332,6 +544,13 @@ export async function updateAgent(
   // 系统 Agent 不可修改
   if (existing.isSystem) {
     throw createError(AGENT_SYSTEM_READONLY)
+  }
+
+  if (isSingleUserMode()) {
+    const payload = agentToRuntimeProfilePayload(orgId, input, existing)
+    const item = await updateRuntimeAgentProfile(agentId, payload)
+    if (!item) throw createError(AGENT_NOT_FOUND)
+    return runtimeProfileToAgent(item, orgId)
   }
 
   // 合并配置
@@ -446,6 +665,12 @@ export async function deleteAgent(orgId: string, agentId: string): Promise<void>
   const agent = await getAgent(orgId, agentId)
   if (agent.isSystem) {
     throw createError(AGENT_SYSTEM_READONLY)
+  }
+
+  if (isSingleUserMode()) {
+    const deleted = await deleteRuntimeAgentProfile(agentId)
+    if (!deleted) throw createError(AGENT_NOT_FOUND)
+    return
   }
 
   const deleted = await agentRepository.softDelete(agentId, orgId)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -11,6 +12,19 @@ from typing import Any, Iterator
 from uuid import uuid4
 
 SUPPORTED_GATEWAY_PROVIDERS = ("feishu", "telegram")
+DEFAULT_LLM_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "kimi": "https://api.moonshot.cn/v1",
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "minimax": "https://api.minimax.chat/v1",
+    "xai": "https://api.x.ai/v1",
+    "custom": "",
+}
+SUPPORTED_LLM_PROVIDERS = ("openai", "anthropic", "google", "kimi", "qwen", "minimax", "xai", "custom")
+DEFAULT_LOCAL_LLM_MODEL = "kimi-k2.5"
+DEFAULT_LOCAL_LLM_PROVIDER_KEY = "kimi:kimiprovider"
 
 
 def _now_iso() -> str:
@@ -189,11 +203,22 @@ class RuntimeConfigStore:
 
                 CREATE INDEX IF NOT EXISTS idx_agent_profiles_name ON agent_profiles(name);
                 CREATE INDEX IF NOT EXISTS idx_agent_profiles_active ON agent_profiles(is_active);
+
+                CREATE TABLE IF NOT EXISTS llm_settings (
+                  id TEXT PRIMARY KEY,
+                  default_model TEXT,
+                  default_provider_key TEXT,
+                  fallback_model TEXT,
+                  fallback_provider_key TEXT,
+                  providers_json TEXT NOT NULL DEFAULT '{}',
+                  updated_at TEXT NOT NULL
+                );
                 """
             )
         self._seed_gateway_configs()
         self._migrate_legacy_gateway_configs_to_instances()
         self._seed_gateway_instances()
+        self._seed_llm_settings_from_env()
 
     def _seed_gateway_configs(self) -> None:
         now = _now_iso()
@@ -321,6 +346,141 @@ class RuntimeConfigStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def _seed_llm_settings_from_env(self) -> None:
+        existing = self.get_llm_settings()
+        if (
+            existing.get("default_model")
+            or existing.get("default_provider_key")
+            or existing.get("fallback_model")
+            or existing.get("fallback_provider_key")
+            or existing.get("providers")
+        ):
+            return
+        payload = self._llm_settings_from_env()
+        if (
+            payload.get("default_model")
+            or payload.get("default_provider_key")
+            or payload.get("fallback_model")
+            or payload.get("fallback_provider_key")
+            or payload.get("providers")
+        ):
+            self.update_llm_settings(payload, replace=True)
+
+    def _llm_settings_from_env(self) -> dict[str, Any]:
+        providers: dict[str, dict[str, Any]] = {}
+        for provider in SUPPORTED_LLM_PROVIDERS:
+            key_name = f"{provider.upper()}_API_KEY"
+            base_name = f"{provider.upper()}_API_BASE_URL"
+            api_key = str(os.getenv(key_name) or "").strip()
+            base_url = str(os.getenv(base_name) or DEFAULT_LLM_BASE_URLS[provider]).strip()
+            if api_key or base_url:
+                provider_item: dict[str, Any] = {"base_url": base_url}
+                if api_key:
+                    provider_item["api_key"] = api_key
+                providers[provider] = provider_item
+        raw_instances = str(os.getenv("LLM_PROVIDER_INSTANCES") or "").strip()
+        if raw_instances:
+            try:
+                parsed = json.loads(raw_instances)
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        if not isinstance(item, dict):
+                            continue
+                        type_name = str(item.get("type") or "").strip()
+                        instance_id = str(item.get("id") or "").strip()
+                        if not type_name or not instance_id:
+                            continue
+                        provider_key = f"{type_name}:{instance_id}"
+                        providers[provider_key] = {
+                            "display_name": str(item.get("displayName") or "").strip() or instance_id,
+                            "api_key": str(item.get("apiKey") or "").strip(),
+                            "base_url": str(item.get("baseUrl") or "").strip(),
+                        }
+            except Exception:
+                pass
+
+        return {
+            "default_model": str(os.getenv("DEFAULT_LLM_MODEL") or DEFAULT_LOCAL_LLM_MODEL).strip(),
+            "default_provider_key": str(os.getenv("DEFAULT_LLM_PROVIDER_KEY") or DEFAULT_LOCAL_LLM_PROVIDER_KEY).strip(),
+            "fallback_model": str(os.getenv("FALLBACK_LLM_MODEL") or "").strip(),
+            "fallback_provider_key": str(os.getenv("FALLBACK_LLM_PROVIDER_KEY") or "").strip(),
+            "providers": providers,
+        }
+
+    def _llm_row_to_dict(self, row: sqlite3.Row | None) -> dict[str, Any]:
+        if row is None:
+            return {
+                "default_model": "",
+                "default_provider_key": "",
+                "fallback_model": "",
+                "fallback_provider_key": "",
+                "providers": {},
+                "updated_at": None,
+            }
+        return {
+            "default_model": row["default_model"] or "",
+            "default_provider_key": row["default_provider_key"] or "",
+            "fallback_model": row["fallback_model"] or "",
+            "fallback_provider_key": row["fallback_provider_key"] or "",
+            "providers": _json_loads(row["providers_json"], {}),
+            "updated_at": row["updated_at"],
+        }
+
+    def get_llm_settings(self) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM llm_settings
+                WHERE id = 'default'
+                LIMIT 1
+                """
+            ).fetchone()
+        item = self._llm_row_to_dict(row)
+        if not str(item.get("default_model") or "").strip():
+            item["default_model"] = DEFAULT_LOCAL_LLM_MODEL
+        if not str(item.get("default_provider_key") or "").strip():
+            item["default_provider_key"] = DEFAULT_LOCAL_LLM_PROVIDER_KEY
+        return item
+
+    def update_llm_settings(self, payload: dict[str, Any], *, replace: bool = False) -> dict[str, Any]:
+        existing = {} if replace else self.get_llm_settings()
+        providers_existing = existing.get("providers") if isinstance(existing.get("providers"), dict) else {}
+        providers_patch = payload.get("providers") if isinstance(payload.get("providers"), dict) else {}
+        providers = providers_patch if replace else {**providers_existing, **providers_patch}
+        now = _now_iso()
+        item = {
+            "default_model": str(payload.get("default_model", existing.get("default_model", "")) or "").strip(),
+            "default_provider_key": str(payload.get("default_provider_key", existing.get("default_provider_key", "")) or "").strip(),
+            "fallback_model": str(payload.get("fallback_model", existing.get("fallback_model", "")) or "").strip(),
+            "fallback_provider_key": str(payload.get("fallback_provider_key", existing.get("fallback_provider_key", "")) or "").strip(),
+            "providers": providers,
+            "updated_at": now,
+        }
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO llm_settings (
+                  id, default_model, default_provider_key, fallback_model, fallback_provider_key, providers_json, updated_at
+                ) VALUES ('default', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  default_model = excluded.default_model,
+                  default_provider_key = excluded.default_provider_key,
+                  fallback_model = excluded.fallback_model,
+                  fallback_provider_key = excluded.fallback_provider_key,
+                  providers_json = excluded.providers_json,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    item["default_model"],
+                    item["default_provider_key"],
+                    item["fallback_model"],
+                    item["fallback_provider_key"],
+                    _json_dumps(item["providers"]),
+                    item["updated_at"],
+                ),
+            )
+        return self.get_llm_settings()
 
     def list_tools(
         self,

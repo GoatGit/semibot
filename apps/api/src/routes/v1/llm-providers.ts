@@ -2,7 +2,7 @@
  * LLM Providers API 路由
  *
  * - Provider 状态查询
- * - 本地 .env.local 的 LLM 配置读写（单机场景）
+ * - 本地 runtime sqlite 的 LLM 配置读写（单机场景）
  */
 
 import { promises as fs } from 'fs'
@@ -16,6 +16,13 @@ import { combinedRateLimit } from '../../middleware/rateLimit'
 import { getProviderStatus, reloadProviders } from '../../services/llm.service'
 import { getWSServer } from '../../ws/ws-server'
 import { createLogger } from '../../lib/logger'
+import {
+  getRuntimeLlmConfig,
+  updateRuntimeLlmConfig,
+  applyRuntimeLlmConfigToProcessEnv,
+  syncRuntimeLlmConfigToProcessEnv,
+  type RuntimeLlmConfig,
+} from '../../lib/runtime-config-client'
 
 const router: Router = Router()
 const llmProviderRouteLogger = createLogger('llm-provider-route')
@@ -217,60 +224,6 @@ function applyProcessEnvUpdates(updates: Record<string, string | null>): void {
   }
 }
 
-function parseProviderInstancesFromEnv(): CustomProviderConfig[] {
-  const items: CustomProviderConfig[] = []
-  const raw = process.env.LLM_PROVIDER_INSTANCES
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          if (!item || typeof item !== 'object') continue
-          const row = item as Record<string, unknown>
-          const typeValue = String(row.type || '').trim()
-          if (!['openai', 'anthropic', 'google', 'kimi', 'qwen', 'minimax', 'xai', 'custom'].includes(typeValue)) continue
-          const id = String(row.id || '').trim()
-          if (!id) continue
-          items.push({
-            type: typeValue as 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom',
-            id,
-            displayName: String(row.displayName || '').trim() || undefined,
-            apiKey: String(row.apiKey || '').trim() || undefined,
-            baseUrl: String(row.baseUrl || '').trim() || undefined,
-          })
-        }
-      }
-    } catch {
-      llmProviderRouteLogger.warn('解析 LLM_PROVIDER_INSTANCES 失败，已忽略')
-    }
-  }
-
-  const legacyRaw = process.env.CUSTOM_LLM_PROVIDERS
-  if (!legacyRaw) return items
-  try {
-    const parsed = JSON.parse(legacyRaw) as unknown
-    if (!Array.isArray(parsed)) return items
-    for (const item of parsed) {
-      if (!item || typeof item !== 'object') continue
-      const row = item as Record<string, unknown>
-      const id = String(row.id || '').trim()
-      if (!id) continue
-      if (items.some((entry) => entry.type === 'custom' && entry.id === id)) continue
-      items.push({
-        type: 'custom',
-        id,
-        displayName: String(row.displayName || '').trim() || undefined,
-        apiKey: String(row.apiKey || '').trim() || undefined,
-        baseUrl: String(row.baseUrl || '').trim() || undefined,
-      })
-    }
-    return items
-  } catch {
-    llmProviderRouteLogger.warn('解析 CUSTOM_LLM_PROVIDERS 失败，已忽略')
-    return items
-  }
-}
-
 function getProviderDisplayName(providerName: string, displayName?: string): string {
   if (displayName) return displayName
   if (PROVIDER_DISPLAY_NAMES[providerName]) return PROVIDER_DISPLAY_NAMES[providerName]
@@ -282,8 +235,16 @@ function getProviderDisplayName(providerName: string, displayName?: string): str
   return providerName
 }
 
-function buildProviderConfig() {
-  const providerInstances = parseProviderInstancesFromEnv()
+function buildProviderConfig(config: RuntimeLlmConfig) {
+  const providerInstances = Object.entries(config.providers || {})
+    .filter(([providerKey]) => providerKey.includes(':'))
+    .map(([providerKey, item]) => ({
+      type: providerKey.split(':', 2)[0] as CustomProviderConfig['type'],
+      id: providerKey.split(':', 2)[1] || '',
+      displayName: item.display_name,
+      apiKey: item.api_key,
+      baseUrl: item.base_url,
+    }))
   const providers: Record<string, {
     apiKeyConfigured: boolean
     apiKeyPreview: string | null
@@ -291,51 +252,51 @@ function buildProviderConfig() {
     displayName?: string
   }> = {
     openai: {
-      apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
-      apiKeyPreview: keyPreview(process.env.OPENAI_API_KEY),
-      baseUrl: process.env.OPENAI_API_BASE_URL || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.openai?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.openai?.api_key),
+      baseUrl: config.providers?.openai?.base_url || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.openai,
     },
     anthropic: {
-      apiKeyConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
-      apiKeyPreview: keyPreview(process.env.ANTHROPIC_API_KEY),
-      baseUrl: process.env.ANTHROPIC_API_BASE_URL || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.anthropic?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.anthropic?.api_key),
+      baseUrl: config.providers?.anthropic?.base_url || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.anthropic,
     },
     google: {
-      apiKeyConfigured: Boolean(process.env.GOOGLE_AI_API_KEY),
-      apiKeyPreview: keyPreview(process.env.GOOGLE_AI_API_KEY),
-      baseUrl: process.env.GOOGLE_AI_API_BASE_URL || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.google?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.google?.api_key),
+      baseUrl: config.providers?.google?.base_url || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.google,
     },
     kimi: {
-      apiKeyConfigured: Boolean(process.env.KIMI_API_KEY),
-      apiKeyPreview: keyPreview(process.env.KIMI_API_KEY),
-      baseUrl: process.env.KIMI_API_BASE_URL || DEFAULT_BASE_URLS.KIMI_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.kimi?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.kimi?.api_key),
+      baseUrl: config.providers?.kimi?.base_url || DEFAULT_BASE_URLS.KIMI_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.kimi,
     },
     qwen: {
-      apiKeyConfigured: Boolean(process.env.QWEN_API_KEY),
-      apiKeyPreview: keyPreview(process.env.QWEN_API_KEY),
-      baseUrl: process.env.QWEN_API_BASE_URL || DEFAULT_BASE_URLS.QWEN_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.qwen?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.qwen?.api_key),
+      baseUrl: config.providers?.qwen?.base_url || DEFAULT_BASE_URLS.QWEN_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.qwen,
     },
     minimax: {
-      apiKeyConfigured: Boolean(process.env.MINIMAX_API_KEY),
-      apiKeyPreview: keyPreview(process.env.MINIMAX_API_KEY),
-      baseUrl: process.env.MINIMAX_API_BASE_URL || DEFAULT_BASE_URLS.MINIMAX_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.minimax?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.minimax?.api_key),
+      baseUrl: config.providers?.minimax?.base_url || DEFAULT_BASE_URLS.MINIMAX_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.minimax,
     },
     xai: {
-      apiKeyConfigured: Boolean(process.env.XAI_API_KEY),
-      apiKeyPreview: keyPreview(process.env.XAI_API_KEY),
-      baseUrl: process.env.XAI_API_BASE_URL || DEFAULT_BASE_URLS.XAI_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.xai?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.xai?.api_key),
+      baseUrl: config.providers?.xai?.base_url || DEFAULT_BASE_URLS.XAI_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.xai,
     },
     custom: {
-      apiKeyConfigured: Boolean(process.env.CUSTOM_LLM_API_KEY),
-      apiKeyPreview: keyPreview(process.env.CUSTOM_LLM_API_KEY),
-      baseUrl: process.env.CUSTOM_LLM_API_BASE_URL || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
+      apiKeyConfigured: Boolean(config.providers?.custom?.api_key),
+      apiKeyPreview: keyPreview(config.providers?.custom?.api_key),
+      baseUrl: config.providers?.custom?.base_url || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
       displayName: PROVIDER_DISPLAY_NAMES.custom,
     },
   }
@@ -351,70 +312,76 @@ function buildProviderConfig() {
   }
 
   return {
-    defaultModel: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
-    defaultProviderKey: process.env.DEFAULT_LLM_PROVIDER_KEY ?? '',
-    fallbackModel: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
-    fallbackProviderKey: process.env.FALLBACK_LLM_PROVIDER_KEY ?? '',
+    defaultModel: config.default_model || 'gpt-4o',
+    defaultProviderKey: config.default_provider_key || '',
+    fallbackModel: config.fallback_model || '',
+    fallbackProviderKey: config.fallback_provider_key || '',
     providers,
   }
 }
 
-function buildRuntimeLlmConfigPayload() {
+function buildRuntimeLlmConfigPayload(config: RuntimeLlmConfig) {
   const providers: Record<string, { base_url: string }> = {
     openai: {
-      base_url: process.env.OPENAI_API_BASE_URL || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
+      base_url: config.providers?.openai?.base_url || DEFAULT_BASE_URLS.OPENAI_API_BASE_URL,
     },
     anthropic: {
-      base_url: process.env.ANTHROPIC_API_BASE_URL || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
+      base_url: config.providers?.anthropic?.base_url || DEFAULT_BASE_URLS.ANTHROPIC_API_BASE_URL,
     },
     google: {
-      base_url: process.env.GOOGLE_AI_API_BASE_URL || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
+      base_url: config.providers?.google?.base_url || DEFAULT_BASE_URLS.GOOGLE_AI_API_BASE_URL,
     },
     kimi: {
-      base_url: process.env.KIMI_API_BASE_URL || DEFAULT_BASE_URLS.KIMI_API_BASE_URL,
+      base_url: config.providers?.kimi?.base_url || DEFAULT_BASE_URLS.KIMI_API_BASE_URL,
     },
     qwen: {
-      base_url: process.env.QWEN_API_BASE_URL || DEFAULT_BASE_URLS.QWEN_API_BASE_URL,
+      base_url: config.providers?.qwen?.base_url || DEFAULT_BASE_URLS.QWEN_API_BASE_URL,
     },
     minimax: {
-      base_url: process.env.MINIMAX_API_BASE_URL || DEFAULT_BASE_URLS.MINIMAX_API_BASE_URL,
+      base_url: config.providers?.minimax?.base_url || DEFAULT_BASE_URLS.MINIMAX_API_BASE_URL,
     },
     xai: {
-      base_url: process.env.XAI_API_BASE_URL || DEFAULT_BASE_URLS.XAI_API_BASE_URL,
+      base_url: config.providers?.xai?.base_url || DEFAULT_BASE_URLS.XAI_API_BASE_URL,
     },
     custom: {
-      base_url: process.env.CUSTOM_LLM_API_BASE_URL || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
+      base_url: config.providers?.custom?.base_url || DEFAULT_BASE_URLS.CUSTOM_LLM_API_BASE_URL,
     },
   }
 
-  for (const item of parseProviderInstancesFromEnv()) {
-    providers[`${item.type}:${item.id}`] = {
-      base_url: item.baseUrl || '',
+  for (const item of Object.entries(config.providers || {})
+    .filter(([providerKey]) => providerKey.includes(':'))
+    .map(([providerKey, provider]) => ({
+      key: providerKey,
+      baseUrl: provider.base_url || '',
+    }))) {
+    providers[item.key] = {
+      base_url: item.baseUrl,
     }
   }
 
   return {
-    default_model: process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o',
-    default_provider_key: process.env.DEFAULT_LLM_PROVIDER_KEY ?? '',
-    fallback_model: process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo',
-    fallback_provider_key: process.env.FALLBACK_LLM_PROVIDER_KEY ?? '',
+    default_model: config.default_model || 'gpt-4o',
+    default_provider_key: config.default_provider_key || '',
+    fallback_model: config.fallback_model || '',
+    fallback_provider_key: config.fallback_provider_key || '',
     providers,
   }
 }
 
-function buildRuntimeApiKeysPayload(): Record<string, string> {
+function buildRuntimeApiKeysPayload(config: RuntimeLlmConfig): Record<string, string> {
   const payload: Record<string, string> = {
-    openai: process.env.OPENAI_API_KEY ?? '',
-    anthropic: process.env.ANTHROPIC_API_KEY ?? '',
-    google: process.env.GOOGLE_AI_API_KEY ?? '',
-    kimi: process.env.KIMI_API_KEY ?? '',
-    qwen: process.env.QWEN_API_KEY ?? '',
-    minimax: process.env.MINIMAX_API_KEY ?? '',
-    xai: process.env.XAI_API_KEY ?? '',
-    custom: process.env.CUSTOM_LLM_API_KEY ?? '',
+    openai: config.providers?.openai?.api_key ?? '',
+    anthropic: config.providers?.anthropic?.api_key ?? '',
+    google: config.providers?.google?.api_key ?? '',
+    kimi: config.providers?.kimi?.api_key ?? '',
+    qwen: config.providers?.qwen?.api_key ?? '',
+    minimax: config.providers?.minimax?.api_key ?? '',
+    xai: config.providers?.xai?.api_key ?? '',
+    custom: config.providers?.custom?.api_key ?? '',
   }
-  for (const item of parseProviderInstancesFromEnv()) {
-    payload[`${item.type}:${item.id}`] = item.apiKey || ''
+  for (const [providerKey, provider] of Object.entries(config.providers || {})) {
+    if (!providerKey.includes(':')) continue
+    payload[providerKey] = provider.api_key || ''
   }
   return payload
 }
@@ -431,6 +398,7 @@ router.get(
   authenticate,
   combinedRateLimit,
   asyncHandler(async (_req: AuthRequest, res: Response) => {
+    await syncRuntimeLlmConfigToProcessEnv().catch(() => undefined)
     const providers = await getProviderStatus()
 
     const data = providers
@@ -457,6 +425,7 @@ router.get(
   authenticate,
   combinedRateLimit,
   asyncHandler(async (_req: AuthRequest, res: Response) => {
+    await syncRuntimeLlmConfigToProcessEnv().catch(() => undefined)
     const providers = await getProviderStatus()
 
     const models: Array<{
@@ -498,6 +467,7 @@ router.get(
   authenticate,
   combinedRateLimit,
   asyncHandler(async (_req: AuthRequest, res: Response) => {
+    await syncRuntimeLlmConfigToProcessEnv().catch(() => undefined)
     const providers = await getProviderStatus()
 
     const data = providers.map((p) => ({
@@ -523,9 +493,10 @@ router.get(
   combinedRateLimit,
   requireRole('owner', 'admin'),
   asyncHandler(async (_req: AuthRequest, res: Response) => {
+    const config = await getRuntimeLlmConfig()
     res.json({
       success: true,
-      data: buildProviderConfig(),
+      data: buildProviderConfig(config),
     })
   })
 )
@@ -726,135 +697,58 @@ router.put(
   validate(updateLlmConfigSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const body = req.body as z.infer<typeof updateLlmConfigSchema>
-    const updates: Record<string, string | null> = {}
-
-    if (body.defaultModel !== undefined) {
-      const trimmed = body.defaultModel.trim()
-      updates.DEFAULT_LLM_MODEL = trimmed || null
-    }
-
-    if (body.defaultProviderKey !== undefined) {
-      const trimmed = body.defaultProviderKey.trim()
-      updates.DEFAULT_LLM_PROVIDER_KEY = trimmed || null
-    }
-
-    if (body.fallbackModel !== undefined) {
-      const trimmed = body.fallbackModel.trim()
-      updates.FALLBACK_LLM_MODEL = trimmed || null
-    }
-
-    if (body.fallbackProviderKey !== undefined) {
-      const trimmed = body.fallbackProviderKey.trim()
-      updates.FALLBACK_LLM_PROVIDER_KEY = trimmed || null
-    }
-
-    const mapProvider = (
-      config: z.infer<typeof providerConfigSchema> | undefined,
-      envApiKey: string,
-      envBaseUrl: string
-    ) => {
-      if (!config) return
-
-      if (config.clearApiKey) {
-        updates[envApiKey] = null
-      } else if (config.apiKey !== undefined) {
-        const apiKey = config.apiKey.trim()
-        updates[envApiKey] = apiKey || null
-      }
-
-      if (config.baseUrl !== undefined) {
-        const baseUrl = config.baseUrl.trim()
-        updates[envBaseUrl] = baseUrl || null
+    const current = await getRuntimeLlmConfig()
+    const nextProviders: RuntimeLlmConfig['providers'] = { ...(current.providers || {}) }
+    const builtInProviderKeys = ['openai', 'anthropic', 'google', 'kimi', 'qwen', 'minimax', 'xai', 'custom']
+    for (const providerKey of builtInProviderKeys) {
+      const providerConfig = body.providers?.[providerKey]
+      if (!providerConfig) continue
+      const existing = nextProviders[providerKey] || {}
+      nextProviders[providerKey] = {
+        ...existing,
+        api_key: providerConfig.clearApiKey ? '' : providerConfig.apiKey !== undefined ? providerConfig.apiKey.trim() : existing.api_key,
+        base_url: providerConfig.baseUrl !== undefined ? providerConfig.baseUrl.trim() : existing.base_url,
+        display_name: existing.display_name,
       }
     }
-
-    mapProvider(body.providers?.openai, 'OPENAI_API_KEY', 'OPENAI_API_BASE_URL')
-    mapProvider(body.providers?.anthropic, 'ANTHROPIC_API_KEY', 'ANTHROPIC_API_BASE_URL')
-    mapProvider(body.providers?.google, 'GOOGLE_AI_API_KEY', 'GOOGLE_AI_API_BASE_URL')
-    mapProvider(body.providers?.kimi, 'KIMI_API_KEY', 'KIMI_API_BASE_URL')
-    mapProvider(body.providers?.qwen, 'QWEN_API_KEY', 'QWEN_API_BASE_URL')
-    mapProvider(body.providers?.minimax, 'MINIMAX_API_KEY', 'MINIMAX_API_BASE_URL')
-    mapProvider(body.providers?.xai, 'XAI_API_KEY', 'XAI_API_BASE_URL')
-    mapProvider(body.providers?.custom, 'CUSTOM_LLM_API_KEY', 'CUSTOM_LLM_API_BASE_URL')
-
-    const nextInstances = parseProviderInstancesFromEnv()
-    const instancesByKey = new Map(nextInstances.map((item) => [`${item.type}:${item.id}`, item] as const))
-    let hasDynamicProviderUpdates = false
     for (const [providerKey, providerConfig] of Object.entries(body.providers || {})) {
-      const matched = providerKey.match(/^(openai|anthropic|google|kimi|qwen|minimax|xai|custom):(.+)$/)
-      if (!matched) continue
-      hasDynamicProviderUpdates = true
-      const type = matched[1] as 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom'
-      const id = matched[2].trim()
-      if (!id) continue
-      const dynamicKey = `${type}:${id}` as const
-      const current = instancesByKey.get(dynamicKey) || { type, id }
-
-      if (providerConfig.clearApiKey) {
-        delete current.apiKey
-      } else if (providerConfig.apiKey !== undefined) {
-        const apiKey = providerConfig.apiKey.trim()
-        if (apiKey) current.apiKey = apiKey
-        else delete current.apiKey
+      if (!providerKey.includes(':')) continue
+      const existing = nextProviders[providerKey] || {}
+      nextProviders[providerKey] = {
+        ...existing,
+        display_name: existing.display_name || providerKey.split(':', 2)[1] || providerKey,
+        api_key: providerConfig.clearApiKey ? '' : providerConfig.apiKey !== undefined ? providerConfig.apiKey.trim() : existing.api_key,
+        base_url: providerConfig.baseUrl !== undefined ? providerConfig.baseUrl.trim() : existing.base_url,
       }
-
-      if (providerConfig.baseUrl !== undefined) {
-        const baseUrl = providerConfig.baseUrl.trim()
-        if (baseUrl) current.baseUrl = baseUrl
-        else delete current.baseUrl
-      }
-
-      if (!current.displayName) current.displayName = id
-      instancesByKey.set(dynamicKey, current)
     }
 
-    if (hasDynamicProviderUpdates) {
-      const providersForEnv = Array.from(instancesByKey.values())
-        .map((item) => ({
-          type: item.type,
-          id: item.id,
-          ...(item.displayName ? { displayName: item.displayName } : {}),
-          ...(item.apiKey ? { apiKey: item.apiKey } : {}),
-          ...(item.baseUrl ? { baseUrl: item.baseUrl } : {}),
-        }))
-        .sort((a, b) => `${a.type}:${a.id}`.localeCompare(`${b.type}:${b.id}`))
+    const persisted = await updateRuntimeLlmConfig({
+      default_model: body.defaultModel !== undefined ? body.defaultModel.trim() : current.default_model,
+      default_provider_key: body.defaultProviderKey !== undefined ? body.defaultProviderKey.trim() : current.default_provider_key,
+      fallback_model: body.fallbackModel !== undefined ? body.fallbackModel.trim() : current.fallback_model,
+      fallback_provider_key: body.fallbackProviderKey !== undefined ? body.fallbackProviderKey.trim() : current.fallback_provider_key,
+      providers: nextProviders,
+    })
+    applyRuntimeLlmConfigToProcessEnv(persisted)
+    reloadProviders()
 
-      updates.LLM_PROVIDER_INSTANCES = providersForEnv.length > 0
-        ? JSON.stringify(providersForEnv)
-        : null
-      // 保留兼容写入：仅写 custom 子集
-      const legacyCustom = providersForEnv.filter((item) => item.type === 'custom').map(({ id, displayName, apiKey, baseUrl }) => ({
-        id,
-        ...(displayName ? { displayName } : {}),
-        ...(apiKey ? { apiKey } : {}),
-        ...(baseUrl ? { baseUrl } : {}),
-      }))
-      updates.CUSTOM_LLM_PROVIDERS = legacyCustom.length > 0 ? JSON.stringify(legacyCustom) : null
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await applyEnvUpdates(updates)
-      applyProcessEnvUpdates(updates)
-      reloadProviders()
-
-      try {
-        const wsServer = getWSServer()
-        wsServer.broadcastLLMConfigUpdate({
-          llm_config: buildRuntimeLlmConfigPayload(),
-          api_keys: buildRuntimeApiKeysPayload(),
-        })
-      } catch (error) {
-        llmProviderRouteLogger.warn('执行平面 LLM 配置广播跳过', {
-          reason: (error as Error).message,
-        })
-      }
+    try {
+      const wsServer = getWSServer()
+      wsServer.broadcastLLMConfigUpdate({
+        llm_config: buildRuntimeLlmConfigPayload(persisted),
+        api_keys: buildRuntimeApiKeysPayload(persisted),
+      })
+    } catch (error) {
+      llmProviderRouteLogger.warn('执行平面 LLM 配置广播跳过', {
+        reason: (error as Error).message,
+      })
     }
 
     res.json({
       success: true,
-      data: buildProviderConfig(),
+      data: buildProviderConfig(persisted),
       meta: {
-        updatedKeys: Object.keys(updates),
+        updatedKeys: ['defaultModel', 'defaultProviderKey', 'fallbackModel', 'fallbackProviderKey', 'providers'],
       },
     })
   })

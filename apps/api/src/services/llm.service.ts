@@ -26,6 +26,7 @@ import { AnthropicProvider } from './llm/anthropic.provider'
 import { CustomProvider } from './llm/custom.provider'
 import { GoogleAIProvider } from './llm/google.provider'
 import { createLogger } from '../lib/logger'
+import { syncRuntimeLlmConfigToProcessEnv } from '../lib/runtime-config-client'
 
 const llmLogger = createLogger('llm')
 
@@ -237,8 +238,13 @@ export function reloadProviders(): void {
 // 默认配置
 // ═══════════════════════════════════════════════════════════════
 
-const DEFAULT_MODEL = process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o'
-const FALLBACK_MODEL = process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo'
+function getDefaultModel(): string {
+  return process.env.DEFAULT_LLM_MODEL ?? 'gpt-4o'
+}
+
+function getFallbackModel(): string {
+  return process.env.FALLBACK_LLM_MODEL ?? 'gpt-3.5-turbo'
+}
 
 const DEFAULT_CONFIG: Partial<LLMConfig> = {
   temperature: 0.7,
@@ -273,8 +279,10 @@ export async function generate(
   messages: LLMMessage[],
   config: Partial<LLMConfig> = {}
 ): Promise<LLMResponse> {
+  await syncRuntimeLlmConfigToProcessEnv().catch(() => undefined)
+  reloadProviders()
   const fullConfig: LLMConfig = {
-    model: config.model ?? DEFAULT_MODEL,
+    model: config.model ?? getDefaultModel(),
     ...DEFAULT_CONFIG,
     ...config,
   }
@@ -283,13 +291,14 @@ export async function generate(
 
   if (!provider || !provider.isAvailable()) {
     // 尝试 Fallback
-    const fallbackProvider = await resolveProviderForModel(FALLBACK_MODEL)
+    const fallbackModel = getFallbackModel()
+    const fallbackProvider = await resolveProviderForModel(fallbackModel)
     if (fallbackProvider?.isAvailable()) {
       llmLogger.warn('Provider 不可用，使用 Fallback', {
         original: fullConfig.model,
-        fallback: FALLBACK_MODEL,
+        fallback: fallbackModel,
       })
-      fullConfig.model = FALLBACK_MODEL
+      fullConfig.model = fallbackModel
       return fallbackProvider.generate(messages, fullConfig)
     }
 
@@ -307,8 +316,10 @@ export async function generateStream(
   config: Partial<LLMConfig> = {},
   onChunk: (chunk: LLMStreamChunk) => void
 ): Promise<void> {
+  await syncRuntimeLlmConfigToProcessEnv().catch(() => undefined)
+  reloadProviders()
   const fullConfig: LLMConfig = {
-    model: config.model ?? DEFAULT_MODEL,
+    model: config.model ?? getDefaultModel(),
     ...DEFAULT_CONFIG,
     ...config,
   }
@@ -317,13 +328,14 @@ export async function generateStream(
 
   if (!provider || !provider.isAvailable()) {
     // 尝试 Fallback
-    const fallbackProvider = await resolveProviderForModel(FALLBACK_MODEL)
+    const fallbackModel = getFallbackModel()
+    const fallbackProvider = await resolveProviderForModel(fallbackModel)
     if (fallbackProvider?.isAvailable()) {
       llmLogger.warn('Provider 不可用，使用 Fallback', {
         original: fullConfig.model,
-        fallback: FALLBACK_MODEL,
+        fallback: fallbackModel,
       })
-      fullConfig.model = FALLBACK_MODEL
+      fullConfig.model = fallbackModel
       return fallbackProvider.generateStream(messages, fullConfig, onChunk)
     }
 
@@ -351,6 +363,8 @@ export function isLLMAvailable(): boolean {
  * 获取可用的模型列表
  */
 export async function getAvailableModels(): Promise<string[]> {
+  await syncRuntimeLlmConfigToProcessEnv().catch(() => undefined)
+  reloadProviders()
   const models: string[] = []
   for (const provider of getAvailableProviders()) {
     models.push(...(await provider.fetchModels()))
@@ -368,6 +382,8 @@ export async function getProviderStatus(): Promise<Array<{
   models: string[]
   modelInfos: LLMModelInfo[]
 }>> {
+  await syncRuntimeLlmConfigToProcessEnv().catch(() => undefined)
+  reloadProviders()
   initializeProviders()
 
   const loadProviderModels = async (

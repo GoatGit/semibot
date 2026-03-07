@@ -21,7 +21,6 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
-<<<<<<< HEAD
 import { Select, type SelectGroup, type SelectOption } from '@/components/ui/Select'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'

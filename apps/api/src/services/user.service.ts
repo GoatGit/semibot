@@ -5,6 +5,7 @@
  */
 
 import { sql } from '../lib/db'
+import { isDatabaseUnavailable, isSingleUserMode } from '../lib/local-mode'
 import { createError } from '../middleware/errorHandler'
 import { AUTH_USER_NOT_FOUND, AUTH_INVALID_PASSWORD } from '../constants/errorCodes'
 import bcrypt from 'bcryptjs'
@@ -30,15 +31,6 @@ export interface UserPreferences {
 }
 
 const SINGLE_USER_ORG_ID = process.env.SEMIBOT_SINGLE_ORG_ID || '11111111-1111-1111-1111-111111111111'
-
-function isSingleUserMode(): boolean {
-  const enableAuth = process.env.SEMIBOT_ENABLE_AUTH
-  const disableAuth = process.env.SEMIBOT_DISABLE_AUTH
-
-  if (enableAuth !== undefined) return enableAuth !== 'true'
-  if (disableAuth !== undefined) return disableAuth !== 'false'
-  return true
-}
 
 function normalizePreferences(settings: Record<string, unknown> | null | undefined): UserPreferences {
   const safe = settings ?? {}
@@ -141,23 +133,30 @@ export async function updateUserProfile(
  * 获取用户偏好设置（存储在组织 settings 中）
  */
 export async function getUserPreferences(userId: string): Promise<UserPreferences> {
-  const result = await sql`
-    SELECT o.settings
-    FROM users u
-    JOIN organizations o ON o.id = u.org_id
-    WHERE u.id = ${userId} AND u.is_active = true
-    LIMIT 1
-  `
+  try {
+    const result = await sql`
+      SELECT o.settings
+      FROM users u
+      JOIN organizations o ON o.id = u.org_id
+      WHERE u.id = ${userId} AND u.is_active = true
+      LIMIT 1
+    `
 
-  if (result.length === 0) {
-    if (isSingleUserMode()) {
-      return getSingleUserOrgPreferences()
+    if (result.length === 0) {
+      if (isSingleUserMode()) {
+        return getSingleUserOrgPreferences()
+      }
+      throw createError(AUTH_USER_NOT_FOUND)
     }
-    throw createError(AUTH_USER_NOT_FOUND)
-  }
 
-  const row = result[0] as { settings: Record<string, unknown> | null }
-  return normalizePreferences(row.settings)
+    const row = result[0] as { settings: Record<string, unknown> | null }
+    return normalizePreferences(row.settings)
+  } catch (error) {
+    if (isSingleUserMode() && isDatabaseUnavailable(error)) {
+      return normalizePreferences(null)
+    }
+    throw error
+  }
 }
 
 /**
