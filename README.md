@@ -1,224 +1,167 @@
-# Semibot - 通用 Agent 编排平台
+# Semibot
 
-> 极简的云原生 Agent 编排平台，支持多 LLM、Skill 扩展和 MCP 集成
+Semibot 是一个本地优先的通用 Agent 产品，包含：
 
-## 特性
+- `apps/web`: Next.js Web UI
+- `apps/api`: Node.js API
+- `runtime`: Python runtime、CLI、内建 supervisor
+- `packages/*`: 共享配置和类型
 
-- **多 LLM 支持** - OpenAI、Anthropic、Google 等主流 LLM
-- **Skill 系统** - 可扩展的 Skill 注册表，支持版本管理
-- **MCP 集成** - Model Context Protocol 客户端
-- **智能记忆** - 短期（Redis）+ 长期（PostgreSQL + pgvector）
-- **多租户** - 完整的租户隔离和配额管理
-- **实时通信** - SSE/WebSocket 实时状态推送
-- **沙箱执行** - Docker 隔离的代码执行环境
-- **审计日志** - 完整的执行追踪和审计
+这个仓库是 **Public Core**。  
+它可以独立构建 release 安装包，但不包含内部工作目录、私有文档、官网仓库和其他私有资产。
 
-## 架构
+## 安装
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Web Frontend                          │
-│                  (Next.js 14 + React 18)                     │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                         API Layer                            │
-│                  (Node.js + Express + TypeScript)            │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Runtime Engine                          │
-│              (Python + LangGraph + LangChain)                │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                    ┌─────────┴─────────┐
-                    ▼                   ▼
-          ┌──────────────┐    ┌──────────────┐
-          │  PostgreSQL  │    │    Redis     │
-          │  + pgvector  │    │   (Cache)    │
-          └──────────────┘    └──────────────┘
-```
-
-## 项目结构
-
-```
-semibot/
-├── apps/
-│   ├── api/              # Express API 服务 (TypeScript)
-│   └── web/              # Next.js 前端应用 (React)
-├── packages/
-│   ├── shared-types/     # 共享 TypeScript 类型
-│   ├── shared-config/    # 共享配置
-│   └── ui/               # UI 组件库
-├── runtime/              # Python Agent Runtime 引擎
-├── database/             # 数据库迁移和脚本
-├── infra/                # 基础设施配置
-├── docs/                 # 项目文档
-└── tests/                # E2E 测试
-```
-
-## 技术栈
-
-### 前端
-- **框架**: Next.js 14 (App Router)
-- **UI**: React 18 + Tailwind CSS
-- **状态管理**: Zustand
-- **测试**: Vitest + Playwright
-
-### 后端 API
-- **运行时**: Node.js 20+
-- **框架**: Express + TypeScript
-- **数据库**: PostgreSQL 15+ (pgvector)
-- **缓存**: Redis 7+ (ioredis)
-- **验证**: Zod
-- **测试**: Vitest
-
-### Runtime 引擎
-- **语言**: Python 3.11+
-- **框架**: LangGraph + LangChain
-- **LLM**: OpenAI, Anthropic, Google
-- **测试**: pytest
-
-## 快速开始
-
-### V2 Runtime（推荐先体验）
+推荐安装方式：
 
 ```bash
-cd runtime
-
-# 安装依赖 + 引导配置 OPENAI_API_KEY
-./scripts/install_and_start.sh install
-
-# 检查环境配置
-./scripts/install_and_start.sh doctor
-
-# 启动交互
-./scripts/install_and_start.sh chat
+curl -fsSL https://releases.semibot.ai/install.sh | bash
+semibot init
+semibot ui
 ```
 
-说明：
-- `chat/run` 需要至少一个 LLM key：`OPENAI_API_KEY` 或 `CUSTOM_LLM_API_KEY`
-- 使用 `CUSTOM_LLM_API_KEY` 时，需要同时配置 `CUSTOM_LLM_API_BASE_URL`
-- 研究类任务建议配置 `TAVILY_API_KEY` 或 `SERPAPI_API_KEY`
+默认更新源：
 
-### 环境要求
+- 安装脚本：`https://releases.semibot.ai/install.sh`
+- 更新清单：`https://releases.semibot.ai/stable/latest.json`
+- Release 包基址：`https://releases.semibot.ai/stable`
 
-- Node.js >= 20.0.0
-- pnpm >= 9.0.0
-- PostgreSQL 15+
-- Redis 7+
-- Python 3.11+
-- Docker (可选，用于沙箱)
-
-### 安装
+常用命令：
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/your-org/semibot.git
-cd semibot
+semibot init
+semibot up
+semibot down
+semibot status
+semibot doctor
+semibot ui
+semibot logs
+semibot upgrade
+```
 
-# 2. 安装 Node.js 依赖
+## 本地开发
+
+前置依赖：
+
+- Node.js `20+`
+- `pnpm 9+`
+- Python `3.11+`
+
+安装依赖：
+
+```bash
 pnpm install
+python3 -m venv runtime/.venv
+runtime/.venv/bin/pip install -r runtime/requirements.txt
+```
 
-# 3. 设置 Python 环境（Runtime 引擎）
-# 确保安装了 Python 3.11+
-python3.11 --version  # 如果没有，使用 brew install python@3.11
+开发模式：
 
-# 创建虚拟环境
-cd runtime
-python3.11 -m venv .venv
-
-# 激活虚拟环境并安装依赖
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install --upgrade pip
-pip install -e .
-
-# 安装额外依赖
-pip install "aiohttp>=3.9.0" "docker>=7.0.0" "fastapi>=0.115.0" \
-    "uvicorn[standard]>=0.30.0" "sse-starlette>=2.1.0" \
-    "opentelemetry-exporter-otlp>=1.26.0"
-
-# 安装 MCP SDK（从 GitHub）
-pip install "mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git"
-
-cd ..
-
-# 4. 配置环境变量
-cp .env.example .env.local
-# 编辑 .env.local 填入配置
-
-# 5. 启动数据库
-docker-compose up -d postgres redis
-
-# 6. 运行数据库迁移
-cd database
-psql -U postgres -d semibot -f migrations/001_init_schema.sql
-
-# 7. 启动开发服务器
+```bash
 pnpm dev
 ```
 
-### 访问应用
-
-- **Web 前端**: http://localhost:3000
-- **API 服务**: http://localhost:3001
-- **API 索引**: http://localhost:3001/api/v1/docs
-
-### API 迁移提示（进化中心）
-
-- `GET/PUT /api/v1/context-policies/*` 已标记为 deprecated（兼容保留）。
-- 进化中心统一使用新接口：`/api/v1/evolution-capabilities/*`。
-- 新接口对象类型：`hands`、`reflex`、`spine`、`guard`、`mind`。
-
-## 常用命令
+分别启动：
 
 ```bash
-pnpm dev        # 开发模式
-pnpm build      # 构建
-pnpm test       # 运行测试
-pnpm lint       # 代码检查
-pnpm typecheck  # 类型检查
-pnpm format     # 代码格式化
-
-# 单独启动
-pnpm --filter api dev    # API 服务
-pnpm --filter web dev    # Web 应用
-
-# Runtime 测试
-cd runtime && pytest
+pnpm --dir apps/api dev
+pnpm --dir apps/web dev
+cd runtime && .venv/bin/python -m src.main serve start
 ```
 
-## 文档
+产品态命令：
 
-### 核心文档
-- [架构设计](docs/design/ARCHITECTURE.md)
-- [API 设计](docs/design/API_DESIGN.md)
-- [数据模型](docs/design/DATA_MODEL.md)
-- [部署指南](docs/design/DEPLOYMENT.md)
-- [测试指南](docs/design/TESTING.md)
+```bash
+cd runtime
+python -m src.main init
+python -m src.main up
+python -m src.main status
+python -m src.main ui --no-open
+```
 
-### 开发规范
-- [编码规范](.claude/rules/coding-standards.md)
-- [API 规范](.claude/rules/api-standards.md)
-- [数据库规范](.claude/rules/database.md)
-- [安全规范](.claude/rules/security.md)
-- [并发规范](.claude/rules/concurrency.md)
+## Release 构建
 
-### Runtime 文档
-- [Runtime 架构](runtime/docs/architecture.md)
-- [API 参考](runtime/docs/api-reference.md)
-- [部署指南](runtime/docs/deployment-guide.md)
+标准构建：
 
-## 贡献
+```bash
+./scripts/build_release.sh
+```
 
-1. Fork 项目
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'feat: add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
+常用构建参数：
 
-## 许可证
+```bash
+SKIP_BUILD=1 ./scripts/build_release.sh
+INCLUDE_NODE_MODULES=1 ./scripts/build_release.sh
+INCLUDE_RUNTIME_VENV=1 ./scripts/build_release.sh
+```
 
-Private - All Rights Reserved
+产物位于：
+
+- `.release/<version>/`
+- `.release/current`
+- `.release/semibot-<version>.tar.gz`
+- `.release/latest.json`
+
+Public Core 构建前提：
+
+- Public Core 验收允许 `INCLUDE_RUNTIME_VENV=0`
+- 若导出树未复用已有依赖缓存，`pnpm install` 需要联网
+- Node 22 下，传递依赖 `canvas` 可能尝试本地编译
+- 若没有预编译二进制，宿主机可能需要 `pkg-config` 和 `pixman` 开发库
+
+## 仓库结构
+
+```text
+semibot/
+├── apps/
+│   ├── api/
+│   └── web/
+├── packages/
+│   ├── shared-config/
+│   └── shared-types/
+├── runtime/
+├── scripts/
+└── tests/
+```
+
+Public Core 明确不包含：
+
+- 官网仓库
+- 私有设计文档
+- 内部工作目录
+- 本地状态目录
+- 构建产物和本地缓存
+
+## 许可、商标、贡献
+
+本仓库不是 MIT / Apache 这类宽松开源协议。当前采用 **source-available** 模型。
+
+你可以：
+
+- 查看源码
+- 下载源码
+- 进行评估、研究、测试和非商业内部开发
+
+你不能在未获得授权的情况下：
+
+- 商业托管
+- 商业再分发
+- 以实质相同的产品或服务形式商业化 Semibot
+- 使用 `Semibot` 品牌暗示官方关系
+
+详情见：
+
+- `LICENSE`
+- `TRADEMARKS.md`
+- `CLA.md`
+- `CONTRIBUTING.md`
+
+所有外部贡献都要求接受 CLA。
+
+## 常用验证
+
+```bash
+pnpm --dir apps/api type-check
+python3 -m pytest runtime/tests/test_cli.py -q
+python3 -m compileall runtime/src
+```
