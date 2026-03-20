@@ -1,4 +1,4 @@
-name: one-click-release
+name: public-core-ci
 
 on:
   workflow_dispatch:
@@ -24,10 +24,8 @@ permissions:
   id-token: write
 
 jobs:
-  release-smoke:
+  public-core-validate:
     runs-on: ubuntu-latest
-    outputs:
-      release_version: ${{ steps.release_meta.outputs.version }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -51,6 +49,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: install playwright chromium
+        if: github.repository == 'GoatGit/semibot-internal'
         working-directory: tests
         run: pnpm exec playwright install --with-deps chromium
 
@@ -66,13 +65,15 @@ jobs:
       - name: build and smoke release
         run: ./scripts/release_ci.sh
         env:
-          SEMIBOT_UI_SMOKE_PLAYWRIGHT: "1"
+          SEMIBOT_UI_SMOKE_PLAYWRIGHT: ${{ github.repository == 'GoatGit/semibot-internal' && '1' || '0' }}
           RELEASE_BASE_URL: https://releases.semibot.ai/stable
 
       - name: prepare stable channel
+        if: github.repository == 'GoatGit/semibot-internal'
         run: ./scripts/prepare_release_channel.sh stable
 
       - name: read release version
+        if: github.repository == 'GoatGit/semibot-internal'
         id: release_meta
         run: |
           VERSION="$(python3 - <<'PY'
@@ -85,7 +86,7 @@ PY
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: upload release artifacts
-        if: always()
+        if: always() && github.repository == 'GoatGit/semibot-internal'
         uses: actions/upload-artifact@v4
         with:
           name: semibot-release
@@ -98,14 +99,14 @@ PY
             .release/publish/stable/**
 
       - name: upload pages artifact
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && github.repository == 'GoatGit/semibot-internal'
         uses: actions/upload-pages-artifact@v3
         with:
           path: .release/publish
 
   deploy-pages:
-    if: github.ref == 'refs/heads/main'
-    needs: release-smoke
+    if: github.ref == 'refs/heads/main' && github.repository == 'GoatGit/semibot-internal'
+    needs: public-core-validate
     runs-on: ubuntu-latest
     environment:
       name: github-pages
