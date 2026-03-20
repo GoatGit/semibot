@@ -947,7 +947,7 @@
     "title": "开始新会话",
     "subtitle": "选择一个 Agent，或直接输入您的问题开始对话",
     "chooseAgent": "选择 Agent",
-    "smartAssistant": "智能 AI 助手",
+    "smartAssistant": "通用智能体",
     "quickStart": "快速开始",
     "inputPlaceholder": "输入您的问题或任务描述...",
     "selectedPrefix": "已选择:",
@@ -957,15 +957,15 @@
     "defaultMessage": "你好，请介绍一下你自己",
     "templates": {
       "general": {
-        "name": "通用助手",
-        "description": "多功能 AI 助手，可以帮助您完成各种任务"
+        "name": "通用智能体",
+        "description": "多功能通用智能体，可帮助您完成各种任务"
       },
       "code": {
-        "name": "代码助手",
-        "description": "专注于编程和代码审查的 AI 助手"
+        "name": "代码智能体",
+        "description": "专注于编程和代码审查的通用智能体"
       },
       "research": {
-        "name": "研究助手",
+        "name": "研究智能体",
         "description": "帮助您搜索、整理和分析信息"
       },
       "data": {
@@ -999,7 +999,7 @@
     "backToChats": "返回会话列表",
     "sessionLabel": "会话",
     "new": "新建",
-    "welcome": "您好！我是您的 AI 助手。有什么我可以帮助您的吗？",
+    "welcome": "您好！我是 Semibot。今天我们一起做点什么？",
     "pendingApprovals": "待审批操作",
     "risk": "风险",
     "approve": "通过",

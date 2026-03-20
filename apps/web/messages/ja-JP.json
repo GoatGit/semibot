@@ -947,7 +947,7 @@
     "title": "新しい会話を開始",
     "subtitle": "エージェントを選択するか、質問を入力して会話を開始してください",
     "chooseAgent": "エージェントを選択",
-    "smartAssistant": "スマート AI アシスタント",
+    "smartAssistant": "汎用エージェント",
     "quickStart": "クイックスタート",
     "inputPlaceholder": "質問やタスク内容を入力してください…",
     "selectedPrefix": "選択中:",
@@ -957,15 +957,15 @@
     "defaultMessage": "こんにちは。自己紹介をお願いします。",
     "templates": {
       "general": {
-        "name": "汎用アシスタント",
-        "description": "日常業務向けのマルチ用途 AI アシスタント"
+        "name": "汎用エージェント",
+        "description": "日常業務向けのマルチ用途汎用エージェント"
       },
       "code": {
-        "name": "コードアシスタント",
+        "name": "コードエージェント",
         "description": "コーディングとコードレビューに特化"
       },
       "research": {
-        "name": "リサーチアシスタント",
+        "name": "リサーチエージェント",
         "description": "情報の検索・整理・分析"
       },
       "data": {
@@ -999,7 +999,7 @@
     "backToChats": "会話一覧に戻る",
     "sessionLabel": "セッション",
     "new": "新規",
-    "welcome": "こんにちは。AI アシスタントです。今日は何をお手伝いできますか？",
+    "welcome": "こんにちは。Semibot です。今日は何を一緒に進めますか？",
     "pendingApprovals": "承認待ち",
     "risk": "リスク",
     "approve": "承認",

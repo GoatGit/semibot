@@ -947,7 +947,7 @@
     "title": "Start New Chat",
     "subtitle": "Select an agent, or type your question to start chatting",
     "chooseAgent": "Choose Agent",
-    "smartAssistant": "Smart AI assistant",
+    "smartAssistant": "General agent",
     "quickStart": "Quick Start",
     "inputPlaceholder": "Describe your question or task...",
     "selectedPrefix": "Selected:",
@@ -957,15 +957,15 @@
     "defaultMessage": "Hi, please introduce yourself.",
     "templates": {
       "general": {
-        "name": "General Assistant",
-        "description": "Multi-purpose AI assistant for everyday tasks"
+        "name": "General Agent",
+        "description": "Multi-purpose general agent for everyday tasks"
       },
       "code": {
-        "name": "Code Assistant",
+        "name": "Code Agent",
         "description": "Focused on coding and code review tasks"
       },
       "research": {
-        "name": "Research Assistant",
+        "name": "Research Agent",
         "description": "Search, organize, and analyze information"
       },
       "data": {
@@ -999,7 +999,7 @@
     "backToChats": "Back to chats",
     "sessionLabel": "Session",
     "new": "New",
-    "welcome": "Hi! I am your AI assistant. How can I help you today?",
+    "welcome": "Hi! I am Semibot. What should we work on today?",
     "pendingApprovals": "Pending approvals",
     "risk": "Risk",
     "approve": "Approve",
