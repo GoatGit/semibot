@@ -1133,7 +1133,7 @@
       "coreData": "ダッシュボードの主要データを読み込めませんでした。API サービスを確認してください。",
       "load": "読み込みに失敗しました"
     },
-    "title": "Semibot - セミ自律ボット",
+    "title": "Semibot - 半分の汎用エージェント",
     "channelList": {
       "title": "Bot 会話",
       "subtitle": "Bot と Chat ID ごとにグループ化された Bot 会話と最近の実行を参照します。",

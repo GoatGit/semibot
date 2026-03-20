@@ -1,8 +1,10 @@
-# Semibot
+# Semibot - 半个通用智能体
 
 [中文](./README.zh-CN.md) | [English](./README.en.md) | [日本語](./README.ja.md)
 
-Semibot 是一个本地优先的通用 Agent 产品，包含：
+能干活、能提醒、能协作、能自己变强的大闸蟹。
+
+Semibot 是一个本地优先、可安装、可协作、可进化的通用智能体产品，包含：
 
 - `apps/web`: Next.js Web UI
 - `apps/api`: Node.js API

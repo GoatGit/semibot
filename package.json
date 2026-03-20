@@ -2,7 +2,7 @@
   "name": "semibot",
   "version": "2.0.0",
   "private": true,
-  "description": "AI Agent Orchestration Platform",
+  "description": "Semibot - 半个通用智能体",
   "packageManager": "pnpm@9.0.0",
   "engines": {
     "node": ">=20.0.0",

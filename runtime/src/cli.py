@@ -215,7 +215,7 @@ def _banner_lines(title: str | None = None) -> list[str]:
 def _print_banner() -> None:
     if not sys.stdout.isatty():
         return
-    for line in _banner_lines():
+    for line in _banner_lines("Semibot - 半个通用智能体"):
         print(line)
 
 

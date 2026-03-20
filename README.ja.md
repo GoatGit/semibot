@@ -1,8 +1,10 @@
-# Semibot
+# Semibot - 半分の汎用エージェント
 
 [中文](./README.zh-CN.md) | [English](./README.en.md) | [日本語](./README.ja.md)
 
-Semibot はローカルファーストの汎用 Agent 製品で、以下を含みます。
+仕事をこなし、知らせ、協調し、自分で強くなっていくカニ。
+
+Semibot は、ローカルファーストで、インストール可能で、協調的かつ自己進化する汎用エージェント製品で、以下を含みます。
 
 - `apps/web`: Next.js Web UI
 - `apps/api`: Node.js API

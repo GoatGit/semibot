@@ -1,8 +1,10 @@
-# Semibot
+# Semibot - Half a General Agent
 
 [中文](./README.zh-CN.md) | [English](./README.en.md) | [日本語](./README.ja.md)
 
-Semibot is a local-first general agent product, including:
+The crab that gets work done, reminds, collaborates, and keeps getting stronger.
+
+Semibot is a local-first, installable, collaborative, self-improving general agent product, including:
 
 - `apps/web`: Next.js Web UI
 - `apps/api`: Node.js API

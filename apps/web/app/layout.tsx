@@ -5,8 +5,8 @@ import { ToastContainer } from '@/components/ui/Toast'
 import { LocaleProvider } from '@/components/providers/LocaleProvider'
 
 export const metadata: Metadata = {
-  title: 'Semibot - Agent Orchestration Platform',
-  description: 'Professional AI Agent orchestration platform for developers and enterprises',
+  title: 'Semibot - 半个通用智能体',
+  description: '能干活、能提醒、能协作、能自己变强的大闸蟹。一个本地优先、可安装、可协作、可进化的通用智能体产品。',
   icons: {
     icon: '/semibot-logo.png',
     shortcut: '/semibot-logo.png',

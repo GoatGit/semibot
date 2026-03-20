@@ -1133,7 +1133,7 @@
       "coreData": "Failed to load dashboard core data. Please check API service.",
       "load": "Load failed"
     },
-    "title": "Semibot - A semi bot",
+    "title": "Semibot - Half a General Agent",
     "channelList": {
       "title": "Bot Conversations",
       "subtitle": "Browse all bot conversations grouped by bot and Chat ID with recent runs.",

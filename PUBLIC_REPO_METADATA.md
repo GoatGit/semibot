@@ -11,7 +11,7 @@ This file is the source of truth for the public GitHub repository metadata of `G
 
 ## Recommended Description
 
-Semibot is a local-first general agent product with a Next.js UI, Node API, Python runtime, one-click install, and Public Core release build pipeline.
+Semibot - 半个通用智能体. A local-first, installable, collaborative, self-improving general agent product.
 
 ## Recommended Topics
 
