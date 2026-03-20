@@ -29,9 +29,12 @@ import contextPoliciesRouter from './context-policies'
 import evolutionCapabilitiesRouter from './evolution-capabilities'
 import statsRouter from './stats'
 import studiosRouter from './studios'
+import { isChannelsFeatureEnabled, isWebhooksFeatureEnabled } from '../../lib/feature-flags'
 import { resolveCurrentVersion, resolveVersionPayload } from '../../lib/version'
 
 const router: Router = Router()
+const channelsEnabled = isChannelsFeatureEnabled()
+const webhooksEnabled = isWebhooksFeatureEnabled()
 
 // 健康检查
 router.get('/health', (_req: Request, res: Response) => {
@@ -69,9 +72,10 @@ router.get('/docs', (_req: Request, res: Response) => {
         events: '/api/v1/events',
         rules: '/api/v1/rules',
         approvals: '/api/v1/approvals',
-        channels: '/api/v1/channels',
         control: '/api/v1/control',
         evolutionCapabilities: '/api/v1/evolution-capabilities',
+        ...(channelsEnabled ? { channels: '/api/v1/channels' } : {}),
+        ...(webhooksEnabled ? { webhooks: '/api/v1/webhooks' } : {}),
       },
       deprecated: [
         {
@@ -100,14 +104,18 @@ router.use('/llm-providers', llmProvidersRouter)
 router.use('/users', usersRouter)
 router.use('/skill-definitions', skillDefinitionsRouter)
 router.use('/evolved-skills', evolvedSkillsRouter)
-router.use('/webhooks', webhooksRouter)
+if (webhooksEnabled) {
+  router.use('/webhooks', webhooksRouter)
+}
 router.use('/vm', vmRouter)
 router.use('/files', filesRouter)
 router.use('/runtime', runtimeRouter)
 router.use('/events', eventsRouter)
 router.use('/rules', rulesRouter)
 router.use('/approvals', approvalsRouter)
-router.use('/channels', channelsRouter)
+if (channelsEnabled) {
+  router.use('/channels', channelsRouter)
+}
 router.use('/control', controlRouter)
 router.use('/context-policies', contextPoliciesRouter)
 router.use('/evolution-capabilities', evolutionCapabilitiesRouter)

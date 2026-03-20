@@ -34,6 +34,7 @@ from src.gateway.channels.telegram.notifier import SendFn as TelegramSendFn
 from src.gateway.parsers.approval_text import extract_message_text
 from src.runtime_service import run_task_once
 from src.server.config_store import RuntimeConfigStore
+from src.server.feature_flags import channels_enabled
 from src.server.routes.gateway import register_gateway_routes
 from src.skills.index_manager import SkillsIndexManager
 from src.skills.bootstrap import create_default_registry
@@ -183,6 +184,7 @@ def create_app(
     imessage_send_fn: IMessageSendFn | None = None,
     task_runner: TaskRunner | None = None,
 ) -> FastAPI:
+    channels_feature_enabled = channels_enabled()
     db = db_path or str(Path("~/.semibot/semibot.db").expanduser())
     rules = rules_path or str(Path("~/.semibot/rules").expanduser())
     _task_runner = task_runner or run_task_once
@@ -243,24 +245,25 @@ def create_app(
         on_cron_completed=_on_cron_completed,
     )
 
-    gateway_manager = GatewayManager(
-        config_store=config_store,
-        gateway_context=gateway_context,
-        engine=engine,
-        feishu_verify_token=feishu_verify_token,
-        feishu_webhook_url=feishu_webhook_url,
-        feishu_webhook_urls=feishu_webhook_urls,
-        feishu_notify_event_types=feishu_notify_event_types,
-        feishu_templates=feishu_templates,
-        feishu_send_fn=feishu_send_fn,
-        telegram_bot_token=telegram_bot_token,
-        telegram_default_chat_id=telegram_default_chat_id,
-        telegram_webhook_secret=telegram_webhook_secret,
-        telegram_notify_event_types=telegram_notify_event_types,
-        telegram_send_fn=telegram_send_fn,
-        discord_send_fn=discord_send_fn,
-        imessage_send_fn=imessage_send_fn,
-    )
+    if channels_feature_enabled:
+        gateway_manager = GatewayManager(
+            config_store=config_store,
+            gateway_context=gateway_context,
+            engine=engine,
+            feishu_verify_token=feishu_verify_token,
+            feishu_webhook_url=feishu_webhook_url,
+            feishu_webhook_urls=feishu_webhook_urls,
+            feishu_notify_event_types=feishu_notify_event_types,
+            feishu_templates=feishu_templates,
+            feishu_send_fn=feishu_send_fn,
+            telegram_bot_token=telegram_bot_token,
+            telegram_default_chat_id=telegram_default_chat_id,
+            telegram_webhook_secret=telegram_webhook_secret,
+            telegram_notify_event_types=telegram_notify_event_types,
+            telegram_send_fn=telegram_send_fn,
+            discord_send_fn=discord_send_fn,
+            imessage_send_fn=imessage_send_fn,
+        )
     sessions_root = Path("~/.semibot/sessions").expanduser()
     checkpointer = LocalCheckpointer(str(sessions_root))
     runtime_base_url = str(
@@ -269,26 +272,28 @@ def create_app(
     ).rstrip("/")
     channel_internal_tokens: dict[str, str] = {}
     channel_supervisors: dict[str, Any] = {}
-    for provider in gateway_manager.channel_plugins.providers():
-        env_name = f"SEMIBOT_{provider.upper()}_INTERNAL_TOKEN"
-        internal_token = str(os.getenv(env_name) or uuid4().hex).strip()
-        channel_internal_tokens[provider] = internal_token
-        plugin = gateway_manager.channel_plugin(provider)
-        if not plugin:
-            continue
-        supervisor = plugin.build_connection_supervisor(
-            gateway_manager,
-            runtime_base_url=runtime_base_url,
-            internal_token=internal_token,
-        )
-        if supervisor is not None:
-            channel_supervisors[provider] = supervisor
+    if gateway_manager:
+        for provider in gateway_manager.channel_plugins.providers():
+            env_name = f"SEMIBOT_{provider.upper()}_INTERNAL_TOKEN"
+            internal_token = str(os.getenv(env_name) or uuid4().hex).strip()
+            channel_internal_tokens[provider] = internal_token
+            plugin = gateway_manager.channel_plugin(provider)
+            if not plugin:
+                continue
+            supervisor = plugin.build_connection_supervisor(
+                gateway_manager,
+                runtime_base_url=runtime_base_url,
+                internal_token=internal_token,
+            )
+            if supervisor is not None:
+                channel_supervisors[provider] = supervisor
 
     async def _gateway_event_sink(event: Event) -> None:
         if gateway_manager:
             await gateway_manager.handle_engine_event(event)
 
-    engine.bus.subscribe(_gateway_event_sink)
+    if gateway_manager:
+        engine.bus.subscribe(_gateway_event_sink)
 
     def _sync_cron_scheduler_from_store() -> None:
         """Keep in-memory scheduler aligned with persisted cron jobs."""
@@ -507,11 +512,12 @@ def create_app(
                 summary[key] = value
         return summary
 
-    register_gateway_routes(
-        app,
-        gateway_manager,
-        internal_tokens=channel_internal_tokens,
-    )
+    if gateway_manager:
+        register_gateway_routes(
+            app,
+            gateway_manager,
+            internal_tokens=channel_internal_tokens,
+        )
 
     @app.post("/v1/control/{domain}/{action}")
     async def control_plane_action(
