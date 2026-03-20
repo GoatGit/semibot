@@ -1,0 +1,154 @@
+/**
+ * Semibot API 服务入口
+ */
+
+// 环境变量必须在所有其他模块之前加载（ESM import 提升问题）
+import './env'
+
+import express, { type Express, type Request, type Response, type NextFunction } from 'express'
+import cors from 'cors'
+import helmet from 'helmet'
+import compression from 'compression'
+import { errorHandler, notFoundHandler } from './middleware/errorHandler'
+import { generalRateLimit } from './middleware/rateLimit'
+import { tracing } from './middleware/tracing'
+import v1Router from './routes/v1/index'
+import {
+  SERVER_PORT,
+  SERVER_HOST,
+  ENABLE_REQUEST_LOGGING,
+  LOG_LEVEL,
+} from './constants/config'
+import { createLogger } from './lib/logger'
+import { initWSServer } from './ws/ws-server'
+
+const serverLogger = createLogger('server')
+
+// ═══════════════════════════════════════════════════════════════
+// 创建 Express 应用
+// ═══════════════════════════════════════════════════════════════
+
+const app: Express = express()
+
+// ═══════════════════════════════════════════════════════════════
+// 基础中间件
+// ═══════════════════════════════════════════════════════════════
+
+// 安全头
+app.use(helmet({
+  contentSecurityPolicy: false, // SSE 需要禁用
+}))
+
+// CORS
+app.use(cors({
+  origin: process.env.CORS_ORIGIN ?? '*',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+  exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'X-Request-ID'],
+}))
+
+// 压缩（SSE 响应跳过压缩，避免缓冲导致事件无法实时推送）
+app.use(compression({
+  filter: (req, res) => {
+    if (res.getHeader('Content-Type') === 'text/event-stream') {
+      return false
+    }
+    return compression.filter(req, res)
+  },
+}))
+
+// JSON 解析
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true }))
+
+// 请求追踪（生成/透传 X-Request-ID）
+app.use(tracing)
+
+// 请求日志
+if (ENABLE_REQUEST_LOGGING) {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const start = Date.now()
+
+    res.on('finish', () => {
+      const duration = Date.now() - start
+      serverLogger.debug('请求完成', {
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        duration,
+      })
+    })
+
+    next()
+  })
+}
+
+// 通用限流
+app.use(generalRateLimit)
+
+// ═══════════════════════════════════════════════════════════════
+// API 路由
+// ═══════════════════════════════════════════════════════════════
+
+// v1 API
+app.use('/api/v1', v1Router)
+
+// 根路径
+app.get('/', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      name: 'Semibot API',
+      version: '1.0.0',
+      docs: '/api/v1/docs',
+    },
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════
+// 错误处理
+// ═══════════════════════════════════════════════════════════════
+
+// 404 处理
+app.use(notFoundHandler)
+
+// 统一错误处理
+app.use(errorHandler)
+
+// ═══════════════════════════════════════════════════════════════
+// 启动服务器
+// ═══════════════════════════════════════════════════════════════
+
+const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
+  serverLogger.info('服务器已启动', {
+    host: SERVER_HOST,
+    port: SERVER_PORT,
+    logLevel: LOG_LEVEL,
+    api: `http://${SERVER_HOST}:${SERVER_PORT}/api/v1`,
+  })
+})
+
+// 初始化控制平面 WS 服务（执行平面反向连接入口）
+const wsServer = initWSServer(server)
+
+// 优雅关闭
+process.on('SIGTERM', () => {
+  serverLogger.info('收到 SIGTERM 信号，正在优雅关闭...')
+  wsServer.close()
+  server.close(() => {
+    serverLogger.info('服务器已关闭')
+    process.exit(0)
+  })
+})
+
+process.on('SIGINT', () => {
+  serverLogger.info('收到 SIGINT 信号，正在优雅关闭...')
+  wsServer.close()
+  server.close(() => {
+    serverLogger.info('服务器已关闭')
+    process.exit(0)
+  })
+})
+
+export default app

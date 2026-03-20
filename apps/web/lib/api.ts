@@ -1,0 +1,417 @@
+/**
+ * API 客户端封装
+ *
+ * 提供统一的 API 请求方法，支持认证、错误处理、重试等功能
+ */
+
+import {
+  API_BASE_PATH,
+  DEFAULT_TIMEOUT_MS,
+  DEFAULT_MAX_RETRIES,
+  RETRY_BASE_DELAY_MS,
+} from '@semibot/shared-config'
+import { AUTH_DISABLED } from '@/lib/auth-mode'
+
+// ═══════════════════════════════════════════════════════════════
+// 类型定义
+// ═══════════════════════════════════════════════════════════════
+
+export interface RequestOptions extends Omit<RequestInit, 'body'> {
+  /** 请求参数 (GET 时作为 query string) */
+  params?: Record<string, unknown>
+  /** 请求体 */
+  body?: unknown
+  /** 超时时间 (毫秒) */
+  timeout?: number
+  /** 是否重试 */
+  retry?: boolean
+  /** 最大重试次数 */
+  maxRetries?: number
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 辅助函数
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 获取 API 基础 URL
+ */
+function normalizeApiBase(url: string): string {
+  const normalized = url.replace(/\/$/, '')
+  return normalized.endsWith(API_BASE_PATH) ? normalized : `${normalized}${API_BASE_PATH}`
+}
+
+function isLocalHostname(hostname: string): boolean {
+  const safe = String(hostname || '').toLowerCase()
+  return safe === 'localhost' || safe === '127.0.0.1' || safe === '::1'
+}
+
+function rewriteLocalApiUrlToCurrentHost(envUrl: string): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const parsed = new URL(envUrl)
+    const currentHost = window.location.hostname
+    if (!isLocalHostname(parsed.hostname) || !isLocalHostname(currentHost)) {
+      return null
+    }
+    if (parsed.hostname === currentHost) {
+      return normalizeApiBase(envUrl)
+    }
+    const rebuilt = `${window.location.protocol}//${currentHost}:${parsed.port}${parsed.pathname}`
+    return normalizeApiBase(rebuilt)
+  } catch {
+    return null
+  }
+}
+
+function shouldUseEnvApiUrlInBrowser(envUrl: string): boolean {
+  if (typeof window === 'undefined') return true
+  try {
+    const envHost = new URL(envUrl).hostname
+    const currentHost = window.location.hostname
+    if (isLocalHostname(envHost) && !isLocalHostname(currentHost)) {
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const envApiUrl = process.env.NEXT_PUBLIC_API_URL
+    if (envApiUrl && shouldUseEnvApiUrlInBrowser(envApiUrl)) {
+      return rewriteLocalApiUrlToCurrentHost(envApiUrl) ?? normalizeApiBase(envApiUrl)
+    }
+    return API_BASE_PATH
+  }
+
+  // 非浏览器环境优先使用环境变量
+  if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
+    return normalizeApiBase(process.env.NEXT_PUBLIC_API_URL)
+  }
+
+  // 服务端默认
+  return `${process.env.API_INTERNAL_URL || 'http://localhost:3001'}${API_BASE_PATH}`
+}
+
+export function getDirectApiBaseUrlForBrowser(): string {
+  if (typeof window === 'undefined') {
+    return normalizeApiBase(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1')
+  }
+
+  const envApiUrl = process.env.NEXT_PUBLIC_API_URL
+  if (envApiUrl && shouldUseEnvApiUrlInBrowser(envApiUrl)) {
+    return rewriteLocalApiUrlToCurrentHost(envApiUrl) ?? normalizeApiBase(envApiUrl)
+  }
+
+  // 远程访问场景下，避免直连访问者机器 localhost。
+  // 默认回退到当前主机的 API 端口。
+  const protocol = window.location.protocol || 'http:'
+  const host = window.location.hostname
+  return `${protocol}//${host}:3001${API_BASE_PATH}`
+}
+
+/**
+ * 获取认证 Token
+ */
+function getAuthToken(): string | null {
+  if (AUTH_DISABLED) return null
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem('auth_token')
+}
+
+/**
+ * 构建 URL 查询字符串
+ */
+function buildQueryString(params: Record<string, unknown>): string {
+  const searchParams = new URLSearchParams()
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value))
+    }
+  }
+
+  return searchParams.toString()
+}
+
+/**
+ * 计算重试延迟 (指数退避)
+ */
+function getRetryDelay(attempt: number): number {
+  return Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt), 10000)
+}
+
+/**
+ * 延迟函数
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function parseJsonSafe<T = unknown>(text: string): T | Record<string, never> {
+  if (!text) return {}
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return {}
+  }
+}
+
+function extractErrorMessage(data: unknown, fallback: string): string {
+  if (data && typeof data === 'object') {
+    const payload = data as { error?: { message?: string }; message?: string }
+    if (payload.error?.message) return payload.error.message
+    if (payload.message) return payload.message
+  }
+  return fallback
+}
+
+/**
+ * 判断是否应该重试
+ * 注意：429 限流不重试，重试只会加剧限流形成恶性循环
+ */
+function shouldRetry(status: number): boolean {
+  return status >= 500
+}
+
+// ═══════════════════════════════════════════════════════════════
+// API 客户端实现
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 发起 API 请求
+ */
+async function request<T>(
+  method: string,
+  path: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const {
+    params,
+    body,
+    timeout = DEFAULT_TIMEOUT_MS,
+    retry = true,
+    maxRetries = DEFAULT_MAX_RETRIES,
+    headers: customHeaders,
+    ...fetchOptions
+  } = options
+
+  // 构建 URL
+  const baseUrl = getApiBaseUrl()
+  let url = `${baseUrl}${path}`
+
+  if (params) {
+    const queryString = buildQueryString(params)
+    if (queryString) {
+      url += `?${queryString}`
+    }
+  }
+
+  // 构建请求头
+  const headers: Record<string, string> = {
+    ...(customHeaders as Record<string, string>),
+  }
+
+  const token = getAuthToken()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  // 请求配置
+  const requestInit: RequestInit = {
+    method,
+    headers,
+    ...fetchOptions,
+  }
+
+  if (body && method !== 'GET') {
+    if (!headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json'
+    }
+    requestInit.body = JSON.stringify(body)
+  }
+
+  // 执行请求 (带重试)
+  let lastError: Error | null = null
+  let attempt = 0
+
+  while (attempt <= maxRetries) {
+    try {
+      // 创建超时控制
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+      const response = await fetch(url, {
+        ...requestInit,
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+
+      // 解析响应（兼容 204/空响应）
+      const isNoContent = response.status === 204 || response.status === 205
+      const rawText = isNoContent ? '' : await response.text()
+      const data = parseJsonSafe(rawText)
+
+      // 请求失败：先判断是否可重试，再抛出错误
+      if (!response.ok) {
+        if (retry && shouldRetry(response.status) && attempt < maxRetries) {
+          const retryDelay = getRetryDelay(attempt)
+          console.warn(
+            `[API] 请求失败，准备重试 - ${method} ${path}, 状态: ${response.status}, 第 ${attempt + 1}/${maxRetries} 次，延迟 ${retryDelay}ms`
+          )
+          await delay(retryDelay)
+          attempt++
+          continue
+        }
+
+        const errorMessage = extractErrorMessage(data, response.statusText)
+        throw Object.assign(new Error(errorMessage), {
+          response: { status: response.status, data }
+        })
+      }
+
+      return data as T
+    } catch (error) {
+      lastError = error as Error
+
+      // 网络错误可以重试
+      if (retry && attempt < maxRetries && (error as Error).name !== 'AbortError') {
+        const retryDelay = getRetryDelay(attempt)
+        console.warn(
+          `[API] 请求异常，准备重试 - ${method} ${path}, 错误: ${(error as Error).message}, 第 ${attempt + 1}/${maxRetries} 次，延迟 ${retryDelay}ms`
+        )
+        await delay(retryDelay)
+        attempt++
+        continue
+      }
+
+      break
+    }
+  }
+
+  // 所有重试都失败
+  console.error(`[API] 请求失败 - ${method} ${path}`, lastError)
+  throw lastError ?? new Error('请求失败')
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 导出 API 客户端
+// ═══════════════════════════════════════════════════════════════
+
+export const apiClient = {
+  /**
+   * GET 请求
+   */
+  get<T>(path: string, options?: RequestOptions): Promise<T> {
+    return request<T>('GET', path, options)
+  },
+
+  /**
+   * POST 请求
+   */
+  post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>('POST', path, { ...options, body })
+  },
+
+  /**
+   * PUT 请求
+   */
+  put<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>('PUT', path, { ...options, body })
+  },
+
+  /**
+   * PATCH 请求
+   */
+  patch<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>('PATCH', path, { ...options, body })
+  },
+
+  /**
+   * DELETE 请求
+   */
+  delete<T>(path: string, options?: RequestOptions): Promise<T> {
+    return request<T>('DELETE', path, options)
+  },
+
+  /**
+   * 文件上传请求 (FormData)
+   *
+   * 不设置 Content-Type，让浏览器自动设置 multipart boundary
+   */
+  async upload<T>(path: string, formData: FormData, options: RequestOptions = {}): Promise<T> {
+    const {
+      timeout = 120000,
+      retry = true,
+      maxRetries = DEFAULT_MAX_RETRIES,
+      headers: customHeaders,
+    } = options
+
+    // 上传直连后端，绕过 Next.js rewrite 代理（代理可能破坏 multipart body）
+    const directBase = getDirectApiBaseUrlForBrowser()
+    const url = `${directBase}${path}`
+
+    const headers: Record<string, string> = {
+      ...(customHeaders as Record<string, string>),
+    }
+
+    const token = getAuthToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    let lastError: Error | null = null
+    let attempt = 0
+
+    while (attempt <= maxRetries) {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: formData,
+          signal: controller.signal,
+        })
+
+        clearTimeout(timeoutId)
+
+        const rawText = await response.text()
+        const data = parseJsonSafe(rawText)
+
+        if (!response.ok) {
+          if (retry && shouldRetry(response.status) && attempt < maxRetries) {
+            const retryDelay = getRetryDelay(attempt)
+            await delay(retryDelay)
+            attempt++
+            continue
+          }
+          const message = extractErrorMessage(data, response.statusText)
+          throw Object.assign(new Error(message), { response: { status: response.status, data } })
+        }
+
+        return data as T
+      } catch (error) {
+        lastError = error as Error
+
+        if (retry && attempt < maxRetries && (error as Error).name !== 'AbortError') {
+          const retryDelay = getRetryDelay(attempt)
+          await delay(retryDelay)
+          attempt++
+          continue
+        }
+
+        break
+      }
+    }
+
+    throw lastError ?? new Error('上传请求失败')
+  },
+}
+
+export default apiClient

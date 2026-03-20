@@ -1,0 +1,529 @@
+/**
+ * Tool 服务层
+ *
+ * 使用数据库持久化实现 Tool CRUD
+ */
+
+import { createError } from '../middleware/errorHandler'
+import { TOOL_NOT_FOUND, TOOL_LIMIT_EXCEEDED } from '../constants/errorCodes'
+import { MAX_TOOLS_PER_ORG } from '../constants/config'
+import * as toolRepository from '../repositories/tool.repository'
+import { createLogger } from '../lib/logger'
+
+const toolLogger = createLogger('tool')
+const NON_TOOL_SKILL_NAMES = new Set(['xlsx', 'pdf'])
+
+const BUILTIN_TOOL_TEMPLATES: Record<
+  string,
+  { description: string; type: string; config: ToolConfig }
+> = {
+  search: {
+    description: '内建搜索工具',
+    type: 'builtin',
+    config: {
+      timeout: 15000,
+      rateLimit: 120,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  code_executor: {
+    description: '内建代码执行工具',
+    type: 'builtin',
+    config: {
+      timeout: 60000,
+      rateLimit: 60,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  file_io: {
+    description: '内建会话工作目录文件工具（read/write/list/edit）',
+    type: 'builtin',
+    config: {
+      timeout: 10000,
+      rateLimit: 120,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  semi_browser: {
+    description: '内建浏览器自动化工具（Playwright）',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 60,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+      headless: true,
+      browserType: 'chromium',
+      blockedDomains: ['localhost', '127.0.0.1', '::1'],
+      allowedDomains: [],
+      maxTextLength: 20000,
+    },
+  },
+  http_client: {
+    description: '内建 HTTP 客户端工具（REST 调用/鉴权/重试）',
+    type: 'builtin',
+    config: {
+      timeout: 15000,
+      retryAttempts: 2,
+      rateLimit: 120,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['method', 'url'],
+      authType: 'none',
+      authHeader: 'X-API-Key',
+      allowLocalhost: false,
+      allowedDomains: [],
+      blockedDomains: ['localhost', '127.0.0.1', '::1'],
+      maxResponseChars: 20000,
+    },
+  },
+  web_fetch: {
+    description: '内建网页抓取与正文抽取工具（可选 readability）',
+    type: 'builtin',
+    config: {
+      timeout: 12000,
+      retryAttempts: 1,
+      rateLimit: 120,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+      allowLocalhost: false,
+      allowedDomains: [],
+      blockedDomains: ['localhost', '127.0.0.1', '::1'],
+      maxResponseChars: 20000,
+    },
+  },
+  json_transform: {
+    description: '内建 JSON 转换工具（JSONPath/JMESPath/模板映射）',
+    type: 'builtin',
+    config: {
+      timeout: 10000,
+      rateLimit: 240,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  text_processing: {
+    description: '内建文本处理工具（compact/extract/slice）',
+    type: 'builtin',
+    config: {
+      timeout: 20000,
+      rateLimit: 120,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  memory: {
+    description: '内建记忆工具（长期检索/长期保存/短期快照/短期压缩/预算查询）',
+    type: 'builtin',
+    config: {
+      timeout: 20000,
+      rateLimit: 120,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  csv_xlsx: {
+    description: '内建 CSV/Excel 读写与分析工具',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 120,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['action', 'path', 'output_path'],
+      maxReturnRows: 500,
+    },
+  },
+  pdf_report: {
+    description: '内建 PDF 报告生成工具（模板化表格/图表/结论）',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 60,
+      requiresApproval: false,
+      riskLevel: 'low',
+      approvalScope: 'session',
+      approvalDedupeKeys: [],
+    },
+  },
+  sql_query_readonly: {
+    description: '内建只读 SQL 查询工具（白名单/超时/行数限制）',
+    type: 'builtin',
+    config: {
+      timeout: 15000,
+      rateLimit: 120,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['database', 'query'],
+      maxRows: 200,
+    },
+  },
+  skill_installer: {
+    description: '内建技能安装工具（从本地目录/zip安装并刷新运行时技能索引）',
+    type: 'builtin',
+    config: {
+      timeout: 30000,
+      rateLimit: 30,
+      requiresApproval: true,
+      riskLevel: 'high',
+      approvalScope: 'session',
+      approvalDedupeKeys: ['source_path', 'skill_name'],
+    },
+  },
+}
+
+function getBuiltinTemplate(toolName: string): { description: string; type: string; config: ToolConfig } {
+  return (
+    BUILTIN_TOOL_TEMPLATES[toolName] ?? {
+      description: `Builtin tool: ${toolName}`,
+      type: 'builtin',
+      config: {
+        timeout: 15000,
+        rateLimit: 100,
+      },
+    }
+  )
+}
+
+function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig | undefined {
+  if (!config) return undefined
+  const sanitized: ToolConfig = { ...config }
+  delete sanitized.permissions
+  if (
+    toolName === 'code_executor' ||
+    toolName === 'file_io' ||
+    toolName === 'semi_browser' ||
+    toolName === 'json_transform' ||
+    toolName === 'memory' ||
+    toolName === 'csv_xlsx' ||
+    toolName === 'pdf_report' ||
+    toolName === 'skill_installer'
+  ) {
+    delete sanitized.apiEndpoint
+    delete sanitized.apiKey
+  }
+  if (toolName === 'web_fetch' || toolName === 'sql_query_readonly') {
+    delete sanitized.apiKey
+  }
+  return sanitized
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 类型定义
+// ═══════════════════════════════════════════════════════════════
+
+export interface Tool {
+  id: string
+  name: string
+  description?: string
+  type: string
+  schema: ToolSchema
+  config: ToolConfig
+  isBuiltin: boolean
+  isActive: boolean
+  createdBy?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ToolSchema {
+  parameters?: Record<string, unknown>
+  returns?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface ToolConfig {
+  timeout?: number
+  retryAttempts?: number
+  requiresApproval?: boolean
+  rateLimit?: number
+  [key: string]: unknown
+}
+
+export interface CreateToolInput {
+  name: string
+  description?: string
+  type: string
+  schema?: ToolSchema
+  config?: ToolConfig
+}
+
+export interface UpdateToolInput {
+  config?: ToolConfig
+  isActive?: boolean
+}
+
+export interface ListToolsOptions {
+  page?: number
+  limit?: number
+  search?: string
+  type?: string
+  includeBuiltin?: boolean
+}
+
+export interface PaginatedResult<T> {
+  data: T[]
+  meta: {
+    total: number
+    page: number
+    limit: number
+    totalPages: number
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 辅助函数
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 将数据库行转换为 Tool 对象
+ */
+function rowToTool(row: toolRepository.ToolRow): Tool {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? undefined,
+    type: row.type,
+    schema: row.schema as ToolSchema,
+    config: row.config as ToolConfig,
+    isBuiltin: row.is_builtin,
+    isActive: row.is_active,
+    createdBy: row.created_by ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 服务方法
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 创建 Tool
+ */
+export async function createTool(
+  userId: string,
+  input: CreateToolInput
+): Promise<Tool> {
+  // 检查配额
+  const existingTools = await toolRepository.findAll({ includeBuiltin: false })
+
+  if (existingTools.meta.total >= MAX_TOOLS_PER_ORG) {
+    toolLogger.warn('Tool 数量已达上限', { current: existingTools.meta.total, limit: MAX_TOOLS_PER_ORG })
+    throw createError(TOOL_LIMIT_EXCEEDED)
+  }
+
+  const row = await toolRepository.create({
+    name: input.name,
+    description: input.description,
+    type: input.type,
+    schema: input.schema,
+    config: input.config,
+    isBuiltin: false,
+    createdBy: userId,
+  })
+
+  return rowToTool(row)
+}
+
+/**
+ * 获取 Tool
+ */
+export async function getTool(toolId: string): Promise<Tool> {
+  const row = await toolRepository.findById(toolId)
+
+  if (!row) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+
+  if (!row.is_active && !row.is_builtin) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  if (NON_TOOL_SKILL_NAMES.has((row.name || '').toLowerCase())) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+
+  return rowToTool(row)
+}
+
+/**
+ * 列出 Tools
+ */
+export async function listTools(
+  options: ListToolsOptions = {}
+): Promise<PaginatedResult<Tool>> {
+  const result = await toolRepository.findAll({
+    includeBuiltin: options.includeBuiltin ?? true,
+    page: options.page,
+    limit: options.limit,
+    search: options.search,
+    type: options.type,
+  })
+
+  const filtered = result.data.filter((row) => !NON_TOOL_SKILL_NAMES.has((row.name || '').toLowerCase()))
+  return {
+    data: filtered.map(rowToTool),
+    meta: {
+      ...result.meta,
+      total: filtered.length,
+      totalPages: Math.max(1, Math.ceil(filtered.length / (result.meta.limit || 1))),
+    },
+  }
+}
+
+/**
+ * 更新 Tool
+ */
+export async function updateTool(
+  toolId: string,
+  input: UpdateToolInput,
+  userId?: string
+): Promise<Tool> {
+  // 先获取现有 Tool
+  const existing = await getTool(toolId)
+
+  // 只允许更新 Tool 的配置/状态
+  if (!existing.isBuiltin) {
+    // custom tool — ok
+  }
+  if (NON_TOOL_SKILL_NAMES.has(existing.name.toLowerCase())) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  const template = existing.isBuiltin ? getBuiltinTemplate(existing.name.toLowerCase()) : null
+  const sanitizedInputConfig = sanitizeToolConfig(existing.name.toLowerCase(), input.config)
+
+  const mergedConfig =
+    sanitizedInputConfig !== undefined
+      ? ({
+          ...(template?.config ?? {}),
+          ...(existing.config || {}),
+          ...sanitizedInputConfig,
+        } as ToolConfig)
+      : undefined
+
+  const row = await toolRepository.update(toolId, {
+    config: mergedConfig,
+    isActive: input.isActive,
+  }, userId)
+
+  if (!row) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+
+  return rowToTool(row)
+}
+
+/**
+ * 按内建工具名创建/更新配置（若不存在则自动创建配置记录）
+ */
+export async function upsertBuiltinToolConfig(
+  userId: string,
+  toolName: string,
+  input: UpdateToolInput
+): Promise<Tool> {
+  const normalizedName = toolName.trim().toLowerCase()
+  if (!normalizedName) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  if (NON_TOOL_SKILL_NAMES.has(normalizedName)) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  const template = getBuiltinTemplate(normalizedName)
+  const sanitizedInputConfig = sanitizeToolConfig(normalizedName, input.config)
+
+  const existing = await toolRepository.findByNameAndOrg(normalizedName)
+
+  if (!existing) {
+    const config = {
+      ...template.config,
+      ...(sanitizedInputConfig ?? {}),
+    }
+    const created = await toolRepository.create({
+      name: normalizedName,
+      description: template.description,
+      type: template.type,
+      schema: {},
+      config,
+      isBuiltin: true,
+      createdBy: userId,
+    })
+
+    // 新建后允许显式设置 isActive
+    if (input.isActive === false) {
+      const updated = await toolRepository.update(created.id, { isActive: false }, userId)
+      return rowToTool(updated ?? created)
+    }
+    return rowToTool(created)
+  }
+
+  if (existing.org_id !== null && !existing.is_builtin) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+
+  const mergedConfig =
+    sanitizedInputConfig !== undefined
+      ? ({
+          ...template.config,
+          ...(existing.config as ToolConfig),
+          ...sanitizedInputConfig,
+        } as ToolConfig)
+      : ({
+          ...template.config,
+          ...(existing.config as ToolConfig),
+        } as ToolConfig)
+
+  const updated = await toolRepository.update(
+    existing.id,
+    {
+      config: mergedConfig,
+      isActive: input.isActive,
+    },
+    userId
+  )
+
+  if (!updated) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+  return rowToTool(updated)
+}
+
+/**
+ * 删除 Tool (软删除)
+ */
+export async function deleteTool(toolId: string): Promise<void> {
+  // 先检查权限
+  const existing = await getTool(toolId)
+
+  // 内置 Tool 不可删除
+  if (existing.isBuiltin) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+
+  const deleted = await toolRepository.softDelete(toolId)
+
+  if (!deleted) {
+    throw createError(TOOL_NOT_FOUND)
+  }
+}

@@ -1,0 +1,23 @@
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  distDir: process.env.NEXT_DIST_DIR || '.next',
+  transpilePackages: ['@semibot/shared-types'],
+  images: {
+    domains: [],
+  },
+  experimental: {
+    optimizePackageImports: ['lucide-react'],
+  },
+  async rewrites() {
+    const apiUrl = process.env.API_INTERNAL_URL || 'http://localhost:3001'
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${apiUrl}/api/:path*`,
+      },
+    ]
+  },
+}
+
+module.exports = nextConfig

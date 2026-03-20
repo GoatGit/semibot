@@ -1,0 +1,584 @@
+/**
+ * Agent 服务层
+ *
+ * 使用数据库持久化实现 Agent CRUD
+ */
+
+import { createError } from '../middleware/errorHandler'
+import {
+  AGENT_NOT_FOUND,
+  AGENT_INACTIVE,
+  AGENT_LIMIT_EXCEEDED,
+  AGENT_SYSTEM_READONLY,
+  LLM_UNAVAILABLE,
+} from '../constants/errorCodes'
+import { MAX_AGENTS_PER_ORG } from '../constants/config'
+import { SYSTEM_DEFAULT_AGENT_ID } from '../constants/config'
+import {
+  getRuntimeLlmConfig,
+} from '../lib/runtime-config-client'
+import * as agentRepository from '../repositories/agent.repository'
+import { generate, getAvailableModels } from './llm.service'
+import * as mcpService from './mcp.service'
+import { buildSkillIndex } from './skill-prompt-builder'
+import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
+import * as skillPackageRepo from '../repositories/skill-package.repository'
+import { createLogger } from '../lib/logger'
+
+const agentLogger = createLogger('agent')
+
+// ═══════════════════════════════════════════════════════════════
+// 类型定义
+// ═══════════════════════════════════════════════════════════════
+
+export interface Agent {
+  id: string
+  name: string
+  description?: string
+  systemPrompt: string
+  config: AgentConfig
+  skills: string[]
+  subAgents: string[]
+  version: number
+  isActive: boolean
+  isPublic: boolean
+  isSystem: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentConfig {
+  model: string
+  modelProviderKey?: string
+  temperature: number
+  maxTokens: number
+  timeoutSeconds: number
+  retryAttempts?: number
+  fallbackModel?: string
+  fallbackProviderKey?: string
+  modelRoles?: {
+    plan?: { model?: string; temperature?: number }
+    act?: { model?: string; temperature?: number }
+    textProcessing?: { model?: string; temperature?: number }
+  }
+}
+
+export interface CreateAgentInput {
+  name: string
+  description?: string
+  systemPrompt: string
+  config?: Partial<AgentConfig>
+  skills?: string[]
+  subAgents?: string[]
+  isPublic?: boolean
+}
+
+export interface UpdateAgentInput {
+  name?: string
+  description?: string
+  systemPrompt?: string
+  config?: Partial<AgentConfig>
+  skills?: string[]
+  subAgents?: string[]
+  isActive?: boolean
+  isPublic?: boolean
+}
+
+export interface ListAgentsOptions {
+  page?: number
+  limit?: number
+  isActive?: boolean
+  search?: string
+}
+
+export interface PaginatedResult<T> {
+  data: T[]
+  meta: {
+    total: number
+    page: number
+    limit: number
+    totalPages: number
+  }
+}
+
+export interface GenerateAgentDraftInput {
+  goal: string
+  model?: string
+  locale?: string
+}
+
+export interface AgentDraft {
+  name: string
+  description: string
+  systemPrompt: string
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 默认配置
+// ═══════════════════════════════════════════════════════════════
+
+const DEFAULT_AGENT_CONFIG: AgentConfig = {
+  model: '',
+  modelProviderKey: '',
+  temperature: 0.7,
+  maxTokens: 4096,
+  timeoutSeconds: 120,
+  retryAttempts: 3,
+  fallbackModel: '',
+  fallbackProviderKey: '',
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 辅助函数
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 将数据库行转换为 Agent 对象
+ */
+function rowToAgent(row: agentRepository.AgentRow): Agent {
+  // 防御性解析：config 可能因 JSON.stringify + postgres.js 双重序列化而变成字符串
+  const rawConfig = typeof row.config === 'string' ? JSON.parse(row.config) : row.config
+  const config = (rawConfig ?? {}) as Record<string, unknown>
+
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? undefined,
+    systemPrompt: row.system_prompt,
+    config: {
+      model: (config.model as string) ?? DEFAULT_AGENT_CONFIG.model,
+      modelProviderKey: (config.modelProviderKey as string) ?? DEFAULT_AGENT_CONFIG.modelProviderKey,
+      temperature: (config.temperature as number) ?? DEFAULT_AGENT_CONFIG.temperature,
+      maxTokens: (config.maxTokens as number) ?? DEFAULT_AGENT_CONFIG.maxTokens,
+      timeoutSeconds: (config.timeoutSeconds as number) ?? DEFAULT_AGENT_CONFIG.timeoutSeconds,
+      retryAttempts: config.retryAttempts as number | undefined,
+      fallbackModel: config.fallbackModel as string | undefined,
+      fallbackProviderKey: config.fallbackProviderKey as string | undefined,
+      modelRoles:
+        config.modelRoles && typeof config.modelRoles === 'object'
+          ? (config.modelRoles as AgentConfig['modelRoles'])
+          : undefined,
+    },
+    skills: row.skills ?? [],
+    subAgents: row.sub_agents ?? [],
+    version: row.version,
+    isActive: row.is_active,
+    isPublic: row.is_public,
+    isSystem: row.is_system,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+async function getLocalDefaultAgentConfig(): Promise<AgentConfig> {
+  const llm = await getRuntimeLlmConfig().catch(() => null)
+  return {
+    ...DEFAULT_AGENT_CONFIG,
+    model: llm?.default_model || DEFAULT_AGENT_CONFIG.model || '',
+    modelProviderKey: llm?.default_provider_key || DEFAULT_AGENT_CONFIG.modelProviderKey || '',
+    fallbackModel: llm?.fallback_model || DEFAULT_AGENT_CONFIG.fallbackModel || '',
+    fallbackProviderKey: llm?.fallback_provider_key || DEFAULT_AGENT_CONFIG.fallbackProviderKey || '',
+  }
+}
+
+async function buildLocalSystemAgent(): Promise<Agent> {
+  const config = await getLocalDefaultAgentConfig()
+  return {
+    id: SYSTEM_DEFAULT_AGENT_ID,
+    name: '系统助手',
+    description: '系统默认 AI 助手，可使用所有系统预装能力',
+    systemPrompt: 'You are a helpful AI assistant with access to system tools and capabilities.',
+    config: {
+      ...config,
+    },
+    skills: [],
+    subAgents: [],
+    version: 1,
+    isActive: true,
+    isPublic: true,
+    isSystem: true,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  }
+}
+
+/**
+ * 校验 skill IDs 有效性（宽容模式：过滤无效 ID，不抛错）
+ */
+async function validateSkillIds(skills: string[]): Promise<string[]> {
+  if (!skills || skills.length === 0) return []
+
+  const validated: string[] = []
+  const invalid: string[] = []
+
+  await Promise.all(skills.map(async (skillId) => {
+    const def = await skillDefinitionRepo.findBySkillId(skillId)
+      .catch(() => null)
+    if (def) {
+      validated.push(skillId)
+    } else {
+      invalid.push(skillId)
+    }
+  }))
+
+  if (invalid.length > 0) {
+    agentLogger.warn('Agent 关联的部分 skill 未找到定义，已保留（可能为 runtime 技能）', {
+      invalidSkillIds: invalid,
+    })
+  }
+
+  // 宽容模式：保留所有 skillId（runtime 技能不在 DB 中）
+  return skills
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 服务方法
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 创建 Agent
+ */
+export async function createAgent(input: CreateAgentInput): Promise<Agent> {
+  const count = await agentRepository.countByOrg()
+  if (count >= MAX_AGENTS_PER_ORG) {
+    agentLogger.warn('Agent 数量已达上限', { current: count, limit: MAX_AGENTS_PER_ORG })
+    throw createError(AGENT_LIMIT_EXCEEDED)
+  }
+
+  const availableModels = await getAvailableModels().catch(() => [] as string[])
+  if (availableModels.length === 0) {
+    agentLogger.error('创建 Agent 失败：当前无可用模型', undefined, {})
+    throw createError(LLM_UNAVAILABLE, '当前没有可用模型，无法创建 Agent')
+  }
+
+  if (input.config?.model && !availableModels.includes(input.config.model)) {
+    throw createError(LLM_UNAVAILABLE, `模型 ${input.config.model} 当前不可用，请选择可用模型`)
+  }
+
+  const primaryModel = input.config?.model || availableModels[0] || DEFAULT_AGENT_CONFIG.model
+  const fallbackModel =
+    input.config?.fallbackModel ||
+    availableModels.find((model) => model !== primaryModel) ||
+    DEFAULT_AGENT_CONFIG.fallbackModel
+
+  const config = { ...DEFAULT_AGENT_CONFIG, ...input.config, model: primaryModel, fallbackModel }
+  const systemPrompt = input.systemPrompt?.trim() || 'You are a helpful AI assistant.'
+
+  // 校验 skills 有效性
+  if (input.skills && input.skills.length > 0) {
+    await validateSkillIds(input.skills)
+  }
+
+  const row = await agentRepository.create({
+    name: input.name,
+    description: input.description,
+    systemPrompt,
+    config,
+    skills: input.skills,
+    subAgents: input.subAgents,
+    isPublic: input.isPublic,
+  })
+
+  return rowToAgent(row)
+}
+
+/**
+ * 获取 Agent
+ */
+export async function getAgent(agentId: string): Promise<Agent> {
+  if (agentId === SYSTEM_DEFAULT_AGENT_ID) {
+    return buildLocalSystemAgent()
+  }
+  const row = await agentRepository.findByIdAndOrg(agentId)
+  if (!row) throw createError(AGENT_NOT_FOUND)
+  return rowToAgent(row)
+}
+
+/**
+ * 获取系统默认 Agent
+ */
+export async function getSystemDefaultAgent(): Promise<Agent> {
+  let row = await agentRepository.findSystemDefault()
+  if (!row) row = await agentRepository.ensureSystemDefault()
+  return rowToAgent(row)
+}
+
+/**
+ * 获取 Agent (允许公开访问)
+ */
+export async function getAgentPublic(agentId: string): Promise<Agent> {
+  const row = await agentRepository.findById(agentId)
+
+  if (!row) {
+    throw createError(AGENT_NOT_FOUND)
+  }
+
+  if (!row.is_public || !row.is_active) {
+    throw createError(AGENT_NOT_FOUND)
+  }
+
+  return rowToAgent(row)
+}
+
+/**
+ * 列出 Agents
+ */
+export async function listAgents(
+  options: ListAgentsOptions = {}
+): Promise<PaginatedResult<Agent>> {
+  const shouldEnsureSystemDefault =
+    !options.search &&
+    options.isActive !== false &&
+    (options.page === undefined || options.page === 1)
+  if (shouldEnsureSystemDefault) {
+    await agentRepository.ensureSystemDefault()
+  }
+
+  let result = await agentRepository.findByOrg({
+    page: options.page,
+    limit: options.limit,
+    isActive: options.isActive,
+    search: options.search,
+  })
+
+  const hasFilter = Boolean(options.search) || options.isActive === false
+  if (result.data.length === 0 && !hasFilter) {
+    await agentRepository.ensureSystemDefault()
+    result = await agentRepository.findByOrg({
+      page: options.page,
+      limit: options.limit,
+      isActive: options.isActive,
+      search: options.search,
+    })
+  }
+
+  return {
+    data: result.data.map(rowToAgent),
+    meta: result.meta,
+  }
+}
+
+/**
+ * 更新 Agent
+ */
+export async function updateAgent(
+  agentId: string,
+  input: UpdateAgentInput
+): Promise<Agent> {
+  const existing = await getAgent(agentId)
+  if (existing.isSystem) throw createError(AGENT_SYSTEM_READONLY)
+
+  const config = input.config ? { ...existing.config, ...input.config } : undefined
+
+  // 校验 skills 有效性
+  if (input.skills && input.skills.length > 0) {
+    await validateSkillIds(input.skills)
+  }
+
+  const row = await agentRepository.update(agentId, {
+    name: input.name,
+    description: input.description,
+    systemPrompt: input.systemPrompt,
+    config,
+    skills: input.skills,
+    subAgents: input.subAgents,
+    isActive: input.isActive,
+    isPublic: input.isPublic,
+  })
+
+  if (!row) throw createError(AGENT_NOT_FOUND)
+  return rowToAgent(row)
+}
+
+function extractJsonObject(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fenced?.[1]) {
+    return fenced[1].trim()
+  }
+  const first = raw.indexOf('{')
+  const last = raw.lastIndexOf('}')
+  if (first >= 0 && last > first) {
+    return raw.slice(first, last + 1)
+  }
+  return raw.trim()
+}
+
+function sanitizeDraft(input: Partial<AgentDraft>, goal: string): AgentDraft {
+  const normalizedName = String(input.name || '').trim().slice(0, 100)
+  const normalizedDescription = String(input.description || '').trim().slice(0, 1000)
+  const normalizedSystemPrompt = String(input.systemPrompt || '').trim().slice(0, 10000)
+
+  const fallbackName = `Agent - ${goal.trim().slice(0, 30) || 'Assistant'}`
+  const fallbackDescription = `负责完成目标：${goal.trim().slice(0, 200)}`
+  const fallbackPrompt = `你是一个专注的 AI 代理。\n你的目标：${goal.trim()}\n请优先给出可执行、清晰、稳健的结果。`
+
+  return {
+    name: normalizedName || fallbackName,
+    description: normalizedDescription || fallbackDescription,
+    systemPrompt: normalizedSystemPrompt || fallbackPrompt,
+  }
+}
+
+export async function generateAgentDraft(input: GenerateAgentDraftInput): Promise<AgentDraft> {
+  const goal = input.goal.trim()
+  if (!goal) {
+    throw new Error('goal is required')
+  }
+
+  const localeHint = input.locale || 'zh-CN'
+  try {
+    const response = await generate(
+      [
+        {
+          role: 'system',
+          content: [
+            'You are an expert AI agent designer.',
+            'Generate a compact draft for a new agent.',
+            'Return JSON only, no markdown, no extra text.',
+            'JSON schema:',
+            '{"name":"string","description":"string","systemPrompt":"string"}',
+            'Constraints:',
+            '- name <= 100 chars',
+            '- description <= 300 chars',
+            '- systemPrompt <= 2000 chars',
+            '- practical, action-oriented, and safe',
+            `- prefer language consistent with locale: ${localeHint}`,
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: `Goal:\n${goal}`,
+        },
+      ],
+      {
+        model: input.model || DEFAULT_AGENT_CONFIG.model,
+        temperature: 0.4,
+        maxTokens: 900,
+      }
+    )
+
+    const raw = extractJsonObject(response.content || '')
+    const parsed = JSON.parse(raw) as Partial<AgentDraft>
+    return sanitizeDraft(parsed, goal)
+  } catch (error) {
+    agentLogger.warn('Agent draft generation failed, using fallback', {
+      model: input.model || DEFAULT_AGENT_CONFIG.model,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return sanitizeDraft({}, goal)
+  }
+}
+
+/**
+ * 删除 Agent (软删除)
+ */
+export async function deleteAgent(agentId: string): Promise<void> {
+  const agent = await getAgent(agentId)
+  if (agent.isSystem) throw createError(AGENT_SYSTEM_READONLY)
+
+  const deleted = await agentRepository.softDelete(agentId)
+  if (!deleted) throw createError(AGENT_NOT_FOUND)
+}
+
+/**
+ * 验证 Agent 可用性 (用于会话创建)
+ */
+export async function validateAgentForSession(
+  agentId: string
+): Promise<Agent> {
+  const agent = await getAgent(agentId)
+
+  if (!agent.isActive) {
+    throw createError(AGENT_INACTIVE)
+  }
+
+  return agent
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SubAgent 委派候选池
+// ═══════════════════════════════════════════════════════════════
+
+export interface SubAgentConfigForRuntime {
+  id: string
+  name: string
+  description: string
+  system_prompt: string
+  model?: string
+  temperature: number
+  max_tokens: number
+  skills: string[]
+  mcp_servers: Array<{
+    id: string
+    name: string
+    endpoint: string
+    transport: string
+    is_connected: boolean
+    available_tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
+  }>
+}
+
+/**
+ * 获取同组织下其他活跃 Agent 作为委派候选池
+ * 为每个候选 Agent 加载其独立的 Skills 和 MCP Servers
+ */
+export async function getCandidateSubAgents(
+  currentAgentId: string
+): Promise<SubAgentConfigForRuntime[]> {
+  const candidates = await agentRepository.findOtherActiveByOrg(currentAgentId)
+
+  const results = await Promise.all(candidates.map(async (row) => {
+    const a = rowToAgent(row)
+
+    // 加载候选 Agent 自己的 Skill 索引（注入 system_prompt）
+    let systemPrompt = a.systemPrompt || `你是 ${a.name}，一个有帮助的 AI 助手。`
+    if (a.skills && a.skills.length > 0) {
+      try {
+        const pairResults = await Promise.all(a.skills.map(async (skillDefId) => {
+          const def = await skillDefinitionRepo.findById(skillDefId)
+          if (!def || !def.isActive) return null
+          const pkg = await skillPackageRepo.findByDefinition(skillDefId)
+          if (!pkg) return null
+          return { definition: def, package: pkg }
+        }))
+        const skillPairs = pairResults.filter(
+          (p): p is { definition: skillDefinitionRepo.SkillDefinition; package: skillPackageRepo.SkillPackage } => p !== null
+        )
+        if (skillPairs.length > 0) {
+          const skillIndexXml = await buildSkillIndex(skillPairs)
+          if (skillIndexXml) {
+            systemPrompt += '\n\n' + skillIndexXml
+          }
+        }
+      } catch (err) {
+        agentLogger.warn('加载候选 Agent Skills 失败', {
+          agentId: a.id, error: (err as Error).message,
+        })
+      }
+    }
+
+    // 加载候选 Agent 自己的 MCP Servers
+    let mcpServers: SubAgentConfigForRuntime['mcp_servers'] = []
+    try {
+      mcpServers = await mcpService.getMcpServersForRuntime(a.id)
+    } catch (err) {
+      agentLogger.warn('加载候选 Agent MCP Servers 失败', {
+        agentId: a.id, error: (err as Error).message,
+      })
+    }
+
+    return {
+      id: a.id,
+      name: a.name,
+      description: a.description || '',
+      system_prompt: systemPrompt,
+      model: a.config?.model,
+      temperature: a.config?.temperature ?? 0.7,
+      max_tokens: a.config?.maxTokens ?? 4096,
+      skills: a.skills || [],
+      mcp_servers: mcpServers,
+    }
+  }))
+
+  return results
+}

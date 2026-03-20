@@ -1,0 +1,6 @@
+skills:
+  - name: code_executor
+    enabled: true
+    config:
+      timeout: 60
+      max_output_size: 100000

@@ -1,0 +1,759 @@
+"""Unified Action Executor - Routes and executes skills, tools, and MCP calls.
+
+This module implements the UnifiedActionExecutor that provides a single
+entry point for executing all types of actions (skills, tools, MCP tools).
+It handles routing, metadata enrichment, and approval hooks.
+"""
+
+import json
+from typing import Any, Callable, Awaitable
+from dataclasses import dataclass, field
+
+from src.orchestrator.state import PlanStep, ToolCallResult
+from src.orchestrator.context import RuntimeSessionContext
+from src.orchestrator.capability import CapabilityGraph
+from src.events.runtime_emitter import RuntimeEventEmitter, emit_runtime_event
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+def _event_safe_result_payload(value: Any, *, max_chars: int = 20000) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list, str, int, float, bool)):
+        if isinstance(value, str) and len(value) > max_chars:
+            return value[:max_chars] + "...(truncated)"
+        if isinstance(value, (dict, list)):
+            try:
+                encoded = json.dumps(value, ensure_ascii=False)
+                if len(encoded) > max_chars:
+                    return {
+                        "truncated": True,
+                        "preview": encoded[:max_chars] + "...(truncated)",
+                    }
+            except Exception:
+                return str(value)[:max_chars] + ("...(truncated)" if len(str(value)) > max_chars else "")
+        return value
+    text = str(value)
+    return text[:max_chars] + ("...(truncated)" if len(text) > max_chars else "")
+
+
+def _event_safe_metadata_payload(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return None
+    payload: dict[str, Any] = {}
+    generated_files = value.get("generated_files")
+    if isinstance(generated_files, list):
+        safe_files: list[dict[str, Any]] = []
+        for item in generated_files:
+            if not isinstance(item, dict):
+                continue
+            safe_files.append(
+                {
+                    "file_id": item.get("file_id"),
+                    "filename": item.get("filename"),
+                    "path": item.get("path"),
+                    "source_path": item.get("source_path"),
+                    "artifact_role": item.get("artifact_role"),
+                    "user_visible": item.get("user_visible", True),
+                }
+            )
+        payload["generated_files"] = safe_files
+    work_dir = value.get("work_dir")
+    if isinstance(work_dir, str) and work_dir.strip():
+        payload["work_dir"] = work_dir
+    capability_type = value.get("capability_type")
+    if isinstance(capability_type, str) and capability_type.strip():
+        payload["capability_type"] = capability_type
+    source = value.get("source")
+    if isinstance(source, str) and source.strip():
+        payload["source"] = source
+    version = value.get("version")
+    if isinstance(version, str) and version.strip():
+        payload["version"] = version
+    return payload or None
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return bool(value)
+
+
+def _normalize_action_params(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort param alias compatibility to prevent avoidable hard failures."""
+    if not isinstance(params, dict):
+        return {}
+
+    normalized = dict(params)
+    name = (tool_name or "").strip().lower()
+
+    if name in {"search"}:
+        query = normalized.get("query")
+        if not isinstance(query, str) or not query.strip():
+            queries = normalized.get("queries")
+            if isinstance(queries, list):
+                for item in queries:
+                    if isinstance(item, str) and item.strip():
+                        normalized["query"] = item.strip()
+                        break
+
+    if name == "web_fetch":
+        url = normalized.get("url")
+        if not isinstance(url, str) or not url.strip():
+            urls = normalized.get("urls")
+            if isinstance(urls, list):
+                for item in urls:
+                    if isinstance(item, str) and item.strip():
+                        normalized["url"] = item.strip()
+                        break
+
+    return normalized
+
+
+@dataclass
+class ExecutionMetadata:
+    """Metadata for action execution."""
+
+    capability_type: str  # "skill", "tool", "mcp"
+    source: str | None = None  # "local", "anthropic", "custom", "builtin"
+    version: str | None = None
+    mcp_server_id: str | None = None
+    mcp_server_name: str | None = None
+    requires_approval: bool = False
+    is_high_risk: bool = False
+    additional: dict[str, Any] = field(default_factory=dict)
+
+
+class UnifiedActionExecutor:
+    """
+    Unified executor for skills, tools, and MCP calls.
+
+    This executor provides a single entry point for all action executions.
+    It handles:
+    - Routing to appropriate executor (skill/tool/mcp)
+    - Metadata enrichment (version, source, etc.)
+    - Approval hooks for high-risk operations
+    - Error handling and retry logic
+    """
+
+    def __init__(
+        self,
+        runtime_context: RuntimeSessionContext,
+        skill_registry: Any = None,
+        mcp_client: Any = None,
+        approval_hook: Callable[[str, dict[str, Any], ExecutionMetadata], Awaitable[bool | dict[str, Any]]] | None = None,
+        audit_logger: Any = None,
+        event_emitter: RuntimeEventEmitter | None = None,
+    ):
+        """
+        Initialize the unified executor.
+
+        Args:
+            runtime_context: Runtime session context
+            skill_registry: Skill registry for skill execution
+            mcp_client: MCP client for MCP tool execution
+            approval_hook: Optional approval hook for high-risk operations
+            audit_logger: Optional audit logger for recording events
+        """
+        self.runtime_context = runtime_context
+        self.skill_registry = skill_registry
+        self.mcp_client = mcp_client
+        self.approval_hook = approval_hook
+        self.audit_logger = audit_logger
+        self.event_emitter = event_emitter or runtime_context.metadata.get("event_emitter")
+
+        # Build capability graph
+        self.capability_graph = CapabilityGraph(runtime_context)
+        self.capability_graph.build()
+
+        # High-risk tools from runtime policy
+        self.high_risk_tools = set(runtime_context.runtime_policy.high_risk_tools)
+
+    async def execute(
+        self,
+        action: PlanStep,
+    ) -> ToolCallResult:
+        """
+        Execute an action (skill/tool/mcp).
+
+        This is the main entry point for action execution. It:
+        1. Validates the action against capability graph
+        2. Determines the capability type and metadata
+        3. Checks for approval if needed
+        4. Routes to appropriate executor
+        5. Enriches result with metadata
+
+        Args:
+            action: The action to execute
+
+        Returns:
+            ToolCallResult with execution result and metadata
+        """
+        tool_name = action.tool
+        params = _normalize_action_params(tool_name or "", action.params)
+        action.params = params
+
+        if not tool_name:
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject="unknown",
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "error": "no_tool_name",
+                },
+                risk_hint="low",
+            )
+            return ToolCallResult(
+                tool_name="unknown",
+                params=params,
+                error="No tool name specified",
+                success=False,
+            )
+
+        logger.info(
+            "Executing action",
+            extra={
+                "session_id": self.runtime_context.session_id,
+                "tool_name": tool_name,
+                "action_id": action.id,
+            },
+        )
+
+        await emit_runtime_event(
+            self.event_emitter,
+            event_type="tool.exec.started",
+            source="runtime.unified_executor",
+            subject=tool_name,
+            payload={
+                "session_id": self.runtime_context.session_id,
+                "action_id": action.id,
+                "tool_name": tool_name,
+                "params": params,
+            },
+        )
+
+        # Validate action against capability graph
+        if not self.capability_graph.validate_action(tool_name):
+            logger.error(
+                "Action not in capability graph",
+                extra={
+                    "session_id": self.runtime_context.session_id,
+                    "tool_name": tool_name,
+                },
+            )
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "error": "not_in_capability_graph",
+                },
+                risk_hint="medium",
+            )
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error=f"Action '{tool_name}' not in capability graph",
+                success=False,
+            )
+
+        # Get capability and metadata
+        capability = self.capability_graph.get_capability(tool_name)
+        if not capability:
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "error": "capability_not_found",
+                },
+                risk_hint="medium",
+            )
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error=f"Capability '{tool_name}' not found",
+                success=False,
+            )
+
+        # Build execution metadata
+        metadata = self._build_metadata(capability, tool_name, params)
+
+        # Log action started
+        if self.audit_logger:
+            await self.audit_logger.log_action_started(
+                context=self.runtime_context,
+                action_id=action.id,
+                action_name=tool_name,
+                action_params=params,
+                metadata=metadata,
+            )
+
+        # Check if approval is needed
+        if metadata.requires_approval and self.approval_hook:
+            logger.info(
+                "Requesting approval for high-risk action",
+                extra={
+                    "session_id": self.runtime_context.session_id,
+                    "tool_name": tool_name,
+                },
+            )
+
+            # Log approval requested
+            if self.audit_logger:
+                await self.audit_logger.log_approval_requested(
+                    context=self.runtime_context,
+                    action_id=action.id,
+                    action_name=tool_name,
+                    action_params=params,
+                    metadata=metadata,
+                )
+
+            try:
+                approval_result = await self.approval_hook(tool_name, params, metadata)
+                approved = True
+                approval_status = "approved"
+                approval_reason: str | None = None
+                approval_id: str | None = None
+
+                if isinstance(approval_result, dict):
+                    approved = bool(approval_result.get("approved"))
+                    status_raw = approval_result.get("status")
+                    if isinstance(status_raw, str) and status_raw.strip():
+                        approval_status = status_raw.strip().lower()
+                    elif approved:
+                        approval_status = "approved"
+                    else:
+                        approval_status = "rejected"
+                    reason_raw = approval_result.get("reason")
+                    approval_reason = str(reason_raw) if reason_raw else None
+                    approval_id_raw = approval_result.get("approval_id")
+                    approval_id = str(approval_id_raw) if approval_id_raw else None
+                elif isinstance(approval_result, bool):
+                    approved = approval_result
+                    approval_status = "approved" if approved else "rejected"
+                else:
+                    approved = bool(approval_result)
+                    approval_status = "approved" if approved else "rejected"
+
+                if approval_id:
+                    metadata.additional["approval_id"] = approval_id
+
+                if not approved:
+                    if approval_status == "pending":
+                        pending_message = approval_reason or "Action pending approval"
+                        await emit_runtime_event(
+                            self.event_emitter,
+                            event_type="tool.exec.pending_approval",
+                            source="runtime.unified_executor",
+                            subject=tool_name,
+                            payload={
+                                "session_id": self.runtime_context.session_id,
+                                "action_id": action.id,
+                                "tool_name": tool_name,
+                                "approval_id": approval_id,
+                                "status": "pending",
+                                "message": pending_message,
+                            },
+                            risk_hint="high",
+                        )
+                        return ToolCallResult(
+                            tool_name=tool_name,
+                            params=params,
+                            error=pending_message,
+                            success=False,
+                            metadata={
+                                "approval_id": approval_id,
+                                "approval_status": "pending",
+                            } if approval_id else {"approval_status": "pending"},
+                        )
+
+                    logger.warning(
+                        "Action rejected by approval hook",
+                        extra={
+                            "session_id": self.runtime_context.session_id,
+                            "tool_name": tool_name,
+                        },
+                    )
+
+                    # Log approval denied
+                    if self.audit_logger:
+                        await self.audit_logger.log_approval_denied(
+                            context=self.runtime_context,
+                            action_id=action.id,
+                            action_name=tool_name,
+                        )
+
+                    # Log action rejected
+                    if self.audit_logger:
+                        await self.audit_logger.log_action_rejected(
+                            context=self.runtime_context,
+                            action_id=action.id,
+                            action_name=tool_name,
+                            action_params=params,
+                            metadata=metadata,
+                            reason="Approval denied by user",
+                        )
+
+                    denial_message = approval_reason or "Action rejected by approval hook"
+
+                    await emit_runtime_event(
+                        self.event_emitter,
+                        event_type="tool.exec.failed",
+                        source="runtime.unified_executor",
+                        subject=tool_name,
+                        payload={
+                            "session_id": self.runtime_context.session_id,
+                            "action_id": action.id,
+                            "tool_name": tool_name,
+                            "error": "approval_denied",
+                            "approval_id": approval_id,
+                        },
+                        risk_hint="high",
+                    )
+                    return ToolCallResult(
+                        tool_name=tool_name,
+                        params=params,
+                        error=denial_message,
+                        success=False,
+                        metadata={
+                            "approval_id": approval_id,
+                            "approval_status": "rejected",
+                        } if approval_id else {"approval_status": "rejected"},
+                    )
+                else:
+                    # Log approval granted
+                    if self.audit_logger:
+                        await self.audit_logger.log_approval_granted(
+                            context=self.runtime_context,
+                            action_id=action.id,
+                            action_name=tool_name,
+                        )
+            except Exception as e:
+                logger.error(
+                    f"Approval hook failed: {e}",
+                    extra={
+                        "session_id": self.runtime_context.session_id,
+                        "tool_name": tool_name,
+                    },
+                )
+                await emit_runtime_event(
+                    self.event_emitter,
+                    event_type="tool.exec.failed",
+                    source="runtime.unified_executor",
+                    subject=tool_name,
+                    payload={
+                        "session_id": self.runtime_context.session_id,
+                        "action_id": action.id,
+                        "tool_name": tool_name,
+                        "error": f"approval_hook_failed:{e}",
+                    },
+                    risk_hint="high" if metadata.is_high_risk else "medium",
+                )
+                return ToolCallResult(
+                    tool_name=tool_name,
+                    params=params,
+                    error=f"Approval hook failed: {str(e)}",
+                    success=False,
+                )
+
+        # Route to appropriate executor
+        try:
+            result = await self._route_execution(capability, tool_name, params, metadata)
+
+            # Log action completed or failed
+            if self.audit_logger:
+                if result.success:
+                    await self.audit_logger.log_action_completed(
+                        context=self.runtime_context,
+                        action_id=action.id,
+                        action_name=tool_name,
+                        action_params=params,
+                        metadata=metadata,
+                        duration_ms=result.duration_ms,
+                        result=result.result,
+                    )
+                else:
+                    await self.audit_logger.log_action_failed(
+                        context=self.runtime_context,
+                        action_id=action.id,
+                        action_name=tool_name,
+                        action_params=params,
+                        metadata=metadata,
+                        duration_ms=result.duration_ms,
+                        error=result.error or "Unknown error",
+                    )
+
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.completed" if result.success else "tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "tool_name": tool_name,
+                    "success": result.success,
+                    "result": _event_safe_result_payload(result.result),
+                    "metadata": _event_safe_metadata_payload(result.metadata),
+                    "duration_ms": result.duration_ms,
+                    "error": result.error,
+                },
+                risk_hint="high" if metadata.is_high_risk else "low",
+            )
+
+            return result
+        except Exception as e:
+            logger.error(
+                f"Action execution failed: {e}",
+                extra={
+                    "session_id": self.runtime_context.session_id,
+                    "tool_name": tool_name,
+                },
+            )
+
+            # Log action failed
+            if self.audit_logger:
+                await self.audit_logger.log_action_failed(
+                    context=self.runtime_context,
+                    action_id=action.id,
+                    action_name=tool_name,
+                    action_params=params,
+                    metadata=metadata,
+                    duration_ms=0,
+                    error=str(e),
+                )
+
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "tool_name": tool_name,
+                    "error": str(e),
+                },
+                risk_hint="high" if tool_name in self.high_risk_tools else "medium",
+            )
+
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error=f"Execution failed: {str(e)}",
+                success=False,
+            )
+
+    def _build_metadata(
+        self,
+        capability: Any,
+        tool_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> ExecutionMetadata:
+        """Build execution metadata from capability."""
+        metadata_map = capability.metadata if isinstance(capability.metadata, dict) else {}
+        raw_risk_level = metadata_map.get("risk_level")
+        risk_level = str(raw_risk_level).strip().lower() if raw_risk_level is not None else ""
+        configured_requires_approval = _to_bool(metadata_map.get("requires_approval"), default=False)
+
+        is_high_risk = (
+            tool_name in self.high_risk_tools
+            or risk_level in {"high", "critical"}
+        )
+        requires_approval = configured_requires_approval or (
+            is_high_risk and self.runtime_context.runtime_policy.require_approval_for_high_risk
+        )
+
+        normalized_params = params if isinstance(params, dict) else {}
+        if tool_name == "file_io":
+            action = str(
+                normalized_params.get("action")
+                or normalized_params.get("operation")
+                or ""
+            ).strip().lower()
+            if action in {"read", "list"}:
+                is_high_risk = False
+                requires_approval = False
+                risk_level = "low"
+            elif action in {"write", "edit"}:
+                is_high_risk = True
+                requires_approval = configured_requires_approval or (
+                    self.runtime_context.runtime_policy.require_approval_for_high_risk
+                )
+                risk_level = "high"
+
+        metadata = ExecutionMetadata(
+            capability_type=capability.capability_type,
+            source=capability.metadata.get("source"),
+            version=capability.metadata.get("version"),
+            requires_approval=requires_approval,
+            is_high_risk=is_high_risk,
+            additional={
+                "risk_level": risk_level or ("high" if is_high_risk else "low"),
+                "approval_scope": metadata_map.get("approval_scope"),
+                "approval_dedupe_keys": metadata_map.get("approval_dedupe_keys"),
+            },
+        )
+
+        # Add MCP-specific metadata
+        if capability.capability_type == "mcp":
+            metadata.mcp_server_id = capability.metadata.get("mcp_server_id")
+            metadata.mcp_server_name = capability.metadata.get("mcp_server_name")
+
+        return metadata
+
+    async def _route_execution(
+        self,
+        capability: Any,
+        tool_name: str,
+        params: dict[str, Any],
+        metadata: ExecutionMetadata,
+    ) -> ToolCallResult:
+        """Route execution to appropriate executor based on capability type."""
+        import time
+
+        start_time = time.time()
+
+        if capability.capability_type == "skill":
+            result = await self._execute_skill(tool_name, params)
+        elif capability.capability_type == "tool":
+            result = await self._execute_tool(tool_name, params)
+        elif capability.capability_type == "mcp":
+            result = await self._execute_mcp(tool_name, params, metadata)
+        else:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error=f"Unknown capability type: {capability.capability_type}",
+                success=False,
+            )
+
+        # Calculate duration
+        duration_ms = int((time.time() - start_time) * 1000)
+        result.duration_ms = duration_ms
+
+        # Enrich result with metadata
+        if not hasattr(result, 'metadata') or result.metadata is None:
+            result.metadata = {}
+
+        result.metadata.update({
+            "capability_type": metadata.capability_type,
+            "source": metadata.source,
+            "version": metadata.version,
+            "is_high_risk": metadata.is_high_risk,
+        })
+
+        if metadata.mcp_server_id:
+            result.metadata["mcp_server_id"] = metadata.mcp_server_id
+            result.metadata["mcp_server_name"] = metadata.mcp_server_name
+
+        return result
+
+    async def _execute_skill(self, tool_name: str, params: dict[str, Any]) -> ToolCallResult:
+        """Execute a skill."""
+        if not self.skill_registry:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error="Skill registry not configured",
+                success=False,
+            )
+
+        logger.debug(f"Executing skill: {tool_name}")
+        enriched_params = dict(params)
+        enriched_params.setdefault("_runtime_context", self.runtime_context)
+
+        try:
+            result = await self.skill_registry.execute(tool_name, enriched_params)
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                result=result.result if hasattr(result, 'result') else result,
+                error=result.error if hasattr(result, 'error') else None,
+                success=result.success if hasattr(result, 'success') else True,
+                metadata=result.metadata if hasattr(result, 'metadata') else {},
+            )
+        except Exception as e:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error=str(e),
+                success=False,
+            )
+
+    async def _execute_tool(self, tool_name: str, params: dict[str, Any]) -> ToolCallResult:
+        """Execute a built-in tool."""
+        # Built-in tools are also in skill_registry for now
+        return await self._execute_skill(tool_name, params)
+
+    async def _execute_mcp(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        metadata: ExecutionMetadata,
+    ) -> ToolCallResult:
+        """Execute an MCP tool."""
+        if not self.mcp_client:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error="MCP client not configured",
+                success=False,
+            )
+
+        if not metadata.mcp_server_id:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error="MCP server ID not found in metadata",
+                success=False,
+            )
+
+        logger.debug(
+            f"Executing MCP tool: {tool_name} on server {metadata.mcp_server_name}"
+        )
+
+        try:
+            # Call MCP client
+            result = await self.mcp_client.call_tool(
+                server_id=metadata.mcp_server_id,
+                tool_name=tool_name,
+                arguments=params,
+            )
+
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                result=result,
+                success=True,
+            )
+        except Exception as e:
+            logger.error(f"MCP tool execution failed: {e}")
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error=f"MCP execution failed: {str(e)}",
+                success=False,
+            )

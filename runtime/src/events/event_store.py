@@ -1,0 +1,1052 @@
+"""SQLite-backed storage for event-engine artifacts."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator
+
+from src.events.models import ApprovalRequest, Event, RuleRun
+
+
+class DuplicateEventError(RuntimeError):
+    """Raised when an event idempotency key already exists."""
+
+
+def _to_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _from_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)
+
+
+def _parse_json_object(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+class EventStore:
+    """Persist events, rule-runs, and approvals in SQLite."""
+
+    def __init__(self, db_path: str | None = None):
+        default_path = Path("~/.semibot/semibot.db").expanduser()
+        self.db_path = Path(db_path).expanduser() if db_path else default_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.row_factory = sqlite3.Row
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                  id TEXT PRIMARY KEY,
+                  event_type TEXT NOT NULL,
+                  source TEXT NOT NULL,
+                  subject TEXT,
+                  idempotency_key TEXT UNIQUE,
+                  payload TEXT NOT NULL,
+                  risk_hint TEXT,
+                  created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+                CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+
+                CREATE TABLE IF NOT EXISTS event_rule_runs (
+                  id TEXT PRIMARY KEY,
+                  rule_id TEXT NOT NULL,
+                  event_id TEXT NOT NULL,
+                  decision TEXT NOT NULL,
+                  reason TEXT,
+                  status TEXT NOT NULL,
+                  action_trace_id TEXT,
+                  duration_ms INTEGER,
+                  created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_rule_runs_rule ON event_rule_runs(rule_id);
+                CREATE INDEX IF NOT EXISTS idx_rule_runs_event ON event_rule_runs(event_id);
+
+                CREATE TABLE IF NOT EXISTS approval_requests (
+                  id TEXT PRIMARY KEY,
+                  rule_id TEXT NOT NULL,
+                  event_id TEXT NOT NULL,
+                  risk_level TEXT NOT NULL,
+                  context TEXT NOT NULL DEFAULT '{}',
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  resolved_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_approval_status ON approval_requests(status);
+                """
+            )
+            # Backward-compatible migration for existing databases.
+            approval_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(approval_requests)").fetchall()
+            }
+            if "context" not in approval_columns:
+                conn.execute(
+                    "ALTER TABLE approval_requests ADD COLUMN context TEXT NOT NULL DEFAULT '{}'"
+                )
+
+    def append_event(self, event: Event) -> None:
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO events (id, event_type, source, subject, idempotency_key, payload, risk_hint, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.event_id,
+                        event.event_type,
+                        event.source,
+                        event.subject,
+                        event.idempotency_key,
+                        json.dumps(event.payload, ensure_ascii=False),
+                        event.risk_hint,
+                        _to_iso(event.timestamp),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                message = str(exc)
+                if "idempotency_key" in message or "events.id" in message:
+                    raise DuplicateEventError(str(exc)) from exc
+                raise
+
+    def append(self, event: Event) -> None:
+        """Compatibility alias for append_event."""
+        self.append_event(event)
+
+    def get_event(self, event_id: str) -> Event | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, event_type, source, subject, payload, idempotency_key, risk_hint, created_at FROM events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return Event(
+                event_id=row["id"],
+                event_type=row["event_type"],
+                source=row["source"],
+                subject=row["subject"],
+                payload=json.loads(row["payload"]),
+                timestamp=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                idempotency_key=row["idempotency_key"],
+                risk_hint=row["risk_hint"],
+            )
+
+    def get(self, event_id: str) -> Event | None:
+        """Compatibility alias for get_event."""
+        return self.get_event(event_id)
+
+    def exists_idempotency(self, key: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM events WHERE idempotency_key = ? LIMIT 1",
+                (key,),
+            ).fetchone()
+            return row is not None
+
+    def has_rule_event_run(self, rule_id: str, event_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM event_rule_runs WHERE rule_id = ? AND event_id = ? LIMIT 1",
+                (rule_id, event_id),
+            ).fetchone()
+            return row is not None
+
+    def has_recent_rule_subject_run(
+        self,
+        rule_id: str,
+        subject: str,
+        window_seconds: int,
+    ) -> bool:
+        if window_seconds <= 0:
+            return False
+
+        cutoff = datetime.now(timezone.utc).timestamp() - window_seconds
+        cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM event_rule_runs r
+                JOIN events e ON e.id = r.event_id
+                WHERE r.rule_id = ?
+                  AND e.subject = ?
+                  AND r.created_at >= ?
+                  AND r.decision != 'skip'
+                LIMIT 1
+                """,
+                (rule_id, subject, cutoff_iso),
+            ).fetchone()
+            return row is not None
+
+    def get_last_rule_run_at(self, rule_id: str) -> datetime | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT created_at
+                FROM event_rule_runs
+                WHERE rule_id = ?
+                  AND decision != 'skip'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (rule_id,),
+            ).fetchone()
+            return _from_iso(row["created_at"]) if row else None
+
+    def list_events_by_session(self, session_id: str, *, limit: int = 200) -> list[Event]:
+        """Return events for a specific session_id using SQL-level json_extract."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, event_type, source, subject, payload, idempotency_key, risk_hint, created_at
+                FROM events
+                WHERE json_extract(payload, '$.session_id') = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        return [
+            Event(
+                event_id=row["id"],
+                event_type=row["event_type"],
+                source=row["source"],
+                subject=row["subject"],
+                payload=json.loads(row["payload"]),
+                timestamp=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                idempotency_key=row["idempotency_key"],
+                risk_hint=row["risk_hint"],
+            )
+            for row in rows
+        ]
+
+    def list_session_index(self, *, limit: int = 200) -> list[dict[str, str]]:
+        """Return (session_id, last_seen_at, title) rows using SQL-level json_extract.
+
+        Much faster than fetching all events into Python and scanning payloads.
+        Returns at most `limit` distinct sessions ordered by last_seen_at DESC.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    session_id,
+                    MAX(created_at) AS last_seen_at,
+                    MAX(CASE WHEN event_type = 'chat.message.received' THEN title END) AS title
+                FROM (
+                    SELECT
+                        json_extract(payload, '$.session_id') AS session_id,
+                        event_type,
+                        created_at,
+                        CASE
+                            WHEN event_type = 'chat.message.received'
+                            THEN substr(json_extract(payload, '$.message'), 1, 100)
+                        END AS title
+                    FROM events
+                    WHERE json_extract(payload, '$.session_id') IS NOT NULL
+                      AND json_extract(payload, '$.session_id') != ''
+                )
+                GROUP BY session_id
+                ORDER BY last_seen_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "session_id": row["session_id"],
+                "last_seen_at": row["last_seen_at"],
+                "title": row["title"] or "",
+            }
+            for row in rows
+        ]
+
+    def list_agent_index(self, *, limit: int = 200) -> list[str]:
+        """Return distinct agent_ids found in event payloads."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT json_extract(payload, '$.agent_id') AS agent_id
+                FROM events
+                WHERE json_extract(payload, '$.agent_id') IS NOT NULL
+                  AND json_extract(payload, '$.agent_id') != ''
+                ORDER BY agent_id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [row["agent_id"] for row in rows]
+
+    def list_events(
+        self,
+        *,
+        limit: int = 100,
+        event_type: str | None = None,
+        event_types: list[str] | None = None,
+        since: datetime | None = None,
+    ) -> list[Event]:
+        query = """
+            SELECT id, event_type, source, subject, payload, idempotency_key, risk_hint, created_at
+            FROM events
+        """
+        clauses: list[str] = []
+        args: list[str | int] = []
+        normalized_event_types = [
+            item.strip()
+            for item in (event_types or [])
+            if isinstance(item, str) and item.strip()
+        ]
+
+        if event_type and not normalized_event_types:
+            clauses.append("event_type = ?")
+            args.append(event_type)
+        elif normalized_event_types:
+            placeholders = ", ".join(["?"] * len(normalized_event_types))
+            clauses.append(f"event_type IN ({placeholders})")
+            args.extend(normalized_event_types)
+        if since:
+            clauses.append("created_at >= ?")
+            args.append(_to_iso(since) or "")
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+
+        return [
+            Event(
+                event_id=row["id"],
+                event_type=row["event_type"],
+                source=row["source"],
+                subject=row["subject"],
+                payload=json.loads(row["payload"]),
+                timestamp=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                idempotency_key=row["idempotency_key"],
+                risk_hint=row["risk_hint"],
+            )
+            for row in rows
+        ]
+
+    def list_events_after(
+        self,
+        *,
+        cursor_created_at: str | None = None,
+        cursor_event_id: str | None = None,
+        limit: int = 100,
+        event_type: str | None = None,
+        event_types: list[str] | None = None,
+    ) -> list[Event]:
+        """
+        List events after cursor in ascending order for incremental streaming.
+
+        Cursor ordering: (created_at, id).
+        """
+        query = """
+            SELECT id, event_type, source, subject, payload, idempotency_key, risk_hint, created_at
+            FROM events
+        """
+        clauses: list[str] = []
+        args: list[str | int] = []
+
+        normalized_event_types = [
+            item.strip()
+            for item in (event_types or [])
+            if isinstance(item, str) and item.strip()
+        ]
+
+        if event_type and not normalized_event_types:
+            clauses.append("event_type = ?")
+            args.append(event_type)
+        elif normalized_event_types:
+            placeholders = ", ".join(["?"] * len(normalized_event_types))
+            clauses.append(f"event_type IN ({placeholders})")
+            args.extend(normalized_event_types)
+
+        if cursor_created_at and cursor_event_id:
+            clauses.append("(created_at > ? OR (created_at = ? AND id > ?))")
+            args.extend([cursor_created_at, cursor_created_at, cursor_event_id])
+        elif cursor_created_at:
+            clauses.append("created_at > ?")
+            args.append(cursor_created_at)
+
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at ASC, id ASC LIMIT ?"
+        args.append(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+
+        return [
+            Event(
+                event_id=row["id"],
+                event_type=row["event_type"],
+                source=row["source"],
+                subject=row["subject"],
+                payload=json.loads(row["payload"]),
+                timestamp=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                idempotency_key=row["idempotency_key"],
+                risk_hint=row["risk_hint"],
+            )
+            for row in rows
+        ]
+
+    def insert_rule_run(self, run: RuleRun) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO event_rule_runs (id, rule_id, event_id, decision, reason, status, action_trace_id, duration_ms, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run.run_id,
+                    run.rule_id,
+                    run.event_id,
+                    run.decision,
+                    run.reason,
+                    run.status,
+                    run.action_trace_id,
+                    run.duration_ms,
+                    _to_iso(run.created_at),
+                ),
+            )
+
+    def list_rule_runs(
+        self,
+        *,
+        rule_id: str | None = None,
+        event_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[RuleRun]:
+        query = """
+            SELECT id, rule_id, event_id, decision, reason, status, action_trace_id, duration_ms, created_at
+            FROM event_rule_runs
+        """
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if rule_id:
+            clauses.append("rule_id = ?")
+            args.append(rule_id)
+        if event_id:
+            clauses.append("event_id = ?")
+            args.append(event_id)
+        if status:
+            clauses.append("status = ?")
+            args.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [
+            RuleRun(
+                run_id=row["id"],
+                rule_id=row["rule_id"],
+                event_id=row["event_id"],
+                decision=row["decision"],
+                reason=row["reason"] or "",
+                status=row["status"],
+                action_trace_id=row["action_trace_id"],
+                duration_ms=row["duration_ms"],
+                created_at=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+            )
+            for row in rows
+        ]
+
+    def update_rule_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        reason: str | None = None,
+        duration_ms: int | None = None,
+        action_trace_id: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE event_rule_runs
+                SET status = ?, reason = COALESCE(?, reason), duration_ms = COALESCE(?, duration_ms), action_trace_id = COALESCE(?, action_trace_id)
+                WHERE id = ?
+                """,
+                (status, reason, duration_ms, action_trace_id, run_id),
+            )
+
+    def insert_approval(self, approval: ApprovalRequest) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO approval_requests (id, rule_id, event_id, risk_level, context, status, created_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    approval.approval_id,
+                    approval.rule_id,
+                    approval.event_id,
+                    approval.risk_level,
+                    json.dumps(approval.context or {}, ensure_ascii=False),
+                    approval.status,
+                    _to_iso(approval.created_at),
+                    _to_iso(approval.resolved_at),
+                ),
+                )
+
+    def update_approval(self, approval_id: str, status: str) -> None:
+        resolved_at = _to_iso(datetime.now(timezone.utc)) if status != "pending" else None
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE approval_requests
+                SET status = ?, resolved_at = ?
+                WHERE id = ?
+                """,
+                (status, resolved_at, approval_id),
+            )
+
+    def get_approval(self, approval_id: str) -> ApprovalRequest | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
+                FROM approval_requests WHERE id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return ApprovalRequest(
+                approval_id=row["id"],
+                rule_id=row["rule_id"],
+                event_id=row["event_id"],
+                risk_level=row["risk_level"],
+                context=_parse_json_object(row["context"]),
+                status=row["status"],
+                created_at=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                resolved_at=_from_iso(row["resolved_at"]),
+            )
+
+    def list_pending_approvals(self) -> list[ApprovalRequest]:
+        return self.list_approvals(status="pending", limit=1000)
+
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[ApprovalRequest]:
+        with self._connect() as conn:
+            if status:
+                rows = conn.execute(
+                    """
+                    SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
+                    FROM approval_requests
+                    WHERE status = ?
+                    ORDER BY created_at ASC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
+                    FROM approval_requests
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            results: list[ApprovalRequest] = []
+            for row in rows:
+                results.append(
+                    ApprovalRequest(
+                        approval_id=row["id"],
+                        rule_id=row["rule_id"],
+                        event_id=row["event_id"],
+                        risk_level=row["risk_level"],
+                        context=_parse_json_object(row["context"]),
+                        status=row["status"],
+                        created_at=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                        resolved_at=_from_iso(row["resolved_at"]),
+                    )
+                )
+            return results
+
+    def get_metrics(self, *, since: datetime | None = None) -> dict[str, object]:
+        """Return aggregated Event Engine metrics from SQLite."""
+        since_iso = _to_iso(since)
+        with self._connect() as conn:
+            events_total = self._count_with_optional_since(
+                conn=conn,
+                table="events",
+                time_field="created_at",
+                since_iso=since_iso,
+            )
+            rule_runs_total = self._count_with_optional_since(
+                conn=conn,
+                table="event_rule_runs",
+                time_field="created_at",
+                since_iso=since_iso,
+            )
+            approvals_total = self._count_with_optional_since(
+                conn=conn,
+                table="approval_requests",
+                time_field="created_at",
+                since_iso=since_iso,
+            )
+
+            if since_iso:
+                row = conn.execute(
+                    """
+                    SELECT
+                      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                      SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                      SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected
+                    FROM approval_requests
+                    WHERE created_at >= ?
+                    """,
+                    (since_iso,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT
+                      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                      SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                      SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected
+                    FROM approval_requests
+                    """
+                ).fetchone()
+            approvals_pending = int(row["pending"] or 0)
+            approvals_approved = int(row["approved"] or 0)
+            approvals_rejected = int(row["rejected"] or 0)
+
+            if since_iso:
+                rule_row = conn.execute(
+                    """
+                    SELECT
+                      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+                      SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END) AS partial,
+                      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                      SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped
+                    FROM event_rule_runs
+                    WHERE created_at >= ?
+                    """,
+                    (since_iso,),
+                ).fetchone()
+            else:
+                rule_row = conn.execute(
+                    """
+                    SELECT
+                      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+                      SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END) AS partial,
+                      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                      SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped
+                    FROM event_rule_runs
+                    """
+                ).fetchone()
+
+            if since_iso:
+                duration_row = conn.execute(
+                    "SELECT AVG(duration_ms) AS avg_duration_ms FROM event_rule_runs WHERE duration_ms IS NOT NULL AND created_at >= ?",
+                    (since_iso,),
+                ).fetchone()
+            else:
+                duration_row = conn.execute(
+                    "SELECT AVG(duration_ms) AS avg_duration_ms FROM event_rule_runs WHERE duration_ms IS NOT NULL"
+                ).fetchone()
+            avg_rule_duration_ms = float(duration_row["avg_duration_ms"] or 0.0)
+
+            if since_iso:
+                approval_duration_row = conn.execute(
+                    """
+                    SELECT AVG((julianday(resolved_at) - julianday(created_at)) * 86400000.0) AS avg_ms
+                    FROM approval_requests
+                    WHERE resolved_at IS NOT NULL AND created_at >= ?
+                    """,
+                    (since_iso,),
+                ).fetchone()
+            else:
+                approval_duration_row = conn.execute(
+                    """
+                    SELECT AVG((julianday(resolved_at) - julianday(created_at)) * 86400000.0) AS avg_ms
+                    FROM approval_requests
+                    WHERE resolved_at IS NOT NULL
+                    """
+                ).fetchone()
+            avg_approval_resolution_ms = float(approval_duration_row["avg_ms"] or 0.0)
+
+            if since_iso:
+                top_rows = conn.execute(
+                    """
+                    SELECT event_type, COUNT(*) AS cnt
+                    FROM events
+                    WHERE created_at >= ?
+                    GROUP BY event_type
+                    ORDER BY cnt DESC, event_type ASC
+                    LIMIT 10
+                    """,
+                    (since_iso,),
+                ).fetchall()
+            else:
+                top_rows = conn.execute(
+                    """
+                    SELECT event_type, COUNT(*) AS cnt
+                    FROM events
+                    GROUP BY event_type
+                    ORDER BY cnt DESC, event_type ASC
+                    LIMIT 10
+                    """
+                ).fetchall()
+
+        return {
+            "events_total": int(events_total),
+            "rule_runs_total": int(rule_runs_total),
+            "rule_runs_completed": int(rule_row["completed"] or 0),
+            "rule_runs_partial": int(rule_row["partial"] or 0),
+            "rule_runs_failed": int(rule_row["failed"] or 0),
+            "rule_runs_skipped": int(rule_row["skipped"] or 0),
+            "approvals_total": int(approvals_total),
+            "approvals_pending": approvals_pending,
+            "approvals_approved": approvals_approved,
+            "approvals_rejected": approvals_rejected,
+            "avg_rule_duration_ms": round(avg_rule_duration_ms, 2),
+            "avg_approval_resolution_ms": round(avg_approval_resolution_ms, 2),
+            "top_event_types": [
+                {"event_type": str(row["event_type"]), "count": int(row["cnt"])} for row in top_rows
+            ],
+        }
+
+    def aggregate_token_usage(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        group_by: str | None = None,
+        granularity: str | None = None,
+    ) -> dict[str, Any]:
+        """Aggregate token usage from llm.usage events.
+
+        group_by: None (totals only), 'node', 'model', 'session', 'agent'
+        granularity: 'hour' | 'day' (default 'day')
+        """
+        since_iso = _to_iso(since)
+        until_iso = _to_iso(until)
+        gran = granularity if granularity in ("hour", "day") else "day"
+
+        clauses = ["event_type = 'llm.usage'"]
+        args: list[str] = []
+        if since_iso:
+            clauses.append("created_at >= ?")
+            args.append(since_iso)
+        if until_iso:
+            clauses.append("created_at <= ?")
+            args.append(until_iso)
+        where = " AND ".join(clauses)
+
+        valid_group_fields = {
+            "node": "json_extract(payload, '$.node')",
+            "model": "json_extract(payload, '$.model')",
+            "session": "json_extract(payload, '$.session_id')",
+            "agent": "json_extract(payload, '$.agent_id')",
+        }
+
+        with self._connect() as conn:
+            # Overall totals
+            totals_row = conn.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS call_count,
+                    SUM(CAST(json_extract(payload, '$.prompt_tokens') AS INTEGER)) AS prompt_tokens,
+                    SUM(CAST(json_extract(payload, '$.completion_tokens') AS INTEGER)) AS completion_tokens,
+                    SUM(CAST(json_extract(payload, '$.total_tokens') AS INTEGER)) AS total_tokens
+                FROM events
+                WHERE {where}
+                """,
+                tuple(args),
+            ).fetchone()
+
+            totals = {
+                "call_count": int(totals_row["call_count"] or 0),
+                "prompt_tokens": int(totals_row["prompt_tokens"] or 0),
+                "completion_tokens": int(totals_row["completion_tokens"] or 0),
+                "total_tokens": int(totals_row["total_tokens"] or 0),
+            }
+
+            breakdown: list[dict[str, Any]] = []
+            if group_by and group_by in valid_group_fields:
+                group_expr = valid_group_fields[group_by]
+                group_rows = conn.execute(
+                    f"""
+                    SELECT
+                        {group_expr} AS group_key,
+                        COUNT(*) AS call_count,
+                        SUM(CAST(json_extract(payload, '$.prompt_tokens') AS INTEGER)) AS prompt_tokens,
+                        SUM(CAST(json_extract(payload, '$.completion_tokens') AS INTEGER)) AS completion_tokens,
+                        SUM(CAST(json_extract(payload, '$.total_tokens') AS INTEGER)) AS total_tokens
+                    FROM events
+                    WHERE {where}
+                    GROUP BY {group_expr}
+                    ORDER BY total_tokens DESC
+                    LIMIT 50
+                    """,
+                    tuple(args),
+                ).fetchall()
+                breakdown = [
+                    {
+                        "key": row["group_key"] or "unknown",
+                        "call_count": int(row["call_count"] or 0),
+                        "prompt_tokens": int(row["prompt_tokens"] or 0),
+                        "completion_tokens": int(row["completion_tokens"] or 0),
+                        "total_tokens": int(row["total_tokens"] or 0),
+                    }
+                    for row in group_rows
+                ]
+
+            # Trend by granularity
+            if gran == "hour":
+                time_expr = "substr(created_at, 1, 13) || ':00'"
+            else:
+                time_expr = "substr(created_at, 1, 10)"
+
+            group_expr_for_segments = (
+                valid_group_fields[group_by] if group_by and group_by in valid_group_fields else None
+            )
+
+            if group_expr_for_segments:
+                # Trend with segments breakdown
+                trend_rows = conn.execute(
+                    f"""
+                    SELECT
+                        {time_expr} AS day,
+                        {group_expr_for_segments} AS seg_key,
+                        SUM(CAST(json_extract(payload, '$.total_tokens') AS INTEGER)) AS total_tokens,
+                        COUNT(*) AS call_count
+                    FROM events
+                    WHERE {where}
+                    GROUP BY day, seg_key
+                    ORDER BY day ASC
+                    """,
+                    tuple(args),
+                ).fetchall()
+                # Pivot into {day: {total_tokens, call_count, segments: {key: tokens}}}
+                trend_map: dict[str, dict[str, Any]] = {}
+                for row in trend_rows:
+                    day_key = row["day"]
+                    if day_key not in trend_map:
+                        trend_map[day_key] = {"day": day_key, "total_tokens": 0, "call_count": 0, "segments": {}}
+                    bucket = trend_map[day_key]
+                    tokens = int(row["total_tokens"] or 0)
+                    bucket["total_tokens"] += tokens
+                    bucket["call_count"] += int(row["call_count"] or 0)
+                    seg = row["seg_key"] or "unknown"
+                    bucket["segments"][seg] = bucket["segments"].get(seg, 0) + tokens
+                trend = list(trend_map.values())
+            else:
+                trend_rows = conn.execute(
+                    f"""
+                    SELECT
+                        {time_expr} AS day,
+                        SUM(CAST(json_extract(payload, '$.total_tokens') AS INTEGER)) AS total_tokens,
+                        COUNT(*) AS call_count
+                    FROM events
+                    WHERE {where}
+                    GROUP BY day
+                    ORDER BY day ASC
+                    """,
+                    tuple(args),
+                ).fetchall()
+                trend = [
+                    {
+                        "day": row["day"],
+                        "total_tokens": int(row["total_tokens"] or 0),
+                        "call_count": int(row["call_count"] or 0),
+                    }
+                    for row in trend_rows
+                ]
+
+        return {
+            "totals": totals,
+            "breakdown": breakdown,
+            "trend": trend,
+        }
+
+    def cleanup_events(self, *, before: datetime, dry_run: bool = False) -> dict[str, int]:
+        """
+        Clean event artifacts before timestamp.
+
+        Returns counts for events, rule runs and approvals.
+        """
+        cutoff = _to_iso(before) or ""
+        with self._connect() as conn:
+            event_rows = conn.execute(
+                "SELECT id FROM events WHERE created_at < ?",
+                (cutoff,),
+            ).fetchall()
+            event_ids = [str(row["id"]) for row in event_rows]
+            if not event_ids:
+                return {"events": 0, "rule_runs": 0, "approvals": 0}
+
+            placeholders = ", ".join(["?"] * len(event_ids))
+            params = tuple(event_ids)
+            rule_runs_count = conn.execute(
+                f"SELECT COUNT(*) AS c FROM event_rule_runs WHERE event_id IN ({placeholders})",
+                params,
+            ).fetchone()
+            approvals_count = conn.execute(
+                f"SELECT COUNT(*) AS c FROM approval_requests WHERE event_id IN ({placeholders})",
+                params,
+            ).fetchone()
+            counts = {
+                "events": len(event_ids),
+                "rule_runs": int(rule_runs_count["c"] if rule_runs_count else 0),
+                "approvals": int(approvals_count["c"] if approvals_count else 0),
+            }
+            if dry_run:
+                return counts
+
+            conn.execute(
+                f"DELETE FROM event_rule_runs WHERE event_id IN ({placeholders})",
+                params,
+            )
+            conn.execute(
+                f"DELETE FROM approval_requests WHERE event_id IN ({placeholders})",
+                params,
+            )
+            conn.execute(
+                f"DELETE FROM events WHERE id IN ({placeholders})",
+                params,
+            )
+            return counts
+
+    def list_session_events(self, session_id: str, *, limit: int = 200) -> list[Event]:
+        """List events for one session ID ordered by time asc."""
+        payload_pattern = f'%"session_id": "{session_id}"%'
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, event_type, source, subject, payload, idempotency_key, risk_hint, created_at
+                FROM events
+                WHERE subject = ? OR payload LIKE ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, payload_pattern, limit),
+            ).fetchall()
+        return [
+            Event(
+                event_id=row["id"],
+                event_type=row["event_type"],
+                source=row["source"],
+                subject=row["subject"],
+                payload=json.loads(row["payload"]),
+                timestamp=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
+                idempotency_key=row["idempotency_key"],
+                risk_hint=row["risk_hint"],
+            )
+            for row in rows
+        ]
+
+    def list_sessions(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """List inferred sessions from events payload/subject."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, event_type, subject, payload, created_at
+                FROM events
+                WHERE event_type IN ('chat.message.received', 'task.completed', 'task.failed')
+                ORDER BY created_at DESC
+                LIMIT 10000
+                """,
+            ).fetchall()
+        buckets: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else {}
+            session_id = payload.get("session_id") if isinstance(payload, dict) else None
+            if not isinstance(session_id, str) or not session_id.strip():
+                if isinstance(row["subject"], str) and row["subject"].strip():
+                    session_id = row["subject"].strip()
+                else:
+                    continue
+            session_id = session_id.strip()
+            created_at = str(row["created_at"])
+            bucket = buckets.get(session_id)
+            if bucket is None:
+                buckets[session_id] = {
+                    "session_id": session_id,
+                    "first_event_at": created_at,
+                    "last_event_at": created_at,
+                    "events_count": 1,
+                }
+            else:
+                bucket["events_count"] = int(bucket["events_count"]) + 1
+                if created_at < str(bucket["first_event_at"]):
+                    bucket["first_event_at"] = created_at
+                if created_at > str(bucket["last_event_at"]):
+                    bucket["last_event_at"] = created_at
+
+        items = sorted(
+            buckets.values(),
+            key=lambda item: str(item["last_event_at"]),
+            reverse=True,
+        )
+        return items[:limit]
+
+    _ALLOWED_COUNT_TABLES = {"events", "event_rule_runs", "approval_requests"}
+    _ALLOWED_COUNT_TIME_FIELDS = {"created_at"}
+
+    def _count_with_optional_since(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        table: str,
+        time_field: str,
+        since_iso: str | None,
+    ) -> int:
+        assert table in self._ALLOWED_COUNT_TABLES, f"invalid table: {table}"
+        assert time_field in self._ALLOWED_COUNT_TIME_FIELDS, f"invalid time_field: {time_field}"
+        if since_iso:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS c FROM {table} WHERE {time_field} >= ?",
+                (since_iso,),
+            ).fetchone()
+        else:
+            row = conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()
+        return int(row["c"] if row and row["c"] is not None else 0)

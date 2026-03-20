@@ -1,0 +1,1699 @@
+{
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "loading": "Loading...",
+    "noData": "No data",
+    "retry": "Retry",
+    "back": "Back",
+    "close": "Close",
+    "submit": "Submit",
+    "reset": "Reset",
+    "copy": "Copy",
+    "copied": "Copied",
+    "refresh": "Refresh"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "agents": "Agents",
+    "sessions": "Sessions",
+    "events": "Events",
+    "rules": "Rules",
+    "approvals": "Approvals",
+    "usage": "Usage",
+    "skills": "Skills",
+    "tools": "Tools",
+    "config": "Config",
+    "settings": "Settings",
+    "logs": "Logs",
+    "apiKeys": "API Keys",
+    "mcpServers": "MCP Servers",
+    "webhooks": "Webhooks",
+    "memory": "Memory",
+    "evolution": "Evolution",
+    "studio": "Agent Studio",
+    "language": "Language",
+    "switchLanguage": "Switch language",
+    "languageOptions": {
+      "zh-CN": "Simplified Chinese",
+      "en-US": "English",
+      "ja-JP": "日本語"
+    },
+    "helpCenter": "Help Center"
+  },
+  "auth": {
+    "login": "Login",
+    "logout": "Logout",
+    "register": "Register",
+    "email": "Email",
+    "password": "Password",
+    "forgotPassword": "Forgot Password",
+    "resetPassword": "Reset Password"
+  },
+  "agent": {
+    "name": "Name",
+    "description": "Description",
+    "systemPrompt": "System Prompt",
+    "runtimeEngine": "Runtime Engine",
+    "model": "Model",
+    "status": "Status",
+    "active": "Active",
+    "inactive": "Inactive",
+    "createAgent": "Create Agent",
+    "editAgent": "Edit Agent",
+    "deleteAgent": "Delete Agent",
+    "deleteConfirm": "Are you sure you want to delete this agent?"
+  },
+  "chat": {
+    "placeholder": "Type a message...",
+    "send": "Send",
+    "newChat": "New Chat",
+    "thinking": "Thinking...",
+    "connecting": "Connecting...",
+    "reconnecting": "Reconnecting...",
+    "disconnected": "Disconnected",
+    "connectionFailed": "Connection Failed"
+  },
+  "error": {
+    "unknown": "Unknown error",
+    "networkError": "Network error, please check your connection",
+    "unauthorized": "Unauthorized, please login again",
+    "forbidden": "Access denied",
+    "notFound": "Resource not found",
+    "serverError": "Server error, please try again later",
+    "rateLimited": "Too many requests, please try again later",
+    "validationError": "Validation failed"
+  },
+  "form": {
+    "required": "This field is required",
+    "invalidEmail": "Please enter a valid email address",
+    "minLength": "Minimum {min} characters",
+    "maxLength": "Maximum {max} characters",
+    "invalidUrl": "Please enter a valid URL"
+  },
+  "mcp": {
+    "title": "MCP Servers",
+    "subtitle": "Manage MCP servers to provide external tools and resources for agents",
+    "addServer": "Add Server",
+    "searchPlaceholder": "Search servers...",
+    "system": "System",
+    "noDescription": "No description",
+    "testAndSync": "Test & Sync",
+    "transport": {
+      "stdio": {
+        "description": "Local command process for locally installed MCP servers",
+        "label": "Stdio"
+      },
+      "sse": {
+        "description": "Connect remote MCP server via Server-Sent Events (legacy protocol)",
+        "label": "SSE"
+      },
+      "streamableHttp": {
+        "description": "Connect remote MCP server via Streamable HTTP (recommended)",
+        "label": "Streamable HTTP"
+      }
+    },
+    "form": {
+      "transport": "Transport",
+      "name": "Name",
+      "namePlaceholder": "e.g. filesystem, github, time",
+      "description": "Description",
+      "descriptionPlaceholder": "Briefly describe this MCP server",
+      "optional": "(optional)",
+      "systemMcp": "Set as system MCP (visible to all)",
+      "endpointLabel": {
+        "command": "Command",
+        "sse": "SSE URL",
+        "http": "HTTP URL"
+      },
+      "endpointHint": {
+        "command": "Enter full executable command with args, e.g. uvx mcp-server-time --local-timezone=Asia/Shanghai",
+        "sse": "Enter MCP Server SSE endpoint URL, usually ending with /sse (legacy servers)",
+        "streamableHttp": "Enter MCP Server HTTP endpoint URL, usually ending with /mcp. Recommended MCP remote transport"
+      },
+      "apiKeyHint": {
+        "stdio": "Optional. Passed to subprocess via MCP_API_KEY env",
+        "http": "Optional. Sent as Authorization: Bearer <key> header"
+      },
+      "apiKeyLabel": "API Key",
+      "apiKeyPlaceholder": "sk-..."
+    },
+    "status": {
+      "connected": "Connected",
+      "connecting": "Connecting",
+      "error": "Connection failed",
+      "disconnected": "Disconnected"
+    },
+    "tools": {
+      "notSynced": "Tools list not synced yet, click \"Sync\"",
+      "count": "{count} tools"
+    },
+    "resources": {
+      "count": "{count} resources"
+    },
+    "error": {
+      "load": "Failed to load MCP servers",
+      "create": "Failed to create MCP server",
+      "delete": "Failed to delete MCP server",
+      "test": "Connection test failed",
+      "update": "Failed to update MCP server",
+      "batchTest": "Batch test completed, {failed}/{total} servers failed",
+      "batchDelete": "Batch delete completed, {failed}/{total} servers failed"
+    },
+    "batch": {
+      "selectAllVisible": "Select current list",
+      "selectedCount": "{count} MCP selected",
+      "testAndSync": "Batch test & sync",
+      "delete": "Batch delete"
+    },
+    "confirm": {
+      "batchDelete": "Delete selected {count} MCP servers?"
+    },
+    "empty": {
+      "filteredTitle": "No matching servers found",
+      "filteredDescription": "Try adjusting your search",
+      "clearSearch": "Clear search",
+      "defaultTitle": "No MCP servers yet",
+      "defaultDescription": "Add your first MCP server to get started"
+    },
+    "modal": {
+      "addTitle": "Add MCP Server",
+      "editTitle": "Edit MCP Server"
+    }
+  },
+  "config": {
+    "header": {
+      "title": "Configuration",
+      "subtitle": "Manage LLM, tools, bots, API keys and webhooks in one place.",
+      "helpHint": "Need setup guidance or troubleshooting? Open Help Center for walkthroughs and FAQ.",
+      "openHelpCenter": "Open Help Center"
+    },
+    "loading": "Loading configuration...",
+    "common": {
+      "notSet": "Not set",
+      "customValue": "Custom",
+      "riskLevels": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "critical": "Critical"
+      }
+    },
+    "status": {
+      "available": "Available",
+      "configured": "Configured",
+      "notConfigured": "Not configured",
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "errors": {
+      "llmLoad": "Failed to load LLM configuration",
+      "runtimeToolsLoad": "Failed to read runtime built-in tools",
+      "toolsConfigLoad": "Failed to load tool config (runtime tools are shown)",
+      "toolsLoad": "Failed to load tools list",
+      "apiKeysLoad": "Failed to load API key list",
+      "webhooksLoad": "Failed to load webhook list",
+      "saveDefaultModel": "Failed to save default model config",
+      "saveProvider": "Failed to save provider config",
+      "timeoutInvalid": "timeout must be an integer >= 1000 (ms)",
+      "retryAttemptsInvalid": "retryAttempts must be between 0 and 5",
+      "apiEndpointInvalid": "apiEndpoint must be a valid URL",
+      "httpAuthHeaderRequired": "authHeader is required when authType=api_key",
+      "maxReadBytesInvalid": "maxReadBytes must be a positive integer",
+      "maxTextLengthInvalid": "maxTextLength must be between 100 and 500000",
+      "maxResponseCharsInvalid": "maxResponseChars must be between 100 and 500000",
+      "maxRowsInvalid": "maxRows must be between 1 and 5000",
+      "sqlConnectionsRowInvalid": "{count} connection rows are incomplete (alias or dsn is empty)",
+      "sqlConnectionsDuplicateAlias": "{count} duplicate connection aliases found; please fix and retry",
+      "missingToolId": "Missing tool ID, unable to save",
+      "updateToolConfig": "Failed to update tool config",
+      "updateToolStatus": "Failed to update tool status",
+      "updateGateway": "Failed to update bot config",
+      "deleteGateway": "Failed to delete bot instance",
+      "testGateway": "Failed to test bot connectivity",
+      "gatewayBindingsImportInvalid": "Import failed: {count} lines have invalid format.",
+      "gatewayBindingsPartial": "Bot bindings contain {count} incomplete rows.",
+      "createApiKey": "Failed to create API key",
+      "deleteApiKey": "Failed to delete API key",
+      "webhookUrlInvalid": "Webhook URL must be an http(s) address",
+      "webhookSecretMin": "Webhook secret must be at least {min} characters",
+      "webhookEventRequired": "At least one event is required",
+      "createWebhook": "Failed to create webhook",
+      "updateWebhook": "Failed to update webhook",
+      "testWebhook": "Failed to test webhook",
+      "deleteWebhook": "Failed to delete webhook",
+      "evolutionCapabilitiesLoad": "Failed to load evolution capabilities",
+      "evolutionCapabilitiesSave": "Failed to save evolution capability",
+      "channelsLoad": "Failed to load bots"
+    },
+    "confirm": {
+      "deleteApiKey": "Delete this API key? This action cannot be undone.",
+      "deleteWebhook": "Delete this webhook? This action cannot be undone.",
+      "deleteGateway": "Delete this bot instance? This action cannot be undone.",
+      "deleteGateways": "Delete the selected {count} bot instances? This action cannot be undone.",
+      "gatewayBindingsDuplicate": "{count} duplicate bot IDs found. Keep only the last one for each bot ID and continue?"
+    },
+    "llm": {
+      "routingDefaults": "Model routing defaults",
+      "saveRouting": "Save routing defaults",
+      "providerConfig": "Provider configuration",
+      "addProviderInstance": "Add provider instance",
+      "viewModels": "View models",
+      "apiKeyLabel": "API Key",
+      "providerIdLabel": "Provider ID",
+      "endpointLabel": "Endpoint",
+      "noConfiguredProviders": "No configured providers yet. Add a provider instance or set an API key first.",
+      "defaultModelLabel": "Default model",
+      "fallbackModelLabel": "Fallback model",
+      "defaultModelPlaceholder": "Default model (e.g. gpt-4o)",
+      "fallbackModelPlaceholder": "Fallback model (e.g. gpt-4o-mini)"
+    },
+    "tools": {
+      "activeCount": "Active {count}",
+      "configTitle": "Tool configuration (toggle & params only)",
+      "quickTips": {
+        "title": "Quick Tips",
+        "fields": "Read and edit values by field name to avoid config mistakes.",
+        "scope": "For high-risk tools, keep approval scope at session or session_action.",
+        "domains": "Domain allow/block lists are comma-separated and apply to subdomains."
+      },
+      "loading": "Loading tools...",
+      "empty": "No tool config data (V2 does not support add/delete tools)",
+      "risk": "Risk",
+      "approval": "Approval",
+      "approvalScope": "Scope",
+      "on": "On",
+      "off": "Off",
+      "builtIn": "Built-in",
+      "toolCardHint": "Configure risk, approval strategy, and runtime params here.",
+      "toolCardHintAria": "Tool config help",
+      "configure": "Configure",
+      "disable": "Disable",
+      "enable": "Enable",
+      "title": "Tools"
+    },
+    "apiKeys": {
+      "newKey": "New Key",
+      "loading": "Loading API keys...",
+      "empty": "No API keys",
+      "lastUsed": "Last used",
+      "expires": "Expires",
+      "title": "API Keys"
+    },
+    "webhooks": {
+      "newWebhook": "New Webhook",
+      "loading": "Loading webhooks...",
+      "empty": "No webhooks",
+      "events": "Events",
+      "createdAt": "Created at",
+      "title": "Webhooks"
+    },
+    "evolutionCapabilities": {
+      "tab": "Evolution",
+      "title": "Evolution Center",
+      "description": "Manage five evolution objects independently with version switch and rollback.",
+      "hands": "Hands (Execution Capability)",
+      "reflex": "Reflex (Rule Template)",
+      "spine": "Spine (Planner Guidance)",
+      "guard": "Guard (Tool Policy)",
+      "mind": "Mind (Global Behavior)",
+      "version": "Version",
+      "updatedAt": "Updated at",
+      "contentLabel": "Capability content",
+      "placeholder": "Enter capability content...",
+      "history": "History",
+      "rollbackTo": "Switch to",
+      "rollback": "Switch Version"
+    },
+    "modals": {
+      "provider": {
+        "title": "Edit LLM provider",
+        "providerTypeLabel": "Provider type",
+        "customIdLabel": "Provider instance ID",
+        "customIdPlaceholder": "Provider instance ID (e.g. primary)",
+        "customIdHelp": "Used to build key <type>:<provider-id>; use lowercase letters, numbers, and hyphens.",
+        "apiKeyLabel": "API Key",
+        "endpointLabel": "Endpoint / Base URL",
+        "apiKeyPlaceholder": "New API key (leave empty to keep unchanged)",
+        "clearApiKey": "Clear existing API key"
+      },
+      "tool": {
+        "title": "Tool configuration",
+        "description": "V2 only supports built-in tool params and enable/disable; rename/type change and add/delete are not supported.",
+        "nameLabel": "Field: name",
+        "namePlaceholder": "Tool name",
+        "typeLabel": "Field: type",
+        "typePlaceholder": "Tool type",
+        "timeoutLabel": "Timeout",
+        "timeoutDefault": "Use default timeout",
+        "timeoutPlaceholder": "timeout ms (optional, >=1000)",
+        "retryAttemptsLabel": "Retry attempts",
+        "retryAttemptsDefault": "Use default retry policy",
+        "retryAttemptsPlaceholder": "retryAttempts (optional, 0-5)",
+        "hitl": "Require approval before execution (requiresApproval)",
+        "hitlHint": "When enabled, this tool enters approval flow before execution; when disabled, runtime decides by risk and rules.",
+        "riskLevel": "Risk level",
+        "approvalScope": "Approval grouping scope",
+        "approvalScopeHint": "Controls how similar approvals are grouped to reduce noise.",
+        "approvalDedupeKeysLabel": "Approval dedupe dimensions",
+        "approvalDedupeDefault": "Default dedupe (system decides)",
+        "approvalDedupeKeysPlaceholder": "approvalDedupeKeys (optional, comma-separated, e.g. url,selector)",
+        "approvalScopes": {
+          "session": "Group by session (recommended)",
+          "sessionAction": "Group by session + action",
+          "action": "Group by action",
+          "target": "Group by action + target",
+          "tool": "Group by tool",
+          "call": "Per call"
+        },
+        "apiEndpointLabel": "Field: apiEndpoint",
+        "apiEndpointPlaceholder": "API endpoint (optional)",
+        "apiKeyLabel": "Field: apiKey",
+        "apiKeyPlaceholder": "API key (leave empty to keep unchanged)",
+        "noApiNeeded": "{tool} does not require API endpoint / API key.",
+        "rootPathLabel": "Field: rootPath",
+        "rootPathPlaceholder": "Root path (optional, e.g. /Users/xxx)",
+        "maxReadBytesLabel": "Field: maxReadBytes",
+        "maxReadBytesDefault": "Use default maxReadBytes",
+        "maxReadBytesPlaceholder": "maxReadBytes (optional, positive integer)",
+        "http": {
+          "allowLocalhost": "Allow localhost / internal network access",
+          "allowedDomainsLabel": "Field: allowedDomains",
+          "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. api.example.com)",
+          "blockedDomainsLabel": "Field: blockedDomains",
+          "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxResponseCharsLabel": "Field: maxResponseChars",
+          "maxResponseCharsDefault": "Use default maxResponseChars",
+          "maxResponseCharsPlaceholder": "maxResponseChars (optional, 100-500000)",
+          "authType": "Default auth type",
+          "authHeaderLabel": "Field: authHeader",
+          "authHeaderPlaceholder": "authHeader (e.g. X-API-Key)",
+          "authTypes": {
+            "none": "No auth",
+            "bearer": "Bearer Token",
+            "basic": "Basic Auth (provide username/password per call)",
+            "apiKey": "API Key Header"
+          }
+        },
+        "sql": {
+          "maxRowsLabel": "Field: maxRows",
+          "maxRowsDefault": "Use default maxRows",
+          "maxRowsPlaceholder": "maxRows (optional, 1-5000)",
+          "defaultDatabaseLabel": "Field: defaultDatabase",
+          "defaultDatabaseDefault": "Use runtime default database",
+          "defaultDatabasePlaceholder": "defaultDatabase (optional, default DB alias)",
+          "allowedDatabasesLabel": "Field: allowedDatabases",
+          "allowedDatabasesPlaceholder": "allowedDatabases (optional, comma-separated)",
+          "connectionsLabel": "connections (database alias map)",
+          "connectionAliasLabel": "Field: alias",
+          "connectionDsnLabel": "Field: dsn",
+          "addConnection": "Add connection",
+          "connectionAliasPlaceholder": "Alias (e.g. main)",
+          "connectionDsnPlaceholder": "DSN (e.g. postgresql://... or sqlite:///...)",
+          "connectionsHint": "One row per database connection: alias is the DB key, dsn is the connection string."
+        },
+        "browser": {
+          "headless": "Run browser in headless mode",
+          "allowLocalhost": "Allow localhost / internal network access",
+          "browserType": "Browser type",
+          "allowedDomainsLabel": "Field: allowedDomains",
+          "allowedDomainsPlaceholder": "allowedDomains (optional, comma-separated, e.g. example.com,news.ycombinator.com)",
+          "blockedDomainsLabel": "Field: blockedDomains",
+          "blockedDomainsPlaceholder": "blockedDomains (optional, comma-separated)",
+          "maxTextLengthLabel": "Field: maxTextLength",
+          "maxTextLengthDefault": "Use default maxTextLength",
+          "maxTextLengthPlaceholder": "maxTextLength (optional, 100-500000)",
+          "browserTypes": {
+            "chromium": "Chromium",
+            "firefox": "Firefox",
+            "webkit": "WebKit"
+          }
+        }
+      },
+      "gateway": {
+        "title": "Bot configuration",
+        "instanceKeyLabel": "Field: instanceKey",
+        "instanceKeyPlaceholder": "instanceKey (optional, should be unique)",
+        "displayNameLabel": "Field: displayName",
+        "displayNamePlaceholder": "Display name",
+        "agentIdLabel": "Field: agentId",
+        "agentIdPlaceholder": "Agent ID (default: semibot)",
+        "botBindingsTitle": "Bot bindings",
+        "botBindingsEmpty": "No bot bindings. Add one to route different bots/apps to different agents.",
+        "addBotBinding": "Add binding",
+        "removeBotBinding": "Remove",
+        "importBindingsLabel": "Import bindings",
+        "botIdLabel": "Field: botId",
+        "botBindingAgentLabel": "Field: agentId",
+        "importBindingsPlaceholder": "Paste lines: botId=agentId (or only botId to use default agent)",
+        "applyImportedBindings": "Apply import",
+        "botIdPlaceholder": "Bot ID",
+        "botBindingAgentPlaceholder": "Agent ID",
+        "setDefault": "Set as default instance",
+        "enabled": "Enable this bot",
+        "notifyEventTypesLabel": "Field: notifyEventTypes",
+        "notifyEventTypesPlaceholder": "notifyEventTypes (optional, comma-separated)",
+        "addressing": {
+          "title": "Addressing policy",
+          "modeLabel": "Message trigger mode",
+          "modeMentionOnly": "Trigger only on @mention / reply / commands",
+          "modeAllMessages": "All group messages mode",
+          "allowReplyToBot": "Treat replies to bot messages as addressed",
+          "executeOnUnaddressed": "Execute even when unaddressed (use carefully)",
+          "commandPrefixesLabel": "Field: commandPrefixes",
+          "commandPrefixesPlaceholder": "commandPrefixes (optional, comma-separated, e.g. /ask,/run,/approve,/reject)",
+          "sessionContinuationWindowSecLabel": "Field: sessionContinuationWindowSec",
+          "sessionContinuationWindowSecPlaceholder": "sessionContinuationWindowSec (positive integer seconds)"
+        },
+        "proactive": {
+          "title": "Proactive notification policy",
+          "modeLabel": "Notification mode",
+          "modeSilent": "Silent (default)",
+          "modeRiskBased": "Risk-based",
+          "modeAlways": "Always",
+          "minRiskToNotifyLabel": "Minimum risk level to notify"
+        },
+        "context": {
+          "title": "Context retention policy",
+          "ttlDaysLabel": "Field: ttlDays",
+          "ttlDaysPlaceholder": "ttlDays (retention days)",
+          "maxRecentMessagesLabel": "Field: maxRecentMessages",
+          "maxRecentMessagesPlaceholder": "maxRecentMessages (max recent messages)",
+          "summarizeEveryNMessagesLabel": "Field: summarizeEveryNMessages",
+          "summarizeEveryNMessagesPlaceholder": "summarizeEveryNMessages (summarize every N messages)"
+        },
+        "feishu": {
+          "verifyTokenLabel": "Field: verifyToken",
+          "verifyTokenPlaceholder": "Feishu verify token (leave empty to clear)",
+          "webhookUrlLabel": "Field: webhookUrl",
+          "webhookUrlPlaceholder": "Feishu webhook URL (optional)",
+          "clearVerifyToken": "Clear existing verify token"
+        },
+        "telegram": {
+          "botTokenLabel": "Field: botToken",
+          "botTokenPlaceholder": "Telegram bot token (leave empty to clear)",
+          "clearBotToken": "Clear existing bot token",
+          "webhookSecretLabel": "Field: webhookSecret",
+          "webhookSecretPlaceholder": "Telegram webhook secret (optional)",
+          "clearWebhookSecret": "Clear existing webhook secret"
+        }
+      },
+      "apiKey": {
+        "title": "Create API key",
+        "description": "The full key is shown only once.",
+        "nameLabel": "Field: name",
+        "expiresAtLabel": "Expires at (optional)",
+        "namePlaceholder": "Key name"
+      },
+      "webhook": {
+        "title": "Create webhook",
+        "description": "Use comma-separated events, at least one event required.",
+        "urlLabel": "Webhook URL",
+        "secretLabel": "Secret",
+        "eventsLabel": "Events",
+        "secretPlaceholder": "secret (at least 16 characters)",
+        "urlPlaceholder": "https://example.com/webhook",
+        "eventsPlaceholder": "event.a,event.b"
+      },
+      "createdKey": {
+        "title": "API key created",
+        "description": "Save it now. It will not be shown again after closing.",
+        "saved": "Saved",
+        "fullKey": "Full key"
+      }
+    },
+    "tabs": {
+      "llm": "LLM",
+      "tools": "Tools",
+      "apiKeys": "API Keys",
+      "webhooks": "Webhooks",
+      "channels": "Bots"
+    },
+    "channels": {
+      "title": "Bots",
+      "activeCount": "Active {count}",
+      "newTelegram": "New Telegram",
+      "newFeishu": "New Feishu",
+      "filterAll": "All",
+      "filterTelegram": "Telegram",
+      "filterFeishu": "Feishu",
+      "selectAllVisible": "Select all visible",
+      "selectedCount": "{count} selected",
+      "batchEnable": "Batch enable",
+      "batchDisable": "Batch disable",
+      "batchTest": "Batch test",
+      "batchDelete": "Batch delete",
+      "batchSelectHint": "Select at least one bot instance first.",
+      "batchNoDeletable": "Only default bot instances are selected. They cannot be deleted in batch.",
+      "batchPartialFailed": "Batch action partially failed: {success} succeeded, {failed} failed.",
+      "batchTestPartialFailed": "Batch test partially failed: {success} succeeded, {failed} failed.",
+      "defaultTag": "Default",
+      "loading": "Loading bots...",
+      "empty": "No bots",
+      "botBindingsSummary": "Bot bindings: {count}",
+      "botBindingsNone": "No bot bindings",
+      "botBindingsMore": "+{count} more",
+      "importBindingsPlaceholder": "Paste lines: botId=agentId (or only botId to use default agent)",
+      "applyImportedBindings": "Apply import",
+      "agent": "Agent",
+      "updatedAt": "Updated at",
+      "test": "Test"
+    }
+  },
+  "events": {
+    "title": "Event Center",
+    "subtitle": "Inspect triggered events, matching results, and replay single events.",
+    "positioning": "Observe system behavior, quickly locate issues, and create automation rules from events.",
+    "capabilities": "Available actions: filter same type, replay events, and create rules from events.",
+    "newRule": "New Rule",
+    "filterPlaceholder": "Filter by event type (e.g. task.completed)",
+    "apiUnavailable": "Event APIs are not connected yet. Please implement `/v1/events` and `/v1/events/replay`.",
+    "riskLabel": "Risk",
+    "unknown": "unknown",
+    "unknownEventType": "Unknown event type",
+    "createRule": "Create Rule",
+    "copyType": "Copy Type",
+    "copyTypeSuccess": "Event type copied",
+    "filterSameType": "Filter same type",
+    "details": "Details",
+    "replay": "Replay",
+    "empty": "No events found",
+    "detailsTitle": "Event Details",
+    "error": {
+      "replay": "Replay failed",
+      "copy": "Copy failed"
+    },
+    "source": "Source",
+    "time": "Time",
+    "type": "Type",
+    "subject": "Subject",
+    "truncated": " ...",
+    "riskLevel": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "unknown": "Unknown"
+    },
+    "categories": {
+      "system": "System",
+      "task": "Task",
+      "tool": "Tool",
+      "rule": "Rule",
+      "approval": "Approval",
+      "chat": "Chat",
+      "gateway": "Channel",
+      "memory": "Memory",
+      "scheduler": "Scheduler",
+      "replay": "Replay",
+      "unknown": "Unknown"
+    },
+    "actionNames": {
+      "bootCompleted": "Boot Completed",
+      "messageReceived": "Message Received",
+      "messageCompleted": "Message Completed",
+      "execStarted": "Execution Started",
+      "execCompleted": "Execution Completed",
+      "execFailed": "Execution Failed",
+      "lifecyclePreExecute": "Pre Execute",
+      "lifecyclePostExecute": "Post Execute",
+      "queueTelemetry": "Queue Telemetry"
+    },
+    "actions": {
+      "boot.completed": "Boot Completed",
+      "message.received": "Message Received",
+      "message.completed": "Message Completed",
+      "exec.started": "Execution Started",
+      "exec.completed": "Execution Completed",
+      "exec.failed": "Execution Failed",
+      "lifecycle.pre_execute": "Pre Execute",
+      "lifecycle.post_execute": "Post Execute",
+      "queue.telemetry": "Queue Telemetry",
+      "action": "Action",
+      "unknown": "Unknown Action"
+    },
+    "summary": {
+      "message": "Summary",
+      "tool": "Tool",
+      "action": "Action",
+      "target": "Target",
+      "status": "Status",
+      "replayId": "Replay ID",
+      "originalEventId": "Original Event ID"
+    }
+  },
+  "approvals": {
+    "title": "Approval Center",
+    "subtitle": "Review high-risk actions before execution.",
+    "pending": "Pending",
+    "total": "Total",
+    "approve": "Approve",
+    "reject": "Reject",
+    "empty": "No approvals",
+    "unknownEvent": "Unknown event",
+    "status": {
+      "all": "All statuses",
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "expired": "Expired"
+    },
+    "error": {
+      "action": "Approval action failed"
+    },
+    "risk": "Risk",
+    "detail": {
+      "tool": "Tool {tool}",
+      "action": "Action {action}",
+      "target": "Target {target}"
+    },
+    "trace": {
+      "title": "Skill Orchestration Trace",
+      "selectedSkill": "Selected skill",
+      "skillKind": "Skill kind",
+      "skillMdGate": "SKILL.md first-step gate",
+      "raw": "View raw trace"
+    },
+    "scopeGroups": {
+      "title": "Grouped by task scope",
+      "scopeLabel": "Scope: {id}",
+      "pendingCount": "{count} pending approvals",
+      "approveScope": "Approve scope",
+      "rejectScope": "Reject scope"
+    },
+    "riskLevel": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "apiUnavailableMessage": "Approval APIs are not connected yet. Please implement {path1} and {path2}."
+  },
+  "toolsPage": {
+    "title": "Tools Center",
+    "subtitle": "Unified tool view: built-in tools can be enabled/disabled and configured.",
+    "openConfig": "Open Configuration",
+    "configTitle": "Tool Configuration",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "builtin": "Built-in",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "empty": "No tool configuration yet (V2 does not support add/delete).",
+    "runtimeUnavailable": "Runtime unavailable",
+    "error": {
+      "load": "Failed to load tools data. Please check API and Runtime."
+    },
+    "stats": {
+      "total": "Total Tools",
+      "enabled": "Enabled",
+      "runtimeConnected": "Runtime Connected"
+    },
+    "builtinDescriptions": {
+      "search": "Built-in web search tool. Including: search etc.",
+      "code_executor": "Built-in code execution tool. Including: execute etc.",
+      "file_io": "Built-in local file read/write tool. Including: read, write, edit, list etc.",
+      "semi_browser": "Built-in browser automation tool (Playwright). Including: open, click, type, press, extract_text, get_links, screenshot etc.",
+      "http_client": "Built-in HTTP client. Including: GET, POST, PUT, DELETE etc.",
+      "web_fetch": "Built-in web fetch and content extraction tool. Including: fetch, extract_text, extract_json etc.",
+      "json_transform": "Built-in JSON transform tool. Including: transform etc.",
+      "text_processing": "Built-in text processing tool. Supports compact, extract, and slice operations.",
+      "memory": "Built-in memory tool. Supports long-term search, long-term save, short-term snapshot, short-term compaction, and budget inspection.",
+      "csv_xlsx": "Built-in CSV/Excel tool. Including: read, write, filter, aggregate, pivot etc.",
+      "pdf_report": "Built-in PDF report generation tool. Including: generate etc.",
+      "sql_query_readonly": "Built-in read-only SQL query tool. Including: query etc.",
+      "control_plane": "Built-in control plane tool for managing runtime config, rule policies & skill orchestration. Including: create_rule, update_rule, delete_rule, list_rules etc.",
+      "rule_authoring": "Built-in rule authoring tool (alias for control_plane). Create/update/simulate/enable/disable event rules.",
+      "skill_installer": "Built-in skill installer. Install skills from local folder/ZIP or remote URL into ~/.semibot/skills and refresh index."
+    }
+  },
+  "rules": {
+    "title": "Rule Management",
+    "subtitle": "Configure event policies for reminders, suggestions and automation.",
+    "enabled": "Enabled",
+    "new": "New Rule",
+    "edit": "Edit Rule",
+    "disable": "Disable",
+    "enable": "Enable",
+    "empty": "No rules yet. Create one to start.",
+    "apiUnavailable": "Rules API is not connected yet. Please implement `/v1/control/rules/list`.",
+    "createDescription": "Create an event trigger rule",
+    "updateDescription": "Update rule settings",
+    "actionMode": {
+      "ask": "ask (confirm first)",
+      "suggest": "suggest (recommend)",
+      "auto": "auto (run automatically)",
+      "skip": "skip"
+    },
+    "error": {
+      "requiredFields": "Please fill rule name and event type",
+      "invalidConditionsJson": "Invalid conditions JSON",
+      "invalidActionParamsJson": "Invalid action params JSON",
+      "cronRequired": "Please provide both cron job name and schedule",
+      "cronCreateFailed": "Failed to create cron scheduler",
+      "save": "Failed to save rule",
+      "updateStatus": "Failed to update rule status"
+    },
+    "form": {
+      "ruleName": "Rule name",
+      "eventType": "Event type (e.g. tool.exec.failed)",
+      "advancedMode": "Advanced mode (JSON)",
+      "conditionPreset": "Condition preset",
+      "advancedHint": "Use presets by default; switch to advanced mode only for complex rules.",
+      "conditionsJson": "Conditions (JSON)",
+      "actionParamsJson": "Action params (JSON)",
+      "actions": "Actions",
+      "addAction": "Add action",
+      "cronCreateScheduler": "Create/update cron scheduler with this rule",
+      "cronJobName": "Cron job name (trigger_name)",
+      "cronSchedule": "Cron schedule (5-field recommended)",
+      "conditionPresets": {
+        "all": "Match all (no extra condition)",
+        "subjectExists": "Trigger when subject exists",
+        "hasAttachments": "Trigger when message has attachments",
+        "highRisk": "Trigger on high-risk events",
+        "cronAny": "Any cron trigger",
+        "cronNamed": "Cron with trigger name",
+        "cronSchedule": "Cron with schedule"
+      },
+      "eventTypeGroups": {
+        "chat": "Chat",
+        "tool": "Tool",
+        "approval": "Approval",
+        "gateway": "Channel",
+        "system": "System"
+      },
+      "priority": "priority",
+      "dedupe": "dedupe(s)",
+      "cooldown": "cooldown(s)",
+      "budgetPerDay": "budget/day",
+      "cronJobNamePlaceholder": "daily_digest"
+    },
+    "formHelp": {
+      "priority": "priority: higher value means higher execution precedence.",
+      "dedupe": "dedupeWindowSeconds: within this window, same rule + same subject runs only once.",
+      "cooldown": "cooldownSeconds: after one run, this rule will not trigger again during cooldown.",
+      "budgetPerDay": "attentionBudgetPerDay: max trigger count per day (keyed by rule_id:subject).",
+      "cronSchedule": "Prefer 5-field cron (e.g. 0 9 * * 1-5, */5 * * * *); @every:seconds is still supported for compatibility."
+    },
+    "status": {
+      "active": "active",
+      "inactive": "inactive"
+    },
+    "actionType": {
+      "notify": "notify",
+      "runAgent": "run_agent",
+      "executePlan": "execute_plan",
+      "callWebhook": "call_webhook",
+      "logOnly": "log_only"
+    },
+    "risk": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    },
+    "meta": {
+      "dedupe": "dedupe",
+      "cooldown": "cooldown",
+      "budgetPerDay": "budget/day",
+      "effectiveAt": "effective at"
+    }
+  },
+  "chatLayout": {
+    "newChat": "New Chat",
+    "refresh": "Refresh",
+    "noSessions": "No sessions",
+    "untitled": "Untitled chat"
+  },
+  "agents": {
+    "new": "New Agent",
+    "searchPlaceholder": "Search agents...",
+    "system": "System",
+    "noDescription": "No description",
+    "createdOn": "Created on",
+    "header": {
+      "prefix": "Manage your AI agents,",
+      "suffix": "",
+      "title": "Agents"
+    },
+    "filter": {
+      "all": "All",
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "pagination": {
+      "label": "Pagination",
+      "prev": "Prev",
+      "next": "Next"
+    },
+    "action": {
+      "disable": "Disable",
+      "enable": "Enable"
+    },
+    "empty": {
+      "filteredTitle": "No matching agents",
+      "filteredDescription": "Try adjusting search or filters",
+      "clearFilters": "Clear filters",
+      "defaultTitle": "No agents yet",
+      "defaultDescription": "Create your first AI agent to get started"
+    },
+    "error": {
+      "load": "Load failed, please retry",
+      "nameRequired": "Name is required",
+      "modelRequired": "Please select a model",
+      "save": "Save failed, please retry",
+      "toggle": "Failed to change status",
+      "delete": "Delete failed, please retry"
+    },
+    "toast": {
+      "created": "Created successfully",
+      "deleted": "Deleted"
+    },
+    "modal": {
+      "createTitle": "Create Agent",
+      "editTitle": "Edit Agent",
+      "namePlaceholder": "Agent name",
+      "modelsLoadFailed": "Failed to load models, please check backend APIs",
+      "noModels": "No model available, check LLM Provider config",
+      "selectModel": "Select a model",
+      "systemPromptPlaceholder": "System prompt",
+      "aiGenerate": "Generate with AI",
+      "aiGenerateTitle": "Generate Agent Draft with AI",
+      "aiGenerateDescription": "Describe your goal and AI will generate name, description, and system prompt. You can edit afterwards.",
+      "aiGoalLabel": "Goal",
+      "aiGoalPlaceholder": "e.g. Build a weekly e-commerce ops report that summarizes sales, ads, and inventory anomalies with next-week actions.",
+      "aiGenerateAction": "Generate and Fill",
+      "aiGoalRequired": "Please enter a goal first",
+      "aiGenerateFailed": "AI generation failed, please retry",
+      "aiGenerated": "Draft generated and filled"
+    },
+    "deleteModal": {
+      "title": "Delete Agent",
+      "description": "Deleting \"{name}\" cannot be undone."
+    }
+  },
+  "agentsDetail": {
+    "createTitle": "Create Agent",
+    "editTitle": "Edit Agent",
+    "basicConfig": "Basic Configuration",
+    "basicConfigDescription": "Save agent settings via live API",
+    "current": "Current",
+    "currentModelNotInList": "{model} (not in available list)",
+    "namePlaceholder": "Enter agent name",
+    "descriptionPlaceholder": "Enter description",
+    "selectModel": "Select a model",
+    "noModels": "No models available",
+    "systemPromptPlaceholder": "Enter system prompt",
+    "skillsTitle": "Skills",
+    "skillsDescription": "Select skills available to this agent",
+    "loadingSkills": "Loading skills...",
+    "noSkills": "No available skills",
+    "builtin": "Built-in",
+    "mcpTitle": "MCP Servers",
+    "mcpDescription": "Select MCP servers available to this agent",
+    "loadingMcp": "Loading MCP servers...",
+    "noMcp": "No available MCP server",
+    "system": "System",
+    "error": {
+      "load": "Failed to load agent, please retry later",
+      "nameRequired": "Name is required",
+      "modelRequired": "Please select a model",
+      "createFailed": "Create failed",
+      "updateFailed": "Update failed",
+      "save": "Save failed, please retry later"
+    },
+    "runtimeTypeSemigraph": "Semigraph",
+    "modelRolesTitle": "Per-Role Model Config (Advanced)",
+    "modelRolesDescription": "Override model and temperature for Plan, Act, and Text Processing separately. Leave blank to use the global config above.",
+    "studioSchemaTitle": "Studio Interface Config",
+    "studioSchemaDescription": "Define the expected upstream inputs for this agent on the Studio canvas, helping users understand how to wire connections.",
+    "studioInputLabel": "Input name (e.g. Novel text)",
+    "studioInputDescription": "Description (optional)",
+    "studioInputAdd": "Add expected input",
+    "modelRolesPlan": "Plan Node",
+    "modelRolesAct": "Act / Respond Node",
+    "modelRolesTextProcessing": "Text Processing Tool",
+    "modelRolesModelLabel": "Model",
+    "modelRolesTemperatureLabel": "Temperature",
+    "modelRolesTemperaturePlaceholder": "Leave blank for default",
+    "modelRolesModelPlaceholder": "Leave blank to use global model"
+  },
+  "chatNew": {
+    "title": "Start New Chat",
+    "subtitle": "Select an agent, or type your question to start chatting",
+    "chooseAgent": "Choose Agent",
+    "smartAssistant": "Smart AI assistant",
+    "quickStart": "Quick Start",
+    "inputPlaceholder": "Describe your question or task...",
+    "selectedPrefix": "Selected:",
+    "startChat": "Start Chat",
+    "suggestionsTitle": "Try These Prompts",
+    "system": "System",
+    "defaultMessage": "Hi, please introduce yourself.",
+    "templates": {
+      "general": {
+        "name": "General Assistant",
+        "description": "Multi-purpose AI assistant for everyday tasks"
+      },
+      "code": {
+        "name": "Code Assistant",
+        "description": "Focused on coding and code review tasks"
+      },
+      "research": {
+        "name": "Research Assistant",
+        "description": "Search, organize, and analyze information"
+      },
+      "data": {
+        "name": "Data Analyst",
+        "description": "Data processing, visualization, and insights"
+      },
+      "creative": {
+        "name": "Creative Writer",
+        "description": "Copywriting, content generation, and editing"
+      }
+    },
+    "suggestions": {
+      "item1": "Analyze this sales data and generate a report",
+      "item2": "Build a React component for file upload",
+      "item3": "Search latest AI industry news and summarize",
+      "item4": "Optimize the performance of this Python code"
+    },
+    "warning": {
+      "noAvailableAgent": "No available agent loaded. Unable to start chat.",
+      "goCreateAgent": "Create or enable an agent"
+    },
+    "error": {
+      "noAvailableAgent": "No available agent loaded. Please create or enable an agent first.",
+      "selectAgent": "Please select an agent first.",
+      "createSession": "Failed to create session"
+    }
+  },
+  "chatSession": {
+    "loadingSession": "Loading session...",
+    "newChat": "New chat",
+    "backToChats": "Back to chats",
+    "sessionLabel": "Session",
+    "new": "New",
+    "welcome": "Hi! I am your AI assistant. How can I help you today?",
+    "pendingApprovals": "Pending approvals",
+    "risk": "Risk",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approveAll": "Approve all",
+    "rejectAll": "Reject all",
+    "approveScope": "Approve scope",
+    "rejectScope": "Reject scope",
+    "scopeGroups": "Grouped approvals by task scope",
+    "scopeLabel": "Scope: {id}",
+    "scopeCount": "{count} pending",
+    "bulkDone": "Bulk {action} completed for {count} approvals.",
+    "scopeDone": "Scope bulk {action} completed for {count} approvals.",
+    "moreApprovalsHint": "{count} more approvals hidden. Use approve-all/reject-all.",
+    "approvalHint": "After approval, blocked tasks will resume automatically.",
+    "sendFailed": "Send failed",
+    "addAttachment": "Add attachment",
+    "inputPlaceholder": "Type your question...",
+    "voiceInput": "Voice input",
+    "stop": "Stop",
+    "send": "Send",
+    "keyboardHint": "Press Enter to send, Shift + Enter for new line",
+    "messageStatus": {
+      "sending": "Sending...",
+      "sent": "Sent",
+      "failed": "Send failed"
+    },
+    "error": {
+      "loadApprovals": "Failed to load approvals",
+      "bulkApproval": "Bulk approval failed",
+      "loadSession": "Failed to load session",
+      "messageWithReason": "Sorry, an error occurred: {message}"
+    },
+    "responseLabel": "Semibot Response",
+    "generatingLabel": "Generating",
+    "readyLabel": "Ready",
+    "outline": "Outline",
+    "copyBodyOnly": "Copy Body",
+    "copyWithReferences": "Copy With References",
+    "exportMarkdown": "Export Markdown",
+    "chatMode": "Chat Mode",
+    "reportMode": "Report Mode",
+    "sourceSummary": "Sources",
+    "sourceSummaryStats": "{count} references from {domains} domains",
+    "print": "Print",
+    "executiveSummary": "Executive Summary"
+  },
+  "dashboard": {
+    "subtitle": "A Crab that works, reminds, collaborates, evolves.",
+    "cards": {
+      "agents": {
+        "label": "Agents",
+        "hint": "available agents"
+      },
+      "sessions": {
+        "label": "Sessions",
+        "hint": "active {count}"
+      },
+      "mcp": {
+        "hint": "external integrations",
+        "label": "MCP"
+      },
+      "skills": {
+        "hint": "skill definitions",
+        "label": "Skills"
+      },
+      "events": {
+        "label": "Events",
+        "hint": "pending approvals {count}"
+      }
+    },
+    "recentSessions": {
+      "title": "Recent Sessions",
+      "viewAll": "View all",
+      "empty": "No sessions yet. Create your first chat task.",
+      "sources": {
+        "web": "Web",
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "discord": "Discord",
+        "whatsapp": "WhatsApp",
+        "imessage": "iMessage",
+        "gateway": "Bot",
+        "channel": "Bot"
+      }
+    },
+    "quickLinks": {
+      "title": "Quick Links",
+      "note": "Current interface is switched to the new navigation IA.",
+      "items": {
+        "newChat": {
+          "title": "New Chat",
+          "desc": "Create session and ask immediately"
+        },
+        "agents": {
+          "title": "Manage Agents",
+          "desc": "Create, edit and enable/disable agents"
+        },
+        "events": {
+          "title": "Event Center",
+          "desc": "Review triggered events and replay"
+        },
+        "rules": {
+          "title": "Rule Management",
+          "desc": "Configure reminder/suggest/auto strategies"
+        },
+        "approvals": {
+          "title": "Approval Center",
+          "desc": "Handle high-risk approvals"
+        },
+        "tools": {
+          "title": "Tools",
+          "desc": "View runtime and DB tools"
+        },
+        "config": {
+          "title": "Configuration",
+          "desc": "Model, tool and webhook settings"
+        },
+        "mcp": {
+          "title": "MCP Integrations",
+          "desc": "Connect external tools and resources"
+        }
+      }
+    },
+    "recentEvents": {
+      "title": "Recent Events",
+      "open": "Open Event Center",
+      "empty": "No events yet"
+    },
+    "error": {
+      "coreData": "Failed to load dashboard core data. Please check API service.",
+      "load": "Load failed"
+    },
+    "title": "Semibot - A semi bot",
+    "channelList": {
+      "title": "Bot Conversations",
+      "subtitle": "Browse all bot conversations grouped by bot and Chat ID with recent runs.",
+      "searchPlaceholder": "Search Chat ID, conversation ID, run summary, or Run ID",
+      "filterAll": "All sources",
+      "conversations": "{count} conversations",
+      "runs": "{count} runs",
+      "latest": "Last update {time}",
+      "openLatest": "Open latest details",
+      "showingRuns": "Showing latest {shown} of {total} runs",
+      "runFallbackTitle": "Bot conversation run",
+      "unknownChat": "Unknown chat",
+      "empty": "No matching bot conversations"
+    },
+    "channelDetail": {
+      "title": "Bot Conversation",
+      "subtitle": "Inspect bot conversation runs and context messages.",
+      "back": "Back to Dashboard",
+      "conversationId": "Conversation ID",
+      "chatId": "Chat ID",
+      "runs": "Runs",
+      "context": "Context Messages",
+      "emptyRuns": "No runs found",
+      "emptyContext": "No context messages",
+      "mountedSession": "Mounted Session",
+      "forkedFrom": "Forked From",
+      "instanceId": "Instance ID",
+      "botId": "Bot ID"
+    }
+  },
+  "skillDefinitions": {
+    "title": "Skill Management",
+    "subtitlePrefix": "Manage skill definitions,",
+    "subtitleSuffix": "",
+    "create": "Create Skill",
+    "install": "Install",
+    "searchPlaceholder": "Search by skill name, ID, or description...",
+    "builtin": "Built-in",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "noDescription": "No description",
+    "category": "Category:",
+    "empty": {
+      "filteredTitle": "No matching skills found",
+      "filteredDescription": "Try adjusting your search query",
+      "clearSearch": "Clear search",
+      "defaultTitle": "No skill definitions yet",
+      "defaultDescription": "Create your first skill definition to get started"
+    },
+    "installModal": {
+      "title": "Install Skill",
+      "sourceType": "Source Type *",
+      "sourceUrl": "Source URL *",
+      "sourceOptions": {
+        "anthropic": "Anthropic",
+        "git": "Git",
+        "url": "URL"
+      },
+      "sourceUrlPlaceholder": "https://..."
+    },
+    "editModal": {
+      "title": "Edit Skill Definition",
+      "name": "Name *",
+      "builtinHint": "Mark as built-in skill (visible to all orgs)"
+    },
+    "error": {
+      "load": "Failed to load skill definitions",
+      "install": "Install failed",
+      "delete": "Delete failed",
+      "update": "Update failed"
+    }
+  },
+  "skillsPage": {
+    "title": "Skill Management",
+    "subtitlePrefix": "Manage skill definitions,",
+    "subtitleSuffix": "",
+    "create": "Create Skill",
+    "install": "Install Skill",
+    "searchPlaceholder": "Search skill name, ID or description...",
+    "emptyTitle": "No matching skills found",
+    "emptyDescription": "Try adjusting the search query",
+    "noDescription": "No description",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "createDescription": "Upload a package containing SKILL.md to create and install a skill automatically.",
+    "packageLabel": "Package file *",
+    "packageHint": "Supports .zip, .tar.gz, .tgz up to 100MB. Package must include SKILL.md.",
+    "uploadAndCreate": "Upload & Create",
+    "uploadAndInstall": "Upload & Install",
+    "batch": {
+      "selectAllVisible": "Select current list",
+      "selectedCount": "{count} skills selected",
+      "enable": "Batch enable",
+      "disable": "Batch disable",
+      "delete": "Batch delete"
+    },
+    "confirm": {
+      "delete": "Delete skill \"{name}\"? This action cannot be undone.",
+      "batchDelete": "Delete selected {count} skills? This action cannot be undone."
+    },
+    "error": {
+      "load": "Failed to load skill definitions",
+      "create": "Failed to create skill",
+      "toggle": "Failed to change status",
+      "delete": "Delete failed",
+      "batchToggle": "Batch operation completed, {failed}/{total} skills failed to update",
+      "batchDelete": "Batch delete completed, {failed}/{total} skills failed to delete"
+    }
+  },
+  "dashboardError": {
+    "title": "Something went wrong",
+    "message": "Failed to load page. Please try again later.",
+    "errorId": "Error ID",
+    "backHome": "Back to home"
+  },
+  "usage": {
+    "title": "Usage",
+    "subtitle": "View LLM token consumption, grouped by node, model, session, or agent.",
+    "cards": {
+      "totalTokens": "Total Tokens",
+      "promptTokens": "Prompt Tokens",
+      "completionTokens": "Completion Tokens",
+      "calls": "calls"
+    },
+    "trend": {
+      "title": "Daily Trend",
+      "titleHourly": "Hourly Trend"
+    },
+    "breakdown": {
+      "title": "Breakdown",
+      "key": "Group",
+      "calls": "Calls",
+      "promptTokens": "Prompt",
+      "completionTokens": "Completion",
+      "totalTokens": "Total"
+    },
+    "groupBy": {
+      "node": "Node",
+      "model": "Model",
+      "agent": "Agent",
+      "session": "Session"
+    },
+    "timeRange": {
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "last7d": "Last 7 days",
+      "last30d": "Last 30 days",
+      "custom": "Custom",
+      "from": "From",
+      "to": "To",
+      "apply": "Apply"
+    }
+  },
+  "settings": {
+    "title": "Personal Settings",
+    "subtitle": "Manage profile, account security, and UI preferences.",
+    "platformConfig": "Platform Config",
+    "sections": {
+      "profile": "Profile",
+      "password": "Password",
+      "preferences": "Preferences"
+    },
+    "profile": {
+      "title": "Profile",
+      "subtitle": "From live `/users/me` API",
+      "username": "Username",
+      "avatarUrl": "Avatar URL",
+      "saveChanges": "Save Changes",
+      "success": {
+        "saved": "Saved"
+      },
+      "error": {
+        "load": "Failed to load profile",
+        "save": "Failed to save"
+      }
+    },
+    "password": {
+      "title": "Change Password",
+      "subtitle": "Update your login password",
+      "currentPassword": "Current Password",
+      "newPassword": "New Password",
+      "confirmPassword": "Confirm New Password",
+      "currentPasswordPlaceholder": "Enter current password",
+      "newPasswordPlaceholder": "At least 8 characters",
+      "confirmPasswordPlaceholder": "Re-enter new password",
+      "changePassword": "Change Password",
+      "success": {
+        "changed": "Password changed"
+      },
+      "error": {
+        "required": "Please fill in all fields",
+        "minLength": "New password must be at least 8 characters",
+        "mismatch": "New passwords do not match",
+        "changeFailed": "Failed to change password"
+      }
+    },
+    "preferences": {
+      "title": "Preferences",
+      "subtitle": "From live `/users/preferences` API",
+      "theme": "Theme",
+      "language": "Language",
+      "themeOptions": {
+        "dark": "Dark",
+        "light": "Light",
+        "system": "System"
+      },
+      "languageOptions": {
+        "zhCN": "Chinese",
+        "enUS": "English"
+      },
+      "languageHint": "Language will refresh automatically after saving",
+      "saved": "Saved",
+      "save": "Save Preferences",
+      "error": {
+        "load": "Failed to load preferences",
+        "save": "Failed to save preferences"
+      }
+    }
+  },
+  "detailCanvas": {
+    "title": "Detail Canvas",
+    "collapse": "Collapse detail canvas",
+    "maximize": "Maximize detail canvas",
+    "exitMaximize": "Exit maximize",
+    "expand": "Expand detail canvas",
+    "emptyTitle": "No detail content yet",
+    "emptyDescription": "Reports, files, and structured results will appear here"
+  },
+  "ui": {
+    "select": {
+      "placeholder": "Please select"
+    }
+  },
+  "fileUpload": {
+    "dropOr": "Drop files here, or",
+    "clickSelect": "click to select",
+    "error": {
+      "maxSize": "File size {size} exceeds limit {max}",
+      "invalidType": "File type {ext} is not allowed. Allowed: {allowed}"
+    }
+  },
+  "agent2ui": {
+    "renderer": {
+      "renderFailed": "Render failed"
+    },
+    "chart": {
+      "item": "Item {index}",
+      "unsupported": "Unsupported chart type: {type}"
+    },
+    "citation": {
+      "references": "References ({count})"
+    },
+    "code": {
+      "copyCode": "Copy code",
+      "wrapCode": "Wrap",
+      "horizontalScroll": "Scroll"
+    },
+    "dataTable": {
+      "pagination": "{total} records, page {page}/{totalPages}",
+      "prevPage": "Previous page",
+      "nextPage": "Next page"
+    },
+    "fileDownload": {
+      "unknownSize": "Unknown size",
+      "downloadFile": "Download file",
+      "openInDetail": "Open detail",
+      "markdownPreview": "Markdown Preview",
+      "error": {
+        "http": "Download failed (HTTP {status})",
+        "invalidResponse": "Download endpoint returned an invalid response"
+      }
+    },
+    "image": {
+      "defaultAlt": "image",
+      "defaultFilename": "image",
+      "download": "Download",
+      "zoom": "Zoom",
+      "loadFailed": "Failed to load image"
+    },
+    "loading": {
+      "contentLoading": "Loading content"
+    },
+    "plan": {
+      "status": {
+        "pending": "pending",
+        "running": "running",
+        "completed": "completed",
+        "failed": "failed",
+        "skipped": "skipped"
+      }
+    },
+    "progress": {
+      "processing": "Processing..."
+    },
+    "thinking": {
+      "title": "Thinking"
+    },
+    "toolCall": {
+      "arguments": "Arguments",
+      "result": "Result",
+      "running": "Running",
+      "success": "Success",
+      "successWithDuration": "Success ({seconds}s)",
+      "error": "Failed",
+      "errorWithDuration": "Failed ({seconds}s)"
+    },
+    "sandbox": {
+      "title": "Sandbox Execution",
+      "output": "Output",
+      "logs": "Logs",
+      "waitingOutput": "Waiting for output...",
+      "noOutput": "No output",
+      "waitingLogs": "Waiting for logs...",
+      "noLogs": "No logs",
+      "status": {
+        "starting": "Starting",
+        "running": "Running",
+        "success": "Success",
+        "timeout": "Timeout",
+        "error": "Failed"
+      }
+    },
+    "process": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "details": "Details",
+      "failed": "Failed",
+      "planSummary": "Execution plan: {count} steps",
+      "thinkingMergedExtra": "(+{count} more)",
+      "toolCallSummary": "Called {count} tools",
+      "stepSummary": "Executed {count} steps",
+      "failedSummary": "{count} failed",
+      "summarySeparator": ", ",
+      "status": {
+        "thinking": "Deep thinking in progress",
+        "completed": "Thinking completed",
+        "failed": "Execution encountered issues"
+      },
+      "skillOrchestration": {
+        "title": "Skill orchestration",
+        "skill": "Skill",
+        "skillKind": "Skill kind",
+        "stepCount": "Steps",
+        "roundGoal": "Round goal",
+        "loadedSkill": "Loaded skill",
+        "plannerLoadedSkill": "Planner loaded skill",
+        "observeOutcome": "Observe outcome",
+        "observeReason": "Why continued",
+        "lastRejection": "Last rejection",
+        "replan": "Replan",
+        "noSkill": "Not explicitly selected",
+        "moreSteps": "{count} more steps",
+        "planMode": {
+          "label": "Plan mode",
+          "initial": "Initial plan",
+          "incrementalReplan": "Incremental replan",
+          "fullReplan": "Full replan",
+          "unknown": "Unspecified"
+        }
+      }
+    }
+  },
+  "globalError": {
+    "title": "Application Error",
+    "message": "Sorry, the application encountered an unexpected error.",
+    "errorId": "Error ID",
+    "reload": "Reload application"
+  },
+  "errorBoundary": {
+    "title": "Component failed to load"
+  },
+  "help": {
+    "languageSwitch": "Switch UI language. Labels update immediately for the current page.",
+    "actions": {
+      "refreshDashboard": "Reload dashboard metrics, recent sessions, and recent events."
+    },
+    "nav": {
+      "dashboard": "View overall system health, key metrics, and latest activity.",
+      "sessions": "Create and manage conversations, with context and execution traces.",
+      "events": "Search system events, inspect details, and replay selected events.",
+      "rules": "Configure event matching rules, actions, and risk strategies.",
+      "approvals": "Review and decide high-risk action approvals in one place.",
+      "usage": "View LLM token consumption stats, grouped by node, model, session, or agent.",
+      "agents": "Manage agents, models, and runtime behavior.",
+      "studio": "Build multi-agent studios and define collaborative workflows.",
+      "skills": "Maintain skill templates and versions to extend agent capabilities.",
+      "mcpServers": "Configure MCP connections for external tools and resources.",
+      "tools": "Manage built-in tool status, risk levels, and runtime parameters.",
+      "config": "Central place for LLM, gateway, API key, and webhook settings.",
+      "helpCenter": "Read feature guides, setup tutorials, and troubleshooting tips."
+    }
+  },
+  "helpCenter": {
+    "title": "Help Center",
+    "subtitle": "Learn feature usage, hover hints, and critical bot setup in one place.",
+    "badges": {
+      "hover": "Hover Guidance",
+      "gateway": "Bot Tutorial",
+      "quickStart": "Quick Start"
+    },
+    "searchPlaceholder": "Search guides, module pages, and troubleshooting...",
+    "searchNoResults": "No matching guides found. Try broader keywords.",
+    "sections": {
+      "feature-guide": "Feature Guide",
+      "hover-tips": "Hover Tips",
+      "provider-guides": "Provider Guides",
+      "channel-tutorial": "Bot Tutorial"
+    },
+    "featureGuide": {
+      "title": "Feature Navigation Guide",
+      "subtitle": "Hover each entry for detailed usage notes, or click directly to open the page."
+    },
+    "hoverTips": {
+      "title": "How Hover Help Works",
+      "subtitle": "Hover buttons, nav items, and quick entries to see purpose and impact.",
+      "items": {
+        "1": "Left navigation: hover to learn each module responsibility and scenario.",
+        "2": "Key action buttons: hover to see what data will refresh or change.",
+        "3": "Configuration entries: hover to learn suggested setup order and risks."
+      }
+    },
+    "channelTutorial": {
+      "title": "Bot Setup Tutorial (Critical)",
+      "subtitle": "For Telegram / Feishu bot integrations, follow the steps in order.",
+      "openConfig": "Open Config Center",
+      "openConfigTip": "Go to Config > Bots for create, test, and enable/disable operations.",
+      "securityTitle": "Security Recommendation",
+      "securityBody": "For production, enable approvals and rotate token/secret regularly.",
+      "steps": {
+        "prepare": {
+          "title": "Prepare integration parameters",
+          "description": "Collect bot token, webhook callback URL, default agent, and allowed chatId list."
+        },
+        "create": {
+          "title": "Create a bot instance",
+          "description": "Choose Telegram or Feishu in Config, fill base connectivity fields, then save the bot instance."
+        },
+        "policy": {
+          "title": "Set addressing and proactive policies",
+          "description": "Configure addressingPolicy, proactivePolicy, and contextPolicy to avoid noisy triggers."
+        },
+        "test": {
+          "title": "Run connectivity test",
+          "description": "Use \"Test\" to verify bot outbound connectivity and confirm status becomes ready."
+        },
+        "platformWebhook": {
+          "title": "Configure platform callbacks",
+          "description": "Point Telegram/Feishu callback URLs to the corresponding Semibot Runtime endpoints."
+        },
+        "observe": {
+          "title": "Verify in Events and Sessions",
+          "description": "After sending a real message, confirm inbound events and execution results in gateway session details."
+        }
+      }
+    },
+    "channelFaq": {
+      "title": "Bot FAQ",
+      "items": {
+        "noResponse": {
+          "q": "No bot response after sending message in group. What to check?",
+          "a": "Check webhook status, instance enabled state, bot privacy mode, and pending approvals."
+        },
+        "notInAllowedChatIds": {
+          "q": "Why are some group messages not triggering?",
+          "a": "Most likely bot bindings are missing, or no available agent is bound for this instance."
+        },
+        "tokenInvalid": {
+          "q": "Token/secret reported invalid. What should I do?",
+          "a": "Regenerate credentials, update the bot config, and run connectivity test again."
+        },
+        "approvalStuck": {
+          "q": "Why is a task stuck waiting for approval?",
+          "a": "Go to Approvals to decide it, or reduce risk/approval requirement in tool settings."
+        }
+      }
+    },
+    "channelProviders": {
+      "feishu": {
+        "title": "Feishu Bot Detailed Setup",
+        "subtitle": "For Feishu bot event integration and card-action callbacks.",
+        "items": {
+          "credentials": {
+            "title": "Prepare Feishu app credentials",
+            "description": "Get App ID/App Secret from Feishu platform and fill verifyToken / webhookSecret / bot token in Bot config."
+          },
+          "events": {
+            "title": "Configure event callback URL",
+            "description": "Set event subscription URL to /v1/integrations/feishu/events with public HTTPS access and complete platform verification."
+          },
+          "cardActions": {
+            "title": "Configure card-action callback URL",
+            "description": "Set card action callback URL to /v1/integrations/feishu/card-actions for approve/reject and other interactive actions."
+          },
+          "testAndObserve": {
+            "title": "Test and observe",
+            "description": "After saving, run Bot test first, then send messages in Feishu group and verify inbound events plus execution traces."
+          }
+        }
+      },
+      "telegram": {
+        "title": "Telegram Bot Detailed Setup",
+        "subtitle": "For Telegram bot webhook integration and group conversation routing.",
+        "items": {
+          "credentials": {
+            "title": "Prepare bot token and routing defaults",
+            "description": "Get token from BotFather, then configure botId -> agentId bindings."
+          },
+          "setWebhook": {
+            "title": "Set Telegram webhook",
+            "description": "Point Telegram webhook to /v1/integrations/telegram/webhook and ensure the URL is public HTTPS reachable by Telegram."
+          },
+          "privacyAndChatId": {
+            "title": "Check privacy mode and chatId",
+            "description": "If bot does not reply in groups, verify bot privacy mode, allowed chat_id list, and gateway enabled state."
+          },
+          "testAndObserve": {
+            "title": "Integration test and verification",
+            "description": "Send test message, then verify chat.message.received in Events and tool execution / reply traces in gateway conversation detail."
+          }
+        }
+      }
+    }
+  },
+  "studio": {
+    "create": "Create Studio",
+    "name": "Name",
+    "namePlaceholder": "Enter studio name",
+    "description": "Description",
+    "descriptionPlaceholder": "Optional description",
+    "empty": "No studios yet. Click the button to create one.",
+    "nodes": "nodes",
+    "edges": "edges",
+    "runs": "Run History",
+    "run": "Run",
+    "addAgent": "Add Agent",
+    "saved": "Saved",
+    "save": "Save",
+    "deleted": "Deleted",
+    "noRuns": "No runs yet",
+    "runDetail": "Run Detail",
+    "runId": "Run ID",
+    "startedAt": "Started at",
+    "completedAt": "Completed at",
+    "nodeResults": "Node Results",
+    "cancel": "Cancel Run",
+    "runInputs": "Initial Inputs (JSON)",
+    "runInputsHint": "Optional. Leave empty to use an empty object.",
+    "canvasHint": "Drag agent nodes and connect them to define the data flow",
+    "deleteConfirm": "Confirm Delete",
+    "deleteWarning": "Are you sure you want to delete studio \"{name}\"? This cannot be undone.",
+    "error": {
+      "load": "Failed to load",
+      "create": "Failed to create",
+      "save": "Failed to save",
+      "delete": "Failed to delete",
+      "run": "Failed to start run",
+      "cancel": "Failed to cancel",
+      "invalidJson": "Invalid JSON format"
+    }
+  }
+}

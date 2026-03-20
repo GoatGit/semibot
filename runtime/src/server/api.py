@@ -1,0 +1,1653 @@
+"""FastAPI app for Event Engine management APIs."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import os
+import time
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, status
+from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
+
+from src.checkpoint.local_checkpointer import LocalCheckpointer
+from src.events.event_engine import EventEngine
+from src.events.event_router import EventRouter
+from src.events.event_store import EventStore
+from src.events.models import Event
+from src.events.runtime_action_executor import RuntimeActionExecutor
+from src.gateway.context_service import GatewayContextService
+from src.gateway.manager import GatewayManager
+from src.gateway.channels.discord.notifier import SendFn as DiscordSendFn
+from src.gateway.channels.imessage.notifier import SendFn as IMessageSendFn
+from src.services.rule_service import RuleService, RuleServiceError
+from src.gateway.channels.feishu.notifier import SendFn
+from src.gateway.channels.telegram.notifier import SendFn as TelegramSendFn
+from src.gateway.parsers.approval_text import extract_message_text
+from src.runtime_service import run_task_once
+from src.server.config_store import RuntimeConfigStore
+from src.server.routes.gateway import register_gateway_routes
+from src.skills.index_manager import SkillsIndexManager
+from src.skills.bootstrap import create_default_registry
+from src.skills.skill_installer import install_or_refresh_skill
+
+TaskRunner = Callable[..., Awaitable[dict[str, Any]]]
+
+RESTART_COMMAND = ["pm2", "restart", "semibot-runtime"]
+DIRECT_CHAT_STREAM_HEARTBEAT_SECONDS = max(5.0, float(os.getenv("SEMIBOT_DIRECT_CHAT_STREAM_HEARTBEAT_SECONDS", "15")))
+
+
+class EmitEventRequest(BaseModel):
+    event_type: str
+    source: str = "api"
+    subject: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = None
+    risk_hint: str | None = None
+
+
+class ReplayEventRequest(BaseModel):
+    event_id: str
+
+
+class HeartbeatRequest(BaseModel):
+    source: str = "system.api"
+    subject: str | None = "system"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class CronJobUpsertRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    schedule: str = Field(min_length=1, max_length=120)
+    event_type: str = Field(default="cron.job.tick", min_length=1, max_length=160)
+    source: str = Field(default="system.cron", min_length=1, max_length=160)
+    subject: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunTaskRequest(BaseModel):
+    task: str
+    agent_id: str = "semibot"
+    session_id: str | None = None
+    model: str | None = None
+    model_provider_key: str | None = None
+    fallback_model: str | None = None
+    fallback_provider_key: str | None = None
+    system_prompt: str | None = None
+    model_roles: dict[str, Any] | None = None
+
+
+class RuleActionRequest(BaseModel):
+    action_type: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    target: str | None = None
+
+
+class CreateRuleRequest(BaseModel):
+    id: str | None = None
+    name: str
+    event_type: str
+    conditions: dict[str, Any] = Field(default_factory=lambda: {"all": []})
+    action_mode: str = "suggest"
+    actions: list[RuleActionRequest]
+    risk_level: str = "low"
+    priority: int = 50
+    dedupe_window_seconds: int = 300
+    cooldown_seconds: int = 600
+    attention_budget_per_day: int = 10
+    is_active: bool = True
+    cron: dict[str, Any] | None = None
+    override_reason: str | None = None
+
+
+class UpdateRuleRequest(BaseModel):
+    name: str | None = None
+    event_type: str | None = None
+    conditions: dict[str, Any] | None = None
+    action_mode: str | None = None
+    actions: list[RuleActionRequest] | None = None
+    risk_level: str | None = None
+    priority: int | None = None
+    dedupe_window_seconds: int | None = None
+    cooldown_seconds: int | None = None
+    attention_budget_per_day: int | None = None
+    is_active: bool | None = None
+    cron: dict[str, Any] | None = None
+    override_reason: str | None = None
+
+
+class SimulateRuleRequest(BaseModel):
+    rule: dict[str, Any] | None = None
+    rule_id: str | None = None
+    event: dict[str, Any]
+
+
+class ControlPlaneActionRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatStartRequest(BaseModel):
+    message: str
+    agent_id: str = "semibot"
+    session_id: str | None = None
+    model: str | None = None
+    model_provider_key: str | None = None
+    fallback_model: str | None = None
+    fallback_provider_key: str | None = None
+    system_prompt: str | None = None
+    skill_index: list[dict[str, Any]] = Field(default_factory=list)
+    model_roles: dict[str, Any] | None = None
+    stream: bool = False
+
+
+class ChatSessionRequest(BaseModel):
+    message: str
+    agent_id: str = "semibot"
+    model: str | None = None
+    model_provider_key: str | None = None
+    fallback_model: str | None = None
+    fallback_provider_key: str | None = None
+    system_prompt: str | None = None
+    skill_index: list[dict[str, Any]] = Field(default_factory=list)
+    model_roles: dict[str, Any] | None = None
+    stream: bool = False
+
+
+def create_app(
+    *,
+    db_path: str | None = None,
+    rules_path: str | None = None,
+    heartbeat_interval_seconds: float | None = None,
+    cron_jobs: list[dict[str, Any]] | None = None,
+    feishu_verify_token: str | None = None,
+    feishu_webhook_url: str | None = None,
+    feishu_webhook_urls: dict[str, str] | None = None,
+    feishu_notify_event_types: set[str] | None = None,
+    feishu_templates: dict[str, dict[str, str]] | None = None,
+    feishu_send_fn: SendFn | None = None,
+    telegram_bot_token: str | None = None,
+    telegram_default_chat_id: str | None = None,
+    telegram_webhook_secret: str | None = None,
+    telegram_notify_event_types: set[str] | None = None,
+    telegram_send_fn: TelegramSendFn | None = None,
+    discord_send_fn: DiscordSendFn | None = None,
+    imessage_send_fn: IMessageSendFn | None = None,
+    task_runner: TaskRunner | None = None,
+) -> FastAPI:
+    db = db_path or str(Path("~/.semibot/semibot.db").expanduser())
+    rules = rules_path or str(Path("~/.semibot/rules").expanduser())
+    _task_runner = task_runner or run_task_once
+    # Expose runtime db path for tool-level config readers (e.g. SearchTool).
+    os.environ["SEMIBOT_EVENTS_DB_PATH"] = db
+    os.environ["SEMIBOT_RULES_PATH"] = rules
+    config_store = RuntimeConfigStore(db_path=db)
+    rule_service = RuleService(rules_path=rules, db_path=db)
+    gateway_context = GatewayContextService(
+        db_path=db,
+        config_store=config_store,
+        task_runner=_task_runner,
+        runtime_db_path=db,
+        rules_path=rules,
+    )
+
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
+    gateway_manager: GatewayManager | None = None
+
+    async def _runtime_event_sink(runtime_event: dict[str, Any]) -> None:
+        event_name = str(runtime_event.get("event") or "")
+        data = runtime_event.get("data")
+        payload = data if isinstance(data, dict) else {}
+        if event_name == "rule.notify" and gateway_manager:
+            await gateway_manager.handle_runtime_notify_payload(payload)
+
+    action_executor = RuntimeActionExecutor(runtime_event_sink=_runtime_event_sink)
+
+    async def _on_cron_completed(job_name: str, job_payload: dict[str, Any]) -> None:
+        payload = job_payload.get("payload") if isinstance(job_payload, dict) else {}
+        if not isinstance(payload, dict):
+            return
+        one_shot = _to_bool(payload.get("one_shot", payload.get("oneShot")), False)
+        if not one_shot:
+            return
+        try:
+            config_store.set_cron_job_active(job_name, active=False)
+        except Exception:
+            # Keep scheduler resilient even if persistence update fails.
+            return
+
+    engine = EventEngine(
+        store=EventStore(db_path=db),
+        router=EventRouter(action_executor),
+        rules_path=rules,
+        on_cron_completed=_on_cron_completed,
+    )
+
+    gateway_manager = GatewayManager(
+        config_store=config_store,
+        gateway_context=gateway_context,
+        engine=engine,
+        feishu_verify_token=feishu_verify_token,
+        feishu_webhook_url=feishu_webhook_url,
+        feishu_webhook_urls=feishu_webhook_urls,
+        feishu_notify_event_types=feishu_notify_event_types,
+        feishu_templates=feishu_templates,
+        feishu_send_fn=feishu_send_fn,
+        telegram_bot_token=telegram_bot_token,
+        telegram_default_chat_id=telegram_default_chat_id,
+        telegram_webhook_secret=telegram_webhook_secret,
+        telegram_notify_event_types=telegram_notify_event_types,
+        telegram_send_fn=telegram_send_fn,
+        discord_send_fn=discord_send_fn,
+        imessage_send_fn=imessage_send_fn,
+    )
+    sessions_root = Path("~/.semibot/sessions").expanduser()
+    checkpointer = LocalCheckpointer(str(sessions_root))
+    runtime_base_url = str(
+        os.getenv("SEMIBOT_RUNTIME_URL")
+        or f"http://127.0.0.1:{str(os.getenv('SEMIBOT_RUNTIME_PORT', '8765')).strip() or '8765'}"
+    ).rstrip("/")
+    channel_internal_tokens: dict[str, str] = {}
+    channel_supervisors: dict[str, Any] = {}
+    for provider in gateway_manager.channel_plugins.providers():
+        env_name = f"SEMIBOT_{provider.upper()}_INTERNAL_TOKEN"
+        internal_token = str(os.getenv(env_name) or uuid4().hex).strip()
+        channel_internal_tokens[provider] = internal_token
+        plugin = gateway_manager.channel_plugin(provider)
+        if not plugin:
+            continue
+        supervisor = plugin.build_connection_supervisor(
+            gateway_manager,
+            runtime_base_url=runtime_base_url,
+            internal_token=internal_token,
+        )
+        if supervisor is not None:
+            channel_supervisors[provider] = supervisor
+
+    async def _gateway_event_sink(event: Event) -> None:
+        if gateway_manager:
+            await gateway_manager.handle_engine_event(event)
+
+    engine.bus.subscribe(_gateway_event_sink)
+
+    def _sync_cron_scheduler_from_store() -> None:
+        """Keep in-memory scheduler aligned with persisted cron jobs."""
+        persisted = config_store.list_cron_jobs(active_only=True)
+        persisted_map = {
+            str(item.get("name") or "").strip(): item
+            for item in persisted
+            if str(item.get("name") or "").strip()
+        }
+
+        runtime_jobs = engine.list_cron_jobs()
+        runtime_map = {
+            str(item.get("name") or "").strip(): item
+            for item in runtime_jobs
+            if str(item.get("name") or "").strip()
+        }
+        persisted_names = set(persisted_map.keys())
+        runtime_names = set(runtime_map.keys())
+
+        for stale_name in runtime_names - persisted_names:
+            engine.remove_cron_job(stale_name)
+
+        # Only upsert when missing or changed; avoid resetting running timers every sync cycle.
+        for name, job in persisted_map.items():
+            current = runtime_map.get(name)
+            if not current:
+                engine.upsert_cron_job(job)
+                continue
+            if (
+                str(current.get("schedule") or "") != str(job.get("schedule") or "")
+                or str(current.get("event_type") or "") != str(job.get("event_type") or "")
+                or str(current.get("source") or "") != str(job.get("source") or "")
+                or str(current.get("subject") or "") != str(job.get("subject") or "")
+                or (current.get("payload") if isinstance(current.get("payload"), dict) else {})
+                != (job.get("payload") if isinstance(job.get("payload"), dict) else {})
+            ):
+                engine.upsert_cron_job(job)
+
+    async def _cron_sync_loop() -> None:
+        while True:
+            _sync_cron_scheduler_from_store()
+            await asyncio.sleep(2.0)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        engine.start_rule_watch(poll_interval=1.0)
+        cron_sync_task = asyncio.create_task(_cron_sync_loop())
+        channel_supervisor_tasks = {
+            provider: asyncio.create_task(supervisor.run())
+            for provider, supervisor in channel_supervisors.items()
+        }
+        if heartbeat_interval_seconds and heartbeat_interval_seconds > 0:
+            engine.start_heartbeat(interval_seconds=heartbeat_interval_seconds)
+        persisted_cron_jobs = config_store.list_cron_jobs(active_only=True)
+        if persisted_cron_jobs:
+            engine.start_cron_jobs(persisted_cron_jobs)
+        if cron_jobs:
+            normalized_jobs = [
+                {str(key): value for key, value in item.items()}
+                for item in cron_jobs
+                if isinstance(item, dict)
+            ]
+            if normalized_jobs:
+                engine.start_cron_jobs(normalized_jobs)
+        try:
+            yield
+        finally:
+            for task in channel_supervisor_tasks.values():
+                task.cancel()
+            if channel_supervisor_tasks:
+                await asyncio.gather(*channel_supervisor_tasks.values(), return_exceptions=True)
+            for supervisor in channel_supervisors.values():
+                await supervisor.stop()
+            cron_sync_task.cancel()
+            await asyncio.gather(cron_sync_task, return_exceptions=True)
+            await engine.stop_triggers()
+            await engine.stop_rule_watch()
+
+    app = FastAPI(title="Semibot Event API", version="2.0.0", lifespan=lifespan)
+    app.state.channel_internal_tokens = channel_internal_tokens
+    app.state.feishu_longconn_internal_token = channel_internal_tokens.get("feishu")
+    app.state.discord_gateway_internal_token = channel_internal_tokens.get("discord")
+    app.state.whatsapp_internal_token = channel_internal_tokens.get("whatsapp")
+    app.state.imessage_internal_token = channel_internal_tokens.get("imessage")
+    app.state.skill_registry = create_default_registry()
+    app.state.skills_index = SkillsIndexManager(os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"))
+
+    def _latest_queue_state() -> dict[str, Any]:
+        queue_events = engine.list_events(limit=1, event_type="rule.queue.telemetry")
+        if not queue_events:
+            return {
+                "queued_depth": 0,
+                "active_jobs": 0,
+                "accepted_jobs": 0,
+                "dropped_jobs": 0,
+                "completed_jobs": 0,
+                "failed_jobs": 0,
+                "running_workers": 0,
+                "configured_workers": 0,
+                "queue_maxsize": 0,
+            }
+        payload = queue_events[0].payload
+        return payload if isinstance(payload, dict) else {}
+
+    def _serialize_approval(item: Any) -> dict[str, Any]:
+        context = item.context if isinstance(getattr(item, "context", None), dict) else {}
+        return {
+            "approval_id": item.approval_id,
+            "rule_id": item.rule_id,
+            "event_id": item.event_id,
+            "risk_level": item.risk_level,
+            "status": item.status,
+            "created_at": item.created_at.isoformat(),
+            "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+            "context": context,
+            "tool_name": context.get("tool_name"),
+            "action": context.get("action"),
+            "target": context.get("target"),
+            "summary": context.get("summary"),
+        }
+
+    def _encode_cursor(created_at: str, event_id: str) -> str:
+        raw = f"{created_at}|{event_id}".encode()
+        return base64.urlsafe_b64encode(raw).decode("ascii")
+
+    def _decode_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+        if not cursor:
+            return None, None
+        try:
+            raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+            created_at, event_id = raw.split("|", 1)
+            return created_at, event_id
+        except Exception:
+            return None, None
+
+    def _event_to_item(event: Event) -> dict[str, Any]:
+        return {
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "source": event.source,
+            "subject": event.subject,
+            "payload": event.payload,
+            "risk_hint": event.risk_hint,
+            "timestamp": event.timestamp.isoformat(),
+        }
+
+    def _event_items_with_cursor(
+        *,
+        cursor: str | None,
+        event_type: str | None,
+        event_types: list[str] | None,
+        limit: int,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        cursor_created_at, cursor_event_id = _decode_cursor(cursor)
+        events = engine.list_events_after(
+            cursor_created_at=cursor_created_at,
+            cursor_event_id=cursor_event_id,
+            event_type=event_type,
+            event_types=event_types,
+            limit=limit,
+        )
+        items = [_event_to_item(event) for event in events]
+        if not events:
+            return items, cursor
+        last = events[-1]
+        return items, _encode_cursor(last.timestamp.isoformat(), last.event_id)
+
+    def _parse_csv(value: str | None) -> list[str]:
+        if not value:
+            return []
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def _resolve_event_filters(
+        event_type: str | None, event_types: str | None
+    ) -> tuple[str | None, list[str] | None]:
+        parsed = _parse_csv(event_types)
+        if parsed:
+            return None, parsed
+        return event_type, None
+
+    def _resolve_cursor(cursor: str | None, resume_from: str | None) -> str | None:
+        return resume_from or cursor
+
+    def _normalize_channels(channels: str | None) -> set[str]:
+        allowed = {"summary", "queue", "events", "top_event_types"}
+        requested = set(_parse_csv(channels)) if channels else set()
+        if not requested:
+            return allowed
+        normalized = {item for item in requested if item in allowed}
+        return normalized or allowed
+
+    def _collect_runtime_index(limit: int = 1000) -> tuple[dict[str, str], set[str], dict[str, str]]:
+        # Use SQL-level aggregation via json_extract instead of scanning all events in Python.
+        rows = engine.store.list_session_index(limit=limit)
+        sessions: dict[str, str] = {row["session_id"]: row["last_seen_at"] for row in rows}
+        session_titles: dict[str, str] = {
+            row["session_id"]: row["title"]
+            for row in rows
+            if row["title"]
+        }
+        agent_ids = engine.store.list_agent_index(limit=limit)
+        agents: set[str] = {"semibot"} | set(agent_ids)
+        return sessions, agents, session_titles
+
+    async def _acollect_runtime_index(limit: int = 1000) -> tuple[dict[str, str], set[str], dict[str, str]]:
+        return await asyncio.to_thread(_collect_runtime_index, limit)
+
+    async def _load_session_checkpoint_summary(session_id: str) -> dict[str, Any]:
+        checkpoint = await checkpointer.load_latest(session_id)
+        if not isinstance(checkpoint, dict):
+            return {}
+        summary: dict[str, Any] = {}
+        for key in ("current_date", "current_weekday", "current_timezone"):
+            value = str(checkpoint.get(key) or "").strip()
+            if value:
+                summary[key] = value
+        return summary
+
+    register_gateway_routes(
+        app,
+        gateway_manager,
+        internal_tokens=channel_internal_tokens,
+    )
+
+    @app.post("/v1/control/{domain}/{action}")
+    async def control_plane_action(
+        domain: str,
+        action: str,
+        req: ControlPlaneActionRequest,
+    ) -> dict[str, Any]:
+        registry = app.state.skill_registry
+        tool = registry.get_tool("control_plane") or registry.get_tool("rule_authoring")
+        if tool is None:
+            raise HTTPException(status_code=503, detail="control_plane tool unavailable")
+        result = await tool.execute(
+            domain=str(domain or "").strip().lower(),
+            action=str(action or "").strip(),
+            payload=req.payload or {},
+            options=req.options or {},
+        )
+        if result.success:
+            return {
+                "ok": True,
+                "data": result.result,
+                "metadata": result.metadata or {},
+            }
+        detail_payload: dict[str, Any] = {"message": result.error or "control action failed"}
+        if isinstance(result.metadata, dict):
+            detail_payload.update(result.metadata)
+        raise HTTPException(status_code=400, detail=detail_payload)
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, Any]:
+        return {"ok": True, "version": "2.0.0"}
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        return {"ok": True, "version": "2.0.0"}
+
+    @app.get("/v1/skills")
+    async def list_skills() -> dict[str, Any]:
+        registry = app.state.skill_registry
+        tool_names = registry.list_tools()
+        skill_names = registry.list_skills()
+        # Conceptual split for V2 UI/ops:
+        # xlsx/pdf are exposed as "skills", not configurable builtin tools.
+        skill_like_tools = {"xlsx", "pdf"}
+        tools = [name for name in tool_names if name not in skill_like_tools]
+        skills = sorted(set(skill_names + [name for name in tool_names if name in skill_like_tools]))
+        records = app.state.skills_index.list_records()
+        return {
+            "tools": tools,
+            "skills": skills,
+            "metadata": records,
+        }
+
+    @app.get("/v1/config/tools")
+    async def list_config_tools(
+        page: int = Query(default=1, ge=1),
+        limit: int = Query(default=100, ge=1, le=500),
+        search: str | None = Query(default=None),
+        tool_type: str | None = Query(default=None, alias="type"),
+        include_builtin: str | None = Query(default=None),
+        include_builtin_camel: str | None = Query(default=None, alias="includeBuiltin"),
+    ) -> dict[str, Any]:
+        include_value = include_builtin if include_builtin is not None else include_builtin_camel
+        result = await config_store.alist_tools(
+            include_builtin=_to_bool(include_value, True),
+            page=page,
+            limit=limit,
+            search=search,
+            tool_type=tool_type,
+        )
+        return result
+
+    @app.get("/v1/config/llm")
+    async def get_config_llm() -> dict[str, Any]:
+        return {"data": await config_store.aget_llm_settings()}
+
+    @app.put("/v1/config/llm")
+    async def update_config_llm(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid_llm_payload")
+        patch: dict[str, Any] = {}
+        for key in ("default_model", "default_provider_key", "fallback_model", "fallback_provider_key"):
+            if key in payload:
+                patch[key] = str(payload.get(key) or "").strip()
+        providers_payload = payload.get("providers")
+        if providers_payload is not None:
+            if not isinstance(providers_payload, dict):
+                raise HTTPException(status_code=400, detail="invalid_llm_providers")
+            providers_patch: dict[str, Any] = {}
+            for provider_key, raw_item in providers_payload.items():
+                if not isinstance(raw_item, dict):
+                    continue
+                providers_patch[str(provider_key)] = {
+                    "display_name": str(raw_item.get("display_name") or raw_item.get("displayName") or "").strip(),
+                    "api_key": str(raw_item.get("api_key") or raw_item.get("apiKey") or "").strip(),
+                    "base_url": str(raw_item.get("base_url") or raw_item.get("baseUrl") or "").strip(),
+                }
+            patch["providers"] = providers_patch
+        return {"data": await config_store.aupdate_llm_settings(patch)}
+
+    @app.post("/v1/config/tools")
+    async def create_config_tool(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        item = await config_store.acreate_tool(
+            {
+                "name": str(payload.get("name") or "").strip(),
+                "description": payload.get("description"),
+                "type": payload.get("type") or "builtin",
+                "schema": payload.get("schema") or {},
+                "config": payload.get("config") or {},
+                "is_builtin": _to_bool(payload.get("is_builtin", payload.get("isBuiltin")), True),
+                "is_active": _to_bool(payload.get("is_active", payload.get("isActive")), True),
+                "org_id": payload.get("org_id", payload.get("orgId")),
+                "created_by": payload.get("created_by", payload.get("createdBy")),
+            }
+        )
+        return item
+
+    @app.get("/v1/config/tools/by-name/{tool_name}")
+    async def get_config_tool_by_name(tool_name: str) -> dict[str, Any]:
+        item = await config_store.aget_tool_by_name(tool_name)
+        if not item:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return item
+
+    @app.put("/v1/config/tools/by-name/{tool_name}")
+    async def upsert_config_tool_by_name(tool_name: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        item = await config_store.aupsert_tool_by_name(
+            tool_name,
+            {
+                "description": payload.get("description"),
+                "type": payload.get("type"),
+                "schema": payload.get("schema"),
+                "config": payload.get("config"),
+                "is_builtin": _to_bool(payload.get("is_builtin", payload.get("isBuiltin")), True),
+                "is_active": _to_bool(payload.get("is_active", payload.get("isActive")), True),
+                "org_id": payload.get("org_id", payload.get("orgId")),
+                "created_by": payload.get("created_by", payload.get("createdBy")),
+            },
+        )
+        return item
+
+    @app.get("/v1/config/tools/{tool_id}")
+    async def get_config_tool(tool_id: str) -> dict[str, Any]:
+        item = await config_store.aget_tool_by_id(tool_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return item
+
+    @app.put("/v1/config/tools/{tool_id}")
+    async def update_config_tool(tool_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        patch: dict[str, Any] = {}
+        if "description" in payload:
+            patch["description"] = payload.get("description")
+        if "type" in payload:
+            patch["type"] = payload.get("type")
+        if "schema" in payload:
+            patch["schema"] = payload.get("schema")
+        if "config" in payload and isinstance(payload.get("config"), dict):
+            patch["config"] = payload.get("config")
+        if "is_active" in payload or "isActive" in payload:
+            patch["is_active"] = _to_bool(payload.get("is_active", payload.get("isActive")))
+        item = await config_store.aupdate_tool(tool_id, patch)
+        if not item:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return item
+
+    @app.delete("/v1/config/tools/{tool_id}")
+    async def delete_config_tool(tool_id: str) -> dict[str, Any]:
+        deleted = await config_store.asoft_delete_tool(tool_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="tool_not_found")
+        return {"deleted": True}
+
+    @app.get("/v1/config/mcp/system")
+    async def list_system_mcp_servers() -> dict[str, Any]:
+        return {"data": await config_store.afind_system_mcp_servers()}
+
+    @app.get("/v1/config/mcp/active")
+    async def list_active_mcp_servers() -> dict[str, Any]:
+        return {"data": await config_store.afind_active_mcp_servers()}
+
+    @app.get("/v1/config/mcp/agent/{agent_id}")
+    async def list_agent_mcp_servers(agent_id: str) -> dict[str, Any]:
+        return {"data": await config_store.afind_mcp_servers_by_agent(agent_id)}
+
+    @app.put("/v1/config/mcp/agent/{agent_id}")
+    async def set_agent_mcp_servers(agent_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        ids = payload.get("mcp_server_ids", payload.get("mcpServerIds")) or []
+        if not isinstance(ids, list):
+            raise HTTPException(status_code=400, detail="invalid_mcp_server_ids")
+        await config_store.aset_agent_mcp_servers(agent_id, [str(item) for item in ids])
+        return {"updated": True, "agent_id": agent_id, "mcp_server_ids": ids}
+
+    @app.get("/v1/config/mcp/agent/{agent_id}/ids")
+    async def list_agent_mcp_server_ids(agent_id: str) -> dict[str, Any]:
+        return {"data": await config_store.aget_agent_mcp_server_ids(agent_id)}
+
+    @app.get("/v1/config/mcp")
+    async def list_config_mcp_servers(
+        page: int = Query(default=1, ge=1),
+        limit: int = Query(default=20, ge=1, le=500),
+        search: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        return await config_store.alist_mcp_servers(page=page, limit=limit, search=search, status=status, only_active=True)
+
+    @app.post("/v1/config/mcp")
+    async def create_config_mcp_server(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        name = str(payload.get("name") or "").strip()
+        endpoint = str(payload.get("endpoint") or "").strip()
+        if not name or not endpoint:
+            raise HTTPException(status_code=400, detail="name_and_endpoint_required")
+        item = await config_store.acreate_mcp_server(
+            {
+                "org_id": payload.get("org_id", payload.get("orgId")),
+                "name": name,
+                "description": payload.get("description"),
+                "endpoint": endpoint,
+                "transport": payload.get("transport") or "streamable_http",
+                "auth_type": payload.get("auth_type", payload.get("authType")),
+                "auth_config": payload.get("auth_config", payload.get("authConfig")),
+                "tools": payload.get("tools") or [],
+                "resources": payload.get("resources") or [],
+                "status": payload.get("status") or "disconnected",
+                "last_connected_at": payload.get("last_connected_at", payload.get("lastConnectedAt")),
+                "is_active": _to_bool(payload.get("is_active", payload.get("isActive")), True),
+                "is_system": _to_bool(payload.get("is_system", payload.get("isSystem")), False),
+                "created_by": payload.get("created_by", payload.get("createdBy")),
+            }
+        )
+        return item
+
+    @app.get("/v1/config/mcp/{server_id}")
+    async def get_config_mcp_server(server_id: str) -> dict[str, Any]:
+        item = await config_store.aget_mcp_server(server_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="mcp_server_not_found")
+        return item
+
+    @app.put("/v1/config/mcp/{server_id}")
+    async def update_config_mcp_server(server_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        patch: dict[str, Any] = {}
+        for key in (
+            "name",
+            "description",
+            "endpoint",
+            "transport",
+            "tools",
+            "resources",
+            "status",
+            "auth_type",
+            "auth_config",
+            "last_connected_at",
+        ):
+            if key in payload:
+                patch[key] = payload.get(key)
+
+        if "authType" in payload:
+            patch["auth_type"] = payload.get("authType")
+        if "authConfig" in payload:
+            patch["auth_config"] = payload.get("authConfig")
+        if "lastConnectedAt" in payload:
+            patch["last_connected_at"] = payload.get("lastConnectedAt")
+        if "is_active" in payload or "isActive" in payload:
+            patch["is_active"] = _to_bool(payload.get("is_active", payload.get("isActive")), True)
+        if "is_system" in payload or "isSystem" in payload:
+            patch["is_system"] = _to_bool(payload.get("is_system", payload.get("isSystem")), False)
+
+        item = await config_store.aupdate_mcp_server(server_id, patch)
+        if not item:
+            raise HTTPException(status_code=404, detail="mcp_server_not_found")
+        return item
+
+    @app.delete("/v1/config/mcp/{server_id}")
+    async def delete_config_mcp_server(server_id: str) -> dict[str, Any]:
+        deleted = await config_store.asoft_delete_mcp_server(server_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="mcp_server_not_found")
+        return {"deleted": True}
+
+    @app.get("/v1/sessions")
+    async def list_sessions(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+        sessions, _, session_titles = await _acollect_runtime_index(limit=limit)
+        summaries = await asyncio.gather(
+            *[_load_session_checkpoint_summary(sid) for sid in sessions],
+            return_exceptions=True,
+        )
+        items = []
+        for (session_id, last_seen_at), summary in zip(sessions.items(), summaries):
+            item: dict[str, Any] = {
+                "session_id": session_id,
+                "last_seen_at": last_seen_at,
+                "title": session_titles.get(session_id),
+            }
+            if isinstance(summary, dict):
+                item.update(summary)
+            items.append(item)
+        return {"items": items}
+
+    @app.delete("/v1/sessions/{session_id}")
+    async def delete_session(session_id: str) -> dict[str, Any]:
+        event = Event(
+            event_id=f"evt_session_delete_{uuid4().hex}",
+            event_type="session.deleted",
+            source="api",
+            subject=session_id,
+            payload={"session_id": session_id},
+            risk_hint="low",
+            timestamp=datetime.now(UTC),
+        )
+        await engine.emit(event)
+        return {"deleted": True, "session_id": session_id}
+
+    @app.get("/v1/agents")
+    async def list_agents(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+        _, agents, _ = await _acollect_runtime_index(limit=limit)
+        return {"items": [{"agent_id": agent_id} for agent_id in sorted(agents)[:limit]]}
+
+    @app.get("/v1/config/agents")
+    async def list_config_agents(include_inactive: bool = Query(default=True)) -> dict[str, Any]:
+        return {"items": await config_store.alist_agent_profiles(include_inactive=include_inactive)}
+
+    @app.get("/v1/config/agents/{agent_id}")
+    async def get_config_agent(agent_id: str) -> dict[str, Any]:
+        item = await config_store.aget_agent_profile(agent_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="agent_profile_not_found")
+        return {"item": item}
+
+    @app.post("/v1/config/agents")
+    async def create_config_agent(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid_agent_payload")
+        return {"item": await config_store.acreate_agent_profile(payload)}
+
+    @app.put("/v1/config/agents/{agent_id}")
+    async def update_config_agent(agent_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid_agent_payload")
+        item = await config_store.aupdate_agent_profile(agent_id, payload)
+        if not item:
+            raise HTTPException(status_code=404, detail="agent_profile_not_found")
+        return {"item": item}
+
+    @app.delete("/v1/config/agents/{agent_id}")
+    async def delete_config_agent(agent_id: str) -> dict[str, Any]:
+        deleted = await config_store.asoft_delete_agent_profile(agent_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="agent_profile_not_found")
+        return {"deleted": True, "agent_id": agent_id}
+
+    @app.get("/v1/memories/search")
+    async def memories_search(
+        query: str = Query(..., min_length=1),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        keyword = query.strip().lower()
+        scanned = engine.list_events(limit=max(limit * 5, limit))
+        matched: list[dict[str, Any]] = []
+        for event in scanned:
+            haystack = " ".join(
+                [
+                    event.event_type,
+                    event.subject or "",
+                    json.dumps(event.payload, ensure_ascii=False),
+                ]
+            ).lower()
+            if keyword in haystack:
+                matched.append(
+                    {
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "subject": event.subject,
+                        "payload": event.payload,
+                        "timestamp": event.timestamp.isoformat(),
+                    }
+                )
+            if len(matched) >= limit:
+                break
+
+        return {
+            "query": query,
+            "items": matched,
+        }
+
+    @app.post("/v1/skills/install")
+    async def install_skill(request: Request) -> dict[str, Any]:
+        content_type = str(request.headers.get("content-type") or "").lower()
+        source_path: str | None = None
+        source_url: str | None = None
+        skill_name: str | None = None
+        force = False
+        archive_file: UploadFile | None = None
+
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            source_path = str(form.get("source_path") or "").strip() or None
+            source_url = str(form.get("source_url") or "").strip() or None
+            skill_name = str(form.get("skill_name") or "").strip() or None
+            force_raw = str(form.get("force") or "").strip().lower()
+            force = force_raw in {"1", "true", "yes", "on"}
+            archive_candidate = form.get("archive")
+            if isinstance(archive_candidate, UploadFile):
+                archive_file = archive_candidate
+        else:
+            payload = await request.json()
+            source_path = str(payload.get("source_path") or "").strip() or None
+            source_url = str(payload.get("source_url") or "").strip() or None
+            skill_name = str(payload.get("skill_name") or "").strip() or None
+            force = _to_bool(payload.get("force"), False)
+
+        temp_upload_path: Path | None = None
+        try:
+            if archive_file is not None:
+                suffix = Path(str(archive_file.filename or "skill.zip")).suffix or ".zip"
+                temp_upload_path = Path("/tmp") / f"semibot_skill_upload_{uuid4().hex}{suffix}"
+                file_bytes = await archive_file.read()
+                temp_upload_path.write_bytes(file_bytes)
+                source_path = str(temp_upload_path)
+
+            result = install_or_refresh_skill(
+                registry=app.state.skill_registry,
+                source_path=source_path,
+                source_url=source_url,
+                skill_name=skill_name,
+                force=force,
+                refresh_only=False,
+                skills_root=os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"),
+            )
+            return result
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            if temp_upload_path and temp_upload_path.exists():
+                try:
+                    temp_upload_path.unlink()
+                except Exception:
+                    pass
+
+    @app.post("/v1/skills/reindex")
+    async def reindex_skills(request: Request) -> dict[str, Any]:
+        payload = await request.json() if str(request.headers.get("content-type") or "").startswith("application/json") else {}
+        scope = str(payload.get("scope") or "incremental")
+        result = app.state.skills_index.reindex(scope=scope)
+        return result
+
+    @app.post("/v1/skills/refresh-runtime")
+    async def refresh_runtime_skills(request: Request) -> dict[str, Any]:
+        payload = await request.json() if str(request.headers.get("content-type") or "").startswith("application/json") else {}
+        _session_id = str(payload.get("session_id") or "").strip() or None
+        result = install_or_refresh_skill(
+            registry=app.state.skill_registry,
+            refresh_only=True,
+            skills_root=os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"),
+        )
+        return {
+            "reloaded": len(result.get("registered", [])),
+            "new_tools": result.get("registered", []),
+            "skipped": result.get("skipped", []),
+            "session_id": _session_id,
+            "reindex": result.get("reindex"),
+        }
+
+    @app.get("/v1/events")
+    async def list_events(
+        event_type: str | None = Query(default=None),
+        event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        session_id: str | None = Query(default=None, description="Filter by session_id in payload"),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        if session_id:
+            events = await asyncio.to_thread(
+                engine.store.list_events_by_session,
+                session_id,
+                limit=limit,
+            )
+            return {"items": [_event_to_item(event) for event in events]}
+        resolved_event_type, resolved_event_types = _resolve_event_filters(event_type, event_types)
+        events = await asyncio.to_thread(
+            engine.list_events,
+            limit=limit,
+            event_type=resolved_event_type,
+            event_types=resolved_event_types,
+        )
+        return {"items": [_event_to_item(event) for event in events]}
+
+    @app.get("/v1/events/{event_id}")
+    async def get_event(event_id: str) -> dict[str, Any]:
+        event = await asyncio.to_thread(engine.store.get, event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="event_not_found")
+        return {
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "source": event.source,
+            "subject": event.subject,
+            "payload": event.payload,
+            "risk_hint": event.risk_hint,
+            "timestamp": event.timestamp.isoformat(),
+        }
+
+    @app.post("/v1/events")
+    async def emit_event(req: EmitEventRequest) -> dict[str, Any]:
+        event = Event(
+            event_id=f"evt_api_{uuid4().hex}",
+            event_type=req.event_type,
+            source=req.source,
+            subject=req.subject,
+            payload=req.payload,
+            idempotency_key=req.idempotency_key,
+            risk_hint=req.risk_hint,
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+        return {"event_id": event.event_id, "matched_rules": len(outcomes)}
+
+    @app.post("/v1/tasks/run")
+    async def run_task(req: RunTaskRequest) -> dict[str, Any]:
+        skill_index = app.state.skills_index.list_records()
+        result = await _task_runner(
+            task=req.task,
+            db_path=db,
+            rules_path=rules,
+            agent_id=req.agent_id,
+            session_id=req.session_id,
+            model=req.model,
+            model_provider_key=req.model_provider_key,
+            fallback_model=req.fallback_model,
+            fallback_provider_key=req.fallback_provider_key,
+            system_prompt=req.system_prompt,
+            skill_index=skill_index,
+            model_roles=req.model_roles,
+        )
+        return {"task": req.task, **result}
+
+    async def _chat_response(
+        *,
+        message: str,
+        agent_id: str,
+        session_id: str | None,
+        model: str | None,
+        model_provider_key: str | None,
+        fallback_model: str | None,
+        fallback_provider_key: str | None,
+        system_prompt: str | None,
+        skill_index: list[dict[str, Any]] | None,
+        model_roles: dict[str, Any] | None,
+        stream: bool,
+    ):
+        if not stream:
+            result = await _task_runner(
+                task=message,
+                db_path=db,
+                rules_path=rules,
+                agent_id=agent_id,
+                session_id=session_id,
+                model=model,
+                model_provider_key=model_provider_key,
+                fallback_model=fallback_model,
+                fallback_provider_key=fallback_provider_key,
+                system_prompt=system_prompt,
+                skill_index=skill_index,
+                model_roles=model_roles,
+            )
+            return {
+                "message": message,
+                **result,
+            }
+
+        async def _stream():
+            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+            async def _runtime_event_callback(runtime_event: dict[str, Any]) -> None:
+                await queue.put(runtime_event)
+
+            async def _run_with_callback() -> None:
+                try:
+                    result = await _task_runner(
+                        task=message,
+                        db_path=db,
+                        rules_path=rules,
+                        agent_id=agent_id,
+                        session_id=session_id,
+                        model=model,
+                        model_provider_key=model_provider_key,
+                        fallback_model=fallback_model,
+                        fallback_provider_key=fallback_provider_key,
+                        system_prompt=system_prompt,
+                        skill_index=skill_index,
+                        model_roles=model_roles,
+                        runtime_event_callback=_runtime_event_callback,
+                    )
+                    await queue.put(
+                        {
+                            "event": "done",
+                            "status": result.get("status"),
+                            "final_response": result.get("final_response"),
+                            "error": result.get("error"),
+                            "session_id": result.get("session_id"),
+                            "agent_id": result.get("agent_id"),
+                        }
+                    )
+                except Exception as exc:
+                    await queue.put(
+                        {
+                            "event": "done",
+                            "status": "failed",
+                            "final_response": "",
+                            "error": str(exc),
+                            "session_id": session_id,
+                            "agent_id": agent_id,
+                        }
+                    )
+                finally:
+                    await queue.put(None)
+
+            start = {
+                "event": "start",
+                "session_id": session_id,
+                "agent_id": agent_id,
+            }
+            yield f"data: {json.dumps(start, ensure_ascii=False)}\n\n"
+            task_handle = asyncio.create_task(_run_with_callback())
+            try:
+                while True:
+                    try:
+                        item = await asyncio.wait_for(
+                            queue.get(),
+                            timeout=DIRECT_CHAT_STREAM_HEARTBEAT_SECONDS,
+                        )
+                    except TimeoutError:
+                        heartbeat = {
+                            "event": "heartbeat",
+                            "session_id": session_id,
+                            "agent_id": agent_id,
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        }
+                        yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
+                        continue
+                    if item is None:
+                        break
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+            finally:
+                with suppress(Exception):
+                    await task_handle
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    @app.post("/api/v1/chat/start")
+    async def chat_start(req: ChatStartRequest):
+        return await _chat_response(
+            message=req.message,
+            agent_id=req.agent_id,
+            session_id=req.session_id,
+            model=req.model,
+            model_provider_key=req.model_provider_key,
+            fallback_model=req.fallback_model,
+            fallback_provider_key=req.fallback_provider_key,
+            system_prompt=req.system_prompt,
+            skill_index=req.skill_index,
+            model_roles=req.model_roles,
+            stream=req.stream,
+        )
+
+    @app.post("/api/v1/chat/sessions/{session_id}")
+    async def chat_in_session(session_id: str, req: ChatSessionRequest):
+        return await _chat_response(
+            message=req.message,
+            agent_id=req.agent_id,
+            session_id=session_id,
+            model=req.model,
+            model_provider_key=req.model_provider_key,
+            fallback_model=req.fallback_model,
+            fallback_provider_key=req.fallback_provider_key,
+            system_prompt=req.system_prompt,
+            skill_index=req.skill_index,
+            model_roles=req.model_roles,
+            stream=req.stream,
+        )
+
+    @app.post("/api/v1/runtime/restart")
+    async def restart_runtime():
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *RESTART_COMMAND,
+                env={**os.environ, "FORCE_COLOR": "0", "NO_COLOR": "1"},
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                raise RuntimeError(stderr.decode("utf-8", errors="ignore").strip() or "restart failed")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"runtime restart failed: {exc}",
+            ) from exc
+
+        return {
+            "success": True,
+            "data": {
+                "restarted": True,
+                "stdout": stdout.decode("utf-8", errors="ignore").strip(),
+            },
+        }
+
+    @app.post("/v1/webhooks/{event_type}")
+    async def ingest_webhook(event_type: str, request: Request) -> dict[str, Any]:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        payload = body.get("payload")
+        event_payload = payload if isinstance(payload, dict) else body
+        event = Event(
+            event_id=str(body.get("event_id") or f"evt_webhook_{uuid4().hex}"),
+            event_type=event_type,
+            source=str(body.get("source") or "webhook"),
+            subject=body.get("subject"),
+            payload=event_payload if isinstance(event_payload, dict) else {},
+            idempotency_key=body.get("idempotency_key"),
+            risk_hint=body.get("risk_hint"),
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+        approval_command = None
+        if event_type == "chat.message.received":
+            text = extract_message_text(event.payload if isinstance(event.payload, dict) else {})
+            if text:
+                approval_command = await gateway_manager.handle_text_approval_command(
+                    text=text,
+                    source=str(event.source or "webhook"),
+                    subject=str(event.subject) if isinstance(event.subject, str) else None,
+                    trace_payload=event.payload if isinstance(event.payload, dict) else {},
+                )
+        return {
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "matched_rules": len(outcomes),
+            "approval_command": approval_command,
+        }
+
+    @app.post("/v1/system/heartbeat")
+    async def emit_heartbeat(req: HeartbeatRequest) -> dict[str, Any]:
+        event = Event(
+            event_id=f"evt_heartbeat_{uuid4().hex}",
+            event_type="health.heartbeat.manual",
+            source=req.source,
+            subject=req.subject,
+            payload=req.payload,
+            risk_hint="low",
+            timestamp=datetime.now(UTC),
+        )
+        outcomes = await engine.emit(event)
+        return {"event_id": event.event_id, "matched_rules": len(outcomes)}
+
+    @app.get("/v1/scheduler/cron-jobs")
+    async def list_cron_jobs() -> dict[str, Any]:
+        return {"data": config_store.list_cron_jobs(active_only=False)}
+
+    @app.post("/v1/scheduler/cron-jobs")
+    async def upsert_cron_job(req: CronJobUpsertRequest) -> dict[str, Any]:
+        job_payload = {
+            "name": req.name,
+            "schedule": req.schedule,
+            "event_type": req.event_type,
+            "source": req.source,
+            "subject": req.subject,
+            "payload": req.payload,
+        }
+        accepted = engine.upsert_cron_job(job_payload)
+        if not accepted:
+            raise HTTPException(status_code=400, detail="invalid_cron_job")
+        config_store.upsert_cron_job(job_payload)
+        return {"accepted": True, "data": config_store.list_cron_jobs(active_only=False)}
+
+    @app.delete("/v1/scheduler/cron-jobs/{name}")
+    async def delete_cron_job(name: str) -> dict[str, Any]:
+        runtime_removed = engine.remove_cron_job(name)
+        removed = config_store.soft_delete_cron_job(name)
+        if not runtime_removed and not removed:
+            raise HTTPException(status_code=404, detail="cron_job_not_found")
+        return {"removed": True}
+
+    @app.post("/v1/events/replay")
+    async def replay_event(req: ReplayEventRequest) -> dict[str, Any]:
+        outcomes = await engine.replay_event(req.event_id)
+        return {
+            "event_id": req.event_id,
+            "matched_rules": len(outcomes),
+            "outcomes": [
+                {
+                    "run_id": item.run_id,
+                    "rule_id": item.rule_id,
+                    "decision": item.decision,
+                    "status": item.status,
+                    "reason": item.reason,
+                    "approval_id": item.approval_id,
+                    "errors": item.errors,
+                }
+                for item in outcomes
+            ],
+        }
+
+    @app.get("/v1/rules")
+    async def list_rules() -> dict[str, Any]:
+        return {"items": rule_service.list_rules()}
+
+    @app.post("/v1/rules")
+    async def create_rule(req: CreateRuleRequest) -> dict[str, Any]:
+        payload = req.model_dump(exclude_none=True)
+        payload["actions"] = [item.model_dump(exclude_none=True) for item in req.actions]
+        try:
+            created = rule_service.create_rule(payload)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        _sync_cron_scheduler_from_store()
+        return created
+
+    @app.put("/v1/rules/{rule_id}")
+    async def update_rule_endpoint(rule_id: str, req: UpdateRuleRequest) -> dict[str, Any]:
+        payload = req.model_dump(exclude_none=True)
+        if req.actions is not None:
+            payload["actions"] = [item.model_dump(exclude_none=True) for item in req.actions]
+        try:
+            updated = rule_service.update_rule(rule_id, payload)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        _sync_cron_scheduler_from_store()
+        return updated
+
+    @app.delete("/v1/rules/{rule_id}")
+    async def delete_rule_endpoint(rule_id: str) -> dict[str, Any]:
+        try:
+            deleted = rule_service.delete_rule(rule_id)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        _sync_cron_scheduler_from_store()
+        return deleted
+
+    @app.post("/v1/rules/simulate")
+    async def simulate_rule_endpoint(req: SimulateRuleRequest) -> dict[str, Any]:
+        try:
+            return rule_service.simulate_rule(req.model_dump(exclude_none=True))
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+    @app.post("/v1/rules/{rule_id}/enable")
+    async def enable_rule(rule_id: str) -> dict[str, Any]:
+        try:
+            result = rule_service.enable_rule(rule_id)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        return {"rule_id": rule_id, "is_active": bool(result.get("active", False))}
+
+    @app.post("/v1/rules/{rule_id}/disable")
+    async def disable_rule(rule_id: str) -> dict[str, Any]:
+        try:
+            result = rule_service.disable_rule(rule_id)
+        except RuleServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        engine.reload_rules()
+        return {"rule_id": rule_id, "is_active": bool(result.get("active", True))}
+
+    @app.get("/v1/approvals")
+    async def list_approvals(
+        status: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        items = await asyncio.to_thread(engine.list_approvals, status=status, limit=limit)
+        return {"items": [_serialize_approval(item) for item in items]}
+
+    @app.get("/v1/metrics/events")
+    async def event_metrics(since: str | None = Query(default=None)) -> dict[str, Any]:
+        since_dt: datetime | None = None
+        if since:
+            try:
+                normalized = since.replace("Z", "+00:00")
+                since_dt = datetime.fromisoformat(normalized)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"invalid since: {exc}") from exc
+        return engine.metrics(since=since_dt)
+
+    @app.get("/v1/stats/token-usage")
+    async def token_usage_stats(
+        since: str | None = Query(default=None),
+        until: str | None = Query(default=None),
+        group_by: str | None = Query(default=None, description="node | model | session | agent"),
+        granularity: str | None = Query(default=None, description="hour | day"),
+    ) -> dict[str, Any]:
+        since_dt: datetime | None = None
+        until_dt: datetime | None = None
+        if since:
+            try:
+                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"invalid since: {exc}") from exc
+        if until:
+            try:
+                until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"invalid until: {exc}") from exc
+        valid_group_by = {"node", "model", "session", "agent", None}
+        if group_by not in valid_group_by:
+            raise HTTPException(status_code=400, detail=f"group_by must be one of: node, model, session, agent")
+        valid_granularity = {"hour", "day", None}
+        if granularity not in valid_granularity:
+            raise HTTPException(status_code=400, detail=f"granularity must be one of: hour, day")
+        return engine.store.aggregate_token_usage(since=since_dt, until=until_dt, group_by=group_by, granularity=granularity)
+
+
+    async def dashboard_summary() -> dict[str, Any]:
+        metrics = engine.metrics()
+        return {
+            "events_total": metrics["events_total"],
+            "rule_runs_total": metrics["rule_runs_total"],
+            "rule_runs_failed": metrics["rule_runs_failed"],
+            "approvals_pending": metrics["approvals_pending"],
+            "approvals_total": metrics["approvals_total"],
+            "top_event_types": metrics["top_event_types"],
+            "queue_state": _latest_queue_state(),
+        }
+
+    @app.get("/v1/dashboard/rule-runs")
+    async def dashboard_rule_runs(
+        rule_id: str | None = Query(default=None),
+        event_id: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        runs = engine.list_rule_runs(rule_id=rule_id, event_id=event_id, status=status, limit=limit)
+        return {
+            "items": [
+                {
+                    "run_id": run.run_id,
+                    "rule_id": run.rule_id,
+                    "event_id": run.event_id,
+                    "decision": run.decision,
+                    "reason": run.reason,
+                    "status": run.status,
+                    "action_trace_id": run.action_trace_id,
+                    "duration_ms": run.duration_ms,
+                    "created_at": run.created_at.isoformat(),
+                }
+                for run in runs
+            ]
+        }
+
+    @app.get("/v1/dashboard/queue")
+    async def dashboard_queue() -> dict[str, Any]:
+        return _latest_queue_state()
+
+    @app.get("/v1/dashboard/events")
+    async def dashboard_events(
+        cursor: str | None = Query(default=None),
+        resume_from: str | None = Query(default=None),
+        event_type: str | None = Query(default=None),
+        event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        resolved_event_type, resolved_event_types = _resolve_event_filters(event_type, event_types)
+        effective_cursor = _resolve_cursor(cursor, resume_from)
+        items, next_cursor = _event_items_with_cursor(
+            cursor=effective_cursor,
+            event_type=resolved_event_type,
+            event_types=resolved_event_types,
+            limit=limit,
+        )
+        return {"items": items, "next_cursor": next_cursor}
+
+    @app.get("/v1/dashboard/live")
+    async def dashboard_live(
+        interval: float = Query(default=1.0, ge=0.1, le=10.0),
+        max_ticks: int | None = Query(default=None, ge=1, le=3600),
+        channels: str | None = Query(
+            default=None, description="summary,queue,events,top_event_types"
+        ),
+        mode: str = Query(default="snapshot_delta", pattern="^(snapshot_delta|delta)$"),
+        delta_only: bool = Query(default=False),
+        heartbeat_interval: float = Query(default=5.0, ge=0.5, le=60.0),
+        cursor: str | None = Query(default=None),
+        resume_from: str | None = Query(default=None),
+        event_type: str | None = Query(default=None),
+        event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        event_limit: int = Query(default=100, ge=1, le=500),
+    ) -> StreamingResponse:
+        selected_channels = _normalize_channels(channels)
+        resolved_event_type, resolved_event_types = _resolve_event_filters(event_type, event_types)
+        effective_cursor = _resolve_cursor(cursor, resume_from)
+
+        async def event_generator():
+            ticks = 0
+            current_cursor = effective_cursor
+            previous_summary: dict[str, Any] | None = None
+            previous_queue: dict[str, Any] | None = None
+            previous_top: list[dict[str, Any]] | None = None
+            last_emit_monotonic = time.monotonic()
+
+            if mode == "snapshot_delta":
+                snapshot_metrics = engine.metrics()
+                snapshot_payload: dict[str, Any] = {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "stream_mode": "snapshot",
+                }
+
+                if "summary" in selected_channels:
+                    snapshot_payload["summary"] = {
+                        "events_total": snapshot_metrics["events_total"],
+                        "rule_runs_total": snapshot_metrics["rule_runs_total"],
+                        "rule_runs_failed": snapshot_metrics["rule_runs_failed"],
+                        "approvals_pending": snapshot_metrics["approvals_pending"],
+                    }
+                    previous_summary = snapshot_payload["summary"]
+
+                if "queue" in selected_channels:
+                    snapshot_payload["queue_state"] = _latest_queue_state()
+                    previous_queue = snapshot_payload["queue_state"]
+
+                if "top_event_types" in selected_channels:
+                    snapshot_payload["top_event_types"] = snapshot_metrics["top_event_types"]
+                    previous_top = snapshot_payload["top_event_types"]
+
+                if "events" in selected_channels:
+                    snapshot_events = engine.list_events(
+                        limit=event_limit,
+                        event_type=resolved_event_type,
+                        event_types=resolved_event_types,
+                    )
+                    snapshot_payload["events"] = [
+                        _event_to_item(event) for event in snapshot_events
+                    ]
+                    if snapshot_events:
+                        newest = snapshot_events[0]
+                        current_cursor = _encode_cursor(
+                            newest.timestamp.isoformat(), newest.event_id
+                        )
+                    snapshot_payload["next_cursor"] = current_cursor
+
+                yield f"data: {json.dumps(snapshot_payload, ensure_ascii=False)}\n\n"
+                ticks += 1
+                last_emit_monotonic = time.monotonic()
+                if max_ticks is not None and ticks >= max_ticks:
+                    return
+
+            while True:
+                metrics = engine.metrics()
+                payload: dict[str, Any] = {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "stream_mode": "delta",
+                }
+                emitted = False
+
+                if "summary" in selected_channels:
+                    current_summary = {
+                        "events_total": metrics["events_total"],
+                        "rule_runs_total": metrics["rule_runs_total"],
+                        "rule_runs_failed": metrics["rule_runs_failed"],
+                        "approvals_pending": metrics["approvals_pending"],
+                    }
+                    if (not delta_only) or (previous_summary != current_summary):
+                        payload["summary"] = current_summary
+                        emitted = True
+                    previous_summary = current_summary
+
+                if "queue" in selected_channels:
+                    current_queue = _latest_queue_state()
+                    if (not delta_only) or (previous_queue != current_queue):
+                        payload["queue_state"] = current_queue
+                        emitted = True
+                    previous_queue = current_queue
+
+                if "top_event_types" in selected_channels:
+                    current_top = metrics["top_event_types"]
+                    if (not delta_only) or (previous_top != current_top):
+                        payload["top_event_types"] = current_top
+                        emitted = True
+                    previous_top = current_top
+
+                if "events" in selected_channels:
+                    events, next_cursor = _event_items_with_cursor(
+                        cursor=current_cursor,
+                        event_type=resolved_event_type,
+                        event_types=resolved_event_types,
+                        limit=event_limit,
+                    )
+                    current_cursor = next_cursor
+                    if (not delta_only) or events:
+                        payload["events"] = events
+                        payload["next_cursor"] = current_cursor
+                        emitted = True
+
+                if emitted:
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    ticks += 1
+                    last_emit_monotonic = time.monotonic()
+                    if max_ticks is not None and ticks >= max_ticks:
+                        break
+                elif time.monotonic() - last_emit_monotonic >= heartbeat_interval:
+                    yield ": ping\n\n"
+                    last_emit_monotonic = time.monotonic()
+
+                await asyncio.sleep(interval)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
+    @app.post("/v1/approvals/{approval_id}/approve")
+    async def approve(approval_id: str) -> dict[str, Any]:
+        approval = await engine.resolve_approval(approval_id, "approved")
+        if not approval:
+            raise HTTPException(status_code=404, detail="approval_not_found")
+        return {"approval_id": approval.approval_id, "status": approval.status}
+
+    @app.post("/v1/approvals/{approval_id}/reject")
+    async def reject(approval_id: str) -> dict[str, Any]:
+        approval = await engine.resolve_approval(approval_id, "rejected")
+        if not approval:
+            raise HTTPException(status_code=404, detail="approval_not_found")
+        return {"approval_id": approval.approval_id, "status": approval.status}
+
+    return app

@@ -1,0 +1,116 @@
+name: one-click-release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/build_release.sh"
+      - "scripts/install.sh"
+      - "scripts/install_public.sh"
+      - "scripts/prepare_release_channel.sh"
+      - "scripts/smoke_test_install.sh"
+      - "scripts/release_ci.sh"
+      - "runtime/**"
+      - "apps/api/**"
+      - "apps/web/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  release-smoke:
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.release_meta.outputs.version }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: install playwright chromium
+        working-directory: tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: install runtime dependencies
+        working-directory: runtime
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -U pip
+          pip install -r requirements.txt
+          pip install hatchling
+
+      - name: build and smoke release
+        run: ./scripts/release_ci.sh
+        env:
+          SEMIBOT_UI_SMOKE_PLAYWRIGHT: "1"
+          RELEASE_BASE_URL: https://releases.semibot.ai/stable
+
+      - name: prepare stable channel
+        run: ./scripts/prepare_release_channel.sh stable
+
+      - name: read release version
+        id: release_meta
+        run: |
+          VERSION="$(python3 - <<'PY'
+import json
+from pathlib import Path
+payload = json.loads(Path('.release/latest.json').read_text(encoding='utf-8'))
+print(payload.get('version') or '')
+PY
+)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: upload release artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semibot-release
+          path: |
+            .release/current
+            .release/latest.json
+            .release/*.tar.gz
+            .release/*.sha256
+            .release/publish/install.sh
+            .release/publish/stable/**
+
+      - name: upload pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .release/publish
+
+  deploy-pages:
+    if: github.ref == 'refs/heads/main'
+    needs: release-smoke
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: deploy to github pages
+        id: deployment
+        uses: actions/deploy-pages@v4

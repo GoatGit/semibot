@@ -1,0 +1,59 @@
+node_modules
+
+# Build outputs
+dist/
+build/
+.next/
+.release/
+.wrangler/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Turbo
+.turbo/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Runtime artifacts
+runtime/test-results/
+tests/test-results/
+
+# Website (maintained in private repo GoatGit/semibot-website)
+website/
+
+# Temp files
+tmp/
+fadfasd
+test_db_agents.py

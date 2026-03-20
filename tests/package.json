@@ -1,0 +1,21 @@
+{
+  "name": "@semibot/tests",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test --config=e2e/playwright.config.ts",
+    "test:e2e:smoke": "playwright test --config=e2e/playwright.config.ts --project=chromium e2e/event-engine-pages.spec.ts e2e/rules-editor-validity.spec.ts",
+    "test:e2e:live:approval": "RUN_LIVE_E2E=1 playwright test --config=e2e/playwright.config.ts e2e/chat-news-approval-live.spec.ts",
+    "test:e2e:live:one-click-ui": "RUN_LIVE_E2E=1 PW_DISABLE_WEBSERVER=1 NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000 playwright test --config=e2e/playwright.config.ts e2e/no-auth-shell.spec.ts --project=chromium",
+    "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui",
+    "test:e2e:headed": "playwright test --config=e2e/playwright.config.ts --headed",
+    "test:e2e:debug": "playwright test --config=e2e/playwright.config.ts --debug",
+    "test:e2e:report": "playwright show-report",
+    "test:e2e:codegen": "playwright codegen http://localhost:3000"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0"
+  }
+}

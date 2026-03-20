@@ -1,0 +1,9 @@
+# Common Python packages for sandbox execution
+# Keep minimal for security
+
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+requests>=2.28.0
+pyyaml>=6.0
+python-dateutil>=2.8.0

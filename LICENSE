@@ -1,0 +1,78 @@
+Semibot Source Available License v1.0
+
+Copyright (c) 2026 Semibot Authors. All rights reserved.
+
+This repository is source-available. You may view, download, and modify the
+source code for personal evaluation, research, testing, and non-commercial
+internal development, subject to the terms below.
+
+1. Permitted Use
+
+You may:
+
+- access, read, and download the source code;
+- modify the source code for personal, educational, evaluation, research, or
+  non-commercial internal use;
+- build and run the software for personal evaluation or internal testing;
+- submit changes to the project subject to the contribution rules in
+  CONTRIBUTING.md and CLA.md.
+
+2. Prohibited Use Without Prior Written Permission
+
+You may not, without prior written permission from the copyright holder:
+
+- use the software, or any modified version of it, for commercial hosting,
+  SaaS, managed service, or paid API access;
+- sell, sublicense, lease, distribute, or otherwise commercialize the software;
+- use the software to provide a product or service that is substantially
+  similar to Semibot;
+- redistribute modified or unmodified versions of the software to third parties
+  for commercial purposes;
+- remove, alter, or obscure copyright, attribution, license, or trademark
+  notices.
+
+3. Trademarks
+
+This license does not grant any right to use the name "Semibot", associated
+logos, domain names, or other brand features, except as expressly allowed in
+TRADEMARKS.md.
+
+4. Contributions
+
+Any contribution submitted to this project is subject to the Contributor
+License Agreement described in CLA.md. Contributions may be rejected if the
+required CLA is not accepted.
+
+5. Ownership
+
+The software is licensed, not sold. All rights not expressly granted are
+reserved by the copyright holder.
+
+6. Warranty Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+7. Limitation of Liability
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. Commercial Licensing
+
+If you want to use Semibot for commercial deployment, managed service, OEM,
+embedded distribution, or other commercial purposes, you must obtain a
+separate commercial license from the copyright holder.
+
+9. Future License Changes
+
+The copyright holder may publish future versions of this project under
+different terms. Your rights with respect to any version of the software are
+governed by the license distributed with that version.
+
+This license text is a first draft for repository governance and product
+strategy alignment. It should be reviewed by qualified counsel before external
+release.

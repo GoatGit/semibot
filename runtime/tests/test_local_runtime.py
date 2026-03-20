@@ -1,0 +1,417 @@
+"""Tests for local runtime helpers."""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from src.llm.base import LLMConfig
+from src.local_runtime import (
+    _build_skill_definitions,
+    _build_approval_policy,
+    _create_llm_provider,
+    _guard_rule_authoring_success_claim,
+    _maybe_bootstrap_llm_from_control_plane,
+    _maybe_load_local_env_files,
+)
+from src.server.config_store import RuntimeConfigStore
+from src.skills.bootstrap import create_default_registry
+
+
+def test_create_llm_provider_reads_env(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("src.local_runtime._load_llm_config", lambda: {})
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
+    monkeypatch.setenv("CUSTOM_LLM_MODEL_NAME", "gpt-4o-mini")
+    monkeypatch.setenv("OPENAI_API_BASE_URL", "http://localhost:11434")
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.api_key == "env-key"
+    assert provider_cfg.model == "gpt-4o-mini"
+    assert provider_cfg.base_url == "http://localhost:11434/v1"
+
+
+def test_create_llm_provider_prefers_explicit_model_override(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("src.local_runtime._load_llm_config", lambda: {})
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
+    monkeypatch.setenv("CUSTOM_LLM_MODEL_NAME", "from-env")
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider("from-arg")
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "from-arg"
+
+
+def test_create_llm_provider_reads_config_when_env_missing(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_BASE_URL", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_BASE_URL", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_MODEL_NAME", raising=False)
+    monkeypatch.delenv("SEMIBOT_CONFIG_PATH", raising=False)
+    db_path = tmp_path / "semibot.db"
+    RuntimeConfigStore(db_path=str(db_path)).update_llm_settings({
+        "default_model": "gpt-4o-mini",
+        "default_provider_key": "openai",
+        "providers": {
+            "openai": {
+                "api_key": "cfg-key",
+                "base_url": "http://localhost:11434",
+            },
+        },
+    })
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.api_key == "cfg-key"
+    assert provider_cfg.model == "gpt-4o-mini"
+    assert provider_cfg.base_url == "http://localhost:11434/v1"
+
+
+def test_create_llm_provider_prefers_runtime_default_model_over_custom_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_BASE_URL", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_BASE_URL", raising=False)
+    monkeypatch.setenv("CUSTOM_LLM_MODEL_NAME", "deepseek-v3.2")
+    monkeypatch.delenv("SEMIBOT_CONFIG_PATH", raising=False)
+    db_path = tmp_path / "semibot.db"
+    RuntimeConfigStore(db_path=str(db_path)).update_llm_settings({
+        "default_model": "kimi-k2.5",
+        "default_provider_key": "kimi:kimiprovider",
+        "providers": {
+            "kimi:kimiprovider": {
+                "api_key": "sqlite-kimi-key",
+                "base_url": "https://api.moonshot.cn",
+            },
+        },
+    })
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    monkeypatch.setattr("src.local_runtime.KimiProvider", lambda cfg: cfg)
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "sqlite-kimi-key"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_prefers_runtime_defaults_over_env_defaults(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_BASE_URL", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_BASE_URL", raising=False)
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "gpt-5.2-codex")
+    monkeypatch.setenv("FALLBACK_LLM_MODEL", "deepseek-v3.2")
+    monkeypatch.setenv("CUSTOM_LLM_MODEL_NAME", "deepseek-v3.2")
+    monkeypatch.delenv("DEFAULT_LLM_PROVIDER_KEY", raising=False)
+    monkeypatch.delenv("FALLBACK_LLM_PROVIDER_KEY", raising=False)
+    monkeypatch.delenv("SEMIBOT_CONFIG_PATH", raising=False)
+    db_path = tmp_path / "semibot.db"
+    RuntimeConfigStore(db_path=str(db_path)).update_llm_settings({
+        "default_model": "kimi-k2.5",
+        "default_provider_key": "kimi:kimiprovider",
+        "fallback_model": "kimi-k2-thinking",
+        "fallback_provider_key": "kimi:kimiprovider",
+        "providers": {
+            "kimi:kimiprovider": {
+                "api_key": "sqlite-kimi-key",
+                "base_url": "https://api.moonshot.cn",
+            },
+        },
+    })
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    monkeypatch.setattr("src.local_runtime.KimiProvider", lambda cfg: cfg)
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "sqlite-kimi-key"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_prefers_kimi_instance_from_env(monkeypatch) -> None:
+    monkeypatch.setattr("src.local_runtime._load_llm_config", lambda: {})
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "env-openai")
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "env-custom")
+    monkeypatch.setenv("CUSTOM_LLM_MODEL_NAME", "kimi-k2.5")
+    monkeypatch.setenv(
+        "LLM_PROVIDER_INSTANCES",
+        '[{"type":"kimi","id":"kimiprovider","apiKey":"env-kimi-instance","baseUrl":"https://api.moonshot.cn/v1"}]',
+    )
+    monkeypatch.setattr("src.local_runtime.KimiProvider", lambda cfg: cfg)
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "env-kimi-instance"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_honors_default_provider_key(monkeypatch) -> None:
+    monkeypatch.setattr("src.local_runtime._load_llm_config", lambda: {})
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "env-custom")
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "kimi-k2.5")
+    monkeypatch.setenv("DEFAULT_LLM_PROVIDER_KEY", "kimi:kimiprovider")
+    monkeypatch.setenv(
+        "LLM_PROVIDER_INSTANCES",
+        '[{"type":"kimi","id":"kimiprovider","apiKey":"env-kimi-instance","baseUrl":"https://api.moonshot.cn/v1"}]',
+    )
+    monkeypatch.setattr("src.local_runtime.KimiProvider", lambda cfg: cfg)
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "env-kimi-instance"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_falls_back_to_default_model_when_explicit_model_provider_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr("src.local_runtime._load_llm_config", lambda: {})
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "env-custom")
+    monkeypatch.delenv("CUSTOM_LLM_MODEL_NAME", raising=False)
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "kimi-k2.5")
+    monkeypatch.setenv(
+        "LLM_PROVIDER_INSTANCES",
+        '[{"type":"kimi","id":"kimiprovider","apiKey":"env-kimi-instance","baseUrl":"https://api.moonshot.cn/v1"}]',
+    )
+    monkeypatch.setattr("src.local_runtime.KimiProvider", lambda cfg: cfg)
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider("gpt-4o")
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "env-kimi-instance"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+@pytest.mark.asyncio
+async def test_ws_bootstrap_applies_init_data_to_env(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_BASE_URL", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_BASE_URL", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_MODEL_NAME", raising=False)
+    monkeypatch.setenv("VM_USER_ID", "user-1")
+    monkeypatch.setenv("VM_TOKEN", "token-1")
+    monkeypatch.setenv("CONTROL_PLANE_WS", "ws://localhost:3001/ws/vm")
+
+    monkeypatch.setattr("src.local_runtime._CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT", 0.0)
+    monkeypatch.setattr("src.local_runtime._CONTROL_PLANE_BOOTSTRAP_LOCK", None)
+
+    class _FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def connect(self):
+            return {
+                "api_keys": {"openai": {"alg": "aes-256-gcm"}},
+                "llm_config": {
+                    "default_model": "gpt-4o-mini",
+                    "providers": {
+                        "openai": {"base_url": "http://localhost:1234"},
+                    },
+                },
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr("src.local_runtime.ControlPlaneClient", _FakeClient)
+    monkeypatch.setattr("src.local_runtime.decrypt_api_keys", lambda _payload, _token: {"openai": "ws-key"})
+
+    await _maybe_bootstrap_llm_from_control_plane()
+
+    assert os.getenv("OPENAI_API_KEY") == "ws-key"
+    assert os.getenv("CUSTOM_LLM_MODEL_NAME") == "gpt-4o-mini"
+    assert os.getenv("OPENAI_API_BASE_URL") == "http://localhost:1234"
+
+
+def test_load_local_env_files_reads_repo_env(monkeypatch, tmp_path) -> None:
+    repo_dir = tmp_path / "repo"
+    runtime_dir = tmp_path / "runtime"
+    repo_dir.mkdir()
+    runtime_dir.mkdir()
+    (repo_dir / ".env.local").write_text(
+        'CUSTOM_LLM_API_KEY="repo-key"\n'
+        'CUSTOM_LLM_MODEL_NAME="repo-model"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_MODEL_NAME", raising=False)
+    monkeypatch.setattr("src.local_runtime._repo_root", lambda: repo_dir)
+    monkeypatch.setattr("src.local_runtime._runtime_root", lambda: runtime_dir)
+    monkeypatch.setattr("src.local_runtime._LOCAL_ENV_BOOTSTRAP_DONE", False)
+
+    _maybe_load_local_env_files()
+
+    assert os.getenv("CUSTOM_LLM_API_KEY") == "repo-key"
+    assert os.getenv("CUSTOM_LLM_MODEL_NAME") == "repo-model"
+
+
+def test_create_llm_provider_returns_none_without_api_key(monkeypatch) -> None:
+    monkeypatch.setattr("src.local_runtime._load_llm_config", lambda: {})
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+
+    assert _create_llm_provider() is None
+
+def test_create_llm_provider_reads_instance_provider_from_runtime_sqlite(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER_INSTANCES", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_MODEL_NAME", raising=False)
+    monkeypatch.delenv("DEFAULT_LLM_MODEL", raising=False)
+    monkeypatch.delenv("DEFAULT_LLM_PROVIDER_KEY", raising=False)
+    db_path = tmp_path / "semibot.db"
+    RuntimeConfigStore(db_path=str(db_path)).update_llm_settings({
+        "default_model": "kimi-k2.5",
+        "default_provider_key": "kimi:kimiprovider",
+        "providers": {
+            "kimi:kimiprovider": {
+                "api_key": "sqlite-kimi-key",
+                "base_url": "https://api.moonshot.cn",
+            },
+        },
+    })
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    monkeypatch.setattr("src.local_runtime.KimiProvider", lambda cfg: cfg)
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "kimi-k2.5"
+    assert provider_cfg.api_key == "sqlite-kimi-key"
+    assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_uses_anthropic_provider_for_anthropic_instance(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER_INSTANCES", raising=False)
+    monkeypatch.delenv("CUSTOM_LLM_MODEL_NAME", raising=False)
+    monkeypatch.delenv("DEFAULT_LLM_MODEL", raising=False)
+    monkeypatch.delenv("DEFAULT_LLM_PROVIDER_KEY", raising=False)
+    db_path = tmp_path / "semibot.db"
+    RuntimeConfigStore(db_path=str(db_path)).update_llm_settings(
+        {
+            "default_model": "claude-sonnet-4-6",
+            "default_provider_key": "anthropic:gaccodeapi",
+            "providers": {
+                "anthropic:gaccodeapi": {
+                    "api_key": "anthropic-key",
+                    "base_url": "https://gaccodeapi.com",
+                },
+            },
+        }
+    )
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    monkeypatch.setattr("src.local_runtime.AnthropicProvider", lambda cfg: ("anthropic", cfg))
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: ("openai", cfg))
+
+    provider = _create_llm_provider()
+
+    assert isinstance(provider, tuple)
+    assert provider[0] == "anthropic"
+    provider_cfg = provider[1]
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "claude-sonnet-4-6"
+    assert provider_cfg.api_key == "anthropic-key"
+    assert provider_cfg.base_url == "https://gaccodeapi.com/v1"
+
+
+def test_build_approval_policy_uses_generic_session_action_scope() -> None:
+    scope_key, context = _build_approval_policy(
+        "browser_automation",
+        {"action": "open", "session_id": "s1", "url": "https://example.com"},
+        "high",
+        "s1",
+        {},
+    )
+
+    assert scope_key == "browser_automation|risk:high|session:s1"
+    assert context["summary"] == "工具 `browser_automation` 执行动作 `open`，目标 `https://example.com`"
+
+
+def test_build_approval_policy_supports_generic_custom_dedupe_keys() -> None:
+    scope_key, context = _build_approval_policy(
+        "any_tool",
+        {"operation": "sync", "resource_id": "abc-1", "value": 42},
+        "medium",
+        "chat-1",
+        {"approval_dedupe_keys": ["resource_id"], "approval_scope": "call"},
+    )
+
+    assert scope_key == "any_tool|risk:medium|custom:resource_id=abc-1"
+    assert context["action"] == "sync"
+
+
+def test_guard_rule_authoring_success_claim_rewrites_false_success() -> None:
+    response = "规则已创建成功，并已设置每天早上9点执行。"
+    tool_results = [
+        {
+            "tool_name": "rule_authoring",
+            "success": False,
+            "error": "INVALID_EVENT_TYPE: event_type is required",
+        }
+    ]
+    guarded = _guard_rule_authoring_success_claim(response, tool_results)
+    assert "未成功落地" in guarded
+    assert "INVALID_EVENT_TYPE" in guarded
+    assert "创建成功" not in guarded
+
+
+def test_guard_rule_authoring_success_claim_noop_when_successful() -> None:
+    response = "规则已创建成功。"
+    tool_results = [{"tool_name": "rule_authoring", "success": True}]
+    assert _guard_rule_authoring_success_claim(response, tool_results) == response
+
+
+def test_build_skill_definitions_merges_external_skill_index() -> None:
+    registry = create_default_registry()
+    defs = _build_skill_definitions(
+        registry,
+        [
+            {
+                "id": "deep-research",
+                "name": "deep-research",
+                "description": "Deep research workflow",
+                "package": {
+                    "files": [
+                        {"path": "SKILL.md"},
+                        {"path": "scripts/research_engine.py"},
+                    ]
+                },
+            }
+        ],
+    )
+    names = [d.name for d in defs]
+    assert "deep-research" in names
+    deep_research = next(d for d in defs if d.name == "deep-research")
+    assert deep_research.metadata.get("has_skill_md") is True
+    assert deep_research.metadata.get("script_files") == ["scripts/research_engine.py"]

@@ -1,0 +1,41 @@
+{
+  "name": "semibot",
+  "version": "2.0.0",
+  "private": true,
+  "description": "AI Agent Orchestration Platform",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "dotenv -e .env.local -- turbo dev --env-mode=loose",
+    "build": "turbo build",
+    "test": "turbo test",
+    "test:e2e:live:approval": "pnpm --dir tests run test:e2e:live:approval",
+    "lint": "turbo lint",
+    "clean": "turbo clean && rm -rf node_modules",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "ralph": "pnpm tsx scripts/ralph/runner.ts",
+    "ralph:verify": "pnpm tsx scripts/ralph/verify.ts"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "dotenv-cli": "^11.0.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react": "^7.34.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "prettier": "^3.2.0",
+    "tsx": "^4.7.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.3.0"
+  }
+}
