@@ -33,6 +33,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
+      '@semibot/shared-config': path.resolve(__dirname, '../../packages/shared-config/src/index.ts'),
+      '@semibot/shared-types': path.resolve(__dirname, '../../packages/shared-types/src/index.ts'),
     },
   },
 })
