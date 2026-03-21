@@ -1,15 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { Wrench, RefreshCw, AlertCircle, CircleHelp, ExternalLink, Pencil, Trash2, Plus } from 'lucide-react'
+import { Wrench, RefreshCw, Pencil, Trash2, Plus } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
-import { Select, type SelectGroup, type SelectOption } from '@/components/ui/Select'
+import { Select } from '@/components/ui/Select'
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error && typeof error === 'object') {
@@ -50,7 +48,7 @@ interface ToolItem {
   schema?: {
     parameters?: Record<string, unknown>
   }
-  config?: Record<string, any>
+  config?: Record<string, unknown>
 }
 
 type ToolParameterSchema = {
@@ -294,8 +292,15 @@ function getLocalizedToolDescription(
   return tool.description || ''
 }
 
+function readString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback
+}
+
+function readBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
 export default function ToolsPage() {
-  const router = useRouter()
   const { t } = useLocale()
   const [tools, setTools] = useState<ToolItem[]>([])
   const [runtime, setRuntime] = useState<RuntimeSkillsData>({
@@ -368,16 +373,16 @@ export default function ToolsPage() {
       approvalDedupeKeys: Array.isArray(tool.config?.approvalDedupeKeys)
         ? tool.config.approvalDedupeKeys.join(',')
         : '',
-      apiEndpoint: tool.config?.apiEndpoint || '',
+      apiEndpoint: readString(tool.config?.apiEndpoint),
       apiKey: '',
-      rootPath: tool.config?.rootPath || '',
+      rootPath: readString(tool.config?.rootPath),
       maxReadBytes:
         typeof tool.config?.maxReadBytes === 'number'
           ? String(tool.config.maxReadBytes)
           : '',
-      headless: tool.config?.headless ?? true,
-      browserType: tool.config?.browserType || 'chromium',
-      allowLocalhost: tool.config?.allowLocalhost ?? false,
+      headless: readBoolean(tool.config?.headless, true),
+      browserType: (readString(tool.config?.browserType, 'chromium') as 'chromium' | 'firefox' | 'webkit'),
+      allowLocalhost: readBoolean(tool.config?.allowLocalhost, false),
       allowedDomains,
       blockedDomains,
       maxTextLength:
@@ -389,12 +394,12 @@ export default function ToolsPage() {
           ? String(tool.config.maxResponseChars)
           : '',
       httpAuthType: (tool.config?.authType || 'none') as 'none' | 'bearer' | 'basic' | 'api_key',
-      httpAuthHeader: tool.config?.authHeader || 'X-API-Key',
+      httpAuthHeader: readString(tool.config?.authHeader, 'X-API-Key'),
       sqlMaxRows:
         typeof tool.config?.maxRows === 'number'
           ? String(tool.config.maxRows)
           : '',
-      sqlDefaultDatabase: tool.config?.defaultDatabase || '',
+      sqlDefaultDatabase: readString(tool.config?.defaultDatabase),
       sqlAllowedDatabases: Array.isArray(tool.config?.allowedDatabases)
         ? tool.config.allowedDatabases.join(',')
         : '',
@@ -617,23 +622,6 @@ export default function ToolsPage() {
     if (current) set.add(current)
     return Array.from(set)
   }, [toolForm.sqlConnectionsRows, toolForm.sqlDefaultDatabase])
-
-  const toggleToolStatus = async (tool: ToolItem) => {
-    try {
-      setError(null)
-      if (tool.id.startsWith('builtin:')) {
-        await apiClient.put('/tools/by-name/' + encodeURIComponent(tool.name), {
-          isActive: !tool.isActive,
-        })
-      } else {
-        await apiClient.put('/tools/' + tool.id, { isActive: !tool.isActive })
-      }
-      await loadData()
-    } catch (err) {
-      setError(getErrorMessage(err, t('config.errors.updateToolStatus')))
-    }
-  }
-
 
   const loadData = useCallback(async () => {
     setIsLoading(true)

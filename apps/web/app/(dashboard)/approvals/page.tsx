@@ -1,8 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
-import { ShieldCheck, RefreshCw, CheckCircle2, XCircle, AlertCircle, CircleHelp, ExternalLink } from 'lucide-react'
+import { ShieldCheck, RefreshCw, CheckCircle2, XCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'

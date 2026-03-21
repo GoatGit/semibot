@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle, CircleHelp, ExternalLink } from 'lucide-react'
+import { Bot, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'

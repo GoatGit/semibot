@@ -77,7 +77,6 @@ export default function StudioCanvasPage() {
   const resolvedColorMode = (theme === 'light' ? 'light' : 'dark') as 'light' | 'dark'
 
   const [studio, setStudio] = useState<Studio | null>(null)
-  const [agentMap, setAgentMap] = useState<Map<string, Agent>>(new Map())
   const [agents, setAgents] = useState<Agent[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -105,7 +104,6 @@ export default function StudioCanvasPage() {
           agentsRes.data.forEach((a) => map.set(a.id, a))
           setAgents(agentsRes.data)
         }
-        setAgentMap(map)
         setNodes(toFlowNodes(s.nodes, map))
         setEdges(toFlowEdges(s.edges))
       }

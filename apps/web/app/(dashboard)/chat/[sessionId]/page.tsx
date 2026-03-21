@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import Link from 'next/link'
 import Image from 'next/image'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
@@ -1350,7 +1349,6 @@ function AssistantMessageCard({
   viewMode,
 }: AssistantMessageCardProps) {
   const { t } = useLocale()
-  const citations = useMemo(() => extractCitations(message.content), [message.content])
 
   const handleCopyBody = useCallback(async () => {
     await navigator.clipboard.writeText(message.content)

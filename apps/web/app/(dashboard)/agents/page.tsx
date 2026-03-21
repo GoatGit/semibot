@@ -2,10 +2,9 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Plus, Search, Settings, Trash2, Loader2, Power, Sparkles, CircleHelp, ExternalLink } from 'lucide-react'
+import { Bot, Plus, Search, Settings, Trash2, Loader2, Power, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'

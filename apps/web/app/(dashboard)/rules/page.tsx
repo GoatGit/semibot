@@ -1,9 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { Workflow, RefreshCw, Plus, AlertCircle, Pencil, Power, Trash2, CircleHelp, ExternalLink } from 'lucide-react'
+import { Workflow, RefreshCw, Plus, Pencil, Power, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'

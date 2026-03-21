@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import clsx from 'clsx'
 import {
   Search,
@@ -17,8 +16,6 @@ import {
   ChevronUp,
   Wrench,
   FolderOpen,
-  CircleHelp,
-  ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'

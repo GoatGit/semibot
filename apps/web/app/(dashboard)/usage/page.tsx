@@ -206,7 +206,7 @@ export default function UsagePage() {
 
   const totals = data?.totals ?? { call_count: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   const breakdown = data?.breakdown ?? []
-  const trend = data?.trend ?? []
+  const trend = useMemo(() => data?.trend ?? [], [data?.trend])
 
   const isHourly = timePreset === 'today' || timePreset === 'yesterday'
     || (timePreset === 'custom' && new Date(endOfDay(customTo)).getTime() - new Date(startOfDay(customFrom)).getTime() <= 2 * 86_400_000)

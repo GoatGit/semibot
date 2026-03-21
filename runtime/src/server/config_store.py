@@ -15,6 +15,8 @@ from time import perf_counter
 from typing import Any, Iterator
 from uuid import uuid4
 
+from src.llm.provider_factory import infer_provider_base_from_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +35,26 @@ DEFAULT_LLM_BASE_URLS = {
 SUPPORTED_LLM_PROVIDERS = ("openai", "anthropic", "google", "kimi", "qwen", "minimax", "xai", "custom")
 DEFAULT_LOCAL_LLM_MODEL = ""
 DEFAULT_LOCAL_LLM_PROVIDER_KEY = ""
+PROVIDER_KEY_ENV_MAP = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GOOGLE_AI_API_KEY",
+    "kimi": "KIMI_API_KEY",
+    "qwen": "QWEN_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "xai": "XAI_API_KEY",
+    "custom": "CUSTOM_LLM_API_KEY",
+}
+PROVIDER_BASE_URL_ENV_MAP = {
+    "openai": "OPENAI_API_BASE_URL",
+    "anthropic": "ANTHROPIC_API_BASE_URL",
+    "google": "GOOGLE_AI_API_BASE_URL",
+    "kimi": "KIMI_API_BASE_URL",
+    "qwen": "QWEN_API_BASE_URL",
+    "minimax": "MINIMAX_API_BASE_URL",
+    "xai": "XAI_API_BASE_URL",
+    "custom": "CUSTOM_LLM_API_BASE_URL",
+}
 
 
 def _now_iso() -> str:
@@ -412,6 +434,40 @@ class RuntimeConfigStore:
             "updated_at": row["updated_at"],
         }
 
+    def _llm_env_defaults(self) -> dict[str, Any]:
+        default_model = str(os.getenv("DEFAULT_LLM_MODEL") or "").strip()
+        default_provider_key = str(os.getenv("DEFAULT_LLM_PROVIDER_KEY") or "").strip()
+        fallback_model = str(os.getenv("FALLBACK_LLM_MODEL") or "").strip()
+        fallback_provider_key = str(os.getenv("FALLBACK_LLM_PROVIDER_KEY") or "").strip()
+
+        if default_model and not default_provider_key:
+            inferred = infer_provider_base_from_model(default_model)
+            if inferred:
+                default_provider_key = inferred
+        if fallback_model and not fallback_provider_key:
+            inferred = infer_provider_base_from_model(fallback_model)
+            if inferred:
+                fallback_provider_key = inferred
+
+        providers: dict[str, dict[str, Any]] = {}
+        for provider in SUPPORTED_LLM_PROVIDERS:
+            api_key = str(os.getenv(PROVIDER_KEY_ENV_MAP.get(provider, ""), "") or "").strip()
+            base_url = str(os.getenv(PROVIDER_BASE_URL_ENV_MAP.get(provider, ""), "") or "").strip()
+            if not api_key and not base_url:
+                continue
+            providers[provider] = {
+                "api_key": api_key,
+                "base_url": base_url or DEFAULT_LLM_BASE_URLS.get(provider, ""),
+            }
+
+        return {
+            "default_model": default_model,
+            "default_provider_key": default_provider_key,
+            "fallback_model": fallback_model,
+            "fallback_provider_key": fallback_provider_key,
+            "providers": providers,
+        }
+
     def get_llm_settings(self) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
@@ -422,10 +478,32 @@ class RuntimeConfigStore:
                 """
             ).fetchone()
         item = self._llm_row_to_dict(row)
+        env_defaults = self._llm_env_defaults()
         if not str(item.get("default_model") or "").strip():
-            item["default_model"] = DEFAULT_LOCAL_LLM_MODEL
+            item["default_model"] = str(env_defaults.get("default_model") or DEFAULT_LOCAL_LLM_MODEL).strip()
         if not str(item.get("default_provider_key") or "").strip():
-            item["default_provider_key"] = DEFAULT_LOCAL_LLM_PROVIDER_KEY
+            item["default_provider_key"] = str(
+                env_defaults.get("default_provider_key") or DEFAULT_LOCAL_LLM_PROVIDER_KEY
+            ).strip()
+        if not str(item.get("fallback_model") or "").strip():
+            item["fallback_model"] = str(env_defaults.get("fallback_model") or "").strip()
+        if not str(item.get("fallback_provider_key") or "").strip():
+            item["fallback_provider_key"] = str(env_defaults.get("fallback_provider_key") or "").strip()
+
+        providers = item.get("providers") if isinstance(item.get("providers"), dict) else {}
+        env_providers = env_defaults.get("providers") if isinstance(env_defaults.get("providers"), dict) else {}
+        for provider_key, env_provider in env_providers.items():
+            current = providers.get(provider_key)
+            if not isinstance(current, dict):
+                providers[provider_key] = dict(env_provider)
+                continue
+            merged = dict(current)
+            if not str(merged.get("api_key") or "").strip():
+                merged["api_key"] = env_provider.get("api_key", "")
+            if not str(merged.get("base_url") or "").strip():
+                merged["base_url"] = env_provider.get("base_url", "")
+            providers[provider_key] = merged
+        item["providers"] = providers
         return item
 
     def update_llm_settings(self, payload: dict[str, Any], *, replace: bool = False) -> dict[str, Any]:

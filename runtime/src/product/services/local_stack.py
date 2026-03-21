@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.llm.provider_factory import infer_provider_base_from_model
 from src.product.config import ProductConfigLoader
 from src.product.health import probe_http_with_retry, probe_port_with_retry
 from src.product.installer import InstallLayout
@@ -133,6 +135,7 @@ class LocalProductStack:
     def start(self) -> dict[str, Any]:
         self._ensure_workspace_packages()
         definitions = self.service_definitions()
+        stale_steps = self._stop_stale_services(definitions)
         steps: list[dict[str, Any]] = []
         started: list[str] = []
 
@@ -200,7 +203,7 @@ class LocalProductStack:
             "action": "start",
             "project_root": str(self.project_root),
             "runtime": {"enabled": self.options.with_runtime, "name": self.runtime_name, "manager": "supervisor"},
-            "steps": steps,
+            "steps": stale_steps + steps,
             "services": status_payload["services"],
             "ui_url": self.ui_url,
             "wait": wait,
@@ -212,6 +215,7 @@ class LocalProductStack:
     def stop(self) -> dict[str, Any]:
         definitions = self.service_definitions()
         steps: list[dict[str, Any]] = []
+        steps.extend(self._stop_stale_services(definitions))
         for service_name in reversed(self._service_order()):
             definition = definitions[service_name]
             detail = self.supervisor.stop(definition)
@@ -361,9 +365,164 @@ class LocalProductStack:
         value = (raw_value or "").strip()
         if value:
             return value
-        normalized = str(self.project_root.resolve()).encode("utf-8")
+        stable_root = str(self.config_loader.paths.home.resolve()).encode("utf-8")
+        normalized = stable_root
         suffix = hashlib.sha1(normalized).hexdigest()[:8]
         return f"semibot-ui-{suffix}"
+
+    def _stop_stale_services(self, definitions: dict[str, ServiceDefinition]) -> list[dict[str, Any]]:
+        stale_steps: list[dict[str, Any]] = []
+        stale_steps.extend(self._stop_stale_ui_pidfiles(definitions))
+        stale_steps.extend(self._stop_stale_port_owners(definitions))
+        return stale_steps
+
+    def _stop_stale_ui_pidfiles(self, definitions: dict[str, ServiceDefinition]) -> list[dict[str, Any]]:
+        current_names = {definition.name for definition in definitions.values()}
+        stale_steps: list[dict[str, Any]] = []
+        for pidfile in sorted(self.run_dir.glob("semibot-ui-*.pid")):
+            service_name = pidfile.name[: -len(".pid")]
+            if service_name in current_names:
+                continue
+            if not (service_name.endswith("-api") or service_name.endswith("-web")):
+                continue
+            logfile = self.logs_dir / f"{service_name}.out.log"
+            error_logfile = self.logs_dir / f"{service_name}.err.log"
+            definition = ServiceDefinition(
+                service_id="legacy-ui",
+                name=service_name,
+                command=[],
+                cwd=self.project_root,
+                logfile=logfile,
+                error_logfile=error_logfile,
+                pidfile=pidfile,
+                manager="supervisor",
+                entrypoint_kind="launcher",
+                env={},
+                ports=[],
+                probes=[],
+            )
+            detail = self.supervisor.stop(definition)
+            stale_steps.append(
+                {
+                    "step": "stop-stale-ui",
+                    "service": "legacy-ui",
+                    "name": service_name,
+                    **detail,
+                }
+            )
+        return stale_steps
+
+    def _stop_stale_port_owners(self, definitions: dict[str, ServiceDefinition]) -> list[dict[str, Any]]:
+        protected_pids = {
+            status.get("pid")
+            for definition in definitions.values()
+            for status in [self.supervisor.status(definition)]
+            if status.get("status") == "running" and status.get("pid")
+        }
+        stale_steps: list[dict[str, Any]] = []
+        for definition in definitions.values():
+            for port in definition.ports:
+                pid = self._listening_pid_for_port(port)
+                if pid is None or pid in protected_pids:
+                    continue
+                command = self._read_process_command(pid)
+                if not self._is_semibot_managed_command(command):
+                    continue
+                stopped = self._terminate_pid(pid)
+                stale_steps.append(
+                    {
+                        "step": "stop-stale-port-owner",
+                        "service": definition.service_id,
+                        "name": definition.name,
+                        "port": port,
+                        "pid": pid,
+                        "stopped": stopped,
+                        "command": command,
+                    }
+                )
+        return stale_steps
+
+    def _listening_pid_for_port(self, port: int) -> int | None:
+        try:
+            result = subprocess.run(
+                ["lsof", "-tiTCP:%s" % port, "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            return None
+        if result.returncode not in (0, 1):
+            return None
+        for line in result.stdout.splitlines():
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                return int(raw)
+            except ValueError:
+                continue
+        return None
+
+    def _read_process_command(self, pid: int) -> str:
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+
+    def _is_semibot_managed_command(self, command: str) -> bool:
+        normalized = str(command or "").strip().lower()
+        if not normalized:
+            return False
+        return any(
+            marker in normalized
+            for marker in (
+                "semibot",
+                "launch_runtime.sh",
+                "launch_api.sh",
+                "launch_web.sh",
+                "next-server",
+                "next/dist/bin/next",
+                "src/index.ts",
+                "dist/index.js",
+                "main.py serve-daemon",
+            )
+        )
+
+    def _terminate_pid(self, pid: int, timeout_seconds: float = 8.0) -> bool:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except Exception:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return True
+            except Exception:
+                return False
+        deadline = time.monotonic() + max(1.0, timeout_seconds)
+        while time.monotonic() < deadline:
+            if not self.supervisor._is_running(pid):
+                return True
+            time.sleep(0.2)
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except Exception:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return True
+            except Exception:
+                return False
+        time.sleep(0.2)
+        return not self.supervisor._is_running(pid)
 
     def _service_summary(self, definition: ServiceDefinition) -> dict[str, Any]:
         supervisor_status = self.supervisor.status(definition)
@@ -462,6 +621,18 @@ class LocalProductStack:
         manifest_url = str(self.product_config.updates.manifest_url or os.getenv("SEMIBOT_UPDATE_MANIFEST_URL") or "").strip()
         if manifest_url:
             env["SEMIBOT_UPDATE_MANIFEST_URL"] = manifest_url
+        default_model = str(self.product_config.llm.default_model or "").strip()
+        if default_model:
+            env["DEFAULT_LLM_MODEL"] = default_model
+            inferred_provider = infer_provider_base_from_model(default_model)
+            if inferred_provider:
+                env["DEFAULT_LLM_PROVIDER_KEY"] = inferred_provider
+        openai_api_key = str(self.product_config.llm.openai_api_key or "").strip()
+        if openai_api_key:
+            env["OPENAI_API_KEY"] = openai_api_key
+        anthropic_api_key = str(self.product_config.llm.anthropic_api_key or "").strip()
+        if anthropic_api_key:
+            env["ANTHROPIC_API_KEY"] = anthropic_api_key
         return env
 
     def _resolve_execution_root(self) -> Path:

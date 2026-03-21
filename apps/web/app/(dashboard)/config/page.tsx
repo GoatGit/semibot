@@ -6,7 +6,6 @@ import {
   Cpu,
   KeyRound,
   Webhook,
-  Wrench,
   FileText,
   RefreshCw,
   Loader2,
@@ -24,7 +23,6 @@ import { Modal } from '@/components/ui/Modal'
 import { Select, type SelectGroup, type SelectOption } from '@/components/ui/Select'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { apiClient } from '@/lib/api'
-import { formatRuntimeStatusError } from '@/lib/runtime-status'
 import { useLocale } from '@/components/providers/LocaleProvider'
 import { toast } from '@/stores/toastStore'
 
@@ -164,6 +162,7 @@ type ConfigTab =
   | 'webhooks'
   | 'envVars'
   | 'evolutionCapabilities'
+type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type SectionKey =
   | 'llm'
   | 'tools'
@@ -174,7 +173,6 @@ type SectionKey =
   | 'evolutionCapabilities'
 type ProviderKey = string
 type ProviderType = 'openai' | 'anthropic' | 'google' | 'kimi' | 'qwen' | 'minimax' | 'xai' | 'custom'
-type ApprovalScope = 'call' | 'action' | 'target' | 'session' | 'session_action' | 'tool'
 type GatewayProvider = 'feishu' | 'telegram' | 'discord' | 'whatsapp' | 'imessage'
 type GatewayFilter = 'all' | GatewayProvider
 type GatewayAddressingMode = 'mention_only' | 'all_messages'
@@ -223,11 +221,6 @@ type GatewayBotBinding = {
   agentId: string
 }
 
-type SqlConnectionRow = {
-  alias: string
-  dsn: string
-}
-
 type GatewayForm = {
   id?: string
   instanceKey: string
@@ -273,35 +266,6 @@ type GatewayForm = {
   contextSummarizeEveryNMessages: string
 }
 
-type ToolForm = {
-  id?: string
-  name: string
-  type: string
-  timeoutMs: string
-  retryAttempts: string
-  requiresApproval: boolean
-  riskLevel: 'low' | 'medium' | 'high' | 'critical'
-  approvalScope: ApprovalScope
-  approvalDedupeKeys: string
-  apiEndpoint: string
-  apiKey: string
-  rootPath: string
-  maxReadBytes: string
-  headless: boolean
-  browserType: 'chromium' | 'firefox' | 'webkit'
-  allowLocalhost: boolean
-  allowedDomains: string
-  blockedDomains: string
-  maxTextLength: string
-  maxResponseChars: string
-  httpAuthType: 'none' | 'bearer' | 'basic' | 'api_key'
-  httpAuthHeader: string
-  sqlMaxRows: string
-  sqlDefaultDatabase: string
-  sqlAllowedDatabases: string
-  sqlConnectionsRows: SqlConnectionRow[]
-}
-
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
 const MIN_WEBHOOK_SECRET_LENGTH = 16
 const MIN_BUILTIN_TOOLS = [
@@ -316,25 +280,6 @@ const MIN_BUILTIN_TOOLS = [
   'pdf_report',
   'sql_query_readonly',
 ]
-const HIGH_RISK_DEFAULT_TOOLS = [
-  'code_executor',
-  'file_io',
-  'semi_browser',
-  'http_client',
-  'csv_xlsx',
-  'sql_query_readonly',
-  'rule_authoring',
-]
-const TOOLS_WITHOUT_API_CREDENTIALS = [
-  'code_executor',
-  'file_io',
-  'semi_browser',
-  'web_fetch',
-  'json_transform',
-  'csv_xlsx',
-  'pdf_report',
-  'rule_authoring',
-]
 const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
 const EVOLUTION_CAPABILITY_TYPES: EvolutionCapabilityType[] = ['hands', 'reflex', 'spine', 'guard', 'mind']
@@ -348,19 +293,6 @@ const PROVIDER_TYPE_OPTIONS: Array<{ value: ProviderType; label: string }> = [
   { value: 'xai', label: 'xAI' },
   { value: 'custom', label: 'Custom' },
 ]
-
-
-function parseBooleanFlag(value: unknown, fallback = false): boolean {
-  if (value === undefined || value === null) return fallback
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'number') return value !== 0
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase()
-    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true
-    if (['0', 'false', 'no', 'n', 'off', ''].includes(normalized)) return false
-  }
-  return Boolean(value)
-}
 
 function formatDate(dateString: string | undefined, locale: string, t: (key: string, params?: Record<string, string | number>) => string): string {
   if (!dateString) return t('config.common.notSet')
@@ -1020,7 +952,7 @@ export default function ConfigPage() {
     ])
     setLoading(false)
     setRefreshingAll(false)
-  }, [loadApiKeys, loadEvolutionCapabilities, loadGateways, loadLlmData, loadTools, loadWebhooks])
+  }, [loadApiKeys, loadEnvVars, loadEvolutionCapabilities, loadGateways, loadLlmData, loadTools, loadWebhooks])
 
   const restartRuntime = useCallback(async () => {
     if (restartingRuntime) return
@@ -1856,19 +1788,11 @@ export default function ConfigPage() {
     [availableModelValueSet, currentFallbackModelBinding, modelDefaults.fallbackModel]
   )
 
-  const activeToolsCount = useMemo(
-    () => tools.filter((tool) => tool.isActive).length,
-    [tools]
-  )
   const activeGatewaysCount = useMemo(
     () => filteredGateways.filter((item) => item.isActive).length,
     [filteredGateways]
   )
   const selectedGatewayCount = useMemo(() => selectedGatewayItems.length, [selectedGatewayItems])
-  const runtimeSkillsErrorText = useMemo(
-    () => formatRuntimeStatusError(runtimeSkills.error, runtimeSkills.source),
-    [runtimeSkills.error, runtimeSkills.source]
-  )
 
   const tabs = useMemo(
     () => [
@@ -1889,19 +1813,9 @@ export default function ConfigPage() {
       envVars.length,
       gateways.length,
       tSafe,
-      tools.length,
       visibleProviderEntries.length,
       webhooks.length,
     ]
-  )
-
-  const toolsQuickTips = useMemo(
-    () => [
-      tSafe('config.tools.quickTips.fields', '请使用明确字段名，避免配置误填。'),
-      tSafe('config.tools.quickTips.scope', '高风险工具建议使用会话级或会话+动作级审批范围。'),
-      tSafe('config.tools.quickTips.domains', '域名白名单/黑名单使用逗号分隔，自动匹配子域名。'),
-    ],
-    [tSafe]
   )
 
   const isAnySectionLoading = Object.values(sectionLoading).some(Boolean)

@@ -77,6 +77,20 @@ def test_create_llm_provider_reads_config_when_env_missing(monkeypatch, tmp_path
     assert provider_cfg.base_url == "http://localhost:11434/v1"
 
 
+def test_runtime_config_store_reads_llm_defaults_from_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.delenv("DEFAULT_LLM_PROVIDER_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "env-openai")
+    monkeypatch.setenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
+
+    config = RuntimeConfigStore(db_path=str(tmp_path / "semibot.db")).get_llm_settings()
+
+    assert config["default_model"] == "gpt-4o-mini"
+    assert config["default_provider_key"] == "openai"
+    assert config["providers"]["openai"]["api_key"] == "env-openai"
+    assert config["providers"]["openai"]["base_url"] == "https://api.openai.com/v1"
+
+
 def test_create_llm_provider_prefers_runtime_default_model_over_custom_env(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)

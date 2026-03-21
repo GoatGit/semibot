@@ -171,7 +171,7 @@ export default function StudioRunDetailPage() {
 
     es.onerror = () => { es.close() }
     return () => { es.close() }
-  }, [run?.status, studioId, runId])
+  }, [run, run?.status, studioId, runId])
 
   const handleCancel = async () => {
     try {

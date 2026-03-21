@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Activity,
   Clock3,
-  ExternalLink,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -58,14 +57,6 @@ interface GatewayConversationRunSummary {
   status: string
   resultSummary: string
   updatedAt: string
-}
-
-interface RuntimeGatewayConversationRunsResponse {
-  success: boolean
-  data?: {
-    available?: boolean
-    runs?: GatewayConversationRunSummary[]
-  }
 }
 
 interface DashboardStats {
