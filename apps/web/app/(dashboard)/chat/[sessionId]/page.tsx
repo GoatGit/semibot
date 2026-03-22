@@ -8,7 +8,7 @@ import { Send, Paperclip, Mic, StopCircle, User, RefreshCw, AlertCircle, X, File
 import { Button } from '@/components/ui/Button'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { MarkdownBlock } from '@/components/agent2ui/text/MarkdownBlock'
-import { CitationList, extractCitations } from '@/components/agent2ui/text/CitationList'
+import { CitationList } from '@/components/agent2ui/text/CitationList'
 import { ProcessCard } from '@/components/agent2ui/process/ProcessCard'
 import { FileDownload } from '@/components/agent2ui/media/FileDownload'
 import { useChat } from '@/hooks/useChat'
@@ -921,7 +921,7 @@ export default function ChatSessionPage() {
           {orderedMessages.length === 0 && (
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0">
-                <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} />
+                <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} unoptimized />
               </div>
               <div className="bg-bg-elevated rounded-xl rounded-bl-sm px-4 py-3 border border-border-subtle">
                 <p className="text-sm text-text-primary">
@@ -1141,6 +1141,8 @@ export default function ChatSessionPage() {
                     className="flex items-center gap-1.5 px-2 py-1 rounded bg-bg-base border border-border-subtle text-xs text-text-secondary"
                   >
                     {f.preview ? (
+                      // User-selected local previews are transient blob/data URLs; next/image is not a good fit here.
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img src={f.preview} alt={f.file.name} className="w-6 h-6 rounded object-cover" />
                     ) : (
                       <FileText size={14} className="text-text-tertiary" />
@@ -1274,7 +1276,7 @@ function MessageBubble({
         {isUser ? (
           <User size={16} className="text-neutral-950" />
         ) : (
-          <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} className="rounded-full" />
+          <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} className="rounded-full" unoptimized />
         )}
       </div>
 
@@ -1376,7 +1378,7 @@ function AssistantMessageCard({
       >
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-500/12 ring-1 ring-primary-500/20">
-            <Image src="/semibot-logo.png" alt="Semibot logo" width={20} height={20} />
+            <Image src="/semibot-logo.png" alt="Semibot logo" width={20} height={20} unoptimized />
           </div>
           <div>
             <p className="text-[11px] uppercase tracking-[0.18em] text-text-tertiary">

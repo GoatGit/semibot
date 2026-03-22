@@ -90,6 +90,8 @@ export function CitationList({ content, className, variant = 'chat', initiallyEx
                   'transition-colors duration-fast group'
                 )}
               >
+                {/* Remote favicon endpoint is dynamic and tiny; plain img is acceptable here. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`https://www.google.com/s2/favicons?domain=${cite.domain}&sz=16`}
                   alt=""

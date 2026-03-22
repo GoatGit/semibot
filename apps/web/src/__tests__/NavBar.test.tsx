@@ -1,4 +1,5 @@
 import type { ImgHTMLAttributes } from 'react'
+import { act } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,11 +7,13 @@ import { NavBar } from '@/components/layout/NavBar'
 import { useLayoutStore } from '@/stores/layoutStore'
 
 const getMock = vi.fn()
+const postMock = vi.fn()
 const openMock = vi.fn()
-const writeTextMock = vi.fn()
 
 vi.mock('next/image', () => ({
   default: ({ alt, priority: _priority, ...props }: ImgHTMLAttributes<HTMLImageElement> & { priority?: boolean }) => (
+    // Test stub for next/image.
+    // eslint-disable-next-line @next/next/no-img-element
     <img alt={alt} {...props} />
   ),
 }))
@@ -63,37 +66,47 @@ vi.mock('@/components/providers/ThemeProvider', () => ({
 vi.mock('@/lib/api', () => ({
   apiClient: {
     get: (...args: unknown[]) => getMock(...args),
+    post: (...args: unknown[]) => postMock(...args),
   },
 }))
 
 describe('NavBar version actions', () => {
-  const originalOpen = window.open
-  const originalClipboard = navigator.clipboard
-
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.useRealTimers()
     useLayoutStore.setState({ navBarExpanded: true })
     Object.defineProperty(window, 'open', {
       value: openMock,
       writable: true,
-    })
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText: writeTextMock },
       configurable: true,
+    })
+    postMock.mockResolvedValue({
+      data: {
+        status: 'queued',
+        message: '升级任务已提交',
+        error: null,
+      },
     })
 
     getMock.mockImplementation(async (path: string) => {
       if (path === '/health') return { success: true }
       if (path === '/runtime/health') return { data: { available: true } }
+      if (path === '/version/upgrade') {
+        return {
+          data: {
+            status: 'idle',
+            message: null,
+            error: null,
+          },
+        }
+      }
       if (path === '/version') {
         return {
           data: {
             currentVersion: '2026.03.21.06',
             latestVersion: '2026.03.21.07',
             updateAvailable: true,
-            releaseUrl: 'https://releases.semibot.ai/stable/semibot-2026.03.21.07.tar.gz',
             releaseNotesUrl: 'https://semibot.ai/releases/2026.03.21.07',
-            upgradeCommand: 'semibot upgrade --manifest-url https://releases.semibot.ai/stable/latest.json',
           },
         }
       }
@@ -102,53 +115,111 @@ describe('NavBar version actions', () => {
   })
 
   afterEach(() => {
-    Object.defineProperty(window, 'open', {
-      value: originalOpen,
-      writable: true,
-    })
-    Object.defineProperty(navigator, 'clipboard', {
-      value: originalClipboard,
-      configurable: true,
-    })
+    vi.restoreAllMocks()
   })
 
-  it('detects newer version and opens release url on version click', async () => {
+  it('detects newer version and submits background upgrade', async () => {
     render(<NavBar />)
 
-    await screen.findByText('v2026.03.21.06')
-    await screen.findByText('→ 2026.03.21.07')
+    await screen.findByText('2026.03.21.06')
+    await screen.findByText('发现新版本 2026.03.21.07')
 
-    const versionButton = screen.getByTitle('发现新版本 2026.03.21.07，当前 2026.03.21.06')
-    fireEvent.click(versionButton)
-
-    expect(openMock).toHaveBeenCalledWith(
-      'https://releases.semibot.ai/stable/semibot-2026.03.21.07.tar.gz',
-      '_blank',
-      'noopener,noreferrer'
-    )
-  })
-
-  it('copies upgrade command and opens release notes', async () => {
-    writeTextMock.mockResolvedValue(undefined)
-
-    render(<NavBar />)
-
-    await screen.findByText('复制升级命令')
-
-    fireEvent.click(screen.getByRole('button', { name: '复制升级命令' }))
+    fireEvent.click(screen.getByRole('button', { name: '立即更新' }))
 
     await waitFor(() => {
-      expect(writeTextMock).toHaveBeenCalledWith(
-        'semibot upgrade --manifest-url https://releases.semibot.ai/stable/latest.json'
-      )
+      expect(postMock).toHaveBeenCalledWith('/version/upgrade', {})
     })
-    expect(screen.getByText('已复制升级命令')).toBeInTheDocument()
+  })
 
+  it('opens release notes', async () => {
+    render(<NavBar />)
+
+    await screen.findByRole('button', { name: '发布说明' })
     fireEvent.click(screen.getByRole('button', { name: '发布说明' }))
+
     expect(openMock).toHaveBeenCalledWith(
       'https://semibot.ai/releases/2026.03.21.07',
       '_blank',
       'noopener,noreferrer'
     )
+  })
+
+  it('stops upgrade polling while status is terminal', async () => {
+    vi.useFakeTimers()
+    let versionUpgradeReads = 0
+    getMock.mockImplementation(async (path: string) => {
+      if (path === '/health') return { success: true }
+      if (path === '/runtime/health') return { data: { available: true } }
+      if (path === '/version/upgrade') {
+        versionUpgradeReads += 1
+        return {
+          data: {
+            status: 'idle',
+            message: null,
+            error: null,
+          },
+        }
+      }
+      if (path === '/version') {
+        return {
+          data: {
+            currentVersion: '2026.03.21.06',
+            latestVersion: '2026.03.21.07',
+            updateAvailable: true,
+            releaseNotesUrl: 'https://semibot.ai/releases/2026.03.21.07',
+          },
+        }
+      }
+      throw new Error(`unexpected path: ${path}`)
+    })
+
+    render(<NavBar />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(versionUpgradeReads).toBeGreaterThan(0)
+    const callsAfterMount = versionUpgradeReads
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
+    })
+
+    expect(versionUpgradeReads).toBe(callsAfterMount)
+    vi.useRealTimers()
+  })
+
+  it('renders upgrade errors in a scrollable bounded container', async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path === '/health') return { success: true }
+      if (path === '/runtime/health') return { data: { available: true } }
+      if (path === '/version/upgrade') {
+        return {
+          data: {
+            status: 'failed',
+            message: '升级失败',
+            error: 'very long upgrade error output',
+          },
+        }
+      }
+      if (path === '/version') {
+        return {
+          data: {
+            currentVersion: '2026.03.21.06',
+            latestVersion: '2026.03.21.07',
+            updateAvailable: true,
+            releaseNotesUrl: null,
+          },
+        }
+      }
+      throw new Error(`unexpected path: ${path}`)
+    })
+
+    render(<NavBar />)
+
+    const errorBox = await screen.findByTitle('升级错误详情')
+    expect(errorBox.className).toContain('max-h-32')
+    expect(errorBox.className).toContain('overflow-y-auto')
+    expect(errorBox).toHaveTextContent('very long upgrade error output')
   })
 })

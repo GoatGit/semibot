@@ -127,6 +127,8 @@ def _print_json(payload: dict[str, Any]) -> None:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return
     if OUTPUT_FORMAT == "table":
+        if _print_compact_product_payload(payload):
+            return
         _print_table_payload(payload)
         return
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -142,6 +144,103 @@ def _augment_payload(payload: dict[str, Any]) -> dict[str, Any]:
         meta.setdefault("verbose", True)
         enriched["_meta"] = meta
     return enriched
+
+
+def _print_compact_product_payload(payload: dict[str, Any]) -> bool:
+    resource = str(payload.get("resource") or "").strip()
+    if resource not in {"init", "doctor", "stack", "ui", "upgrade"}:
+        return False
+
+    if payload.get("ok") is False:
+        print(f"Semibot {resource}: failed")
+        error = payload.get("error")
+        if isinstance(error, dict):
+            code = str(error.get("code") or "").strip()
+            message = str(error.get("message") or "").strip()
+            if code:
+                print(f"  code: {code}")
+            if message:
+                print(f"  message: {message}")
+        return True
+
+    if resource == "init":
+        product = payload.get("product") or {}
+        paths = (payload.get("effective_config") or {}).get("paths") or {}
+        created_files = product.get("created_files") or []
+        updated_files = product.get("updated_files") or []
+        print("Semibot init: complete")
+        if paths.get("home"):
+            print(f"  home: {paths['home']}")
+        if product.get("config_file"):
+            print(f"  config: {product['config_file']}")
+        if product.get("env_file"):
+            print(f"  env: {product['env_file']}")
+        if created_files:
+            print(f"  created: {len(created_files)} file(s)")
+        if updated_files:
+            print(f"  updated: {len(updated_files)} file(s)")
+        return True
+
+    if resource == "doctor":
+        summary = payload.get("summary") or {}
+        product = payload.get("product") or {}
+        release = (product.get("release") or {}).get("active_version")
+        updates = payload.get("updates") or {}
+        print(f"Semibot doctor: {summary.get('status') or ('healthy' if payload.get('ok') else 'needs_attention')}")
+        if release:
+            print(f"  release: {release}")
+        print(f"  failed_checks: {summary.get('failed_checks', 0)}")
+        print(f"  warn_checks: {summary.get('warn_checks', 0)}")
+        if summary.get("service_status"):
+            print(f"  services: {summary['service_status']}")
+        if updates.get("update_available"):
+            print(f"  update: available ({updates.get('latest_version')})")
+        else:
+            print("  update: none")
+        hint = payload.get("hint")
+        if hint:
+            print(f"  hint: {hint}")
+        return True
+
+    if resource in {"stack", "ui"}:
+        action = str(payload.get("action") or resource).strip()
+        status = str(payload.get("status") or "").strip() or ("ok" if payload.get("ok", True) else "failed")
+        summary = payload.get("summary") or {}
+        release = ((payload.get("release") or {}).get("active_version")) or summary.get("active_release")
+        ui_url = payload.get("ui_url") or summary.get("ui_url")
+        print(f"Semibot {resource} {action}: {status}")
+        if release:
+            print(f"  release: {release}")
+        if ui_url:
+            print(f"  ui: {ui_url}")
+        services = payload.get("services") or []
+        if isinstance(services, list) and services:
+            print("  services:")
+            for service in services:
+                if not isinstance(service, dict):
+                    continue
+                name = str(service.get("service") or service.get("name") or "").strip() or "service"
+                line = f"    - {name}: {service.get('status', 'unknown')}"
+                port = service.get("port")
+                if port:
+                    line += f" ({port})"
+                if service.get("attached_to_existing"):
+                    line += " reused"
+                print(line)
+        return True
+
+    if resource == "upgrade":
+        action = str(payload.get("action") or "install").strip()
+        active_release = (payload.get("active_release") or {}).get("active_version")
+        print(f"Semibot upgrade: {action} complete")
+        if active_release:
+            print(f"  active_release: {active_release}")
+        target_version = payload.get("target_version")
+        if target_version and target_version != active_release:
+            print(f"  target_version: {target_version}")
+        return True
+
+    return False
 
 
 def _print_table_payload(payload: dict[str, Any]) -> None:

@@ -69,6 +69,7 @@ export function Select({
   const selectedOption = flat.find((o) => o.value === value)
   const resolvedPlaceholder = placeholder ?? t('ui.select.placeholder')
   const triggerTitle = selectedOption?.label ?? resolvedPlaceholder
+  const listboxId = id ? `${id}-listbox` : undefined
 
   const close = useCallback(() => {
     setOpen(false)
@@ -188,6 +189,7 @@ export function Select({
           selectedOption ? 'text-text-primary' : 'text-text-tertiary'
         )}
         role="combobox"
+        aria-controls={listboxId}
         aria-expanded={open}
         aria-haspopup="listbox"
       >
@@ -203,6 +205,7 @@ export function Select({
       {open && (
         <div
           ref={listRef}
+          id={listboxId}
           role="listbox"
           className={clsx(
             'absolute z-50 mt-1 w-full',

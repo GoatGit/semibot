@@ -237,7 +237,7 @@ export default function NewChatPage() {
           {/* 标题区 */}
           <div className="text-center mb-10">
             <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary-500/20 mb-4">
-              <Image src="/semibot-logo.png" alt="Semibot logo" width={64} height={64} priority />
+              <Image src="/semibot-logo.png" alt="Semibot logo" width={64} height={64} priority unoptimized />
             </div>
             <h1 className="text-2xl font-semibold text-text-primary">{t('chatNew.title')}</h1>
             <p className="text-text-secondary mt-2">

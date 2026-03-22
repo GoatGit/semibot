@@ -79,4 +79,6 @@ export function createTranslator(locale: Locale) {
   }
 }
 
-export default { detectLocale, setLocale, getMessages, createTranslator, defaultLocale, locales }
+const i18n = { detectLocale, setLocale, getMessages, createTranslator, defaultLocale, locales }
+
+export default i18n

@@ -18,6 +18,7 @@ SEMIBOT_WEB_PORT="${SEMIBOT_WEB_PORT:-}"
 SEMIBOT_OPENAI_API_KEY="${SEMIBOT_OPENAI_API_KEY:-}"
 SEMIBOT_ANTHROPIC_API_KEY="${SEMIBOT_ANTHROPIC_API_KEY:-}"
 SEMIBOT_UPDATE_MANIFEST_URL="${SEMIBOT_UPDATE_MANIFEST_URL:-https://releases.semibot.ai/stable/latest.json}"
+SEMIBOT_INSTALL_VERBOSE="${SEMIBOT_INSTALL_VERBOSE:-0}"
 
 sha256_file() {
   local target="$1"
@@ -80,13 +81,103 @@ append_init_args() {
   fi
 }
 
+render_init_summary() {
+  python3 - <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+product = payload.get("product") or {}
+created = product.get("created_files") or []
+updated = product.get("updated_files") or []
+config_file = product.get("config_file")
+env_file = product.get("env_file")
+runtime = payload.get("runtime") or {}
+
+print("[semibot-install] init complete")
+if config_file:
+    print(f"  config: {config_file}")
+if env_file:
+    print(f"  env: {env_file}")
+if runtime.get("db_path"):
+    print(f"  db: {runtime['db_path']}")
+if created:
+    print(f"  created: {len(created)} file(s)")
+if updated:
+    print(f"  updated: {len(updated)} file(s)")
+PY
+}
+
+render_doctor_summary() {
+  python3 - <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+summary = payload.get("summary") or {}
+updates = payload.get("updates") or {}
+active_release = ((payload.get("product") or {}).get("release") or {}).get("active_version")
+status = "healthy" if payload.get("ok") else "needs attention"
+
+print(f"[semibot-install] doctor: {status}")
+if active_release:
+    print(f"  release: {active_release}")
+failed = int(summary.get("failed_checks") or 0)
+warn = int(summary.get("warn_checks") or 0)
+print(f"  checks: {failed} failed, {warn} warned")
+if updates.get("update_available"):
+    latest = updates.get("latest_version")
+    if latest:
+        print(f"  updates: newer release available ({latest})")
+else:
+    print("  updates: up to date")
+hint = payload.get("hint")
+if hint:
+    print(f"  hint: {hint}")
+PY
+}
+
+run_launcher_json() {
+  local summary_kind="$1"
+  shift
+
+  local payload=""
+  if ! payload="$("$@" 2>&1)"; then
+    printf '%s\n' "$payload"
+    return 1
+  fi
+
+  if [[ "$SEMIBOT_INSTALL_VERBOSE" == "1" ]]; then
+    printf '%s\n' "$payload"
+    return 0
+  fi
+
+  if [[ "$summary_kind" == "init" ]]; then
+    if ! printf '%s' "$payload" | render_init_summary; then
+      printf '%s\n' "$payload"
+      return 0
+    fi
+    return 0
+  fi
+
+  if [[ "$summary_kind" == "doctor" ]]; then
+    if ! printf '%s' "$payload" | render_doctor_summary; then
+      printf '%s\n' "$payload"
+      return 0
+    fi
+    return 0
+  fi
+
+  printf '%s\n' "$payload"
+}
+
 run_post_install_bootstrap() {
   local launcher="$1"
   INIT_ARGS=()
 
   append_init_args
   echo "[semibot-install] bootstrapping install-mode config"
-  SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json init "${INIT_ARGS[@]}"
+  run_launcher_json init SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json init "${INIT_ARGS[@]}"
 }
 
 verify_release_metadata() {
@@ -252,7 +343,7 @@ copy_release_workspace() {
     fi
 
     echo "[semibot-install] running first doctor check"
-    if ! SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json doctor; then
+    if ! run_launcher_json doctor SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json doctor; then
       echo "[semibot-install] doctor reported issues; continue with semibot ui after reviewing output"
     fi
   fi

@@ -65,10 +65,10 @@ export function NavBar() {
   const [appVersion, setAppVersion] = useState('dev')
   const [latestVersion, setLatestVersion] = useState<string | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
-  const [releaseUrl, setReleaseUrl] = useState<string | null>(null)
   const [releaseNotesUrl, setReleaseNotesUrl] = useState<string | null>(null)
-  const [upgradeCommand, setUpgradeCommand] = useState<string | null>(null)
-  const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
+  const [upgradeStatus, setUpgradeStatus] = useState<string>('idle')
+  const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null)
+  const [upgradeError, setUpgradeError] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const isExpanded = navBarExpanded || isHovered
@@ -135,6 +135,49 @@ export function NavBar() {
 
   useEffect(() => {
     let cancelled = false
+    const shouldPollUpgradeStatus = ['queued', 'stopping', 'upgrading', 'restarting'].includes(upgradeStatus)
+
+    const loadUpgradeStatus = async () => {
+      try {
+        const response = await apiClient.get<{
+          data?: {
+            status?: string
+            message?: string | null
+            error?: string | null
+          }
+        }>('/version/upgrade')
+        const data = response?.data
+        if (cancelled || !data) return
+        setUpgradeStatus(String(data.status || 'idle'))
+        setUpgradeMessage(data.message || null)
+        setUpgradeError(data.error || null)
+      } catch {
+        if (!cancelled) {
+          setUpgradeStatus('idle')
+          setUpgradeMessage(null)
+          setUpgradeError(null)
+        }
+      }
+    }
+
+    void loadUpgradeStatus()
+    if (!shouldPollUpgradeStatus) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void loadUpgradeStatus()
+    }, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [upgradeStatus])
+
+  useEffect(() => {
+    let cancelled = false
 
     const loadVersion = async () => {
       try {
@@ -143,9 +186,7 @@ export function NavBar() {
             currentVersion?: string
             latestVersion?: string | null
             updateAvailable?: boolean
-            releaseUrl?: string | null
             releaseNotesUrl?: string | null
-            upgradeCommand?: string | null
           }
         }>('/version')
         const data = response?.data
@@ -153,17 +194,13 @@ export function NavBar() {
         setAppVersion(data.currentVersion || 'dev')
         setLatestVersion(data.latestVersion || null)
         setUpdateAvailable(data.updateAvailable === true)
-        setReleaseUrl(data.releaseUrl || null)
         setReleaseNotesUrl(data.releaseNotesUrl || null)
-        setUpgradeCommand(data.upgradeCommand || null)
       } catch {
         if (!cancelled) {
           setAppVersion('dev')
           setLatestVersion(null)
           setUpdateAvailable(false)
-          setReleaseUrl(null)
           setReleaseNotesUrl(null)
-          setUpgradeCommand(null)
         }
       }
     }
@@ -193,28 +230,35 @@ export function NavBar() {
     else setTheme('dark')
   }, [theme, setTheme])
 
-  const handleVersionClick = useCallback(() => {
-    if (updateAvailable && releaseUrl) {
-      window.open(releaseUrl, '_blank', 'noopener,noreferrer')
-    }
-  }, [releaseUrl, updateAvailable])
+  const upgradeInFlight = ['queued', 'stopping', 'upgrading', 'restarting'].includes(upgradeStatus)
+
+  const handleVersionClick = useCallback(() => {}, [])
 
   const handleOpenReleaseNotes = useCallback(() => {
     if (!releaseNotesUrl) return
     window.open(releaseNotesUrl, '_blank', 'noopener,noreferrer')
   }, [releaseNotesUrl])
 
-  const handleCopyUpgradeCommand = useCallback(async () => {
-    if (!upgradeCommand || typeof navigator === 'undefined' || !navigator.clipboard) return
+  const handleTriggerUpgrade = useCallback(async () => {
+    if (!updateAvailable || upgradeInFlight) return
     try {
-      await navigator.clipboard.writeText(upgradeCommand)
-      setCopyFeedback('已复制升级命令')
-      window.setTimeout(() => setCopyFeedback(null), 2000)
-    } catch {
-      setCopyFeedback('复制失败')
-      window.setTimeout(() => setCopyFeedback(null), 2000)
+      const response = await apiClient.post<{
+        data?: {
+          status?: string
+          message?: string | null
+          error?: string | null
+        }
+      }>('/version/upgrade', {})
+      const data = response?.data
+      setUpgradeStatus(String(data?.status || 'queued'))
+      setUpgradeMessage(data?.message || '升级任务已提交')
+      setUpgradeError(data?.error || null)
+    } catch (error) {
+      setUpgradeStatus('failed')
+      setUpgradeMessage('启动升级失败')
+      setUpgradeError(error instanceof Error ? error.message : '启动升级失败')
     }
-  }, [upgradeCommand])
+  }, [updateAvailable, upgradeInFlight])
 
   return (
     <nav
@@ -228,7 +272,7 @@ export function NavBar() {
       <div className={clsx('px-3 py-3 border-b border-border-subtle')}>
         <div className={clsx('flex items-center', isExpanded ? 'gap-2 px-1' : 'justify-center')}>
           <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center">
-            <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} priority />
+            <Image src="/semibot-logo.png" alt="Semibot logo" width={32} height={32} priority unoptimized />
           </div>
           {isExpanded && (
             <span className="font-display font-semibold text-lg text-text-primary whitespace-nowrap">
@@ -329,44 +373,53 @@ export function NavBar() {
         </div>
 
         {/* Version Row */}
-        <div className={clsx('flex items-center gap-1', !isExpanded && 'flex-col')}>
+        <div className={clsx('space-y-1', !isExpanded && 'flex flex-col items-center gap-1 space-y-0')}>
           <button
             type="button"
             onClick={handleVersionClick}
             className={clsx(
-              'flex items-center justify-center p-2 rounded-md transition-colors hover:bg-interactive-hover',
+              'relative flex items-center justify-center p-2 rounded-md transition-colors hover:bg-interactive-hover',
               updateAvailable ? 'text-amber-500 hover:text-amber-400' : 'text-text-tertiary hover:text-text-secondary',
               isExpanded ? 'flex-1' : 'w-10 h-10 flex-col'
             )}
-            title={updateAvailable && latestVersion ? `发现新版本 ${latestVersion}，当前 ${appVersion}` : `当前版本 v${appVersion}`}
+            title={updateAvailable && latestVersion ? `发现新版本 ${latestVersion}，当前 ${appVersion}` : `当前版本 ${appVersion}`}
           >
             {isExpanded ? (
               <>
                 <RefreshCw size={14} className={clsx('opacity-60', updateAvailable && 'text-amber-500')} />
-                <span className="ml-2 text-xs font-mono font-medium">v{appVersion}</span>
-                {updateAvailable && latestVersion && <span className="ml-2 text-[10px] font-medium">→ {latestVersion}</span>}
+                <span className="ml-2 text-xs font-mono font-medium">{appVersion}</span>
+                {updateAvailable && <span className="ml-2 inline-block h-2 w-2 rounded-full bg-red-500" />}
               </>
             ) : (
               <>
                 <span className="text-[10px] font-mono font-medium tracking-tighter shrink-0 pt-0.5" style={{ transform: 'scale(0.8)' }}>
-                  v{appVersion}
+                  {appVersion}
                 </span>
-                {updateAvailable && <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                {updateAvailable && <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-red-500" />}
               </>
             )}
           </button>
+          {isExpanded && updateAvailable && latestVersion && (
+            <div className="px-2 text-[10px] text-amber-500">
+              发现新版本 {latestVersion}
+            </div>
+          )}
           {isExpanded && updateAvailable && (
-            <>
-              {upgradeCommand && (
-                <button
-                  type="button"
-                  onClick={handleCopyUpgradeCommand}
-                  className="px-2 py-2 rounded-md text-[10px] font-medium text-text-secondary hover:bg-interactive-hover hover:text-text-primary transition-colors"
-                  title={upgradeCommand}
-                >
-                  复制升级命令
-                </button>
-              )}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleTriggerUpgrade}
+                disabled={upgradeInFlight}
+                className={clsx(
+                  'px-2 py-2 rounded-md text-[10px] font-medium transition-colors',
+                  upgradeInFlight
+                    ? 'bg-amber-500/10 text-amber-400 cursor-not-allowed'
+                    : 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/20'
+                )}
+                title="后台安装并重启到最新版本"
+              >
+                {upgradeInFlight ? '更新中' : '立即更新'}
+              </button>
               {releaseNotesUrl && (
                 <button
                   type="button"
@@ -377,15 +430,23 @@ export function NavBar() {
                   发布说明
                 </button>
               )}
-            </>
+            </div>
+          )}
+          {isExpanded && upgradeMessage && (
+            <div className={clsx('px-2 text-[10px]', upgradeStatus === 'failed' ? 'text-red-400' : 'text-text-secondary')}>
+              {upgradeMessage}
+            </div>
+          )}
+          {isExpanded && upgradeError && upgradeStatus === 'failed' && (
+            <div
+              className="mx-2 max-h-32 overflow-y-auto rounded-md border border-red-500/20 bg-red-500/5 px-2 py-1 text-[10px] text-red-400 break-all"
+              title="升级错误详情"
+            >
+              {upgradeError}
+            </div>
           )}
           {isExpanded && !updateAvailable && <div className="flex-1" />}
         </div>
-        {isExpanded && copyFeedback && (
-          <div className="px-2 text-[10px] text-text-tertiary">
-            {copyFeedback}
-          </div>
-        )}
       </div>
     </nav>
   )

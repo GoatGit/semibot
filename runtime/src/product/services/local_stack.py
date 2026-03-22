@@ -142,7 +142,10 @@ class LocalProductStack:
         try:
             for service_name in self._service_order():
                 definition = definitions[service_name]
-                detail = self.supervisor.start(definition)
+                detail = self.supervisor.start(
+                    definition,
+                    replace_existing=self._should_replace_existing_service(definition),
+                )
                 steps.append(
                     {
                         "step": "start",
@@ -558,6 +561,36 @@ class LocalProductStack:
             "port": definition.ports[0] if definition.ports else None,
             "attached_to_existing": False,
         }
+
+    def _should_replace_existing_service(self, definition: ServiceDefinition) -> bool:
+        status = self.supervisor.status(definition)
+        if status.get("status") != "running":
+            return False
+
+        metadata = status.get("metadata")
+        if not isinstance(metadata, dict):
+            return False
+
+        recorded_env = metadata.get("env")
+        if not isinstance(recorded_env, dict):
+            return False
+
+        current_release = str(definition.env.get("SEMIBOT_RELEASE_VERSION") or "").strip()
+        running_release = str(recorded_env.get("SEMIBOT_RELEASE_VERSION") or "").strip()
+        if current_release and running_release and current_release != running_release:
+            return True
+
+        current_runtime_url = str(definition.env.get("RUNTIME_URL") or "").strip()
+        running_runtime_url = str(recorded_env.get("RUNTIME_URL") or "").strip()
+        if current_runtime_url and running_runtime_url and current_runtime_url != running_runtime_url:
+            return True
+
+        current_runtime_port = str(definition.env.get("RUNTIME_PORT") or "").strip()
+        running_runtime_port = str(recorded_env.get("RUNTIME_PORT") or "").strip()
+        if current_runtime_port and running_runtime_port and current_runtime_port != running_runtime_port:
+            return True
+
+        return False
 
     def _runtime_command(self) -> list[str]:
         return ["bash", str(self.project_root / "runtime" / "scripts" / "launch_runtime.sh")]

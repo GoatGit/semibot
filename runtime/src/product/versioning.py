@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 from typing import Any
 from urllib.request import Request, urlopen
+
+try:
+    import certifi
+except Exception:  # pragma: no cover - fallback is exercised in runtime environments
+    certifi = None
 
 
 _DATE_VERSION_RE = re.compile(r"^\d{4}\.\d{2}\.\d{2}\.\d{2}$")
@@ -52,7 +58,7 @@ def resolve_update_payload(*, manifest_url: str | None, current_version: str | N
 
     request = Request(normalized_url, headers={"User-Agent": "semibot-runtime-version-check/1"})
     try:
-        with urlopen(request, timeout=3.0) as response:
+        with urlopen(request, timeout=3.0, context=_ssl_context()) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         return {
@@ -73,3 +79,9 @@ def resolve_update_payload(*, manifest_url: str | None, current_version: str | N
         "channel": str(payload.get("channel") or "").strip() or None,
         "checked_at": __import__("datetime").datetime.now(__import__("datetime").UTC).isoformat(),
     }
+
+
+def _ssl_context() -> ssl.SSLContext:
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()

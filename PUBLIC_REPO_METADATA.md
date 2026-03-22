@@ -34,5 +34,6 @@ Semibot - 半个通用智能体. A local-first, installable, collaborative, self
 
 ## Notes
 
+- `/Users/yanghuaiyuan/AI/semibot-internal` remains the source of truth; this repository should only receive exported Public Core changes.
 - Repository metadata should be updated manually in GitHub settings when brand positioning changes.
 - This file should be exported to the public repository together with `README*`, `LICENSE`, `TRADEMARKS.md`, `CLA.md`, and `CONTRIBUTING.md`.

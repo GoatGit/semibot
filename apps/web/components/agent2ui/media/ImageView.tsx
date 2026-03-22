@@ -66,6 +66,8 @@ export function ImageView({ data }: ImageViewProps) {
         )}
 
         {/* 图片 */}
+        {/* Dynamic user/content image URLs may be external or blob-based; keep plain img here. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={url}
           alt={alt}
@@ -142,6 +144,7 @@ export function ImageView({ data }: ImageViewProps) {
           </div>
 
           {/* 放大的图片 */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={url}
             alt={alt}

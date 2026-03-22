@@ -80,6 +80,7 @@ tar \
 RELEASE_DIR_ENV="$RELEASE_DIR" VERSION_ENV="$VERSION" ROOT_DIR_ENV="$ROOT_DIR" INCLUDE_NODE_MODULES_ENV="$INCLUDE_NODE_MODULES" INCLUDE_RUNTIME_VENV_ENV="$INCLUDE_RUNTIME_VENV" python3 - <<'PY'
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime, UTC
 from pathlib import Path
@@ -88,6 +89,31 @@ release_dir = Path(os.environ["RELEASE_DIR_ENV"])
 workspace_dir = release_dir / "workspace"
 include_node_modules = os.environ.get("INCLUDE_NODE_MODULES_ENV") == "1"
 include_runtime_venv = os.environ.get("INCLUDE_RUNTIME_VENV_ENV") == "1"
+
+
+def normalize_absolute_symlinks(root: Path) -> list[str]:
+    rewritten: list[str] = []
+    if not root.exists():
+        return rewritten
+    for path in root.rglob("*"):
+        if not path.is_symlink():
+            continue
+        target = os.readlink(path)
+        if not os.path.isabs(target):
+            continue
+        source = Path(target)
+        if not source.exists():
+            raise RuntimeError(f"bundled virtualenv contains broken absolute symlink: {path} -> {target}")
+        path.unlink()
+        if source.is_dir():
+            shutil.copytree(source, path, symlinks=False)
+        else:
+            shutil.copy2(source, path)
+        rewritten.append(str(path.relative_to(workspace_dir)))
+    return rewritten
+
+
+normalized_runtime_venv_links = normalize_absolute_symlinks(workspace_dir / "runtime" / ".venv")
 artifacts = {
     "runtime_entry": workspace_dir / "runtime" / "main.py",
     "runtime_launcher": workspace_dir / "runtime" / "scripts" / "semibot",
@@ -122,6 +148,7 @@ manifest = {
     "built_at": datetime.now(UTC).isoformat(),
     "workspace_dir": "workspace",
     "git_commit": None,
+    "normalized_runtime_venv_links": normalized_runtime_venv_links,
     "artifacts": {key: str(value.relative_to(release_dir)) for key, value in artifacts.items()},
     "artifact_checks": artifact_checks,
     "artifact_required": required_artifacts,

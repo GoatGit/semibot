@@ -19,7 +19,7 @@ function parseReleaseVersion(value: string | null | undefined): number[] | null 
   return raw.split('.').map((part) => Number(part))
 }
 
-function compareReleaseVersions(left: string, right: string): number {
+export function compareReleaseVersions(left: string, right: string): number {
   const a = parseReleaseVersion(left)
   const b = parseReleaseVersion(right)
   if (!a || !b) return left.localeCompare(right)

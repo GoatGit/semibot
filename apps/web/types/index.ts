@@ -80,7 +80,6 @@ export type {
   CreateMemoryInput,
   SearchMemoriesInput,
   CreateApiKeyInput,
-  UpdateOrganizationInput,
   RegisterInput,
   LoginInput,
   RefreshTokenInput,
@@ -115,16 +114,6 @@ export interface User {
   name?: string
   avatarUrl?: string
   role: 'owner' | 'admin' | 'member'
-}
-
-/**
- * 组织信息
- */
-export interface Organization {
-  id: string
-  name: string
-  slug: string
-  plan: 'free' | 'pro' | 'enterprise'
 }
 
 /**

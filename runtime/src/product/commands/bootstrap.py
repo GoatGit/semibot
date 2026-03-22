@@ -1,18 +1,32 @@
 from __future__ import annotations
 
+import hashlib
+import ipaddress
+import json
 import os
 import socket
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
+import ssl
+from urllib.parse import urlparse
 
 from src.bootstrap import ensure_runtime_home
 from src.product.config import ProductConfigLoader
 from src.product.installer import InstallLayout
 from src.product.services import LocalProductStack, StackOptions
 from src.product.versioning import resolve_update_payload
+
+try:
+    import certifi
+except Exception:  # pragma: no cover
+    certifi = None
 
 
 def _port_check(*, host: str, port: int, services: list[dict[str, Any]]) -> dict[str, Any]:
@@ -292,12 +306,12 @@ def build_product_upgrade_payload(
     version: str | None,
 ) -> dict[str, Any]:
     loader = ProductConfigLoader()
+    product_config = loader.load()
     install_layout = InstallLayout.discover(loader.paths.home)
     layout = loader.active_release_payload()
     workspace_release = Path(str(layout.get("workspace_release") or "")).expanduser()
     source_root = Path(__file__).resolve().parents[4]
     project_root = workspace_release if workspace_release.exists() else source_root
-    install_script = project_root / "scripts" / "install.sh"
     installed_versions = install_layout.installed_versions()
 
     if version and not release_dir and not release_url and not manifest_url:
@@ -315,50 +329,34 @@ def build_product_upgrade_payload(
             "switch": switch_result,
         }
 
-    if not install_script.exists():
-        raise RuntimeError(f"install script not found: {install_script}")
-
-    env = {
-        **os.environ,
-        "SEMIBOT_HOME": str(loader.paths.home),
-    }
     action = "install"
     resolved_release_dir: Path | None = None
+    download_cleanup_root: Path | None = None
+    if not release_dir and not release_url and not manifest_url:
+        manifest_url = str(product_config.updates.manifest_url or "").strip() or None
+
     if manifest_url:
-        env["SEMIBOT_RELEASE_MANIFEST_URL"] = manifest_url
-        env["SEMIBOT_INSTALL_MODE"] = "remote"
-        if sha256:
-            env["SEMIBOT_RELEASE_SHA256"] = sha256
         action = "manifest-install"
+        resolved_release_dir, download_cleanup_root = _download_release_from_manifest(manifest_url=manifest_url, sha256=sha256)
     elif release_url:
-        env["SEMIBOT_RELEASE_URL"] = release_url
-        env["SEMIBOT_INSTALL_MODE"] = "remote"
-        if sha256:
-            env["SEMIBOT_RELEASE_SHA256"] = sha256
         action = "download-install"
+        resolved_release_dir, download_cleanup_root = _download_release_archive(release_url=release_url, sha256=sha256)
     else:
         resolved_release_dir = Path(release_dir).expanduser() if release_dir else (project_root / ".release" / "current")
         if not resolved_release_dir.is_absolute():
             resolved_release_dir = (project_root / resolved_release_dir).resolve()
         if not resolved_release_dir.exists():
             raise RuntimeError(f"release directory not found: {resolved_release_dir}")
-        env["SEMIBOT_RELEASE_DIR"] = str(resolved_release_dir)
-        env["SEMIBOT_INSTALL_MODE"] = "release"
 
-    result = subprocess.run(
-        ["bash", str(install_script)],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(project_root),
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"upgrade failed with exit code {result.returncode}\n"
-            f"--- stdout ---\n{result.stdout}\n"
-            f"--- stderr ---\n{result.stderr}"
+    try:
+        install_result = _install_release_into_home(
+            release_root=resolved_release_dir,
+            loader=loader,
+            install_layout=install_layout,
         )
+    finally:
+        if download_cleanup_root is not None:
+            shutil.rmtree(download_cleanup_root, ignore_errors=True)
 
     active_release = loader.active_release_payload()
     return {
@@ -371,6 +369,179 @@ def build_product_upgrade_payload(
         "target_version": version,
         "active_release": active_release,
         "installed_versions": install_layout.installed_versions(),
+        "stdout_tail": install_result.get("stdout_tail") or [],
+        "stderr_tail": install_result.get("stderr_tail") or [],
+    }
+
+
+def _ssl_context() -> ssl.SSLContext:
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
+
+
+def _validate_remote_url(url: str, *, field_name: str) -> str:
+    value = str(url or "").strip()
+    if not value:
+        raise RuntimeError(f"{field_name} is required")
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "https":
+        raise RuntimeError(f"{field_name} must use HTTPS")
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise RuntimeError(f"{field_name} host is missing")
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        raise RuntimeError(f"{field_name} host is not allowed")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return value
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+        or address.is_multicast
+    ):
+        raise RuntimeError(f"{field_name} host is not allowed")
+    return value
+
+
+def _download_json(url: str) -> dict[str, Any]:
+    url = _validate_remote_url(url, field_name="manifest URL")
+    request = Request(url, headers={"User-Agent": "semibot-upgrade/1"})
+    with urlopen(request, timeout=10.0, context=_ssl_context()) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _download_file(url: str, destination: Path) -> None:
+    url = _validate_remote_url(url, field_name="release URL")
+    request = Request(url, headers={"User-Agent": "semibot-upgrade/1"})
+    with urlopen(request, timeout=60.0, context=_ssl_context()) as response, destination.open("wb") as target:
+        shutil.copyfileobj(response, target)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_release_from_manifest(*, manifest_url: str, sha256: str | None) -> tuple[Path, Path | None]:
+    payload = _download_json(manifest_url)
+    archive_url = str(payload.get("archive_url") or "").strip()
+    if not archive_url:
+        raise RuntimeError("release manifest does not contain archive_url")
+    archive_sha = str(payload.get("archive_sha256") or "").strip() or None
+    return _download_release_archive(release_url=archive_url, sha256=sha256 or archive_sha)
+
+
+def _download_release_archive(*, release_url: str, sha256: str | None) -> tuple[Path, Path | None]:
+    with tempfile.TemporaryDirectory(prefix="semibot-upgrade-") as temp_dir:
+        download_root = Path(temp_dir)
+        archive_path = download_root / "release.tar.gz"
+        extract_root = download_root / "extracted"
+        extract_root.mkdir(parents=True, exist_ok=True)
+
+        _download_file(release_url, archive_path)
+        if sha256:
+            actual = _sha256_file(archive_path)
+            if actual != sha256:
+                raise RuntimeError(f"sha256 mismatch: expected {sha256}, got {actual}")
+
+        with tarfile.open(archive_path, "r:gz") as archive:
+            archive.extractall(extract_root, filter="data")
+
+        candidates = [item for item in extract_root.iterdir() if item.is_dir()]
+        if not candidates:
+            raise RuntimeError("downloaded archive does not contain a release directory")
+
+        cleanup_root = Path(tempfile.mkdtemp(prefix="semibot-upgrade-release-"))
+        copied_release_root = cleanup_root / candidates[0].name
+        shutil.copytree(candidates[0], copied_release_root, symlinks=True)
+        return copied_release_root, cleanup_root
+
+
+def _verify_release_root(release_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest_file = release_root / "manifest.json"
+    build_report_file = release_root / "build-report.json"
+    if not manifest_file.exists():
+        raise RuntimeError(f"release is missing manifest.json: {manifest_file}")
+    if not build_report_file.exists():
+        raise RuntimeError(f"release is missing build-report.json: {build_report_file}")
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    build_report = json.loads(build_report_file.read_text(encoding="utf-8"))
+    if not build_report.get("ok"):
+        raise RuntimeError("release build report is not ok")
+    artifact_checks = build_report.get("artifact_checks") or manifest.get("artifact_checks") or {}
+    missing = [name for name, ok in artifact_checks.items() if not ok]
+    if missing:
+        raise RuntimeError(f"release artifact checks failed: {', '.join(missing)}")
+    return manifest, build_report
+
+
+def _install_release_into_home(*, release_root: Path, loader: ProductConfigLoader, install_layout: InstallLayout) -> dict[str, Any]:
+    manifest, _build_report = _verify_release_root(release_root)
+    version = str(manifest.get("version") or "").strip()
+    if not version:
+        raise RuntimeError("release manifest does not contain version")
+
+    target_release_dir = install_layout.releases_dir / version
+    staging_release_dir = install_layout.releases_dir / f".staging-{version}-{os.getpid()}"
+    backup_release_dir = install_layout.releases_dir / f".backup-{version}-{os.getpid()}"
+    previous_version = install_layout.active_release_version()
+    previous_target = install_layout.active_link.resolve() if install_layout.active_link.exists() else None
+
+    install_layout.releases_dir.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(staging_release_dir, ignore_errors=True)
+    shutil.rmtree(backup_release_dir, ignore_errors=True)
+    with suppress(FileNotFoundError):
+        staging_release_dir.unlink()
+
+    shutil.copytree(release_root, staging_release_dir, symlinks=True)
+
+    if target_release_dir.exists():
+        target_release_dir.rename(backup_release_dir)
+    staging_release_dir.rename(target_release_dir)
+    install_layout.switch_active_version(version)
+
+    runtime_install_script = target_release_dir / "workspace" / "runtime" / "scripts" / "install.sh"
+    if not runtime_install_script.exists():
+        raise RuntimeError(f"release is missing runtime install script: {runtime_install_script}")
+
+    result = subprocess.run(
+        ["bash", str(runtime_install_script)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SEMIBOT_HOME": str(loader.paths.home), "SEMIBOT_RELEASE_VERSION": version},
+        cwd=str(target_release_dir / "workspace" / "runtime"),
+        check=False,
+    )
+    if result.returncode != 0:
+        shutil.rmtree(target_release_dir, ignore_errors=True)
+        if backup_release_dir.exists():
+            backup_release_dir.rename(target_release_dir)
+        if previous_version:
+            install_layout.switch_active_version(previous_version)
+        elif previous_target:
+            tmp_link = install_layout.releases_dir / f".current.rollback-{os.getpid()}.tmp"
+            tmp_link.unlink(missing_ok=True)
+            tmp_link.symlink_to(previous_target.name)
+            tmp_link.replace(install_layout.active_link)
+        raise RuntimeError(
+            f"upgrade failed with exit code {result.returncode}\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}"
+        )
+
+    shutil.rmtree(backup_release_dir, ignore_errors=True)
+    return {
         "stdout_tail": result.stdout.splitlines()[-20:],
         "stderr_tail": result.stderr.splitlines()[-20:],
     }

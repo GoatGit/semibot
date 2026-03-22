@@ -608,20 +608,6 @@ export interface CreateApiKeyInput {
 }
 
 // =============================================================================
-// Organization DTOs
-// =============================================================================
-
-/**
- * Update Organization request DTO
- */
-export interface UpdateOrganizationInput {
-  /** Organization name */
-  name?: string;
-  /** Organization settings */
-  settings?: Record<string, unknown>;
-}
-
-// =============================================================================
 // Auth DTOs
 // =============================================================================
 

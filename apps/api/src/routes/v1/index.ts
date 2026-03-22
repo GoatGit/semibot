@@ -3,6 +3,7 @@
  */
 
 import { Router, type Request, type Response } from 'express'
+import { z } from 'zod'
 import agentsRouter from './agents'
 import sessionsRouter from './sessions'
 import chatRouter from './chat'
@@ -30,7 +31,11 @@ import evolutionCapabilitiesRouter from './evolution-capabilities'
 import statsRouter from './stats'
 import studiosRouter from './studios'
 import { isChannelsFeatureEnabled, isWebhooksFeatureEnabled } from '../../lib/feature-flags'
+import { readUpgradeState, startBackgroundUpgrade, validateUpgradeManifestUrl } from '../../lib/version-upgrade'
 import { resolveCurrentVersion, resolveVersionPayload } from '../../lib/version'
+import { authenticate, type AuthRequest } from '../../middleware/auth'
+import { asyncHandler, validate } from '../../middleware/errorHandler'
+import { combinedRateLimit } from '../../middleware/rateLimit'
 
 const router: Router = Router()
 const channelsEnabled = isChannelsFeatureEnabled()
@@ -55,6 +60,63 @@ router.get('/version', async (_req: Request, res: Response) => {
     data: payload,
   })
 })
+
+router.get('/version/upgrade', authenticate, (_req: AuthRequest, res: Response) => {
+  res.json({
+    success: true,
+    data: readUpgradeState(),
+  })
+})
+
+const versionUpgradeBodySchema = z.object({
+  manifestUrl: z
+    .string()
+    .url()
+    .refine((value) => value.startsWith('https://'), 'manifestUrl 必须使用 HTTPS')
+    .optional(),
+})
+
+router.post(
+  '/version/upgrade',
+  authenticate,
+  combinedRateLimit,
+  validate(versionUpgradeBodySchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const body = req.body as z.infer<typeof versionUpgradeBodySchema>
+    const versionPayload = await resolveVersionPayload()
+    const requestedManifestUrl = String(body.manifestUrl || versionPayload.manifestUrl || '').trim()
+    if (!requestedManifestUrl) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'UPGRADE_MANIFEST_URL_REQUIRED',
+          message: 'manifest URL is required',
+        },
+      })
+      return
+    }
+
+    let manifestUrl: string
+    try {
+      manifestUrl = validateUpgradeManifestUrl(requestedManifestUrl)
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'UPGRADE_MANIFEST_URL_INVALID',
+          message: error instanceof Error ? error.message : 'manifest URL is invalid',
+        },
+      })
+      return
+    }
+
+    const payload = startBackgroundUpgrade(manifestUrl, versionPayload.latestVersion)
+    res.status(202).json({
+      success: true,
+      data: payload,
+    })
+  })
+)
 
 // 轻量 API 文档索引（用于前端/脚本发现关键路由与迁移信息）
 router.get('/docs', (_req: Request, res: Response) => {

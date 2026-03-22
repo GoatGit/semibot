@@ -19,6 +19,7 @@ pydantic>=2.8.0
 pydantic-settings>=2.4.0
 tenacity>=8.5.0
 structlog>=24.4.0
+certifi>=2024.8.30
 
 # OpenTelemetry (Observability)
 opentelemetry-api>=1.26.0

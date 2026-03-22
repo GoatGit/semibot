@@ -14,6 +14,7 @@ import pytest
 from src.cli import (
     _banner_lines,
     _default_log_level,
+    _print_json,
     _require_runtime_server,
     _sanitize_terminal_text,
     build_parser,
@@ -41,6 +42,72 @@ def test_cli_main_callable(monkeypatch) -> None:
 
     cli_main()
     assert called["ok"] is True
+
+
+def test_print_json_compacts_doctor_payload_in_table_mode(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("src.cli.OUTPUT_FORMAT", "table")
+    monkeypatch.setattr("src.cli.VERBOSE_ENABLED", False)
+    monkeypatch.setattr("src.cli.TRACE_ID", None)
+
+    _print_json(
+        {
+            "version": "2026.03.22.02",
+            "resource": "doctor",
+            "action": "diagnose",
+            "ok": True,
+            "summary": {
+                "status": "healthy",
+                "failed_checks": 0,
+                "warn_checks": 1,
+                "service_status": "stopped",
+            },
+            "product": {
+                "release": {
+                    "active_version": "2026.03.22.02",
+                }
+            },
+            "updates": {
+                "update_available": True,
+                "latest_version": "2026.03.22.03",
+            },
+            "hint": "Run `semibot up`.",
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "Semibot doctor: healthy" in output
+    assert "release: 2026.03.22.02" in output
+    assert "update: available (2026.03.22.03)" in output
+    assert "\"summary\"" not in output
+
+
+def test_print_json_compacts_stack_payload_in_table_mode(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("src.cli.OUTPUT_FORMAT", "table")
+    monkeypatch.setattr("src.cli.VERBOSE_ENABLED", False)
+    monkeypatch.setattr("src.cli.TRACE_ID", None)
+
+    _print_json(
+        {
+            "version": "2026.03.22.02",
+            "resource": "stack",
+            "action": "up",
+            "ok": True,
+            "status": "running",
+            "ui_url": "http://127.0.0.1:3000",
+            "release": {"active_version": "2026.03.22.02"},
+            "services": [
+                {"service": "runtime", "status": "running", "port": 8765, "attached_to_existing": False},
+                {"service": "api", "status": "running", "port": 3001, "attached_to_existing": True},
+            ],
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "Semibot stack up: running" in output
+    assert "ui: http://127.0.0.1:3000" in output
+    assert "- runtime: running (8765)" in output
+    assert "- api: running (3001) reused" in output
+    assert "\"services\"" not in output
 
 
 def test_run_command_executes_runtime(monkeypatch, capsys) -> None:
@@ -1434,7 +1501,8 @@ def test_version_command(capsys) -> None:
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "version"
-    assert payload["version"] == "2.0.0"
+    assert isinstance(payload["version"], str)
+    assert payload["version"]
 
 
 def test_doctor_command_with_existing_paths(monkeypatch, tmp_path, capsys) -> None:

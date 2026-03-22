@@ -268,19 +268,6 @@ type GatewayForm = {
 
 const DEFAULT_EVENTS = ['chat.message.completed', 'task.completed', 'task.failed']
 const MIN_WEBHOOK_SECRET_LENGTH = 16
-const MIN_BUILTIN_TOOLS = [
-  'search',
-  'code_executor',
-  'file_io',
-  'semi_browser',
-  'http_client',
-  'web_fetch',
-  'json_transform',
-  'csv_xlsx',
-  'pdf_report',
-  'sql_query_readonly',
-]
-const NON_TOOL_SKILLS = ['xlsx', 'pdf']
 
 const EVOLUTION_CAPABILITY_TYPES: EvolutionCapabilityType[] = ['hands', 'reflex', 'spine', 'guard', 'mind']
 const PROVIDER_TYPE_OPTIONS: Array<{ value: ProviderType; label: string }> = [
@@ -412,31 +399,6 @@ function normalizeGatewayBotBindings(rows: GatewayBotBinding[]): {
   return { normalized, duplicateBotIds, partialCount }
 }
 
-function mergeTools(runtimeTools: string[], dbTools: ToolItem[]): ToolItem[] {
-  const runtimeFiltered = runtimeTools.filter((name) => !NON_TOOL_SKILLS.includes(name))
-  const dbFiltered = dbTools.filter((item) => !NON_TOOL_SKILLS.includes(item.name))
-  const byName = new Map(dbFiltered.map((item) => [item.name, item]))
-  const merged: ToolItem[] = runtimeFiltered.map((name) => {
-    const db = byName.get(name)
-    return {
-      id: db?.id || `builtin:${name}`,
-      name,
-      type: db?.type || 'builtin',
-      description: db?.description || '',
-      config: db?.config || {},
-      isBuiltin: true,
-      isActive: db?.isActive ?? true,
-    }
-  })
-
-  for (const item of dbFiltered) {
-    if (!runtimeFiltered.includes(item.name)) {
-      merged.push(item)
-    }
-  }
-  return merged
-}
-
 export default function ConfigPage() {
   const { locale, t } = useLocale()
   const tSafe = useCallback(
@@ -509,14 +471,6 @@ export default function ConfigPage() {
     apiKey: '',
     baseUrl: '',
     clearApiKey: false,
-  })
-
-  const [tools, setTools] = useState<ToolItem[]>([])
-  const [runtimeSkills, setRuntimeSkills] = useState<RuntimeSkillsData>({
-    available: false,
-    tools: [],
-    skills: [],
-    source: '',
   })
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([])
@@ -680,24 +634,8 @@ export default function ConfigPage() {
         apiClient.get<ApiResponse<RuntimeSkillsData>>('/runtime/skills'),
       ])
 
-      const dbTools =
-        toolsRes.status === 'fulfilled' && toolsRes.value.success ? (toolsRes.value.data || []) : []
-      const runtimeData: RuntimeSkillsData =
-        runtimeRes.status === 'fulfilled' && runtimeRes.value.success
-          ? runtimeRes.value.data
-          : {
-              available: false,
-              tools: [],
-              skills: [],
-              source: '',
-              error: t('config.errors.runtimeToolsLoad'),
-            }
+      void runtimeRes
 
-      const unifiedTools = Array.from(
-        new Set([...(runtimeData.tools || []), ...MIN_BUILTIN_TOOLS])
-      ).filter((name) => !NON_TOOL_SKILLS.includes(name))
-      setRuntimeSkills({ ...runtimeData, tools: unifiedTools })
-      setTools(mergeTools(unifiedTools, dbTools))
       setSectionErrors((prev) => ({
         ...prev,
         tools:
@@ -706,7 +644,6 @@ export default function ConfigPage() {
             : t('config.errors.toolsConfigLoad'),
       }))
     } catch (err) {
-      setTools([])
       setSectionErrors((prev) => ({
         ...prev,
         tools: getErrorMessage(err, t('config.errors.toolsLoad')),

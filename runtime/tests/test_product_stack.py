@@ -64,3 +64,41 @@ def test_stale_port_owner_detection_matches_next_server(monkeypatch, tmp_path: P
     stack = LocalProductStack(StackOptions(wait_for_health=False))
 
     assert stack._is_semibot_managed_command("next-server (v14.2.20)")
+
+
+def test_start_replaces_running_service_when_release_version_changes(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / ".semibot"
+    monkeypatch.setenv("SEMIBOT_HOME", str(home))
+
+    loader = ProductConfigLoader()
+    loader.ensure_layout(force=True)
+    releases_dir = home / "releases"
+    release_version = "2026.03.21.17"
+    active_workspace = releases_dir / release_version / "workspace"
+    active_workspace.mkdir(parents=True, exist_ok=True)
+    current_link = releases_dir / "current"
+    current_link.unlink(missing_ok=True)
+    current_link.symlink_to(release_version)
+
+    stack = LocalProductStack(StackOptions(wait_for_health=False))
+    definitions = stack.service_definitions()
+    api_definition = definitions["api"]
+
+    monkeypatch.setattr(
+        stack.supervisor,
+        "status",
+        lambda definition: {
+            "status": "running",
+            "pid": 12345,
+            "metadata": {
+                "env": {
+                    "SEMIBOT_RELEASE_VERSION": "2026.03.21.16",
+                    "RUNTIME_URL": api_definition.env.get("RUNTIME_URL"),
+                    "RUNTIME_PORT": api_definition.env.get("RUNTIME_PORT"),
+                }
+            },
+        },
+    )
+
+    assert api_definition.env["SEMIBOT_RELEASE_VERSION"] == release_version
+    assert stack._should_replace_existing_service(api_definition) is True

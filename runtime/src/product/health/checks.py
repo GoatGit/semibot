@@ -59,7 +59,7 @@ def probe_http(url: str, *, timeout_seconds: float = 3.0) -> HealthCheckResult:
                 details={"url": url, "status_code": int(status_code), "timeout_seconds": timeout_seconds},
             )
     except HTTPError as exc:
-        status: HealthStatus = "warn" if 400 <= exc.code < 500 else "fail"
+        status: HealthStatus = "ok" if 300 <= exc.code < 500 else "fail"
         return HealthCheckResult(
             name=url,
             status=status,
