@@ -14,7 +14,6 @@ from src.orchestrator.nodes_plan import (
 )
 from src.orchestrator.nodes_respond import (
     _build_inline_delivery_fallback,
-    _extract_search_results,
     _infer_delivery_language,
 )
 from src.orchestrator.nodes_shared import (
@@ -48,7 +47,7 @@ from src.orchestrator.act_tool_injection import (
     _filter_finance_search_results,
     _get_freshness_validation_flag,
     _has_same_step_search_provider_failures,
-    _inject_context_data,
+    _inject_context_data,  # noqa: F401 - re-exported for backward-compatible imports/tests
     _inject_file_io_session_artifacts,
     _is_finance_research_intent,
     _is_latest_research_intent,
@@ -225,11 +224,20 @@ def _tool_call_is_readonly_parallel_safe(call: dict[str, Any]) -> bool:
 def _build_act_tool_schemas(runtime_context: Any | None, skill_registry: Any | None) -> list[dict[str, Any]]:
     tool_schemas: list[dict[str, Any]] = []
     if runtime_context is not None:
-        from src.orchestrator.capability import CapabilityGraph
+        from src.orchestrator.tool_retrieval import select_tool_shortlist
 
         try:
-            capability_graph = CapabilityGraph(runtime_context)
-            tool_schemas = capability_graph.get_schemas_for_planner()
+            metadata = getattr(runtime_context, "metadata", None)
+            query = ""
+            if isinstance(metadata, dict):
+                query = str(metadata.get("_current_act_tool_query") or "").strip()
+            shortlist = select_tool_shortlist(runtime_context, query=query, limit=12)
+            if isinstance(metadata, dict):
+                metadata["_current_act_tool_shortlist_ids"] = [entry.tool_id for entry in shortlist]
+                metadata["_current_act_tool_shortlist_expanded"] = bool(
+                    runtime_context.metadata.get("_current_act_tool_shortlist_expanded")
+                ) if isinstance(getattr(runtime_context, "metadata", None), dict) else False
+            tool_schemas = [entry.to_tool_schema() for entry in shortlist]
             tool_schemas = _merge_dynamic_registry_schemas(tool_schemas, runtime_context)
         except Exception:
             logger.warning("_build_act_tool_schemas: CapabilityGraph failed, falling back to empty schemas", exc_info=True)
@@ -505,7 +513,6 @@ async def execute_single_act_tool_call(
 ) -> ToolCallResult:
     """Execute a single LLM-requested tool call with validation and events."""
     from src.orchestrator.act_terminal import _build_act_decision_event_payload
-    from src.orchestrator.nodes_respond import _extract_search_results
 
     function = call.get("function") or {}
     tool_name = str(function.get("name") or "").strip()
@@ -553,14 +560,6 @@ async def execute_single_act_tool_call(
         session_id=state["session_id"],
         selected_skill_name=current_skill_id,
     )
-    if delegated_action.tool in {"xlsx", "pdf"} and combined_prior_results:
-        search_results = _extract_search_results(combined_prior_results)
-        _inject_context_data(
-            delegated_action,
-            search_results,
-            state["session_id"],
-            latest_user_text,
-        )
     validation_failure = _validate_llm_act_tool_call(
         action=delegated_action,
         prior_results=combined_prior_results,

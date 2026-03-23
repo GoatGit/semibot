@@ -8,35 +8,17 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from src.server.config_store import RuntimeConfigStore
 from src.skills.base import BaseTool, ToolResult
+from src.skills._http_utils import (
+    _LOCAL_BLOCKLIST,
+    parse_domain_rules as _parse_domain_rules,
+    to_bool as _to_bool,
+    validate_remote_url as _validate_remote_url,
+)
 
-_LOCAL_BLOCKLIST = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 _SUPPORTED_BROWSERS = {"chromium", "firefox", "webkit"}
-
-
-def _to_bool(value: Any, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)
-
-
-def _parse_domain_rules(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [item.strip().lower() for item in value.split(",") if item.strip()]
-    if isinstance(value, list):
-        return [str(item).strip().lower() for item in value if str(item).strip()]
-    return []
 
 
 def _host_matches_rule(host: str, rule: str) -> bool:
@@ -192,24 +174,12 @@ class SemiBrowserTool(BaseTool):
         return max(500, self.max_text_length)
 
     def _validate_url(self, raw_url: str) -> tuple[bool, str | None]:
-        parsed = urlparse(raw_url)
-        if parsed.scheme not in {"http", "https"}:
-            return False, "Only http/https URLs are allowed."
-
-        host = (parsed.hostname or "").strip().lower()
-        if not host:
-            return False, "Invalid URL host."
-
-        if not self.allow_localhost and host in _LOCAL_BLOCKLIST:
-            return False, "Access to localhost/loopback is blocked."
-
-        if self.allowed_domains and not any(_host_matches_rule(host, rule) for rule in self.allowed_domains):
-            return False, f"Host '{host}' is not in allowedDomains."
-
-        if self.blocked_domains and any(_host_matches_rule(host, rule) for rule in self.blocked_domains):
-            return False, f"Host '{host}' is blocked."
-
-        return True, None
+        return _validate_remote_url(
+            raw_url,
+            allow_localhost=self.allow_localhost,
+            allowed_domains=self.allowed_domains,
+            blocked_domains=self.blocked_domains,
+        )
 
     def _resolve_screenshot_path(self, session_id: str, provided_path: str | None) -> Path:
         if provided_path and provided_path.strip():

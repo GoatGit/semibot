@@ -74,6 +74,35 @@ class GatewayContextService:
         root.mkdir(parents=True, exist_ok=True)
         return root
 
+    @staticmethod
+    def _extract_tool_usage_events(runtime_result: dict[str, Any], *, task_run_id: str) -> list[dict[str, Any]]:
+        rows = runtime_result.get("tool_results") if isinstance(runtime_result.get("tool_results"), list) else []
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            tool_id = str(metadata.get("tool_id") or "").strip()
+            tool_name = str(row.get("tool_name") or "").strip()
+            actual_tool_name = str(metadata.get("actual_tool_name") or tool_name).strip()
+            if not tool_id or not tool_name:
+                continue
+            events.append(
+                {
+                    "task_run_id": task_run_id,
+                    "tool_id": tool_id,
+                    "tool_name": tool_name,
+                    "actual_tool_name": actual_tool_name or tool_name,
+                    "source_type": str(metadata.get("source") or metadata.get("source_type") or "builtin").strip() or "builtin",
+                    "success": bool(row.get("success")),
+                    "metadata": {
+                        "duration_ms": int(row.get("duration_ms") or 0) if isinstance(row.get("duration_ms"), (int, float)) else 0,
+                        "error": str(row.get("error") or "").strip() or None,
+                    },
+                }
+            )
+        return events
+
     def _fork_runtime_session(self, *, provider: str, source_session_id: str | None) -> str:
         new_session_id = f"sess_{provider}_{uuid4().hex[:12]}"
         source_id = str(source_session_id or "").strip()
@@ -380,6 +409,22 @@ class GatewayContextService:
         return ids
 
     @staticmethod
+    def _extract_missing_capability(runtime_result: dict[str, Any]) -> dict[str, Any] | None:
+        tool_results = runtime_result.get("tool_results")
+        if not isinstance(tool_results, list):
+            return None
+        for item in tool_results:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            missing = metadata.get("missing_capability")
+            if isinstance(missing, dict) and str(missing.get("intent") or "").strip():
+                return dict(missing)
+        return None
+
+    @staticmethod
     def _append_approval_hints(final_response: str, approval_ids: list[str]) -> str:
         if not approval_ids:
             return final_response
@@ -643,6 +688,11 @@ class GatewayContextService:
                         },
                     )
             try:
+                recent_tool_usage = await self.store.asummarize_recent_tool_usage(
+                    session_id=runtime_session_id,
+                    limit=100,
+                    success_only=True,
+                )
                 runner_task = asyncio.create_task(
                     self.task_runner(
                         task=task_input,
@@ -656,6 +706,7 @@ class GatewayContextService:
                         fallback_model=agent_runtime_config["fallback_model"],
                         fallback_provider_key=agent_runtime_config["fallback_provider_key"],
                         system_prompt=agent_runtime_config["system_prompt"],
+                        recent_tool_usage=recent_tool_usage,
                         runtime_event_callback=_runtime_event_callback,
                     )
                 )
@@ -728,6 +779,19 @@ class GatewayContextService:
                     final_response = f"任务执行失败：{error}" if error else "任务已执行，但没有可返回结果。"
                 generated_files = self._extract_generated_files(runtime_result)
                 approval_ids = self._extract_pending_approval_ids(runtime_result)
+                missing_capability = self._extract_missing_capability(runtime_result)
+                tool_usage_events = self._extract_tool_usage_events(runtime_result, task_run_id=run["id"])
+                for event in tool_usage_events:
+                    await self.store.acreate_tool_usage_event(
+                        session_id=runtime_session_id,
+                        task_run_id=event["task_run_id"],
+                        tool_id=event["tool_id"],
+                        tool_name=event["tool_name"],
+                        actual_tool_name=event["actual_tool_name"],
+                        source_type=event["source_type"],
+                        success=bool(event["success"]),
+                        metadata=event.get("metadata") if isinstance(event.get("metadata"), dict) else None,
+                    )
                 final_response = self._append_approval_hints(final_response, approval_ids)
                 await self.store.aupdate_task_run(
                     run["id"],
@@ -736,6 +800,7 @@ class GatewayContextService:
                     result_metadata={
                         "runtime_result": runtime_result,
                         "generated_files": generated_files,
+                        "missing_capability": missing_capability,
                     },
                 )
                 await self.store.aupdate_active_runtime_session_status(
@@ -753,6 +818,7 @@ class GatewayContextService:
                         "runtime_session_id": runtime_session_id,
                         "minimal_writeback": True,
                         "generated_files": generated_files,
+                        "missing_capability": missing_capability,
                     },
                 )
                 if on_result:

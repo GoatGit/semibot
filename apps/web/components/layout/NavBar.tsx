@@ -12,7 +12,6 @@ import {
   SlidersHorizontal,
   MessageSquare,
   Sparkles,
-  Puzzle,
   Wrench,
   Activity,
   Workflow,
@@ -48,7 +47,6 @@ const navItems: NavItem[] = [
   { icon: <Bot size={20} />, labelKey: 'nav.agents', helpKey: 'help.nav.agents', href: '/agents' },
   { icon: <Clapperboard size={20} />, labelKey: 'nav.studio', helpKey: 'help.nav.studio', href: '/studio' },
   { icon: <Sparkles size={20} />, labelKey: 'nav.skills', helpKey: 'help.nav.skills', href: '/skills' },
-  { icon: <Puzzle size={20} />, labelKey: 'nav.mcpServers', helpKey: 'help.nav.mcpServers', href: '/mcp' },
   { icon: <Wrench size={20} />, labelKey: 'nav.tools', helpKey: 'help.nav.tools', href: '/tools' },
   { icon: <SlidersHorizontal size={20} />, labelKey: 'nav.config', helpKey: 'help.nav.config', href: '/config' },
 ]
@@ -232,6 +230,16 @@ export function NavBar() {
 
   const upgradeInFlight = ['queued', 'stopping', 'upgrading', 'restarting'].includes(upgradeStatus)
 
+  const isNavItemActive = useCallback(
+    (href: string) => {
+      if (href === '/tools') {
+        return pathname === '/tools'
+      }
+      return pathname === href || (href !== '/' && pathname.startsWith(href))
+    },
+    [pathname]
+  )
+
   const handleVersionClick = useCallback(() => {}, [])
 
   const handleOpenReleaseNotes = useCallback(() => {
@@ -324,7 +332,7 @@ export function NavBar() {
             label={t(item.labelKey)}
             description={t(item.helpKey)}
             href={item.href}
-            active={pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))}
+            active={isNavItemActive(item.href)}
             expanded={isExpanded}
           />
         ))}

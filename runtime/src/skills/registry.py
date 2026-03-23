@@ -117,6 +117,11 @@ class SkillRegistry:
         """
         return self._tools.get(name)
 
+    def unregister_tool(self, name: str) -> None:
+        """Remove a previously registered tool if it exists."""
+        self._tools.pop(name, None)
+        self._tool_metadata.pop(name, None)
+
     def get_skill(self, name: str) -> BaseSkill | None:
         """
         Get a skill by name.

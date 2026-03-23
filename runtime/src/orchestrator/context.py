@@ -100,6 +100,62 @@ class ToolDefinition:
 
 
 @dataclass
+class ToolCatalogEntry:
+    """Unified tool catalog entry for planner/act injection."""
+
+    tool_id: str
+    tool_name: str
+    actual_tool_name: str
+    display_name: str
+    description: str | None = None
+    source_type: str = "builtin"
+    provider_id: str | None = None
+    parameters: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_tool_schema(self) -> dict[str, Any]:
+        schema = {
+            "type": "function",
+            "function": {
+                "name": self.tool_name,
+                "description": self.description or f"Execute {self.display_name}",
+            },
+            "metadata": {
+                "tool_id": self.tool_id,
+                "source_type": self.source_type,
+                **dict(self.metadata or {}),
+            },
+        }
+        if self.parameters:
+            schema["function"]["parameters"] = self.parameters
+        return schema
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "toolId": self.tool_id,
+            "toolName": self.tool_name,
+            "actualToolName": self.actual_tool_name,
+            "displayName": self.display_name,
+            "description": self.description or "",
+            "sourceType": self.source_type,
+            "providerId": self.provider_id,
+            "parameters": dict(self.parameters or {}),
+            "metadata": dict(self.metadata or {}),
+        }
+
+    def to_catalog_card(self) -> dict[str, Any]:
+        return {
+            "toolId": self.tool_id,
+            "toolName": self.tool_name,
+            "displayName": self.display_name,
+            "sourceType": self.source_type,
+            "providerId": self.provider_id,
+            "summary": self.description or "",
+            "metadata": dict(self.metadata or {}),
+        }
+
+
+@dataclass
 class McpServerDefinition:
     """MCP server definition."""
 
@@ -171,6 +227,7 @@ class RuntimeSessionContext:
     available_skills: list[SkillDefinition] = field(default_factory=list)
     available_tools: list[ToolDefinition] = field(default_factory=list)
     available_mcp_servers: list[McpServerDefinition] = field(default_factory=list)
+    tool_catalog: list[ToolCatalogEntry] = field(default_factory=list)
     available_sub_agents: list[SubAgentDefinition] = field(default_factory=list)
 
     # Execution policy
@@ -188,7 +245,10 @@ class RuntimeSessionContext:
         names.extend(skill.name for skill in self.available_skills)
 
         # Add tool names
-        names.extend(tool.name for tool in self.available_tools)
+        if self.tool_catalog:
+            names.extend(tool.tool_name for tool in self.tool_catalog)
+        else:
+            names.extend(tool.name for tool in self.available_tools)
 
         # Add MCP tool names
         for mcp_server in self.available_mcp_servers:
@@ -212,6 +272,24 @@ class RuntimeSessionContext:
         """Get tool definition by name."""
         for tool in self.available_tools:
             if tool.name == name:
+                return tool
+        return None
+
+    def get_tool_catalog(self) -> list[ToolCatalogEntry]:
+        """Return the unified tool catalog, building it lazily when needed."""
+        if not self.tool_catalog:
+            from src.orchestrator.tool_catalog import build_runtime_tool_catalog
+
+            self.tool_catalog = build_runtime_tool_catalog(self)
+        return list(self.tool_catalog)
+
+    def get_tool_catalog_entry(self, key: str) -> ToolCatalogEntry | None:
+        """Get a catalog entry by tool_id or tool_name."""
+        key_text = str(key or "").strip()
+        if not key_text:
+            return None
+        for tool in self.get_tool_catalog():
+            if tool.tool_id == key_text or tool.tool_name == key_text:
                 return tool
         return None
 

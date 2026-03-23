@@ -14,6 +14,7 @@ from src.orchestrator.context import (
     SkillDefinition,
     ToolDefinition,
     McpServerDefinition,
+    ToolCatalogEntry,
 )
 from src.utils.logging import get_logger
 
@@ -339,12 +340,14 @@ class CapabilityGraph:
         """
         self.context = context
         self.capabilities: dict[str, Capability] = {}
+        self.capabilities_by_name: dict[str, Capability] = {}
         self._built = False
 
     def rebuild(self) -> None:
         """Reset and rebuild the capability graph (e.g., after MCP server reconnection)."""
         self._built = False
         self.capabilities.clear()
+        self.capabilities_by_name.clear()
         self.build()
 
     def build(self) -> None:
@@ -371,6 +374,7 @@ class CapabilityGraph:
 
         # Clear existing capabilities
         self.capabilities.clear()
+        self.capabilities_by_name.clear()
 
         # 1. Load skills (non-executable in runtime v2; used as orchestration context only)
         for skill_def in self.context.available_skills:
@@ -382,37 +386,18 @@ class CapabilityGraph:
                 },
             )
 
-        # 2. Load tools
-        for tool_def in self.context.available_tools:
-            capability = ToolCapability(tool_definition=tool_def)
-            self.capabilities[capability.name] = capability
-            logger.debug(f"Added tool capability: {capability.name}")
-
-        # 3. Load MCP server tools (only from connected servers)
-        for mcp_server in self.context.get_connected_mcp_servers():
-            for tool in mcp_server.available_tools:
-                tool_name = tool.get("name")
-                if not tool_name:
-                    continue
-
-                capability = McpCapability(
-                    name=tool_name,
-                    description=tool.get("description"),
-                    mcp_server_id=mcp_server.id,
-                    mcp_server_name=mcp_server.name,
-                    tool_schema=tool,
-                )
-                if capability.name in self.capabilities:
-                    existing = self.capabilities[capability.name]
-                    existing_source = getattr(existing, "mcp_server_name", None) or type(existing).__name__
-                    logger.warning(
-                        f"MCP tool name collision: '{capability.name}' from '{mcp_server.name}' "
-                        f"overwrites existing from '{existing_source}'"
-                    )
-                self.capabilities[capability.name] = capability
-                logger.debug(
-                    f"Added MCP capability: {capability.name} from {mcp_server.name}"
-                )
+        for entry in self.context.get_tool_catalog():
+            capability = self._capability_from_catalog_entry(entry)
+            self.capabilities[entry.tool_id] = capability
+            self.capabilities_by_name[entry.tool_name] = capability
+            logger.debug(
+                "Added catalog capability",
+                extra={
+                    "tool_id": entry.tool_id,
+                    "tool_name": entry.tool_name,
+                    "source_type": entry.source_type,
+                },
+            )
 
         self._built = True
 
@@ -421,11 +406,46 @@ class CapabilityGraph:
             extra={
                 "session_id": self.context.session_id,
                 "total_capabilities": len(self.capabilities),
-                "skills": len([c for c in self.capabilities.values() if c.capability_type == "skill"]),
-                "tools": len([c for c in self.capabilities.values() if c.capability_type == "tool"]),
-                "mcp_tools": len([c for c in self.capabilities.values() if c.capability_type == "mcp"]),
+                "skills": len([c for c in self.capabilities_by_name.values() if c.capability_type == "skill"]),
+                "tools": len([c for c in self.capabilities_by_name.values() if c.capability_type == "tool"]),
+                "mcp_tools": len([c for c in self.capabilities_by_name.values() if c.capability_type == "mcp"]),
             },
         )
+
+    def _capability_from_catalog_entry(self, entry: ToolCatalogEntry) -> Capability:
+        if entry.source_type == "mcp":
+            return McpCapability(
+                name=entry.tool_name,
+                description=entry.description,
+                mcp_server_id=str(entry.metadata.get("mcp_server_id") or entry.provider_id or ""),
+                mcp_server_name=str(entry.metadata.get("mcp_server_name") or entry.provider_id or ""),
+                tool_schema={
+                    "name": entry.actual_tool_name,
+                    "description": entry.description,
+                    "inputSchema": dict(entry.parameters or {}),
+                },
+                metadata={
+                    **dict(entry.metadata or {}),
+                    "tool_id": entry.tool_id,
+                    "actual_tool_name": entry.actual_tool_name,
+                    "display_name": entry.display_name,
+                    "source": "mcp",
+                },
+            )
+
+        tool_definition = ToolDefinition(
+            name=entry.tool_name,
+            description=entry.description,
+            parameters=dict(entry.parameters or {}),
+            metadata={
+                **dict(entry.metadata or {}),
+                "tool_id": entry.tool_id,
+                "actual_tool_name": entry.actual_tool_name,
+                "display_name": entry.display_name,
+                "source": entry.source_type,
+            },
+        )
+        return ToolCapability(tool_definition=tool_definition)
 
     def get_schemas_for_planner(self) -> list[dict[str, Any]]:
         """
@@ -470,7 +490,7 @@ class CapabilityGraph:
         if not self._built:
             self.build()
 
-        is_valid = action_name in self.capabilities
+        is_valid = action_name in self.capabilities or action_name in self.capabilities_by_name
 
         if not is_valid:
             logger.warning(
@@ -478,7 +498,7 @@ class CapabilityGraph:
                 extra={
                     "session_id": self.context.session_id,
                     "action_name": action_name,
-                    "available_capabilities": list(self.capabilities.keys()),
+                    "available_capabilities": list(self.capabilities_by_name.keys()),
                 },
             )
 
@@ -497,7 +517,7 @@ class CapabilityGraph:
         if not self._built:
             self.build()
 
-        return self.capabilities.get(name)
+        return self.capabilities.get(name) or self.capabilities_by_name.get(name)
 
     def list_capabilities(self) -> list[str]:
         """
@@ -509,7 +529,7 @@ class CapabilityGraph:
         if not self._built:
             self.build()
 
-        return list(self.capabilities.keys())
+        return list(self.capabilities_by_name.keys())
 
     def get_capabilities_by_type(self, capability_type: str) -> list[Capability]:
         """
@@ -526,6 +546,6 @@ class CapabilityGraph:
 
         return [
             cap
-            for cap in self.capabilities.values()
+            for cap in self.capabilities_by_name.values()
             if cap.capability_type == capability_type
         ]

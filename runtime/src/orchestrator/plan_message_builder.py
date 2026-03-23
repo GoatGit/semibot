@@ -146,6 +146,7 @@ def _build_plan_loop_messages(
     current_timezone: str | None = None,
 ) -> list[dict[str, Any]]:
     from src.orchestrator.nodes_respond import _infer_delivery_language
+    from src.orchestrator.tool_catalog import build_catalog_cards
     from src.skills.skill_index_prompt import build_skill_index_entries, format_skills_for_prompt
 
     def _is_planner_safe_history_message(role: str, content: str) -> bool:
@@ -216,6 +217,19 @@ def _build_plan_loop_messages(
         }
     ]
     metadata = getattr(runtime_context, "metadata", None)
+    if runtime_context is not None:
+        try:
+            catalog_cards = build_catalog_cards(runtime_context)
+        except Exception:
+            logger.warning("planner_tool_catalog_cards_failed", exc_info=True)
+            catalog_cards = []
+        if catalog_cards:
+            planning_messages.append(
+                {
+                    "role": "system",
+                    "content": "== Tool Catalog Cards ==\n" + json.dumps(_compact_planner_value(catalog_cards[:24]), ensure_ascii=False, indent=2),
+                }
+            )
     raw_skill_index = metadata.get("skill_index") if isinstance(metadata, dict) else None
     if isinstance(raw_skill_index, list):
         entries = build_skill_index_entries([row for row in raw_skill_index if isinstance(row, dict)])

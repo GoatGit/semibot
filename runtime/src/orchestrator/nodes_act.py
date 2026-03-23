@@ -18,7 +18,6 @@ from src.orchestrator.nodes_plan import (
 )
 from src.orchestrator.nodes_respond import (
     _build_inline_delivery_fallback,
-    _extract_search_results,
     _infer_delivery_language,
 )
 from src.orchestrator.nodes_shared import (
@@ -86,7 +85,7 @@ from src.orchestrator.act_tool_executor import (  # noqa: F401
     _filter_finance_search_results,
     _find_latest_generated_report_path,
     _has_same_step_search_provider_failures,
-    _inject_context_data,
+    _inject_context_data,  # noqa: F401 - re-exported for backward-compatible imports/tests
     _inject_file_io_session_artifacts,
     _inject_skill_script_artifacts,
     _is_finance_research_intent,
@@ -266,6 +265,25 @@ async def _execute_llm_act_step(
         act_messages.append({"role": "user", "content": _truncate_act_prompt_text(act_user_content)})
 
         # --- Tool/model config ---
+        if runtime_context is not None:
+            metadata = getattr(runtime_context, "metadata", None)
+            if isinstance(metadata, dict):
+                metadata["_current_act_tool_query"] = " | ".join(
+                    part
+                    for part in [
+                        str(action.title or "").strip(),
+                        str(action.intent or "").strip(),
+                        " ".join(str(item or "").strip() for item in (action.expected_outputs or []) if str(item or "").strip()),
+                        str(latest_user_text or "").strip(),
+                    ]
+                    if part
+                )
+                observe_loop_guard = state.get("metadata", {}).get("observe_loop_guard") if isinstance(state.get("metadata"), dict) else None
+                metadata["_current_act_failure_repeat_count"] = (
+                    int(observe_loop_guard.get("failure_repeat_count") or 0)
+                    if isinstance(observe_loop_guard, dict)
+                    else 0
+                )
         available_tools = _build_act_tool_schemas(runtime_context, skill_registry)
         agent_model = None
         act_temperature = 0.2
@@ -327,7 +345,8 @@ async def _execute_llm_act_step(
         turn_count += 1
 
         # --- Usage emit ---
-        _act_usage = dict(getattr(response, "usage", {}) or {})
+        raw_usage = getattr(response, "usage", {})
+        _act_usage = dict(raw_usage) if isinstance(raw_usage, dict) else {}
         if event_emitter and _act_usage:
             await event_emitter.emit(
                 "llm.usage",
@@ -494,14 +513,9 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
             "code_executor",
             "file_io",
             "http_client",
-            "csv_xlsx",
-            "pdf_report",
-            "sql_query_readonly",
             "control_plane",
             "rule_authoring",
             "skill_installer",
-            "xlsx",
-            "pdf",
         }
         if runtime_context:
             metadata = getattr(runtime_context, "metadata", None)
@@ -601,14 +615,6 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
             session_id=state["session_id"],
             selected_skill_name=current_skill_name,
         )
-        if action.tool in {"xlsx", "pdf"} and results:
-            search_results = _extract_search_results(results)
-            _inject_context_data(
-                action,
-                search_results,
-                state["session_id"],
-                latest_user_text,
-            )
         return [
             await _execute_with_events(
                 unified_executor,
@@ -794,4 +800,3 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
             }
         )
     return result_state
-

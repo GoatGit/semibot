@@ -724,12 +724,56 @@
       "json_transform": "内建 JSON 转换工具。包含子动作：transform 等",
       "text_processing": "内建文本处理工具。支持 compact、extract、slice 三种操作",
       "memory": "内建记忆工具。支持长期记忆检索、长期记忆保存、短期记忆快照、短期记忆压缩和预算查询",
-      "csv_xlsx": "内建 CSV/Excel 数据处理工具。包含子动作：read, write, filter, aggregate, pivot 等",
-      "pdf_report": "内建 PDF 报告生成工具。包含子动作：generate 等",
-      "sql_query_readonly": "内建只读 SQL 查询工具。包含子动作：query 等",
       "control_plane": "内建控制面工具，用于管理运行时配置、规则策略与技能编排。包含子动作：create_rule, update_rule, delete_rule, list_rules 等",
       "rule_authoring": "内建规则编写工具（control_plane 的别名），用于创建/更新/模拟/启停事件触发规则",
       "skill_installer": "内建技能安装工具，从本地文件夹/ZIP 包或远程 URL 安装技能到 ~/.semibot/skills 并刷新索引"
+    }
+  },
+  "toolsCenter": {
+    "eyebrow": "Tools Center",
+    "title": "工具中心",
+    "subtitle": "统一查看内建工具、MCP 服务器和 CLI 工具。高级编辑仍保留在原有配置页面。",
+    "tabs": {
+      "builtin": "内建工具",
+      "mcp": "MCP 服务器",
+      "cli": "CLI 工具"
+    },
+    "summary": {
+      "builtin": "内建工具",
+      "builtinHelper": "Runtime 自带能力",
+      "mcpServers": "MCP 服务器",
+      "mcpHelper": "外部连接与同步源",
+      "cliTools": "CLI 工具",
+      "cliHelper": "本地 harness 与命令能力",
+      "mcpTools": "MCP 工具",
+      "mcpToolsHelper": "由 MCP server 暴露"
+    },
+    "actions": {
+      "config": "高级配置",
+      "manageMcp": "管理 MCP",
+      "openSkills": "查看技能包"
+    },
+    "sections": {
+      "builtinTitle": "内建工具",
+      "builtinDescription": "这些能力随 runtime 提供，可直接进入 catalog。",
+      "mcpTitle": "MCP 服务器",
+      "mcpDescription": "这些外部 server 会向 catalog 暴露 MCP tools。",
+      "cliTitle": "CLI 工具",
+      "cliDescription": "本地 harness、命令包装器和通过 package 带入的工具。"
+    },
+    "empty": {
+      "builtinTitle": "暂无内建工具",
+      "builtinDescription": "当前 runtime 没有返回任何内建工具。",
+      "mcpTitle": "暂无 MCP 服务器",
+      "mcpDescription": "连接 MCP 后，它们暴露的工具会自动进入统一目录。",
+      "cliTitle": "暂无 CLI 工具",
+      "cliDescription": "当前没有检测到来自本地 harness 或 package 的 CLI 工具。"
+    },
+    "fields": {
+      "lastConnected": "最近连接"
+    },
+    "errors": {
+      "load": "加载工具中心失败"
     }
   },
   "rules": {
@@ -1161,7 +1205,26 @@
       "mountedSession": "挂载会话",
       "forkedFrom": "Fork 来源",
       "instanceId": "实例 ID",
-      "botId": "Bot ID"
+      "botId": "Bot ID",
+      "capability": {
+        "title": "缺少执行能力",
+        "noReason": "当前短名单工具无法完成这项任务。",
+        "find": "查找推荐能力",
+        "install": "安装推荐能力",
+        "openSkills": "打开技能页",
+    "recommendation": "推荐结果",
+    "noRecommendation": "暂未找到更具体的能力推荐。",
+        "installSuccess": "推荐能力已安装并刷新。请重新运行任务验证结果。",
+        "installRequest": "安装请求",
+        "history": "最近安装历史",
+        "state": "状态",
+    "retry": "重试原任务",
+    "retrySuccess": "原任务已重新提交。",
+    "statusError": "获取安装状态失败",
+    "retryError": "重试原任务失败",
+    "resolveError": "查询推荐能力失败",
+    "installError": "安装推荐能力失败"
+  }
     }
   },
   "skillDefinitions": {

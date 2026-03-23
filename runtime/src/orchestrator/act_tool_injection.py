@@ -69,7 +69,7 @@ def _inject_context_data(
     user_request: str | None = None,
 ) -> None:
     """Inject search results as context_data into file-generation actions."""
-    if action.tool not in {"xlsx", "pdf"} or not search_results:
+    if action.tool != "pdf" or not search_results:
         return
     # Pass through all results without domain-specific filtering.
     payload = {

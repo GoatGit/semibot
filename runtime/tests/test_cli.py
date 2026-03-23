@@ -653,7 +653,7 @@ def test_init_command(monkeypatch, capsys) -> None:
 def test_skill_list_command(monkeypatch, capsys) -> None:
     class _FakeRegistry:
         def list_tools(self) -> list[str]:
-            return ["code_executor", "pdf"]
+            return ["code_executor"]
 
         def list_skills(self) -> list[str]:
             return ["market-analyst"]
@@ -667,7 +667,7 @@ def test_skill_list_command(monkeypatch, capsys) -> None:
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["resource"] == "skill"
-    assert payload["tools"] == ["code_executor", "pdf"]
+    assert payload["tools"] == ["code_executor"]
     assert payload["skills"] == ["market-analyst"]
 
 

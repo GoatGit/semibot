@@ -59,11 +59,23 @@ const providerConfigSchema = z.object({
   clearApiKey: z.boolean().optional(),
 })
 
+const nodeModelConfigSchema = z.object({
+  model: z.string().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+})
+
+const modelRolesSchema = z.object({
+  plan: nodeModelConfigSchema.optional(),
+  act: nodeModelConfigSchema.optional(),
+  textProcessing: nodeModelConfigSchema.optional(),
+})
+
 const updateLlmConfigSchema = z.object({
   defaultModel: z.string().optional(),
   defaultProviderKey: z.string().optional(),
   fallbackModel: z.string().optional(),
   fallbackProviderKey: z.string().optional(),
+  modelRoles: modelRolesSchema.optional(),
   providers: z.record(providerConfigSchema).optional(),
 })
 
@@ -314,6 +326,7 @@ function buildProviderConfig(config: RuntimeLlmConfig) {
     defaultProviderKey: config.default_provider_key || '',
     fallbackModel: config.fallback_model || '',
     fallbackProviderKey: config.fallback_provider_key || '',
+    modelRoles: (config.model_roles as Record<string, unknown> | undefined) || {},
     providers,
   }
 }
@@ -722,6 +735,7 @@ router.put(
       default_provider_key: body.defaultProviderKey !== undefined ? body.defaultProviderKey.trim() : current.default_provider_key,
       fallback_model: body.fallbackModel !== undefined ? body.fallbackModel.trim() : current.fallback_model,
       fallback_provider_key: body.fallbackProviderKey !== undefined ? body.fallbackProviderKey.trim() : current.fallback_provider_key,
+      model_roles: body.modelRoles !== undefined ? body.modelRoles : current.model_roles,
       providers: nextProviders,
     })
     reloadProviders()
@@ -742,7 +756,7 @@ router.put(
       success: true,
       data: buildProviderConfig(persisted),
       meta: {
-        updatedKeys: ['defaultModel', 'defaultProviderKey', 'fallbackModel', 'fallbackProviderKey', 'providers'],
+        updatedKeys: ['defaultModel', 'defaultProviderKey', 'fallbackModel', 'fallbackProviderKey', 'modelRoles', 'providers'],
       },
     })
   })

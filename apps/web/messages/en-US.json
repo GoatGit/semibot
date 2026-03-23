@@ -724,12 +724,56 @@
       "json_transform": "Built-in JSON transform tool. Including: transform etc.",
       "text_processing": "Built-in text processing tool. Supports compact, extract, and slice operations.",
       "memory": "Built-in memory tool. Supports long-term search, long-term save, short-term snapshot, short-term compaction, and budget inspection.",
-      "csv_xlsx": "Built-in CSV/Excel tool. Including: read, write, filter, aggregate, pivot etc.",
-      "pdf_report": "Built-in PDF report generation tool. Including: generate etc.",
-      "sql_query_readonly": "Built-in read-only SQL query tool. Including: query etc.",
       "control_plane": "Built-in control plane tool for managing runtime config, rule policies & skill orchestration. Including: create_rule, update_rule, delete_rule, list_rules etc.",
       "rule_authoring": "Built-in rule authoring tool (alias for control_plane). Create/update/simulate/enable/disable event rules.",
       "skill_installer": "Built-in skill installer. Install skills from local folder/ZIP or remote URL into ~/.semibot/skills and refresh index."
+    }
+  },
+  "toolsCenter": {
+    "eyebrow": "Tools Center",
+    "title": "Tools Center",
+    "subtitle": "Unified view of builtin tools, MCP servers, and CLI tools. Advanced editing remains on the existing config pages.",
+    "tabs": {
+      "builtin": "Builtin tools",
+      "mcp": "MCP servers",
+      "cli": "CLI tools"
+    },
+    "summary": {
+      "builtin": "Builtin tools",
+      "builtinHelper": "Runtime-provided capabilities",
+      "mcpServers": "MCP servers",
+      "mcpHelper": "External connections and sync sources",
+      "cliTools": "CLI tools",
+      "cliHelper": "Local harness and command-backed tools",
+      "mcpTools": "MCP tools",
+      "mcpToolsHelper": "Exposed by MCP servers"
+    },
+    "actions": {
+      "config": "Advanced config",
+      "manageMcp": "Manage MCP",
+      "openSkills": "Open skills"
+    },
+    "sections": {
+      "builtinTitle": "Builtin tools",
+      "builtinDescription": "These capabilities are provided by the runtime and enter the catalog directly.",
+      "mcpTitle": "MCP servers",
+      "mcpDescription": "These external servers expose MCP tools into the unified catalog.",
+      "cliTitle": "CLI tools",
+      "cliDescription": "Local harnesses, wrapped commands, and tools brought in by packages."
+    },
+    "empty": {
+      "builtinTitle": "No builtin tools",
+      "builtinDescription": "The runtime did not return any builtin tools.",
+      "mcpTitle": "No MCP servers",
+      "mcpDescription": "Once connected, MCP servers will expose tools into the unified catalog.",
+      "cliTitle": "No CLI tools",
+      "cliDescription": "No CLI tools from local harnesses or packages were detected."
+    },
+    "fields": {
+      "lastConnected": "Last connected"
+    },
+    "errors": {
+      "load": "Failed to load tools center"
     }
   },
   "rules": {
@@ -1161,7 +1205,26 @@
       "mountedSession": "Mounted Session",
       "forkedFrom": "Forked From",
       "instanceId": "Instance ID",
-      "botId": "Bot ID"
+      "botId": "Bot ID",
+      "capability": {
+        "title": "Missing capability",
+        "noReason": "The current shortlisted tools cannot complete this task.",
+        "find": "Find recommended capability",
+        "install": "Install recommended capability",
+        "openSkills": "Open skills",
+    "recommendation": "Recommendation",
+    "noRecommendation": "No concrete recommendation is available yet.",
+        "installSuccess": "The recommended capability was installed and the runtime was refreshed. Rerun the task to verify.",
+        "installRequest": "Install request",
+        "history": "Recent install history",
+        "state": "State",
+    "retry": "Retry original task",
+    "retrySuccess": "The original task was queued again.",
+    "statusError": "Failed to fetch install status",
+    "retryError": "Failed to retry the original task",
+    "resolveError": "Failed to fetch capability recommendation",
+    "installError": "Failed to install recommended capability"
+  }
     }
   },
   "skillDefinitions": {

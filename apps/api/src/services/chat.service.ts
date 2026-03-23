@@ -736,6 +736,7 @@ async function handleChatViaExecutionPlane(
 
   const runtimeBaseUrls = getRuntimeBaseUrls()
   const { skillIndex, runtimeSkillMetadata } = await buildAgentSkillIndex(agent, runtimeBaseUrls)
+  const runtimeAgentConfig = await agentService.resolveRuntimeAgentConfig(agent.config)
 
   const runtimeType = 'semigraph' as const
   let systemPrompt = await buildAgentSystemPrompt(agent)
@@ -752,13 +753,13 @@ async function handleChatViaExecutionPlane(
     agent_id: agent.id,
     agent_config: {
       system_prompt: systemPrompt,
-      model: agent.config?.model,
-      model_provider_key: agent.config?.modelProviderKey,
-      temperature: agent.config?.temperature ?? 0.7,
-      max_tokens: agent.config?.maxTokens ?? 4096,
-      fallback_model: agent.config?.fallbackModel,
-      fallback_provider_key: agent.config?.fallbackProviderKey,
-      model_roles: agent.config?.modelRoles,
+      model: runtimeAgentConfig.model,
+      model_provider_key: runtimeAgentConfig.modelProviderKey,
+      temperature: runtimeAgentConfig.temperature ?? 0.7,
+      max_tokens: runtimeAgentConfig.maxTokens ?? 4096,
+      fallback_model: runtimeAgentConfig.fallbackModel,
+      fallback_provider_key: runtimeAgentConfig.fallbackProviderKey,
+      model_roles: runtimeAgentConfig.modelRoles,
     },
     mcp_servers: mcpServers,
     skill_index: skillIndex,
@@ -1339,6 +1340,7 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
   })
   const skillIndexStartedAt = Date.now()
   const { skillIndex, runtimeSkillMetadata } = await buildAgentSkillIndex(agent, runtimeBaseUrls)
+  const runtimeAgentConfig = await agentService.resolveRuntimeAgentConfig(agent.config)
   const skillIndexDurationMs = Date.now() - skillIndexStartedAt
   const promptStartedAt = Date.now()
   let systemPrompt = await buildAgentSystemPrompt(agent)
@@ -1376,11 +1378,11 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
         body: JSON.stringify({
           message: enhanced.text,
           agent_id: agent.id,
-          model: agent.config?.model,
-          model_provider_key: agent.config?.modelProviderKey,
-          fallback_model: agent.config?.fallbackModel,
-          fallback_provider_key: agent.config?.fallbackProviderKey,
-          model_roles: agent.config?.modelRoles,
+          model: runtimeAgentConfig.model,
+          model_provider_key: runtimeAgentConfig.modelProviderKey,
+          fallback_model: runtimeAgentConfig.fallbackModel,
+          fallback_provider_key: runtimeAgentConfig.fallbackProviderKey,
+          model_roles: runtimeAgentConfig.modelRoles,
           system_prompt: systemPrompt,
           skill_index: skillIndex,
           stream: true,

@@ -67,6 +67,17 @@ class StepOutputContract(BaseModel):
     )
 
 
+class MissingCapability(BaseModel):
+    """Structured contract for capability gaps detected by planner or ACT."""
+
+    type: Literal["missing_capability"] = "missing_capability"
+    version: str = Field(default="1")
+    intent: str = Field(..., description="Missing capability intent label")
+    reason: str = Field(..., description="Why current tools cannot satisfy the step")
+    required_capabilities: list[str] = Field(default_factory=list)
+    preferred_sources: list[str] = Field(default_factory=list)
+
+
 class PlanStep(BaseModel):
     """A single step in the execution plan."""
 

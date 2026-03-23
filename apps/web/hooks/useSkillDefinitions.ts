@@ -106,24 +106,7 @@ export function useSkillDefinitions(options: UseSkillDefinitionsOptions = {}) {
                 }
               })
 
-            const builtinSkillNames = Array.isArray(runtimeData.skills) ? runtimeData.skills : []
-            const builtinSkillLike = builtinSkillNames
-              .filter((name) => name === 'pdf' || name === 'xlsx')
-              .map<SkillDefinition>((name) => ({
-                id: `builtin:${name}`,
-                skillId: name,
-                name,
-                description: '',
-                triggerKeywords: [],
-                category: 'builtin',
-                tags: ['builtin'],
-                isActive: true,
-                isPublic: false,
-                createdAt: nowIso,
-                updatedAt: nowIso,
-              }))
-
-            const merged = [...fromMetadata, ...builtinSkillLike]
+            const merged = [...fromMetadata]
             const dedup = new Map<string, SkillDefinition>()
             for (const item of merged) {
               if (!dedup.has(item.skillId)) dedup.set(item.skillId, item)

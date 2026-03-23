@@ -111,12 +111,9 @@ class FileIOTool(BaseTool):
     @staticmethod
     def _resolve_path(raw_path: str | None, *, root: Path) -> Path:
         rel = str(raw_path or ".").strip() or "."
-        generated_root = Path(GENERATED_FILES_DIR).expanduser().resolve()
         candidate = Path(rel).expanduser()
         if candidate.is_absolute():
             target = candidate.resolve()
-            if target == generated_root or generated_root in target.parents:
-                return target
             if target == root or root in target.parents:
                 return target
             raise ValueError(f"path escapes session working directory: {root}")

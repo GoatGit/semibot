@@ -54,6 +54,16 @@ def _build_failure_reflection(
         }
         tool_result = payload.get("result") if isinstance(payload, dict) else None
         metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        if isinstance(metadata, dict) and isinstance(metadata.get("missing_capability"), dict):
+            missing = metadata.get("missing_capability") or {}
+            missing_intent = str(missing.get("intent") or "").strip()
+            missing_reason = str(missing.get("reason") or "").strip()
+            capability_gap = "established in this round"
+            if missing_intent or missing_reason:
+                observed_failures.append(
+                    f"- missing_capability: {missing_intent or 'unknown'}; {missing_reason or 'no reason provided'}"
+                )
+            continue
         excerpt = ""
         candidates: list[str] = []
         if isinstance(tool_result, dict):
@@ -688,4 +698,3 @@ async def observe_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         result_dict["pending_actions"] = outcome.pending_actions_override
 
     return result_dict
-

@@ -140,6 +140,26 @@ async def test_file_io_uses_session_working_dir_for_read_write_list(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_file_io_blocks_absolute_generated_file_outside_session_root(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SEMIBOT_FILE_IO_ROOT", str(tmp_path / "global-root"))
+    session_root = tmp_path / "session-workdir"
+    runtime_context = SimpleNamespace(metadata={"session_working_dir": str(session_root)})
+    tool = FileIOTool()
+    external_generated = tmp_path / "generated" / "report.md"
+    external_generated.parent.mkdir(parents=True, exist_ok=True)
+    external_generated.write_text("secret", encoding="utf-8")
+
+    result = await tool.execute(
+        action="read",
+        path=str(external_generated),
+        _runtime_context=runtime_context,
+    )
+
+    assert result.success is False
+    assert "escapes session working directory" in str(result.error or "")
+
+
+@pytest.mark.asyncio
 async def test_file_io_edit_returns_minimal_confirmation_payload(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SEMIBOT_FILE_IO_ROOT", str(tmp_path))
     tool = FileIOTool()

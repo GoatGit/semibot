@@ -11,7 +11,7 @@ import * as toolRepository from '../repositories/tool.repository'
 import { createLogger } from '../lib/logger'
 
 const toolLogger = createLogger('tool')
-const NON_TOOL_SKILL_NAMES = new Set(['xlsx', 'pdf'])
+const NON_TOOL_SKILL_NAMES = new Set<string>()
 
 const BUILTIN_TOOL_TEMPLATES: Record<
   string,
@@ -142,44 +142,6 @@ const BUILTIN_TOOL_TEMPLATES: Record<
       approvalDedupeKeys: [],
     },
   },
-  csv_xlsx: {
-    description: '内建 CSV/Excel 读写与分析工具',
-    type: 'builtin',
-    config: {
-      timeout: 30000,
-      rateLimit: 120,
-      requiresApproval: true,
-      riskLevel: 'high',
-      approvalScope: 'session',
-      approvalDedupeKeys: ['action', 'path', 'output_path'],
-      maxReturnRows: 500,
-    },
-  },
-  pdf_report: {
-    description: '内建 PDF 报告生成工具（模板化表格/图表/结论）',
-    type: 'builtin',
-    config: {
-      timeout: 30000,
-      rateLimit: 60,
-      requiresApproval: false,
-      riskLevel: 'low',
-      approvalScope: 'session',
-      approvalDedupeKeys: [],
-    },
-  },
-  sql_query_readonly: {
-    description: '内建只读 SQL 查询工具（白名单/超时/行数限制）',
-    type: 'builtin',
-    config: {
-      timeout: 15000,
-      rateLimit: 120,
-      requiresApproval: true,
-      riskLevel: 'high',
-      approvalScope: 'session',
-      approvalDedupeKeys: ['database', 'query'],
-      maxRows: 200,
-    },
-  },
   skill_installer: {
     description: '内建技能安装工具（从本地目录/zip安装并刷新运行时技能索引）',
     type: 'builtin',
@@ -217,14 +179,13 @@ function sanitizeToolConfig(toolName: string, config?: ToolConfig): ToolConfig |
     toolName === 'semi_browser' ||
     toolName === 'json_transform' ||
     toolName === 'memory' ||
-    toolName === 'csv_xlsx' ||
-    toolName === 'pdf_report' ||
     toolName === 'skill_installer'
   ) {
     delete sanitized.apiEndpoint
     delete sanitized.apiKey
+    delete sanitized.connections
   }
-  if (toolName === 'web_fetch' || toolName === 'sql_query_readonly') {
+  if (toolName === 'web_fetch') {
     delete sanitized.apiKey
   }
   return sanitized
@@ -374,21 +335,30 @@ export async function getTool(toolId: string): Promise<Tool> {
 export async function listTools(
   options: ListToolsOptions = {}
 ): Promise<PaginatedResult<Tool>> {
+  const page = Math.max(1, options.page ?? 1)
+  const limit = Math.max(1, options.limit ?? 20)
+
+  // Keep pagination metadata aligned with the post-filter result set.
+  // Tool counts are intentionally small, so fetching the bounded full set is acceptable here.
   const result = await toolRepository.findAll({
     includeBuiltin: options.includeBuiltin ?? true,
-    page: options.page,
-    limit: options.limit,
+    page: 1,
+    limit: MAX_TOOLS_PER_ORG,
     search: options.search,
     type: options.type,
   })
 
   const filtered = result.data.filter((row) => !NON_TOOL_SKILL_NAMES.has((row.name || '').toLowerCase()))
+  const start = (page - 1) * limit
+  const paged = filtered.slice(start, start + limit)
+
   return {
-    data: filtered.map(rowToTool),
+    data: paged.map(rowToTool),
     meta: {
-      ...result.meta,
+      page,
+      limit,
       total: filtered.length,
-      totalPages: Math.max(1, Math.ceil(filtered.length / (result.meta.limit || 1))),
+      totalPages: Math.max(1, Math.ceil(filtered.length / limit)),
     },
   }
 }
@@ -478,7 +448,7 @@ export async function upsertBuiltinToolConfig(
     return rowToTool(created)
   }
 
-  if (existing.org_id !== null && !existing.is_builtin) {
+  if (!existing.is_builtin) {
     throw createError(TOOL_NOT_FOUND)
   }
 

@@ -875,14 +875,7 @@ class GatewayManager:
             latest_run = None
             if runs:
                 row = runs[0]
-                latest_run = {
-                    "run_id": row["id"],
-                    "runtime_session_id": row["runtime_session_id"],
-                    "snapshot_version": row["snapshot_version"],
-                    "status": row["status"],
-                    "result_summary": row["result_summary"],
-                    "updated_at": row["updated_at"],
-                }
+                latest_run = self._project_gateway_run(row)
             data.append({
                 "conversation_id": item["id"],
                 "provider": item["provider"],
@@ -909,14 +902,7 @@ class GatewayManager:
         latest_run = None
         if runs:
             row = runs[0]
-            latest_run = {
-                "run_id": row["id"],
-                "runtime_session_id": row["runtime_session_id"],
-                "snapshot_version": row["snapshot_version"],
-                "status": row["status"],
-                "result_summary": row["result_summary"],
-                "updated_at": row["updated_at"],
-            }
+            latest_run = self._project_gateway_run(row)
         return {
             "data": {
                 "conversation_id": item["id"],
@@ -938,19 +924,7 @@ class GatewayManager:
 
     def list_gateway_conversation_runs(self, conversation_id: str, *, limit: int = 100) -> dict[str, Any]:
         rows = self.gateway_context.list_task_runs(conversation_id, limit=limit)
-        return {
-            "data": [
-                {
-                    "run_id": row["id"],
-                    "runtime_session_id": row["runtime_session_id"],
-                    "snapshot_version": row["snapshot_version"],
-                    "status": row["status"],
-                    "result_summary": row["result_summary"],
-                    "updated_at": row["updated_at"],
-                }
-                for row in rows
-            ]
-        }
+        return {"data": [self._project_gateway_run(row) for row in rows]}
 
     async def alist_gateway_conversations(self, *, provider: str | None = None, limit: int = 100) -> dict[str, Any]:
         items = await self.gateway_context.store.alist_conversations(provider=provider, limit=limit)
@@ -961,14 +935,7 @@ class GatewayManager:
             row = latest_runs_map.get(item["id"])
             latest_run = None
             if row:
-                latest_run = {
-                    "run_id": row["id"],
-                    "runtime_session_id": row["runtime_session_id"],
-                    "snapshot_version": row["snapshot_version"],
-                    "status": row["status"],
-                    "result_summary": row["result_summary"],
-                    "updated_at": row["updated_at"],
-                }
+                latest_run = self._project_gateway_run(row)
             data.append({
                 "conversation_id": item["id"],
                 "provider": item["provider"],
@@ -995,14 +962,7 @@ class GatewayManager:
         latest_run = None
         if runs:
             row = runs[0]
-            latest_run = {
-                "run_id": row["id"],
-                "runtime_session_id": row["runtime_session_id"],
-                "snapshot_version": row["snapshot_version"],
-                "status": row["status"],
-                "result_summary": row["result_summary"],
-                "updated_at": row["updated_at"],
-            }
+            latest_run = self._project_gateway_run(row)
         return {"data": {
             "conversation_id": item["id"],
             "provider": item["provider"],
@@ -1022,17 +982,23 @@ class GatewayManager:
 
     async def alist_gateway_conversation_runs(self, conversation_id: str, *, limit: int = 100) -> dict[str, Any]:
         rows = await self.gateway_context.store.alist_task_runs(conversation_id, limit=limit)
-        return {"data": [
-            {
-                "run_id": row["id"],
-                "runtime_session_id": row["runtime_session_id"],
-                "snapshot_version": row["snapshot_version"],
-                "status": row["status"],
-                "result_summary": row["result_summary"],
-                "updated_at": row["updated_at"],
-            }
-            for row in rows
-        ]}
+        return {"data": [self._project_gateway_run(row) for row in rows]}
+
+    @staticmethod
+    def _project_gateway_run(row: dict[str, Any]) -> dict[str, Any]:
+        result_metadata = row.get("result_metadata")
+        metadata = result_metadata if isinstance(result_metadata, dict) else {}
+        missing_capability = metadata.get("missing_capability")
+        return {
+            "run_id": row["id"],
+            "runtime_session_id": row["runtime_session_id"],
+            "snapshot_version": row["snapshot_version"],
+            "status": row["status"],
+            "result_summary": row["result_summary"],
+            "result_metadata": metadata,
+            "missing_capability": missing_capability if isinstance(missing_capability, dict) else None,
+            "updated_at": row["updated_at"],
+        }
 
     def get_gateway_conversation_context(self, conversation_id: str, *, limit: int = 200) -> dict[str, Any]:
         messages = self.gateway_context.list_context(conversation_id, limit=limit)

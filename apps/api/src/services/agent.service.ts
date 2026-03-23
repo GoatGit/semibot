@@ -63,6 +63,9 @@ export interface AgentConfig {
   }
 }
 
+type NodeModelConfig = NonNullable<NonNullable<AgentConfig['modelRoles']>['plan']>
+type ModelRolesConfig = NonNullable<AgentConfig['modelRoles']>
+
 export interface CreateAgentInput {
   name: string
   description?: string
@@ -128,6 +131,12 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   fallbackProviderKey: '',
 }
 
+const EMPTY_MODEL_ROLES: ModelRolesConfig = {
+  plan: {},
+  act: {},
+  textProcessing: {},
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 辅助函数
 // ═══════════════════════════════════════════════════════════════
@@ -170,15 +179,75 @@ function rowToAgent(row: agentRepository.AgentRow): Agent {
   }
 }
 
-async function getLocalDefaultAgentConfig(): Promise<AgentConfig> {
+function normalizeNodeModelConfig(raw: unknown): NodeModelConfig {
+  if (!raw || typeof raw !== 'object') return {}
+  const data = raw as Record<string, unknown>
+  const model = typeof data.model === 'string' ? data.model.trim() : ''
+  const temperatureRaw = data.temperature
+  return {
+    model: model || undefined,
+    temperature: typeof temperatureRaw === 'number' ? temperatureRaw : undefined,
+  }
+}
+
+function normalizeModelRoles(raw: unknown): ModelRolesConfig {
+  if (!raw || typeof raw !== 'object') return { ...EMPTY_MODEL_ROLES }
+  const data = raw as Record<string, unknown>
+  return {
+    plan: normalizeNodeModelConfig(data.plan),
+    act: normalizeNodeModelConfig(data.act),
+    textProcessing: normalizeNodeModelConfig(data.textProcessing ?? data.text_processing),
+  }
+}
+
+function mergeNodeModelConfig(base: NodeModelConfig, fallback: NodeModelConfig): NodeModelConfig {
+  return {
+    model: base.model ?? fallback.model,
+    temperature: base.temperature ?? fallback.temperature,
+  }
+}
+
+function mergeModelRoles(base: AgentConfig['modelRoles'], fallback: AgentConfig['modelRoles']): ModelRolesConfig | undefined {
+  const normalizedBase = normalizeModelRoles(base)
+  const normalizedFallback = normalizeModelRoles(fallback)
+  const merged: ModelRolesConfig = {
+    plan: mergeNodeModelConfig(normalizedBase.plan ?? {}, normalizedFallback.plan ?? {}),
+    act: mergeNodeModelConfig(normalizedBase.act ?? {}, normalizedFallback.act ?? {}),
+    textProcessing: mergeNodeModelConfig(normalizedBase.textProcessing ?? {}, normalizedFallback.textProcessing ?? {}),
+  }
+  const hasAnyValue = [merged.plan, merged.act, merged.textProcessing].some(
+    (item) => Boolean(item?.model) || item?.temperature !== undefined
+  )
+  return hasAnyValue ? merged : undefined
+}
+
+function derivePrimaryModel(config: Partial<AgentConfig>, defaults?: AgentConfig['modelRoles']): string {
+  return String(
+    config.model ||
+      defaults?.act?.model ||
+      defaults?.plan?.model ||
+      defaults?.textProcessing?.model ||
+      ''
+  ).trim()
+}
+
+export async function resolveRuntimeAgentConfig(config?: Partial<AgentConfig>): Promise<AgentConfig> {
   const llm = await getRuntimeLlmConfig().catch(() => null)
+  const defaultRoles = normalizeModelRoles(llm?.model_roles)
+  const mergedRoles = mergeModelRoles(config?.modelRoles, defaultRoles)
   return {
     ...DEFAULT_AGENT_CONFIG,
-    model: llm?.default_model || DEFAULT_AGENT_CONFIG.model || '',
-    modelProviderKey: llm?.default_provider_key || DEFAULT_AGENT_CONFIG.modelProviderKey || '',
-    fallbackModel: llm?.fallback_model || DEFAULT_AGENT_CONFIG.fallbackModel || '',
-    fallbackProviderKey: llm?.fallback_provider_key || DEFAULT_AGENT_CONFIG.fallbackProviderKey || '',
+    ...config,
+    model: derivePrimaryModel(config ?? {}, mergedRoles) || llm?.default_model || DEFAULT_AGENT_CONFIG.model,
+    modelProviderKey: String(config?.modelProviderKey || llm?.default_provider_key || DEFAULT_AGENT_CONFIG.modelProviderKey || ''),
+    fallbackModel: String(config?.fallbackModel || llm?.fallback_model || DEFAULT_AGENT_CONFIG.fallbackModel || ''),
+    fallbackProviderKey: String(config?.fallbackProviderKey || llm?.fallback_provider_key || DEFAULT_AGENT_CONFIG.fallbackProviderKey || ''),
+    modelRoles: mergedRoles,
   }
+}
+
+async function getLocalDefaultAgentConfig(): Promise<AgentConfig> {
+  return await resolveRuntimeAgentConfig()
 }
 
 async function buildLocalSystemAgent(): Promise<Agent> {

@@ -3,12 +3,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, RefreshCw, Clock3 } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Clock3, Wrench, Sparkles } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { apiClient } from '@/lib/api'
 import { useLocale } from '@/components/providers/LocaleProvider'
+
+interface MissingCapability {
+  type?: string
+  version?: string
+  intent?: string
+  reason?: string
+  requiredCapabilities?: string[]
+  preferredSources?: string[]
+}
 
 interface GatewayRunItem {
   runId: string
@@ -16,6 +26,7 @@ interface GatewayRunItem {
   snapshotVersion: number
   status: string
   resultSummary: string
+  missingCapability?: MissingCapability | null
   updatedAt: string
 }
 
@@ -32,6 +43,45 @@ interface GatewayRunsResponse {
   success: boolean
   data?: {
     runs?: GatewayRunItem[]
+  }
+}
+
+interface CapabilityInstallResponse {
+  success: boolean
+  data?: {
+    resolution_mode?: 'recommend' | 'install'
+    registry_name?: string
+    install_request_id?: string
+    recommended_skills?: Array<{
+      skill_id?: string
+      skill_name?: string
+      risk_level?: string
+    }>
+    install_result?: {
+      ok?: boolean
+      registry_name?: string
+    }
+  }
+}
+
+interface CapabilityInstallRequestRecord {
+  id: string
+  task_id?: string | null
+  session_id?: string | null
+  target_type?: string
+  target_id?: string
+  approval_mode?: string
+  state?: string
+  error_text?: string | null
+  metadata?: Record<string, unknown>
+  created_at?: string
+  updated_at?: string
+}
+
+interface CapabilityInstallHistoryResponse {
+  success: boolean
+  data?: {
+    items?: CapabilityInstallRequestRecord[]
   }
 }
 
@@ -72,6 +122,13 @@ export default function GatewayConversationDetailPage() {
   const [activeRunId, setActiveRunId] = useState<string>(focusRunId)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [capabilityActionError, setCapabilityActionError] = useState<string | null>(null)
+  const [capabilityResult, setCapabilityResult] = useState<CapabilityInstallResponse['data'] | null>(null)
+  const [capabilityInstallRequest, setCapabilityInstallRequest] = useState<CapabilityInstallRequestRecord | null>(null)
+  const [capabilityInstallHistory, setCapabilityInstallHistory] = useState<CapabilityInstallRequestRecord[]>([])
+  const [isResolvingCapability, setIsResolvingCapability] = useState(false)
+  const [isInstallingCapability, setIsInstallingCapability] = useState(false)
+  const [isRetryingCapabilityTask, setIsRetryingCapabilityTask] = useState(false)
 
   const load = useCallback(async () => {
     if (!conversationId) return
@@ -109,6 +166,13 @@ export default function GatewayConversationDetailPage() {
     }
   }, [focusRunId, runs, activeRunId])
 
+  useEffect(() => {
+    setCapabilityActionError(null)
+    setCapabilityResult(null)
+    setCapabilityInstallRequest(null)
+    setCapabilityInstallHistory([])
+  }, [activeRunId])
+
   const providerLabel = useMemo(() => {
     const normalized = provider.toLowerCase()
     if (normalized === 'telegram' || normalized === 'feishu' || normalized === 'web' || normalized === 'channel') {
@@ -144,6 +208,144 @@ export default function GatewayConversationDetailPage() {
     const query = paramsObj.toString()
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
   }, [pathname, router, searchParams])
+
+  const selectedMissingCapability = selectedRun?.missingCapability ?? null
+  const selectedTaskText = useMemo(
+    () => displayedMessages.find((message) => message.role === 'user')?.content?.trim() || '',
+    [displayedMessages]
+  )
+
+  const recommendedRegistryName = useMemo(() => {
+    if (!capabilityResult) return ''
+    const direct = String(capabilityResult.registry_name || '').trim()
+    if (direct) return direct
+    const firstSkill = capabilityResult.recommended_skills?.[0]
+    return String(firstSkill?.skill_id || '').trim()
+  }, [capabilityResult])
+
+  const installRequestId = useMemo(
+    () => String(capabilityInstallRequest?.id || capabilityResult?.install_request_id || '').trim(),
+    [capabilityInstallRequest?.id, capabilityResult?.install_request_id]
+  )
+
+  const installState = String(capabilityInstallRequest?.state || '').trim()
+  const installErrorText = String(capabilityInstallRequest?.error_text || '').trim()
+  const retryResult = useMemo(() => {
+    const metadata = (capabilityInstallRequest?.metadata || {}) as Record<string, unknown>
+    const retry = metadata.retry_result
+    return retry && typeof retry === 'object' ? (retry as Record<string, unknown>) : null
+  }, [capabilityInstallRequest?.metadata])
+
+  useEffect(() => {
+    const sessionId = String(selectedRun?.runtimeSessionId || '').trim()
+    if (!sessionId) {
+      setCapabilityInstallHistory([])
+      return
+    }
+    let cancelled = false
+    const loadInstallHistory = async () => {
+      try {
+        const response = await apiClient.get<CapabilityInstallHistoryResponse>('/capabilities/install-history', {
+          params: { sessionId, limit: 10 },
+        })
+        if (!cancelled) {
+          setCapabilityInstallHistory(Array.isArray(response.data?.items) ? response.data!.items! : [])
+        }
+      } catch {
+        if (!cancelled) {
+          setCapabilityInstallHistory([])
+        }
+      }
+    }
+    void loadInstallHistory()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRun?.runtimeSessionId])
+
+  useEffect(() => {
+    if (!installRequestId) return
+    if (!['awaiting_approval', 'installing', 'refreshing_catalog', 'retrying_task'].includes(installState)) {
+      return
+    }
+    let cancelled = false
+    const loadInstallStatus = async () => {
+      try {
+        const response = await apiClient.get<{ success: boolean; data?: CapabilityInstallRequestRecord }>(
+          `/capabilities/install-status/${encodeURIComponent(installRequestId)}`
+        )
+        if (!cancelled) {
+          setCapabilityInstallRequest(response.data ?? null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCapabilityActionError(err instanceof Error ? err.message : t('dashboard.channelDetail.capability.statusError'))
+        }
+      }
+    }
+    void loadInstallStatus()
+    const timer = window.setInterval(() => void loadInstallStatus(), 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [installRequestId, installState, t])
+
+  const handleResolveCapability = useCallback(async () => {
+    if (!selectedMissingCapability?.intent) return
+    try {
+      setIsResolvingCapability(true)
+      setCapabilityActionError(null)
+      setCapabilityInstallRequest(null)
+      const response = await apiClient.post<CapabilityInstallResponse>('/capabilities/resolve-missing', {
+        missingCapability: selectedMissingCapability,
+        taskId: selectedRun?.runId,
+        sessionId: selectedRun?.runtimeSessionId,
+        taskText: selectedTaskText || undefined,
+        currentShortlistToolIds: [],
+      })
+      setCapabilityResult(response.data ?? null)
+    } catch (err) {
+      setCapabilityActionError(err instanceof Error ? err.message : t('dashboard.channelDetail.capability.resolveError'))
+    } finally {
+      setIsResolvingCapability(false)
+    }
+  }, [selectedMissingCapability, selectedRun?.runId, selectedRun?.runtimeSessionId, selectedTaskText, t])
+
+  const handleInstallRecommended = useCallback(async () => {
+    if (!installRequestId) return
+    try {
+      setIsInstallingCapability(true)
+      setCapabilityActionError(null)
+      const response = await apiClient.post<{ success: boolean; data?: CapabilityInstallRequestRecord }>('/capabilities/approve-install', {
+        installRequestId,
+        approved: true,
+      })
+      setCapabilityInstallRequest(response.data ?? null)
+      await load()
+    } catch (err) {
+      setCapabilityActionError(err instanceof Error ? err.message : t('dashboard.channelDetail.capability.installError'))
+    } finally {
+      setIsInstallingCapability(false)
+    }
+  }, [installRequestId, load, t])
+
+  const handleRetryCapabilityTask = useCallback(async () => {
+    if (!installRequestId) return
+    try {
+      setIsRetryingCapabilityTask(true)
+      setCapabilityActionError(null)
+      const response = await apiClient.post<{ success: boolean; data?: CapabilityInstallRequestRecord }>('/capabilities/retry-task', {
+        installRequestId,
+      })
+      setCapabilityInstallRequest(response.data ?? null)
+      await load()
+    } catch (err) {
+      setCapabilityActionError(err instanceof Error ? err.message : t('dashboard.channelDetail.capability.retryError'))
+    } finally {
+      setIsRetryingCapabilityTask(false)
+    }
+  }, [installRequestId, load, t])
 
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
@@ -230,6 +432,150 @@ export default function GatewayConversationDetailPage() {
                     {formatTime(selectedRun.updatedAt, locale)}
                     <span>{selectedRun.runtimeSessionId}</span>
                   </div>
+                </div>
+              )}
+              {selectedMissingCapability?.intent && (
+                <div className="mt-4 rounded-lg border border-warning-500/30 bg-warning-500/10 p-4 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 rounded-full bg-warning-500/15 p-2 text-warning-500">
+                      <Wrench size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-text-primary">
+                          {t('dashboard.channelDetail.capability.title')}
+                        </p>
+                        <Badge variant="warning">{selectedMissingCapability.intent}</Badge>
+                      </div>
+                      <p className="text-sm text-text-secondary">
+                        {selectedMissingCapability.reason || t('dashboard.channelDetail.capability.noReason')}
+                      </p>
+                      {Array.isArray(selectedMissingCapability.requiredCapabilities) &&
+                        selectedMissingCapability.requiredCapabilities.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {selectedMissingCapability.requiredCapabilities.map((item) => (
+                              <Badge key={item} variant="outline">{item}</Badge>
+                            ))}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+
+                  {capabilityActionError && (
+                    <InlineErrorAlert
+                      className="px-3 py-2 text-xs"
+                      message={capabilityActionError}
+                      onClose={() => setCapabilityActionError(null)}
+                    />
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      leftIcon={<Sparkles size={14} />}
+                      loading={isResolvingCapability}
+                      onClick={() => void handleResolveCapability()}
+                    >
+                      {t('dashboard.channelDetail.capability.find')}
+                    </Button>
+                    {recommendedRegistryName ? (
+                      <Button
+                        size="sm"
+                        leftIcon={<Wrench size={14} />}
+                        loading={isInstallingCapability}
+                        onClick={() => void handleInstallRecommended()}
+                      >
+                        {t('dashboard.channelDetail.capability.install')}
+                      </Button>
+                    ) : null}
+                    {installRequestId && installState === 'completed' && !retryResult ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        leftIcon={<RefreshCw size={14} />}
+                        loading={isRetryingCapabilityTask}
+                        onClick={() => void handleRetryCapabilityTask()}
+                      >
+                        {t('dashboard.channelDetail.capability.retry')}
+                      </Button>
+                    ) : null}
+                    <Link href="/skills" className="inline-flex">
+                      <Button size="sm" variant="tertiary">
+                        {t('dashboard.channelDetail.capability.openSkills')}
+                      </Button>
+                    </Link>
+                  </div>
+
+                  {installRequestId ? (
+                    <div className="rounded-lg border border-border-subtle bg-bg-surface px-3 py-3 space-y-1 text-sm">
+                      <p className="font-medium text-text-primary">
+                        {t('dashboard.channelDetail.capability.installRequest')}: {installRequestId}
+                      </p>
+                      <p className="text-text-secondary">
+                        {t('dashboard.channelDetail.capability.state')}: {installState || '--'}
+                      </p>
+                      {installErrorText ? (
+                        <p className="text-error-500">{installErrorText}</p>
+                      ) : null}
+                      {retryResult ? (
+                        <p className="text-success-600">{t('dashboard.channelDetail.capability.retrySuccess')}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {capabilityInstallHistory.length > 0 ? (
+                    <div className="rounded-lg border border-border-subtle bg-bg-surface px-3 py-3 space-y-2">
+                      <p className="text-sm font-medium text-text-primary">
+                        {t('dashboard.channelDetail.capability.history')}
+                      </p>
+                      <div className="space-y-2">
+                        {capabilityInstallHistory.map((item) => (
+                          <div key={item.id} className="rounded-md border border-border-subtle px-3 py-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="truncate font-medium text-text-primary">{item.target_id || item.id}</p>
+                              <Badge variant={mapStatusVariant(String(item.state || 'outline'))}>{item.state || '--'}</Badge>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-text-tertiary">
+                              <span>{item.target_type || '--'}</span>
+                              <span>{formatTime(String(item.updated_at || item.created_at || ''), locale)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {capabilityResult?.resolution_mode === 'recommend' && (
+                    <div className="rounded-lg border border-border-subtle bg-bg-surface px-3 py-3 space-y-2">
+                      <p className="text-sm font-medium text-text-primary">
+                        {t('dashboard.channelDetail.capability.recommendation')}
+                      </p>
+                      {capabilityResult.recommended_skills?.length ? (
+                        <div className="space-y-2">
+                          {capabilityResult.recommended_skills.map((item) => (
+                            <div key={item.skill_id || item.skill_name} className="flex items-center justify-between gap-3 text-sm">
+                              <div className="min-w-0">
+                                <p className="truncate text-text-primary">{item.skill_name || item.skill_id || '--'}</p>
+                                {item.skill_id && (
+                                  <p className="truncate text-xs text-text-tertiary">{item.skill_id}</p>
+                                )}
+                              </div>
+                              {item.risk_level ? <Badge variant="outline">{item.risk_level}</Badge> : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-text-secondary">{t('dashboard.channelDetail.capability.noRecommendation')}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {capabilityResult?.resolution_mode === 'install' && (
+                    <div className="rounded-lg border border-success-500/30 bg-success-500/10 px-3 py-3 text-sm text-success-600">
+                      {t('dashboard.channelDetail.capability.installSuccess')}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="mt-4 space-y-2">

@@ -67,6 +67,7 @@ async function sendMessageToRuntime(
   agent: Awaited<ReturnType<typeof agentService.getAgent>>
 ): Promise<void> {
   const baseUrl = getRuntimeBaseUrl()
+  const runtimeAgentConfig = await agentService.resolveRuntimeAgentConfig(agent.config)
   const n = new Date()
   const dateStr = `${n.getFullYear()}年${n.getMonth() + 1}月${n.getDate()}日`
   const systemPrompt = `${agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`}\n\n当前日期: ${dateStr}`
@@ -77,9 +78,11 @@ async function sendMessageToRuntime(
     body: JSON.stringify({
       message,
       agent_id: agent.id,
-      model: agent.config?.model,
-      model_provider_key: (agent.config as unknown as Record<string, unknown>)?.modelProviderKey,
-      fallback_model: agent.config?.fallbackModel,
+      model: runtimeAgentConfig.model,
+      model_provider_key: runtimeAgentConfig.modelProviderKey,
+      fallback_model: runtimeAgentConfig.fallbackModel,
+      fallback_provider_key: runtimeAgentConfig.fallbackProviderKey,
+      model_roles: runtimeAgentConfig.modelRoles,
       system_prompt: systemPrompt,
       skill_index: [],
       stream: true,

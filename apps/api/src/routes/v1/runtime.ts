@@ -43,6 +43,8 @@ interface RuntimeGatewayConversationsPayload {
       snapshot_version?: number
       status?: string
       result_summary?: string
+      result_metadata?: Record<string, unknown>
+      missing_capability?: Record<string, unknown> | null
       updated_at?: string
     } | null
   }>
@@ -55,6 +57,8 @@ interface RuntimeGatewayRunsPayload {
     snapshot_version?: number
     status?: string
     result_summary?: string
+    result_metadata?: Record<string, unknown>
+    missing_capability?: Record<string, unknown> | null
     updated_at?: string
   }>
 }
@@ -257,6 +261,10 @@ function listSkillDirs(root: string): Map<string, string> {
     }
   }
   return found
+}
+
+function normalizeMissingCapability(raw: unknown): Record<string, unknown> | null {
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null
 }
 
 async function syncAgentSkillsToSemibot({
@@ -870,6 +878,11 @@ router.get(
                   snapshotVersion: item.latest_run.snapshot_version ?? 0,
                   status: item.latest_run.status || 'unknown',
                   resultSummary: item.latest_run.result_summary || '',
+                  resultMetadata:
+                    item.latest_run.result_metadata && typeof item.latest_run.result_metadata === 'object'
+                      ? item.latest_run.result_metadata
+                      : {},
+                  missingCapability: normalizeMissingCapability(item.latest_run.missing_capability),
                   updatedAt: item.latest_run.updated_at || new Date().toISOString(),
                 } : null,
               }))
@@ -944,6 +957,9 @@ router.get(
                 snapshotVersion: item.snapshot_version ?? 0,
                 status: item.status || 'unknown',
                 resultSummary: item.result_summary || '',
+                resultMetadata:
+                  item.result_metadata && typeof item.result_metadata === 'object' ? item.result_metadata : {},
+                missingCapability: normalizeMissingCapability(item.missing_capability),
                 updatedAt: item.updated_at || new Date().toISOString(),
               }))
               .filter((item) => item.runId),

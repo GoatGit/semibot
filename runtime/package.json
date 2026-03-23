@@ -3,6 +3,6 @@
   "version": "2.0.0",
   "private": true,
   "scripts": {
-    "dev": ".venv/bin/python -m src.main"
+    "dev": "bash ./scripts/launch_runtime.sh"
   }
 }

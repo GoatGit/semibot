@@ -224,8 +224,8 @@ def test_capability_graph_build():
     assert len(graph.capabilities) == 2
     assert "web_search" not in graph.capabilities
     assert "code_executor" not in graph.capabilities
-    assert "calculator" in graph.capabilities
-    assert "github_create_issue" in graph.capabilities
+    assert "builtin:calculator" in graph.capabilities
+    assert "github_create_issue" in graph.capabilities_by_name
 
 
 def test_capability_graph_skips_skills_from_executable_capabilities():
@@ -358,9 +358,45 @@ def test_capability_graph_list_capabilities():
 
     assert len(capabilities) == 1
     assert "web_search" not in capabilities
-    assert "calculator" in capabilities
 
 
+def test_capability_graph_disambiguates_tool_name_collisions():
+    """Builtin and MCP tools with the same actual name should remain separately addressable."""
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_tools=[ToolDefinition(name="search", description="Builtin search")],
+        available_mcp_servers=[
+            McpServerDefinition(
+                id="mcp_1",
+                name="remote_search",
+                endpoint="http://localhost:8080",
+                transport="http",
+                is_connected=True,
+                available_tools=[
+                    {"name": "search", "description": "Remote search", "inputSchema": {"type": "object", "properties": {}}}
+                ],
+            )
+        ],
+    )
+
+    graph = CapabilityGraph(runtime_context)
+    schemas = graph.get_schemas_for_planner()
+    schema_names = {schema["function"]["name"] for schema in schemas}
+
+    assert len(schema_names) == 2
+    assert "builtin__search" in schema_names
+    assert "mcp__mcp_1__search" in schema_names
+
+    builtin_cap = graph.get_capability("builtin__search")
+    mcp_cap = graph.get_capability("mcp__mcp_1__search")
+
+    assert builtin_cap is not None
+    assert builtin_cap.metadata["actual_tool_name"] == "search"
+    assert mcp_cap is not None
+    assert mcp_cap.metadata["actual_tool_name"] == "search"
 def test_capability_graph_get_capabilities_by_type():
     """Test getting capabilities by type."""
     skill1 = SkillDefinition(id="skill_1", name="web_search")
@@ -428,7 +464,7 @@ def test_capability_graph_only_connected_mcp_servers():
     graph.build()
 
     # Only connected MCP tools should be included
-    assert "github_create_issue" in graph.capabilities
+    assert "mcp:mcp_1:github_create_issue" in graph.capabilities
     assert "slack_send_message" not in graph.capabilities
 
 

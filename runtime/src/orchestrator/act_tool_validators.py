@@ -449,7 +449,7 @@ def _check_code_executor_relative_tool_runs(ctx: ToolValidationContext) -> str |
     language = str(ctx.params.get("language") or "").strip().lower()
     if not language or not code:
         return None
-    suspicious_refs = _re.findall(r"(?<![\\w/])(?:\\./)?tool_runs/[^\\s'\"`]+", code)
+    suspicious_refs = _re.findall(r"(?<![/\w])(?:\./)?tool_runs/[^\s'\"`]+", code)
     if language in {"python", "javascript"} and suspicious_refs:
         return (
             "code_executor code references tool_runs/... via a relative path. "

@@ -4,18 +4,14 @@ import os
 
 from src.skills.semi_browser import SemiBrowserTool
 from src.skills.code_executor import CodeExecutorTool
-from src.skills.csv_xlsx import CsvXlsxTool
-from src.skills.file_generators import PdfGeneratorTool, XlsxGeneratorTool
 from src.skills.file_io import FileIOTool
 from src.skills.http_client import HttpClientTool
 from src.skills.memory import MemoryTool
-from src.skills.pdf_report import PdfReportTool
 from src.skills.package_loader import register_installed_package_tools
 from src.skills.registry import SkillRegistry
 from src.skills.rule_authoring import RuleAuthoringTool
 from src.skills.search import SearchTool
 from src.skills.skill_installer import SkillInstallerTool
-from src.skills.sql_query_readonly import SqlQueryReadonlyTool
 from src.skills.text_processing import TextProcessingTool
 from src.skills.web_fetch import WebFetchTool
 from src.utils.logging import get_logger
@@ -40,9 +36,6 @@ def create_default_registry() -> SkillRegistry:
     registry.register_tool(WebFetchTool())
     registry.register_tool(TextProcessingTool())
     registry.register_tool(MemoryTool())
-    registry.register_tool(CsvXlsxTool())
-    registry.register_tool(PdfReportTool())
-    registry.register_tool(SqlQueryReadonlyTool())
     registry.register_tool(RuleAuthoringTool(tool_name="control_plane", registry=registry))
     registry.register_tool(RuleAuthoringTool(tool_name="rule_authoring", legacy_alias=True, registry=registry))
     registry.register_tool(SkillInstallerTool(registry))
@@ -57,19 +50,12 @@ def create_default_registry() -> SkillRegistry:
                 "web_fetch",
                 "text_processing",
                 "memory",
-                "csv_xlsx",
-                "pdf_report",
-                "sql_query_readonly",
                 "control_plane",
                 "rule_authoring",
                 "skill_installer",
             ]
         },
     )
-    registry.register_tool(XlsxGeneratorTool())
-    registry.register_tool(PdfGeneratorTool())
-    logger.info("Registered file generator tools", extra={"tools": ["xlsx", "pdf"]})
-
     # Index installed skills under ~/.semibot/skills for discovery/orchestration only.
     load_result = register_installed_package_tools(registry, skills_root=os.getenv("SEMIBOT_SKILLS_PATH", "~/.semibot/skills"))
     if load_result.get("indexed"):

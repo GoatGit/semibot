@@ -11,6 +11,25 @@ import * as toolService from '../../services/tool.service'
 
 const router: Router = Router()
 
+function normalizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/+$/, '')
+}
+
+function getRuntimeBaseUrls(): string[] {
+  const configured = (process.env.RUNTIME_URL || '')
+    .split(',')
+    .map((value) => normalizeBaseUrl(value))
+    .filter(Boolean)
+  if (configured.length > 0) return Array.from(new Set(configured))
+  const defaultPort = String(process.env.RUNTIME_PORT || '8765').trim() || '8765'
+  return [`http://127.0.0.1:${defaultPort}`]
+}
+
+function stringifyError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return 'runtime unreachable'
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Schema 定义
 // ═══════════════════════════════════════════════════════════════
@@ -79,6 +98,67 @@ router.post(
       error: {
         code: 'TOOL_CREATE_DISABLED',
         message: 'V2 不支持新增 Tool。Tools 为内建能力，仅支持配置与启停。',
+      },
+    })
+  })
+)
+
+/**
+ * GET /tools/catalog - 读取 runtime 统一工具目录（只读）
+ */
+router.get(
+  '/catalog',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('tools:read'),
+  asyncHandler(async (_req: AuthRequest, res: Response) => {
+    const baseUrls = getRuntimeBaseUrls()
+    const errors: string[] = []
+
+    for (const baseUrl of baseUrls) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 3000)
+      try {
+        const response = await fetch(`${baseUrl}/v1/tools/catalog`, {
+          method: 'GET',
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          const detail = (data as { detail?: string }).detail || `runtime returned ${response.status}`
+          errors.push(`${baseUrl}: ${detail}`)
+          continue
+        }
+
+        const items = Array.isArray((data as { items?: unknown[] }).items)
+          ? (data as { items: unknown[] }).items
+          : []
+        const generatedAt =
+          typeof (data as { generated_at?: unknown }).generated_at === 'string'
+            ? (data as { generated_at: string }).generated_at
+            : new Date().toISOString()
+
+        res.json({
+          success: true,
+          data: {
+            items,
+            generatedAt,
+            source: baseUrl,
+          },
+        })
+        return
+      } catch (error) {
+        clearTimeout(timeout)
+        errors.push(`${baseUrl}: ${stringifyError(error)}`)
+      }
+    }
+
+    res.status(502).json({
+      success: false,
+      error: {
+        code: 'RUNTIME_UNREACHABLE',
+        message: errors.join('; ') || 'runtime unreachable',
       },
     })
   })

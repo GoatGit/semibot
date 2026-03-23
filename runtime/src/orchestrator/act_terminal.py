@@ -5,7 +5,7 @@ import re as _re
 from contextlib import suppress
 from typing import Any
 
-from src.orchestrator.state import AgentState, PlanStep, ToolCallResult
+from src.orchestrator.state import AgentState, MissingCapability, PlanStep, ToolCallResult
 from src.orchestrator.act_context import _infer_text_artifact_type
 from src.utils.logging import get_logger
 
@@ -24,6 +24,19 @@ def _act_response_format() -> dict[str, Any]:
                     "execution_concerns": {"type": "string"},
                     "artifact_result_text": {"type": "string"},
                     "artifact_result_path": {"type": "string"},
+                    "missing_capability": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string"},
+                            "version": {"type": "string"},
+                            "intent": {"type": "string"},
+                            "reason": {"type": "string"},
+                            "required_capabilities": {"type": "array", "items": {"type": "string"}},
+                            "preferred_sources": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["intent", "reason"],
+                        "additionalProperties": True,
+                    },
                 },
                 "required": [],
                 "additionalProperties": True,
@@ -296,6 +309,38 @@ def _build_llm_act_terminal_result(
     action: PlanStep,
     payload: dict[str, Any],
 ) -> ToolCallResult:
+    missing_capability_payload = None
+    raw_missing_capability = payload.get("missing_capability")
+    if isinstance(raw_missing_capability, dict):
+        normalized_missing_capability = {
+            "type": "missing_capability",
+            "version": str(raw_missing_capability.get("version") or "1"),
+            "intent": str(raw_missing_capability.get("intent") or "").strip(),
+            "reason": str(raw_missing_capability.get("reason") or "").strip(),
+            "required_capabilities": [
+                str(item or "").strip()
+                for item in (
+                    raw_missing_capability.get("required_capabilities")
+                    or raw_missing_capability.get("requiredCapabilities")
+                    or []
+                )
+                if str(item or "").strip()
+            ],
+            "preferred_sources": [
+                str(item or "").strip()
+                for item in (
+                    raw_missing_capability.get("preferred_sources")
+                    or raw_missing_capability.get("preferredSources")
+                    or []
+                )
+                if str(item or "").strip()
+            ],
+        }
+        try:
+            missing_capability_payload = MissingCapability(**normalized_missing_capability).model_dump()
+        except Exception:
+            missing_capability_payload = None
+
     observations = payload.get("observations") if isinstance(payload.get("observations"), list) else []
     observation_summaries = [
         str(item.get("summary") or "").strip()
@@ -349,7 +394,9 @@ def _build_llm_act_terminal_result(
     if legacy_llm_decision == "replan" and not execution_concerns:
         execution_concerns = str(payload.get("reason") or payload.get("replan_reason") or "execution encountered issues").strip()
 
-    if has_artifact:
+    if missing_capability_payload:
+        decision = "missing_capability"
+    elif has_artifact:
         decision = "advance_step"
     else:
         decision = "continue_current_step"
@@ -371,7 +418,7 @@ def _build_llm_act_terminal_result(
     text_artifact = _build_text_artifact_payload(action, artifact_text_value or summary_text)
     result_metadata: dict[str, Any] = {
         "capability_type": "llm",
-        "act_result_type": "execution_result",
+        "act_result_type": "execution_blocked" if missing_capability_payload else "execution_result",
         "act_result_payload": payload,
         "act_decision": decision,
         "act_step_id": str(action.id or "").strip(),
@@ -388,13 +435,15 @@ def _build_llm_act_terminal_result(
     }
     if execution_concerns:
         result_metadata["execution_concerns"] = execution_concerns
+    if missing_capability_payload:
+        result_metadata["missing_capability"] = missing_capability_payload
     # Lazy import to avoid circular dependency (act_terminal ↔ act_tool_executor).
     from src.orchestrator.act_tool_executor import _ensure_step_result_handoff_contract
     return _ensure_step_result_handoff_contract(action, ToolCallResult(
         tool_name="llm_act",
         params={"title": action.title},
-        result=summary_text,
-        success=True,
+        result=summary_text or missing_capability_payload.get("reason", "") if missing_capability_payload else summary_text,
+        success=not bool(missing_capability_payload),
         metadata=result_metadata,
     ))
 
@@ -495,6 +544,7 @@ def validate_act_terminal_response(
     is_valid_terminal = bool(structured_payload) and (
         legacy_decision in {"continue_current_step", "advance_step", "complete_task", "replan"}
         or legacy_type in {"execution_result", "execution_blocked"}
+        or isinstance(structured_payload.get("missing_capability"), dict)
         or any(
             str(key).startswith("artifact_result_") and structured_payload.get(key) not in (None, "", [], {})
             for key in structured_payload

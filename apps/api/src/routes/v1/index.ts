@@ -10,6 +10,7 @@ import chatRouter from './chat'
 import authRouter from './auth'
 import apiKeysRouter from './api-keys'
 import toolsRouter from './tools'
+import skillsRouter from './skills'
 import mcpRouter from './mcp'
 import memoryRouter from './memory'
 import logsRouter from './logs'
@@ -30,6 +31,7 @@ import contextPoliciesRouter from './context-policies'
 import evolutionCapabilitiesRouter from './evolution-capabilities'
 import statsRouter from './stats'
 import studiosRouter from './studios'
+import capabilitiesRouter from './capabilities'
 import { isChannelsFeatureEnabled, isWebhooksFeatureEnabled } from '../../lib/feature-flags'
 import { readUpgradeState, startBackgroundUpgrade, validateUpgradeManifestUrl } from '../../lib/version-upgrade'
 import { resolveCurrentVersion, resolveVersionPayload } from '../../lib/version'
@@ -159,6 +161,7 @@ router.use('/sessions', sessionsRouter)
 router.use('/chat', chatRouter)
 router.use('/api-keys', apiKeysRouter)
 router.use('/tools', toolsRouter)
+router.use('/skills', skillsRouter)
 router.use('/mcp', mcpRouter)
 router.use('/memory', memoryRouter)
 router.use('/logs', logsRouter)
@@ -179,6 +182,7 @@ if (channelsEnabled) {
   router.use('/channels', channelsRouter)
 }
 router.use('/control', controlRouter)
+router.use('/capabilities', capabilitiesRouter)
 router.use('/context-policies', contextPoliciesRouter)
 router.use('/evolution-capabilities', evolutionCapabilitiesRouter)
 router.use('/stats', statsRouter)

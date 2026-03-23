@@ -1,7 +1,8 @@
 """Installed skill loader helpers.
 
-Installed skills are indexed for discovery and orchestration context only.
-They are no longer auto-registered as executable tools.
+Installed skills are indexed for discovery and orchestration context.
+When a package bundles CLI tool manifests under ``cli-tools/*.json``, those
+tools are auto-registered into the runtime registry.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.skills.cli_tool_provider import register_cli_manifest_tools
 from src.skills.index_manager import SkillsIndexManager
 from src.skills.registry import SkillRegistry
 from src.utils.logging import get_logger
@@ -51,18 +53,23 @@ def register_installed_package_tools(
     disabled = _read_disabled_skill_names(root)
     indexed: list[str] = []
     skipped: list[dict[str, str]] = []
+    active_map: dict[str, dict[str, Any]] = {}
     for skill_name, metadata_row in indexed_map.items():
         if skill_name in disabled:
             skipped.append({"name": skill_name, "reason": "disabled"})
             continue
         indexed.append(skill_name)
+        active_map[skill_name] = metadata_row
 
     if indexed:
         logger.info("installed_skills_indexed", extra={"count": len(indexed), "skills": indexed})
+    cli_refresh = register_cli_manifest_tools(registry, skills_root=root, package_rows=active_map)
     return {
         "skills_root": str(root),
-        "registered": [],
+        "registered": cli_refresh.get("registered", []),
+        "removed": cli_refresh.get("removed", []),
         "indexed": indexed,
-        "skipped": skipped,
+        "skipped": skipped + list(cli_refresh.get("skipped", [])),
+        "cli_manifest_count": int(cli_refresh.get("manifest_count", 0)),
         "index_total": len(indexed_rows),
     }

@@ -7,7 +7,6 @@ import asyncio
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import uuid
@@ -291,13 +290,6 @@ class CodeExecutorTool(BaseTool):
         Returns:
             ToolResult with stdout, stderr, and exit code
         """
-        # LLMs sometimes produce code with literal escaped newlines (\\n)
-        # instead of real newline characters, causing SyntaxError.
-        # Detect and fix: if the code has no real newlines but contains \\n,
-        # it's a single-line string that needs unescaping.
-        if "\n" not in code and "\\n" in code:
-            code = code.replace("\\n", "\n").replace("\\t", "\t")
-
         if language not in self.allowed_languages:
             return ToolResult.error_result(
                 f"Language '{language}' not allowed. Allowed: {self.allowed_languages}"
@@ -367,6 +359,11 @@ except ImportError:
         "sklearn": "scikit-learn",
         "markitdown": "markitdown[pptx]",
     }
+    _JS_MODULE_ALLOWLIST: frozenset[str] = frozenset()
+
+    @staticmethod
+    def _auto_install_enabled() -> bool:
+        return str(os.getenv("SEMIBOT_ENABLE_CODE_AUTO_INSTALL", "")).strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _detect_missing_python_module(result: ToolResult) -> str | None:
@@ -397,6 +394,12 @@ except ImportError:
     @staticmethod
     async def _auto_install_python(module_name: str) -> bool:
         """Attempt to pip-install a missing Python package. Returns True on success."""
+        if not CodeExecutorTool._auto_install_enabled():
+            logger.info("auto_installed_python_dep: auto-install disabled for module %s", module_name)
+            return False
+        if module_name not in CodeExecutorTool._PYTHON_MODULE_TO_PACKAGE:
+            logger.warning("auto_installed_python_dep: module %s is not in the allowlist", module_name)
+            return False
         package = CodeExecutorTool._PYTHON_MODULE_TO_PACKAGE.get(module_name, module_name)
         logger.info("auto_installed_python_dep: attempting pip install %s (module: %s)", package, module_name)
         try:
@@ -417,6 +420,12 @@ except ImportError:
     @staticmethod
     async def _auto_install_js_global(module_name: str) -> bool:
         """Attempt to npm install -g a missing JS package. Returns True on success."""
+        if not CodeExecutorTool._auto_install_enabled():
+            logger.info("auto_installed_js_dep: auto-install disabled for module %s", module_name)
+            return False
+        if module_name not in CodeExecutorTool._JS_MODULE_ALLOWLIST:
+            logger.warning("auto_installed_js_dep: module %s is not in the allowlist", module_name)
+            return False
         logger.info("auto_installed_js_dep: attempting npm install -g %s", module_name)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -542,7 +551,7 @@ except ImportError:
         before_snapshot = self._snapshot_work_dir(shell_dir)
 
         result = await self._run_process(
-            ["bash", "-lc", code],
+            ["bash", "--noprofile", "--norc", "-c", code],
             stdin=stdin,
             cwd=str(shell_dir),
             env=self._build_process_env(runtime_context),

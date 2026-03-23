@@ -8,7 +8,7 @@ import pytest
 import json
 
 from src.skills.registry import SkillRegistry
-from src.skills.skill_installer import SkillInstallerTool, _search_registry, _is_auth_failure
+from src.skills.skill_installer import SkillInstallerTool, _search_registry, _is_auth_failure, install_or_refresh_skill
 
 
 def _write_skill_package(base: Path) -> None:
@@ -93,6 +93,34 @@ async def test_skill_installer_supports_instruction_only_skill(tmp_path: Path, m
     row = next(item for item in skills if item.get("skill_id") == "instruction_skill")
     assert row.get("has_skill_md") is True
     assert row.get("script_files") == []
+
+
+def test_install_or_refresh_skill_rejects_non_https_source_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home_http"
+    monkeypatch.setenv("SEMIBOT_HOME", str(home))
+    registry = SkillRegistry()
+
+    with pytest.raises(ValueError, match="must use https://"):
+        install_or_refresh_skill(
+            registry=registry,
+            source_url="http://example.com/skill.zip",
+        )
+
+
+def test_install_or_refresh_skill_blocks_zip_path_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home_zip"
+    monkeypatch.setenv("SEMIBOT_HOME", str(home))
+    zip_path = tmp_path / "evil.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("../escape.txt", "bad")
+
+    registry = SkillRegistry()
+    with pytest.raises(ValueError, match="escapes extraction root"):
+        install_or_refresh_skill(
+            registry=registry,
+            source_path=str(zip_path),
+            skill_name="evil",
+        )
 
 
 # ---------------------------------------------------------------------------

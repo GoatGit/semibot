@@ -106,6 +106,38 @@ class GatewayStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_gateway_task_runs_conv ON gateway_task_runs(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_gateway_task_runs_runtime_session ON gateway_task_runs(runtime_session_id);
+
+                CREATE TABLE IF NOT EXISTS capability_install_requests (
+                  id TEXT PRIMARY KEY,
+                  task_id TEXT,
+                  session_id TEXT,
+                  target_type TEXT NOT NULL,
+                  target_id TEXT NOT NULL,
+                  approval_mode TEXT NOT NULL,
+                  state TEXT NOT NULL,
+                  error_text TEXT,
+                  metadata_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_capability_install_requests_target ON capability_install_requests(target_type, target_id);
+                CREATE INDEX IF NOT EXISTS idx_capability_install_requests_state ON capability_install_requests(state);
+                CREATE INDEX IF NOT EXISTS idx_capability_install_requests_created ON capability_install_requests(created_at);
+
+                CREATE TABLE IF NOT EXISTS tool_usage_events (
+                  id TEXT PRIMARY KEY,
+                  session_id TEXT NOT NULL,
+                  task_run_id TEXT,
+                  tool_id TEXT NOT NULL,
+                  tool_name TEXT NOT NULL,
+                  actual_tool_name TEXT NOT NULL,
+                  source_type TEXT NOT NULL,
+                  success INTEGER NOT NULL DEFAULT 1,
+                  metadata_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_tool_usage_events_session_created ON tool_usage_events(session_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_tool_usage_events_tool_id ON tool_usage_events(tool_id);
                 """
             )
             columns = {
@@ -199,6 +231,37 @@ class GatewayStore:
             "context_version": int(row["context_version"]),
             "role": row["role"],
             "content": row["content"],
+            "metadata": _json_loads(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _install_request_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "task_id": row["task_id"],
+            "session_id": row["session_id"],
+            "target_type": row["target_type"],
+            "target_id": row["target_id"],
+            "approval_mode": row["approval_mode"],
+            "state": row["state"],
+            "error_text": row["error_text"],
+            "metadata": _json_loads(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @staticmethod
+    def _tool_usage_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "task_run_id": row["task_run_id"],
+            "tool_id": row["tool_id"],
+            "tool_name": row["tool_name"],
+            "actual_tool_name": row["actual_tool_name"],
+            "source_type": row["source_type"],
+            "success": bool(row["success"]),
             "metadata": _json_loads(row["metadata_json"], {}),
             "created_at": row["created_at"],
         }
@@ -486,6 +549,225 @@ class GatewayStore:
             ).fetchone()
         return str(row["created_at"]) if row else None
 
+    def create_capability_install_request(
+        self,
+        *,
+        task_id: str | None,
+        session_id: str | None,
+        target_type: str,
+        target_id: str,
+        approval_mode: str,
+        state: str,
+        metadata: dict[str, Any] | None = None,
+        error_text: str | None = None,
+    ) -> dict[str, Any]:
+        now = _now_iso()
+        request_id = f"cinst_{uuid4().hex}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO capability_install_requests (
+                  id, task_id, session_id, target_type, target_id,
+                  approval_mode, state, error_text, metadata_json,
+                  created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request_id,
+                    task_id,
+                    session_id,
+                    target_type,
+                    target_id,
+                    approval_mode,
+                    state,
+                    error_text,
+                    _json_dumps(metadata or {}),
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM capability_install_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+        if not row:
+            raise RuntimeError("failed_to_create_capability_install_request")
+        return self._install_request_row(row)
+
+    def update_capability_install_request(
+        self,
+        request_id: str,
+        *,
+        approval_mode: str | None = None,
+        state: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        error_text: str | None = None,
+    ) -> dict[str, Any] | None:
+        existing = self.get_capability_install_request(request_id)
+        if not existing:
+            return None
+        merged_metadata = dict(existing.get("metadata") or {})
+        if metadata:
+            merged_metadata.update(metadata)
+        now = _now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE capability_install_requests
+                SET approval_mode = ?, state = ?, error_text = ?, metadata_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    approval_mode or existing["approval_mode"],
+                    state or existing["state"],
+                    error_text,
+                    _json_dumps(merged_metadata),
+                    now,
+                    request_id,
+                ),
+            )
+            if cur.rowcount <= 0:
+                return None
+            row = conn.execute(
+                "SELECT * FROM capability_install_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+        return self._install_request_row(row) if row else None
+
+    def append_capability_install_audit_event(
+        self,
+        request_id: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        existing = self.get_capability_install_request(request_id)
+        if not existing:
+            return None
+        metadata = dict(existing.get("metadata") or {})
+        audit_trail = metadata.get("auditTrail")
+        if not isinstance(audit_trail, list):
+            audit_trail = []
+        normalized_event = dict(event or {})
+        normalized_event.setdefault("timestamp", _now_iso())
+        audit_trail.append(normalized_event)
+        metadata["auditTrail"] = audit_trail[-50:]
+        return self.update_capability_install_request(request_id, metadata=metadata)
+
+    def get_capability_install_request(self, request_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM capability_install_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+        return self._install_request_row(row) if row else None
+
+    def list_capability_install_requests(
+        self,
+        *,
+        session_id: str | None = None,
+        task_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            where.append("session_id = ?")
+            params.append(session_id)
+        if task_id:
+            where.append("task_id = ?")
+            params.append(task_id)
+        sql = """
+                SELECT * FROM capability_install_requests
+            """
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += """
+                ORDER BY created_at DESC
+                LIMIT ?
+            """
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        return [self._install_request_row(row) for row in rows]
+
+    def create_tool_usage_event(
+        self,
+        *,
+        session_id: str,
+        task_run_id: str | None,
+        tool_id: str,
+        tool_name: str,
+        actual_tool_name: str,
+        source_type: str,
+        success: bool,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        event_id = f"tuse_{uuid4().hex}"
+        now = _now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO tool_usage_events (
+                  id, session_id, task_run_id, tool_id, tool_name, actual_tool_name,
+                  source_type, success, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    session_id,
+                    task_run_id,
+                    tool_id,
+                    tool_name,
+                    actual_tool_name,
+                    source_type,
+                    1 if success else 0,
+                    _json_dumps(metadata or {}),
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM tool_usage_events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+        if not row:
+            raise RuntimeError("failed_to_create_tool_usage_event")
+        return self._tool_usage_row(row)
+
+    def list_tool_usage_events(
+        self,
+        *,
+        session_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM tool_usage_events
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        return [self._tool_usage_row(row) for row in rows]
+
+    def summarize_recent_tool_usage(
+        self,
+        *,
+        session_id: str,
+        limit: int = 100,
+        success_only: bool = True,
+    ) -> dict[str, int]:
+        events = self.list_tool_usage_events(session_id=session_id, limit=limit)
+        summary: dict[str, int] = {}
+        for event in events:
+            if success_only and not bool(event.get("success")):
+                continue
+            tool_id = str(event.get("tool_id") or "").strip()
+            if not tool_id:
+                continue
+            summary[tool_id] = int(summary.get(tool_id, 0)) + 1
+        return summary
+
     async def aget_or_create_conversation(
         self,
         *,
@@ -617,3 +899,141 @@ class GatewayStore:
 
     async def alatest_assistant_at(self, conversation_id: str) -> str | None:
         return await self._run_async(self.latest_assistant_at, conversation_id, op_name="latest_assistant_at")
+
+    async def acreate_capability_install_request(
+        self,
+        *,
+        task_id: str | None,
+        session_id: str | None,
+        target_type: str,
+        target_id: str,
+        approval_mode: str,
+        state: str,
+        metadata: dict[str, Any] | None = None,
+        error_text: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._run_async(
+            self.create_capability_install_request,
+            task_id=task_id,
+            session_id=session_id,
+            target_type=target_type,
+            target_id=target_id,
+            approval_mode=approval_mode,
+            state=state,
+            metadata=metadata,
+            error_text=error_text,
+            op_name="create_capability_install_request",
+        )
+
+    async def aupdate_capability_install_request(
+        self,
+        request_id: str,
+        *,
+        approval_mode: str | None = None,
+        state: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        error_text: str | None = None,
+    ) -> dict[str, Any] | None:
+        return await self._run_async(
+            self.update_capability_install_request,
+            request_id,
+            approval_mode=approval_mode,
+            state=state,
+            metadata=metadata,
+            error_text=error_text,
+            op_name="update_capability_install_request",
+        )
+
+    async def aget_capability_install_request(self, request_id: str) -> dict[str, Any] | None:
+        return await self._run_async(
+            self.get_capability_install_request,
+            request_id,
+            op_name="get_capability_install_request",
+        )
+
+    async def alist_capability_install_requests(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return await self._run_async(
+            self.list_capability_install_requests,
+            limit=limit,
+            op_name="list_capability_install_requests",
+        )
+
+    async def afilter_capability_install_requests(
+        self,
+        *,
+        session_id: str | None = None,
+        task_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return await self._run_async(
+            self.list_capability_install_requests,
+            session_id=session_id,
+            task_id=task_id,
+            limit=limit,
+            op_name="list_capability_install_requests",
+        )
+
+    async def aappend_capability_install_audit_event(
+        self,
+        request_id: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return await self._run_async(
+            self.append_capability_install_audit_event,
+            request_id,
+            event,
+            op_name="append_capability_install_audit_event",
+        )
+
+    async def acreate_tool_usage_event(
+        self,
+        *,
+        session_id: str,
+        task_run_id: str | None,
+        tool_id: str,
+        tool_name: str,
+        actual_tool_name: str,
+        source_type: str,
+        success: bool,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._run_async(
+            self.create_tool_usage_event,
+            session_id=session_id,
+            task_run_id=task_run_id,
+            tool_id=tool_id,
+            tool_name=tool_name,
+            actual_tool_name=actual_tool_name,
+            source_type=source_type,
+            success=success,
+            metadata=metadata,
+            op_name="create_tool_usage_event",
+        )
+
+    async def alist_tool_usage_events(
+        self,
+        *,
+        session_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return await self._run_async(
+            self.list_tool_usage_events,
+            session_id=session_id,
+            limit=limit,
+            op_name="list_tool_usage_events",
+        )
+
+    async def asummarize_recent_tool_usage(
+        self,
+        *,
+        session_id: str,
+        limit: int = 100,
+        success_only: bool = True,
+    ) -> dict[str, int]:
+        return await self._run_async(
+            self.summarize_recent_tool_usage,
+            session_id=session_id,
+            limit=limit,
+            success_only=success_only,
+            op_name="summarize_recent_tool_usage",
+        )

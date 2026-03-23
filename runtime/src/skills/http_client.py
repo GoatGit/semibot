@@ -12,9 +12,9 @@ import httpx
 from src.server.config_store import RuntimeConfigStore
 from src.skills._http_utils import (
     _LOCAL_BLOCKLIST,
-    host_matches_rule as _host_matches_rule,
     parse_domain_rules as _parse_domain_rules,
     to_bool as _to_bool,
+    validate_remote_url as _validate_remote_url,
 )
 from src.skills.base import BaseTool, ToolResult
 
@@ -177,24 +177,12 @@ class HttpClientTool(BaseTool):
         return urlunparse(parsed._replace(query=merged_query))
 
     def _validate_url(self, raw_url: str) -> tuple[bool, str | None]:
-        parsed = urlparse(raw_url)
-        if parsed.scheme not in {"http", "https"}:
-            return False, "Only http/https URLs are allowed."
-
-        host = (parsed.hostname or "").strip().lower()
-        if not host:
-            return False, "Invalid URL host."
-
-        if not self.allow_localhost and host in _LOCAL_BLOCKLIST:
-            return False, "Access to localhost/loopback is blocked."
-
-        if self.allowed_domains and not any(_host_matches_rule(host, rule) for rule in self.allowed_domains):
-            return False, f"Host '{host}' is not in allowedDomains."
-
-        if self.blocked_domains and any(_host_matches_rule(host, rule) for rule in self.blocked_domains):
-            return False, f"Host '{host}' is blocked."
-
-        return True, None
+        return _validate_remote_url(
+            raw_url,
+            allow_localhost=self.allow_localhost,
+            allowed_domains=self.allowed_domains,
+            blocked_domains=self.blocked_domains,
+        )
 
     async def execute(
         self,

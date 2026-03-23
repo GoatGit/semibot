@@ -187,6 +187,89 @@ async def test_execute_mcp_tool(executor, mock_mcp_client):
 
 
 @pytest.mark.asyncio
+async def test_execute_disambiguated_mcp_tool_uses_actual_tool_name(mock_skill_registry, mock_mcp_client):
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_789",
+        session_id="session_abc",
+        agent_config=AgentConfig(id="agent_789", name="Test Agent"),
+        available_tools=[ToolDefinition(name="search", description="Builtin search")],
+        available_mcp_servers=[
+            McpServerDefinition(
+                id="mcp_1",
+                name="remote_search",
+                endpoint="http://localhost:8080",
+                transport="http",
+                is_connected=True,
+                available_tools=[
+                    {
+                        "name": "search",
+                        "description": "Remote search",
+                        "inputSchema": {},
+                    }
+                ],
+            )
+        ],
+    )
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+        mcp_client=mock_mcp_client,
+    )
+
+    result = await executor.execute(
+        PlanStep(id="step_1", title="Search remotely", tool="mcp__mcp_1__search", params={"q": "test"})
+    )
+
+    assert result.success is True
+    mock_mcp_client.call_tool.assert_called_once_with(
+        server_id="mcp_1",
+        tool_name="search",
+        arguments={"q": "test"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_disambiguated_builtin_tool_uses_actual_tool_name(mock_skill_registry, mock_mcp_client):
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_789",
+        session_id="session_abc",
+        agent_config=AgentConfig(id="agent_789", name="Test Agent"),
+        available_tools=[ToolDefinition(name="search", description="Builtin search")],
+        available_mcp_servers=[
+            McpServerDefinition(
+                id="mcp_1",
+                name="remote_search",
+                endpoint="http://localhost:8080",
+                transport="http",
+                is_connected=True,
+                available_tools=[
+                    {
+                        "name": "search",
+                        "description": "Remote search",
+                        "inputSchema": {},
+                    }
+                ],
+            )
+        ],
+    )
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+        mcp_client=mock_mcp_client,
+    )
+
+    result = await executor.execute(
+        PlanStep(id="step_1", title="Search locally", tool="builtin__search", params={"query": "test"})
+    )
+
+    assert result.success is True
+    mock_skill_registry.execute.assert_called_once()
+    assert mock_skill_registry.execute.call_args.args[0] == "search"
+
+
+@pytest.mark.asyncio
 async def test_execute_invalid_action(executor):
     """Test executing an action not in capability graph."""
     action = PlanStep(
@@ -399,6 +482,8 @@ async def test_approval_hook_error(runtime_context, mock_skill_registry):
 
     assert result.success is False
     assert "Approval hook failed" in result.error
+    assert result.metadata["approval_status"] == "error"
+    assert result.metadata["guard"] == "approval_hook_failed"
 
 
 @pytest.mark.asyncio

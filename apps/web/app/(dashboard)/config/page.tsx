@@ -88,11 +88,44 @@ function decodeModelBinding(value: string): { providerKey: string; modelId: stri
   return { providerKey, modelId }
 }
 
+type NodeModelConfig = {
+  model?: string
+  temperature?: number
+}
+
+type ModelRolesConfig = {
+  plan?: NodeModelConfig
+  act?: NodeModelConfig
+  textProcessing?: NodeModelConfig
+}
+
+function normalizeNodeModelConfig(raw: unknown): NodeModelConfig {
+  if (!raw || typeof raw !== 'object') return {}
+  const data = raw as Record<string, unknown>
+  const model = typeof data.model === 'string' ? data.model.trim() : ''
+  const temperature = typeof data.temperature === 'number' ? data.temperature : undefined
+  return {
+    model: model || undefined,
+    temperature,
+  }
+}
+
+function normalizeModelRoles(raw: unknown): ModelRolesConfig {
+  if (!raw || typeof raw !== 'object') return { plan: {}, act: {}, textProcessing: {} }
+  const data = raw as Record<string, unknown>
+  return {
+    plan: normalizeNodeModelConfig(data.plan),
+    act: normalizeNodeModelConfig(data.act),
+    textProcessing: normalizeNodeModelConfig(data.textProcessing ?? data.text_processing),
+  }
+}
+
 interface LlmConfigData {
   defaultModel: string
   defaultProviderKey?: string
   fallbackModel: string
   fallbackProviderKey?: string
+  modelRoles?: ModelRolesConfig
   providers: Record<string, LlmProviderConfigEntry>
 }
 
@@ -455,11 +488,10 @@ export default function ConfigPage() {
 
   const [llmProviders, setLlmProviders] = useState<LlmProviderStatus[]>([])
   const [llmConfig, setLlmConfig] = useState<LlmConfigData | null>(null)
-  const [modelDefaults, setModelDefaults] = useState({
-    defaultModel: '',
-    defaultProviderKey: '',
-    fallbackModel: '',
-    fallbackProviderKey: '',
+  const [modelRoleDefaults, setModelRoleDefaults] = useState<ModelRolesConfig>({
+    plan: {},
+    act: {},
+    textProcessing: {},
   })
   const [savingModelDefaults, setSavingModelDefaults] = useState(false)
   const [showProviderConfigModal, setShowProviderConfigModal] = useState(false)
@@ -609,12 +641,7 @@ export default function ConfigPage() {
 
       setLlmProviders(statusRes.data || [])
       setLlmConfig(configRes.data)
-      setModelDefaults({
-        defaultModel: configRes.data.defaultModel || '',
-        defaultProviderKey: configRes.data.defaultProviderKey || '',
-        fallbackModel: configRes.data.fallbackModel || '',
-        fallbackProviderKey: configRes.data.fallbackProviderKey || '',
-      })
+      setModelRoleDefaults(normalizeModelRoles(configRes.data.modelRoles))
       setSectionErrors((prev) => ({ ...prev, llm: null }))
     } catch (err) {
       setSectionErrors((prev) => ({
@@ -914,10 +941,7 @@ export default function ConfigPage() {
       setSavingModelDefaults(true)
       setError(null)
       await apiClient.put('/llm-providers/config', {
-        defaultModel: modelDefaults.defaultModel.trim(),
-        defaultProviderKey: modelDefaults.defaultProviderKey.trim(),
-        fallbackModel: modelDefaults.fallbackModel.trim(),
-        fallbackProviderKey: modelDefaults.fallbackProviderKey.trim(),
+        modelRoles: modelRoleDefaults,
       })
       await loadLlmData()
     } catch (err) {
@@ -926,6 +950,13 @@ export default function ConfigPage() {
       setSavingModelDefaults(false)
     }
   }
+
+  const handleRoleModelDefaultChange = useCallback(
+    (role: keyof ModelRolesConfig, patch: NodeModelConfig) => {
+      setModelRoleDefaults((prev) => ({ ...prev, [role]: patch }))
+    },
+    []
+  )
 
   const saveEvolutionCapability = async (docType: EvolutionCapabilityType) => {
     try {
@@ -1706,25 +1737,6 @@ export default function ConfigPage() {
     return values
   }, [availableModelOptions])
 
-  const currentDefaultModelBinding = useMemo(() => {
-    if (!modelDefaults.defaultModel || !modelDefaults.defaultProviderKey) return ''
-    return encodeModelBinding(modelDefaults.defaultProviderKey, modelDefaults.defaultModel)
-  }, [modelDefaults.defaultModel, modelDefaults.defaultProviderKey])
-
-  const currentFallbackModelBinding = useMemo(() => {
-    if (!modelDefaults.fallbackModel || !modelDefaults.fallbackProviderKey) return ''
-    return encodeModelBinding(modelDefaults.fallbackProviderKey, modelDefaults.fallbackModel)
-  }, [modelDefaults.fallbackModel, modelDefaults.fallbackProviderKey])
-
-  const isDefaultModelCustom = useMemo(
-    () => Boolean(modelDefaults.defaultModel) && !availableModelValueSet.has(currentDefaultModelBinding),
-    [availableModelValueSet, currentDefaultModelBinding, modelDefaults.defaultModel]
-  )
-  const isFallbackModelCustom = useMemo(
-    () => Boolean(modelDefaults.fallbackModel) && !availableModelValueSet.has(currentFallbackModelBinding),
-    [availableModelValueSet, currentFallbackModelBinding, modelDefaults.fallbackModel]
-  )
-
   const activeGatewaysCount = useMemo(
     () => filteredGateways.filter((item) => item.isActive).length,
     [filteredGateways]
@@ -1839,93 +1851,37 @@ export default function ConfigPage() {
                     {sectionErrors.llm && (
                       <p className="text-xs text-warning-500">{sectionErrors.llm}</p>
                     )}
-                    <div className="space-y-2">
-                      <p className="text-xs text-text-secondary">
-                        {tSafe('config.llm.defaultModelLabel', '默认模型')}
-                      </p>
-                      <Select
-                        data-testid="llm-default-model-select"
-                        value={isDefaultModelCustom ? '__custom__' : currentDefaultModelBinding}
-                        onChange={(value) => {
-                          if (value === '__custom__') return
-                          const binding = decodeModelBinding(value)
-                          if (!binding) return
-                          setModelDefaults((prev) => ({
-                            ...prev,
-                            defaultModel: binding.modelId,
-                            defaultProviderKey: binding.providerKey,
-                          }))
-                        }}
-                        options={[
-                          ...availableModelOptions,
-                          { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
-                        ]}
-                        placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
+                    <p className="text-sm text-text-secondary">
+                      {tSafe('agentsDetail.modelRolesDescription', '为 Plan、Act、Text Processing 分别指定模型和 temperature，留空则继承系统默认行为')}
+                    </p>
+                    <div className="space-y-5">
+                      <ConfigRoleModelRow
+                        role="plan"
+                        label={tSafe('agentsDetail.modelRolesPlan', 'Plan 节点')}
+                        config={modelRoleDefaults.plan ?? {}}
+                        options={availableModelOptions}
+                        availableModelValueSet={availableModelValueSet}
+                        onChange={handleRoleModelDefaultChange}
+                        tSafe={tSafe}
                       />
-                      {(isDefaultModelCustom || modelDefaults.defaultModel === '') && (
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <Input
-                            data-testid="llm-default-model-input"
-                            placeholder={tSafe('config.llm.defaultModelPlaceholder', 'DEFAULT_LLM_MODEL')}
-                            value={modelDefaults.defaultModel}
-                            onChange={(e) =>
-                              setModelDefaults((prev) => ({ ...prev, defaultModel: e.target.value }))
-                            }
-                          />
-                          <Input
-                            data-testid="llm-default-provider-input"
-                            placeholder="DEFAULT_LLM_PROVIDER_KEY"
-                            value={modelDefaults.defaultProviderKey}
-                            onChange={(e) =>
-                              setModelDefaults((prev) => ({ ...prev, defaultProviderKey: e.target.value }))
-                            }
-                          />
-                        </div>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <p className="text-xs text-text-secondary">
-                        {tSafe('config.llm.fallbackModelLabel', '回退模型')}
-                      </p>
-                      <Select
-                        data-testid="llm-fallback-model-select"
-                        value={isFallbackModelCustom ? '__custom__' : currentFallbackModelBinding}
-                        onChange={(value) => {
-                          if (value === '__custom__') return
-                          const binding = decodeModelBinding(value)
-                          if (!binding) return
-                          setModelDefaults((prev) => ({
-                            ...prev,
-                            fallbackModel: binding.modelId,
-                            fallbackProviderKey: binding.providerKey,
-                          }))
-                        }}
-                        options={[
-                          ...availableModelOptions,
-                          { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
-                        ]}
-                        placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
+                      <ConfigRoleModelRow
+                        role="act"
+                        label={tSafe('agentsDetail.modelRolesAct', 'Act / Respond 节点')}
+                        config={modelRoleDefaults.act ?? {}}
+                        options={availableModelOptions}
+                        availableModelValueSet={availableModelValueSet}
+                        onChange={handleRoleModelDefaultChange}
+                        tSafe={tSafe}
                       />
-                      {(isFallbackModelCustom || modelDefaults.fallbackModel === '') && (
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <Input
-                            data-testid="llm-fallback-model-input"
-                            placeholder={tSafe('config.llm.fallbackModelPlaceholder', 'FALLBACK_LLM_MODEL')}
-                            value={modelDefaults.fallbackModel}
-                            onChange={(e) =>
-                              setModelDefaults((prev) => ({ ...prev, fallbackModel: e.target.value }))
-                            }
-                          />
-                          <Input
-                            data-testid="llm-fallback-provider-input"
-                            placeholder="FALLBACK_LLM_PROVIDER_KEY"
-                            value={modelDefaults.fallbackProviderKey}
-                            onChange={(e) =>
-                              setModelDefaults((prev) => ({ ...prev, fallbackProviderKey: e.target.value }))
-                            }
-                          />
-                        </div>
-                      )}
+                      <ConfigRoleModelRow
+                        role="textProcessing"
+                        label={tSafe('agentsDetail.modelRolesTextProcessing', 'Text Processing 工具')}
+                        config={modelRoleDefaults.textProcessing ?? {}}
+                        options={availableModelOptions}
+                        availableModelValueSet={availableModelValueSet}
+                        onChange={handleRoleModelDefaultChange}
+                        tSafe={tSafe}
+                      />
                     </div>
                     <Button
                       data-testid="llm-save-routing-button"
@@ -3498,6 +3454,92 @@ export default function ConfigPage() {
           <p className="mt-2 break-all font-mono text-sm text-primary-300">{createdKey?.key}</p>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+function ConfigRoleModelRow({
+  role,
+  label,
+  config,
+  options,
+  availableModelValueSet,
+  onChange,
+  tSafe,
+}: {
+  role: keyof ModelRolesConfig
+  label: string
+  config: NodeModelConfig
+  options: (SelectOption | SelectGroup)[]
+  availableModelValueSet: Set<string>
+  onChange: (role: keyof ModelRolesConfig, patch: NodeModelConfig) => void
+  tSafe: (key: string, fallback: string, params?: Record<string, string | number>) => string
+}) {
+  const currentBinding = useMemo(() => {
+    if (!config.model) return ''
+    const matched = Array.from(availableModelValueSet).find((value) => value.endsWith(`${MODEL_BINDING_DELIMITER}${config.model}`))
+    return matched || ''
+  }, [availableModelValueSet, config.model])
+
+  const isCustomModel = Boolean(config.model) && !currentBinding
+  const [customMode, setCustomMode] = useState(isCustomModel)
+
+  useEffect(() => {
+    if (isCustomModel) {
+      setCustomMode(true)
+    } else if (config.model) {
+      setCustomMode(false)
+    }
+  }, [config.model, isCustomModel])
+
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-medium text-text-secondary">{label}</div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-2">
+          <p className="text-xs text-text-secondary">{tSafe('agentsDetail.modelRolesModelLabel', '模型')}</p>
+          <Select
+            value={customMode ? '__custom__' : currentBinding}
+            onChange={(value) => {
+              if (value === '__custom__') {
+                setCustomMode(true)
+                return
+              }
+              const binding = decodeModelBinding(value)
+              if (!binding) return
+              setCustomMode(false)
+              onChange(role, { ...config, model: binding.modelId })
+            }}
+            options={[
+              ...options,
+              { value: '__custom__', label: tSafe('config.common.customValue', 'Custom') },
+            ]}
+            placeholder={tSafe('agentsDetail.modelRolesModelPlaceholder', '留空使用全局模型')}
+          />
+          {customMode && (
+            <Input
+              placeholder={tSafe('agentsDetail.modelRolesModelPlaceholder', '留空使用全局模型')}
+              value={config.model ?? ''}
+              onChange={(e) => onChange(role, { ...config, model: e.target.value || undefined })}
+            />
+          )}
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs text-text-secondary">{tSafe('agentsDetail.modelRolesTemperatureLabel', 'Temperature')}</p>
+          <Input
+            type="number"
+            min={0}
+            max={2}
+            step={0.1}
+            placeholder={tSafe('agentsDetail.modelRolesTemperaturePlaceholder', '留空使用默认值')}
+            value={config.temperature ?? ''}
+            onChange={(e) => {
+              const raw = e.target.value
+              onChange(role, { ...config, temperature: raw === '' ? undefined : parseFloat(raw) })
+            }}
+          />
+        </div>
+      </div>
     </div>
   )
 }

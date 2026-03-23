@@ -6,11 +6,24 @@ export type RuntimeLlmProviderConfig = {
   base_url?: string
 }
 
+export type RuntimeNodeModelConfig = {
+  model?: string
+  temperature?: number
+}
+
+export type RuntimeModelRolesConfig = {
+  plan?: RuntimeNodeModelConfig
+  act?: RuntimeNodeModelConfig
+  textProcessing?: RuntimeNodeModelConfig
+  text_processing?: RuntimeNodeModelConfig
+}
+
 export type RuntimeLlmConfig = {
   default_model: string
   default_provider_key: string
   fallback_model: string
   fallback_provider_key: string
+  model_roles?: RuntimeModelRolesConfig
   providers: Record<string, RuntimeLlmProviderConfig>
   updated_at?: string | null
 }
@@ -36,6 +49,7 @@ export async function getRuntimeLlmConfig(): Promise<RuntimeLlmConfig> {
     default_provider_key: '',
     fallback_model: '',
     fallback_provider_key: '',
+    model_roles: {},
     providers: {},
   }
 }
@@ -51,6 +65,7 @@ export async function updateRuntimeLlmConfig(payload: Partial<RuntimeLlmConfig>)
     default_provider_key: '',
     fallback_model: '',
     fallback_provider_key: '',
+    model_roles: {},
     providers: {},
   }
 }

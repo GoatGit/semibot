@@ -120,7 +120,7 @@ class SkillScriptRunnerTool(BaseTool):
             return available_names.get(close[0])
         return None
 
-    def _validate_command(self, command: str, skill_root: Path) -> tuple[str, list[str]]:
+    def _validate_command(self, command: str, skill_root: Path) -> tuple[list[str], list[str]]:
         if not command.strip():
             raise ValueError("command is required")
         # Ensure command references at least one scripts/* path inside the skill.
@@ -182,9 +182,9 @@ class SkillScriptRunnerTool(BaseTool):
         return self._normalize_command_interpreter(normalized_parts), rewrites
 
     @staticmethod
-    def _normalize_command_interpreter(parts: list[str]) -> str:
+    def _normalize_command_interpreter(parts: list[str]) -> list[str]:
         if not parts:
-            return ""
+            return []
         normalized = list(parts)
         has_python = shutil.which("python") is not None
         if not has_python:
@@ -192,22 +192,7 @@ class SkillScriptRunnerTool(BaseTool):
             if fallback:
                 fallback_name = Path(fallback).name
                 normalized = [fallback_name if token == "python" else token for token in normalized]
-        return shlex.join(normalized)
-
-    @staticmethod
-    def _build_shell_command(command: str) -> str:
-        prologue = (
-            "if ! command -v python >/dev/null 2>&1; then "
-            "if command -v python3 >/dev/null 2>&1; then "
-            "python(){ command python3 \"$@\"; }; "
-            "elif command -v python3.11 >/dev/null 2>&1; then "
-            "python(){ command python3.11 \"$@\"; }; "
-            "elif command -v python3.10 >/dev/null 2>&1; then "
-            "python(){ command python3.10 \"$@\"; }; "
-            "fi; "
-            "fi; "
-        )
-        return prologue + command
+        return normalized
 
     def _trim(self, text: bytes) -> tuple[str, bool]:
         decoded = text.decode("utf-8", errors="replace")
@@ -258,6 +243,12 @@ class SkillScriptRunnerTool(BaseTool):
 
     @staticmethod
     async def _auto_install_python(module_name: str) -> bool:
+        if str(os.getenv("SEMIBOT_ENABLE_CODE_AUTO_INSTALL", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+            logger.info("auto_installed_python_dep: auto-install disabled for module %s", module_name)
+            return False
+        if module_name not in SkillScriptRunnerTool._PYTHON_MODULE_TO_PACKAGE:
+            logger.warning("auto_installed_python_dep: module %s is not in the allowlist", module_name)
+            return False
         package = SkillScriptRunnerTool._PYTHON_MODULE_TO_PACKAGE.get(module_name, module_name)
         logger.info("auto_installed_python_dep: attempting pip install %s (module: %s)", package, module_name)
         try:
@@ -277,20 +268,7 @@ class SkillScriptRunnerTool(BaseTool):
 
     @staticmethod
     async def _auto_install_js_global(module_name: str) -> bool:
-        logger.info("auto_installed_js_dep: attempting npm install -g %s", module_name)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "npm", "install", "-g", module_name,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, err = await asyncio.wait_for(proc.communicate(), timeout=120)
-            if proc.returncode == 0:
-                logger.info("auto_installed_js_dep: successfully installed %s", module_name)
-                return True
-            logger.warning("auto_installed_js_dep: npm install -g %s failed: %s", module_name, err.decode(errors="replace"))
-        except Exception as exc:
-            logger.warning("auto_installed_js_dep: error installing %s: %s", module_name, exc)
+        logger.warning("auto_installed_js_dep: auto-install is disabled for module %s", module_name)
         return False
 
     # ── End auto-install helpers ──────────────────────────────────────
@@ -304,9 +282,10 @@ class SkillScriptRunnerTool(BaseTool):
     ) -> ToolResult:
         try:
             skill_root = self._resolve_skill_root(skill_name)
-            safe_command, rewrites = self._validate_command(command, skill_root)
+            command_parts, rewrites = self._validate_command(command, skill_root)
         except Exception as exc:
             return ToolResult.error_result(str(exc))
+        safe_command = shlex.join(command_parts)
         script_path, script_args = self.advisor.split_command_args(safe_command)
         if script_path:
             advisory = self.advisor.check_script_help(skill_root, script_path, script_args)
@@ -327,11 +306,8 @@ class SkillScriptRunnerTool(BaseTool):
         final_timeout = timeout if isinstance(timeout, int) and timeout > 0 else self.default_timeout
 
         try:
-            shell_command = self._build_shell_command(safe_command)
             proc = await asyncio.create_subprocess_exec(
-                "bash",
-                "-lc",
-                shell_command,
+                *command_parts,
                 cwd=str(skill_root),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

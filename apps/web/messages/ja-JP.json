@@ -724,12 +724,56 @@
       "json_transform": "内蔵 JSON 変換ツール（JSONPath/JMESPath/マッピングテンプレート）",
       "text_processing": "内蔵テキスト処理ツール。compact・extract・slice をサポートします。",
       "memory": "内蔵メモリツール。長期記憶検索、長期記憶保存、短期記憶スナップショット、短期記憶圧縮、予算確認をサポートします。",
-      "csv_xlsx": "内蔵 CSV/Excel 読み込み・フィルタ・集計・ピボットツール",
-      "pdf_report": "内蔵 PDF レポート生成ツール（テンプレート表/チャート/結論）",
-      "sql_query_readonly": "内蔵読み取り専用 SQL クエリツール（許可リスト/タイムアウト/行数制限）",
       "control_plane": "内蔵コントロールプレーンツール。ランタイム設定・ルールポリシー・スキル編成を管理。サブ動作：create_rule, update_rule, delete_rule, list_rules 等",
       "rule_authoring": "内蔵ルール作成ツール（control_plane のエイリアス）。イベントルールの作成/更新/シミュレーション/有効化/無効化",
       "skill_installer": "内蔵スキルインストーラー。ローカルフォルダ/ZIP またはリモート URL からスキルをインストールし、インデックスを更新"
+    }
+  },
+  "toolsCenter": {
+    "eyebrow": "Tools Center",
+    "title": "ツールセンター",
+    "subtitle": "内蔵ツール、MCP サーバー、CLI ツールを一元表示します。高度な編集は既存の設定ページに残します。",
+    "tabs": {
+      "builtin": "内蔵ツール",
+      "mcp": "MCP サーバー",
+      "cli": "CLI ツール"
+    },
+    "summary": {
+      "builtin": "内蔵ツール",
+      "builtinHelper": "Runtime が提供する能力",
+      "mcpServers": "MCP サーバー",
+      "mcpHelper": "外部接続と同期元",
+      "cliTools": "CLI ツール",
+      "cliHelper": "ローカル harness とコマンド由来の能力",
+      "mcpTools": "MCP ツール",
+      "mcpToolsHelper": "MCP server が公開するツール"
+    },
+    "actions": {
+      "config": "高度な設定",
+      "manageMcp": "MCP を管理",
+      "openSkills": "スキルを開く"
+    },
+    "sections": {
+      "builtinTitle": "内蔵ツール",
+      "builtinDescription": "これらの能力は runtime が提供し、直接 catalog に入ります。",
+      "mcpTitle": "MCP サーバー",
+      "mcpDescription": "これらの外部 server は MCP tools を統一 catalog に公開します。",
+      "cliTitle": "CLI ツール",
+      "cliDescription": "ローカル harness、ラップされたコマンド、package で持ち込まれたツールです。"
+    },
+    "empty": {
+      "builtinTitle": "内蔵ツールはありません",
+      "builtinDescription": "runtime は内蔵ツールを返しませんでした。",
+      "mcpTitle": "MCP サーバーはありません",
+      "mcpDescription": "接続されると、MCP server は統一 catalog にツールを公開します。",
+      "cliTitle": "CLI ツールはありません",
+      "cliDescription": "ローカル harness や package 由来の CLI ツールは検出されていません。"
+    },
+    "fields": {
+      "lastConnected": "最終接続"
+    },
+    "errors": {
+      "load": "ツールセンターの読み込みに失敗しました"
     }
   },
   "rules": {
@@ -1161,7 +1205,26 @@
       "mountedSession": "マウント済みセッション",
       "forkedFrom": "Fork 元",
       "instanceId": "インスタンス ID",
-      "botId": "Bot ID"
+      "botId": "Bot ID",
+      "capability": {
+        "title": "不足している実行能力",
+        "noReason": "現在のショートリストされたツールではこのタスクを完了できません。",
+        "find": "推奨能力を探す",
+        "install": "推奨能力をインストール",
+        "openSkills": "スキルを開く",
+    "recommendation": "推奨結果",
+    "noRecommendation": "具体的な推奨候補はまだ見つかっていません。",
+        "installSuccess": "推奨能力のインストールとランタイムの更新が完了しました。タスクを再実行して確認してください。",
+        "installRequest": "インストール要求",
+        "history": "最近のインストール履歴",
+        "state": "状態",
+    "retry": "元のタスクを再試行",
+    "retrySuccess": "元のタスクを再送信しました。",
+    "statusError": "インストール状態の取得に失敗しました",
+    "retryError": "元のタスクの再試行に失敗しました",
+    "resolveError": "推奨能力の取得に失敗しました",
+    "installError": "推奨能力のインストールに失敗しました"
+  }
     }
   },
   "skillDefinitions": {

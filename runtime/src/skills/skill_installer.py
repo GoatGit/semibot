@@ -24,6 +24,7 @@ from src.constants.config import (
     SKILLS_CLI_AUTO_CONFIRM_INTERVAL,
     SKILLS_CLI_TIMEOUT_SECONDS,
 )
+from src.skills._http_utils import validate_remote_url
 from src.skills.index_manager import SkillsIndexManager, resolve_skill_dir, resolve_skill_md_dir
 from src.skills.base import BaseTool, ToolResult
 from src.skills.package_loader import register_installed_package_tools
@@ -31,6 +32,19 @@ from src.skills.registry import SkillRegistry
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _safe_extract_zip(source: Path, destination: Path) -> None:
+    destination_root = destination.resolve()
+    with zipfile.ZipFile(source, "r") as zf:
+        for member in zf.infolist():
+            member_name = str(member.filename or "").strip()
+            if not member_name:
+                continue
+            target = (destination_root / member_name).resolve()
+            if target != destination_root and destination_root not in target.parents:
+                raise ValueError(f"zip member escapes extraction root: {member_name}")
+        zf.extractall(destination_root)
 
 
 class SkillInstallerTool(BaseTool):
@@ -131,8 +145,11 @@ def install_or_refresh_skill(
     source_kind = "manual"
     if remote:
         parsed = urlparse(remote)
-        if parsed.scheme not in {"http", "https"}:
-            raise ValueError("source_url must start with http:// or https://")
+        if parsed.scheme != "https":
+            raise ValueError("source_url must use https://")
+        allowed, reason = validate_remote_url(remote, allow_localhost=False)
+        if not allowed:
+            raise ValueError(reason or "source_url is blocked")
         download_temp = tempfile.TemporaryDirectory(prefix="semibot_skill_install_")
         temp_dirs.append(download_temp)
         downloaded_zip = Path(download_temp.name) / "skill.zip"
@@ -152,8 +169,7 @@ def install_or_refresh_skill(
             extracted_temp = tempfile.TemporaryDirectory(prefix="semibot_skill_extract_")
             temp_dirs.append(extracted_temp)
             extracted_root = Path(extracted_temp.name)
-            with zipfile.ZipFile(src, "r") as zf:
-                zf.extractall(extracted_root)
+            _safe_extract_zip(src, extracted_root)
             skill_dir = resolve_skill_dir(extracted_root) or resolve_skill_md_dir(extracted_root)
             default_name = src.stem
             if source_kind == "manual":

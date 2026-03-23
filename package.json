@@ -9,7 +9,7 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "dotenv -e .env.local -- turbo dev --env-mode=loose",
+    "dev": "WEB_PORT=\"${WEB_PORT:-3000}\" API_PORT=\"${API_PORT:-3001}\" RUNTIME_PORT=\"${RUNTIME_PORT:-8765}\" SEMIBOT_API_PORT=\"${SEMIBOT_API_PORT:-8765}\" API_INTERNAL_URL=\"${API_INTERNAL_URL:-http://127.0.0.1:${API_PORT:-3001}}\" NEXT_PUBLIC_API_URL=\"${NEXT_PUBLIC_API_URL:-http://127.0.0.1:${API_PORT:-3001}/api/v1}\" SEMIBOT_HOME=\"${SEMIBOT_DEV_HOME:-$HOME/.semibot}\" pnpm exec dotenv -e .env.local -- turbo dev --env-mode=loose",
     "build": "turbo build",
     "test": "turbo test",
     "test:e2e:live:approval": "pnpm --dir tests run test:e2e:live:approval",

@@ -19,7 +19,7 @@ class XlsxGeneratorTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Legacy convenience wrapper for simple XLSX export. Prefer csv_xlsx for richer table operations. "
+            "Legacy convenience wrapper for simple XLSX export. "
             "Accepts context_data as a JSON string and writes an XLSX file returned through generated_files."
         )
 
@@ -318,7 +318,7 @@ class PdfGeneratorTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Legacy convenience wrapper for simple PDF export. Prefer pdf_report for structured report layout control. "
+            "Legacy convenience wrapper for simple PDF export. "
             "Accepts context_data as a JSON string and writes a PDF returned through generated_files."
         )
 

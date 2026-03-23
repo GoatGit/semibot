@@ -49,6 +49,7 @@ from src.orchestrator.nodes_shared import _current_round_skill_id, _serialize_to
 from src.orchestrator.nodes_stateflow import _build_execution_state_for_planner
 from src.orchestrator.execution import ToolCallResult, parse_plan_response
 from src.orchestrator.state import AgentState, ExecutionPlan, PlanStep, ReflectionResult, StepInputRef, StepOutputContract
+from src.orchestrator.context import AgentConfig, RuntimeSessionContext, ToolDefinition
 from src.skills.execution_guard import ExecutionAdvisor
 from src.llm.provider_compat import PlanExecutionStrategy, ActExecutionStrategy
 
@@ -6528,6 +6529,63 @@ def test_build_llm_act_terminal_result_keeps_artifact_text_pure_user_delivery():
     assert terminal_result.result.endswith("Artifacts:\n- report.md")
     assert terminal_result.metadata["artifact_result_text"] == "# 标题\n\n正文内容"
     assert terminal_result.metadata["text_artifact"]["artifact_result_text"] == "# 标题\n\n正文内容"
+
+
+def test_build_llm_act_terminal_result_supports_missing_capability_contract():
+    action = PlanStep(
+        id="step-5",
+        title="需要认证浏览器会话",
+        intent="访问已登录页面并提取内容",
+    )
+
+    terminal_result = _build_llm_act_terminal_result(
+        action=action,
+        payload={
+            "missing_capability": {
+                "intent": "authenticated_browser_session",
+                "reason": "Current shortlisted tools cannot operate an authenticated browser session.",
+                "requiredCapabilities": ["browser", "authenticated_session"],
+                "preferredSources": ["cli", "mcp"],
+            }
+        },
+    )
+
+    assert terminal_result.success is False
+    assert terminal_result.metadata["act_result_type"] == "execution_blocked"
+    assert terminal_result.metadata["act_decision"] == "missing_capability"
+    assert terminal_result.metadata["missing_capability"]["type"] == "missing_capability"
+    assert terminal_result.metadata["missing_capability"]["version"] == "1"
+    assert terminal_result.metadata["missing_capability"]["intent"] == "authenticated_browser_session"
+
+
+def test_build_plan_loop_messages_include_tool_catalog_cards():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_1",
+        agent_id="agent_1",
+        session_id="session_1",
+        agent_config=AgentConfig(id="agent_1", name="Test Agent"),
+        available_tools=[ToolDefinition(name="search", description="Search the web")],
+    )
+
+    messages = _build_plan_loop_messages(
+        state_messages=[{"role": "user", "content": "帮我搜索今天的 AI 新闻"}],
+        original_goal="帮我搜索今天的 AI 新闻",
+        current_round_goal="帮我搜索今天的 AI 新闻",
+        execution_state={},
+        prior_plan_summary={"plan_id": "", "plan_mode": "initial", "selected_skill": None, "round_goal": None},
+        available_execution_capabilities={"web_retrieval": "Search the web for current information"},
+        planning_limits={"remaining_iterations": 10, "max_iterations": 15},
+        runtime_context=runtime_context,
+        memory_context="",
+        failure_reflection="",
+        sub_agents_for_planner=[],
+        agent_system_prompt="",
+        current_date="2026-03-23",
+        current_weekday="Monday",
+        current_timezone="Asia/Shanghai",
+    )
+
+    assert any("Tool Catalog Cards" in str(item.get("content") or "") for item in messages)
 
 
 @pytest.mark.asyncio

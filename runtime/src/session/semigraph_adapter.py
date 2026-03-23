@@ -615,6 +615,7 @@ class SemiGraphAdapter(RuntimeAdapter):
                     "llm_provider": self.llm_provider,
                     "memory_service": self.memory_system,
                     "skill_index": self.start_payload.get("skill_index") if isinstance(self.start_payload.get("skill_index"), list) else [],
+                    "recent_tool_usage": dict(self.start_payload.get("recent_tool_usage") or {}) if isinstance(self.start_payload.get("recent_tool_usage"), dict) else {},
                     "session_working_dir": _session_working_dir(self.session_id),
                 },
                 available_skills=self._build_skill_definitions(),
@@ -1292,6 +1293,7 @@ class SemiGraphAdapter(RuntimeAdapter):
                 "llm_provider": self.llm_provider,
                 "memory_service": self.memory_system,
                 "skill_index": self.start_payload.get("skill_index") if isinstance(self.start_payload.get("skill_index"), list) else [],
+                "recent_tool_usage": dict(self.start_payload.get("recent_tool_usage") or {}) if isinstance(self.start_payload.get("recent_tool_usage"), dict) else {},
                 "session_working_dir": _session_working_dir(self.session_id),
             },
             available_skills=self._build_skill_definitions(),
@@ -1520,12 +1522,22 @@ class SemiGraphAdapter(RuntimeAdapter):
             tool = self.skill_registry.get_tool(tool_name)
             if not tool:
                 continue
+            tool_metadata = self.skill_registry.get_tool_metadata(tool_name)
+            additional = (
+                dict(getattr(tool_metadata, "additional", {}) or {})
+                if tool_metadata is not None
+                else {}
+            )
+            source = str(getattr(tool_metadata, "source", None) or "builtin").strip() or "builtin"
             tools.append(
                 ToolDefinition(
                     name=tool.name,
                     description=tool.description,
                     parameters=tool.parameters,
-                    metadata={"source": "builtin"},
+                    metadata={
+                        "source": source,
+                        **additional,
+                    },
                 )
             )
         return tools

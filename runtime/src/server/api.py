@@ -26,6 +26,17 @@ from src.events.models import Event
 from src.events.runtime_action_executor import RuntimeActionExecutor
 from src.gateway.context_service import GatewayContextService
 from src.gateway.manager import GatewayManager
+from src.orchestrator.missing_capability import (
+    build_missing_capability_query,
+    build_missing_capability_recommendation,
+)
+from src.orchestrator.capability_install_service import (
+    approve_capability_install_request,
+    normalize_missing_capability,
+    resolve_missing_capability_request,
+    retry_capability_install_request_task,
+)
+from src.orchestrator.tool_catalog import build_registry_tool_catalog
 from src.gateway.channels.discord.notifier import SendFn as DiscordSendFn
 from src.gateway.channels.imessage.notifier import SendFn as IMessageSendFn
 from src.services.rule_service import RuleService, RuleServiceError
@@ -90,6 +101,25 @@ class RuleActionRequest(BaseModel):
     action_type: str
     params: dict[str, Any] = Field(default_factory=dict)
     target: str | None = None
+
+
+class CapabilityInstallRequest(BaseModel):
+    missing_capability: dict[str, Any] | None = Field(default=None, alias="missingCapability")
+    registry_name: str | None = Field(default=None, alias="registryName")
+    query: str | None = None
+    task_id: str | None = Field(default=None, alias="taskId")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    task_text: str | None = Field(default=None, alias="taskText")
+    current_shortlist_tool_ids: list[str] | None = Field(default=None, alias="currentShortlistToolIds")
+
+
+class CapabilityApproveRequest(BaseModel):
+    install_request_id: str = Field(alias="installRequestId")
+    approved: bool = True
+
+
+class CapabilityRetryRequest(BaseModel):
+    install_request_id: str = Field(alias="installRequestId")
 
 
 class CreateRuleRequest(BaseModel):
@@ -559,16 +589,20 @@ def create_app(
         registry = app.state.skill_registry
         tool_names = registry.list_tools()
         skill_names = registry.list_skills()
-        # Conceptual split for V2 UI/ops:
-        # xlsx/pdf are exposed as "skills", not configurable builtin tools.
-        skill_like_tools = {"xlsx", "pdf"}
-        tools = [name for name in tool_names if name not in skill_like_tools]
-        skills = sorted(set(skill_names + [name for name in tool_names if name in skill_like_tools]))
         records = app.state.skills_index.list_records()
         return {
-            "tools": tools,
-            "skills": skills,
+            "tools": tool_names,
+            "skills": skill_names,
             "metadata": records,
+        }
+
+    @app.get("/v1/tools/catalog")
+    async def list_tool_catalog() -> dict[str, Any]:
+        registry = app.state.skill_registry
+        entries = build_registry_tool_catalog(registry)
+        return {
+            "items": [entry.to_dict() for entry in entries],
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     @app.get("/v1/config/tools")
@@ -603,6 +637,13 @@ def create_app(
         for key in ("default_model", "default_provider_key", "fallback_model", "fallback_provider_key"):
             if key in payload:
                 patch[key] = str(payload.get(key) or "").strip()
+        model_roles_payload = payload.get("model_roles")
+        if model_roles_payload is None and isinstance(payload.get("modelRoles"), dict):
+            model_roles_payload = payload.get("modelRoles")
+        if model_roles_payload is not None:
+            if not isinstance(model_roles_payload, dict):
+                raise HTTPException(status_code=400, detail="invalid_llm_model_roles")
+            patch["model_roles"] = model_roles_payload
         providers_payload = payload.get("providers")
         if providers_payload is not None:
             if not isinstance(providers_payload, dict):
@@ -988,6 +1029,139 @@ def create_app(
             "skipped": result.get("skipped", []),
             "session_id": _session_id,
             "reindex": result.get("reindex"),
+        }
+
+    @app.post("/v1/capabilities/resolve-missing")
+    async def resolve_missing_capability(req: CapabilityInstallRequest) -> dict[str, Any]:
+        missing_capability = normalize_missing_capability(req.missing_capability)
+        result = await resolve_missing_capability_request(
+            store=gateway_context.store,
+            missing_capability=missing_capability,
+            query=req.query,
+            task_id=req.task_id,
+            session_id=req.session_id,
+            task_text=req.task_text,
+            current_shortlist_tool_ids=req.current_shortlist_tool_ids,
+        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": result.get("code") or "CAPABILITY_CANDIDATE_NOT_FOUND",
+                    "message": result.get("message") or "no install candidate found for missing capability",
+                    "missing_capability": missing_capability.model_dump(),
+                    "query": str(req.query or "").strip() or build_missing_capability_query(missing_capability),
+                },
+            )
+        return result
+
+    @app.post("/v1/capabilities/approve-install")
+    async def approve_missing_capability_install(req: CapabilityApproveRequest) -> dict[str, Any]:
+        result = await approve_capability_install_request(
+            store=gateway_context.store,
+            registry=app.state.skill_registry,
+            request_id=req.install_request_id,
+            approved=bool(req.approved),
+        )
+        if not result.get("ok"):
+            status_code = 404 if result.get("code") == "INSTALL_REQUEST_NOT_FOUND" else 502
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": result.get("code") or "CAPABILITY_INSTALL_FAILED",
+                    "message": result.get("message") or "capability install failed",
+                    "data": result.get("data"),
+                },
+            )
+        return result
+
+    @app.get("/v1/capabilities/install-status/{install_request_id}")
+    async def get_capability_install_status(install_request_id: str) -> dict[str, Any]:
+        request_record = await gateway_context.store.aget_capability_install_request(install_request_id)
+        if not request_record:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "INSTALL_REQUEST_NOT_FOUND",
+                    "message": "install request not found",
+                },
+            )
+        return {"ok": True, "data": request_record}
+
+    @app.get("/v1/capabilities/install-history")
+    async def list_capability_install_history(
+        session_id: str | None = Query(default=None),
+        task_id: str | None = Query(default=None),
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        items = await gateway_context.store.afilter_capability_install_requests(
+            session_id=str(session_id or "").strip() or None,
+            task_id=str(task_id or "").strip() or None,
+            limit=limit,
+        )
+        return {"ok": True, "data": {"items": items}}
+
+    @app.post("/v1/capabilities/retry-task")
+    async def retry_capability_task(req: CapabilityRetryRequest) -> dict[str, Any]:
+        result = await retry_capability_install_request_task(
+            store=gateway_context.store,
+            request_id=req.install_request_id,
+            task_runner=_task_runner,
+        )
+        if not result.get("ok"):
+            code = str(result.get("code") or "")
+            status_code = 404 if code == "INSTALL_REQUEST_NOT_FOUND" else 400 if code == "RETRY_TASK_TEXT_REQUIRED" else 502
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": code or "RETRY_TASK_FAILED",
+                    "message": result.get("message") or "retry task failed",
+                    "data": result.get("data"),
+                },
+            )
+        return result
+
+    @app.post("/v1/capabilities/install")
+    async def install_missing_capability(req: CapabilityInstallRequest) -> dict[str, Any]:
+        resolve_result = await resolve_missing_capability(
+            CapabilityInstallRequest(
+                missingCapability=req.missing_capability,
+                registryName=req.registry_name,
+                query=req.query,
+                taskId=req.task_id,
+                sessionId=req.session_id,
+                taskText=req.task_text,
+                currentShortlistToolIds=req.current_shortlist_tool_ids,
+            )
+        )
+        if not str(req.registry_name or "").strip():
+            return resolve_result
+        install_request_id = str((resolve_result.get("data") or {}).get("install_request_id") or "").strip()
+        if not install_request_id:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "INSTALL_REQUEST_MISSING",
+                    "message": "install request was not created",
+                },
+            )
+        approve_result = await approve_missing_capability_install(
+            CapabilityApproveRequest(installRequestId=install_request_id, approved=True)
+        )
+        approved_data = dict((approve_result.get("data") or {}))
+        resolve_data = dict((resolve_result.get("data") or {}))
+        return {
+            "ok": True,
+            "data": {
+                "resolution_mode": "install",
+                "install_request_id": install_request_id,
+                "registry_name": resolve_data.get("registry_name"),
+                "query": resolve_data.get("query"),
+                "missing_capability": resolve_data.get("missing_capability"),
+                "install_result": ((approved_data.get("metadata") or {}).get("install_result")),
+                "state": approved_data.get("state"),
+                "request": approved_data,
+            },
         }
 
     @app.get("/v1/events")

@@ -10,6 +10,7 @@ from src.orchestrator.context import (
     AgentConfig,
     SkillDefinition,
     ToolDefinition,
+    McpServerDefinition,
     RuntimePolicy,
 )
 from src.orchestrator.state import create_initial_state, AgentState
@@ -102,6 +103,67 @@ def test_runtime_context_capability_methods():
     tool = runtime_context.get_tool_by_name("calculator")
     assert tool is not None
     assert tool.name == "calculator"
+
+
+def test_runtime_context_builds_unified_tool_catalog_with_collision_safe_names():
+    """Builtin and MCP tools with the same actual name should get distinct prompt names."""
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(name="search", description="Builtin search"),
+        ],
+        available_mcp_servers=[
+            McpServerDefinition(
+                id="mcp_1",
+                name="remote_search",
+                endpoint="http://localhost:8080",
+                transport="http",
+                is_connected=True,
+                available_tools=[
+                    {
+                        "name": "search",
+                        "description": "Remote search",
+                        "inputSchema": {"type": "object", "properties": {}},
+                    }
+                ],
+            )
+        ],
+    )
+
+    catalog = runtime_context.get_tool_catalog()
+
+    assert len(catalog) == 2
+    assert {entry.tool_id for entry in catalog} == {"builtin:search", "mcp:mcp_1:search"}
+    assert len({entry.tool_name for entry in catalog}) == 2
+    assert all(entry.actual_tool_name == "search" for entry in catalog)
+
+
+def test_runtime_context_includes_registry_cli_tools_in_catalog():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(
+                name="browser_search",
+                description="Search via local browser harness",
+                parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+                metadata={"source": "opencli", "package_id": "opencli-browser"},
+            )
+        ],
+    )
+
+    catalog = runtime_context.get_tool_catalog()
+
+    assert len(catalog) == 1
+    assert catalog[0].tool_id == "cli:opencli-browser:browser_search"
+    assert catalog[0].source_type == "cli"
+    assert catalog[0].provider_id == "opencli-browser"
+    assert catalog[0].tool_name == "browser_search"
 
 
 def test_create_initial_state_with_context():

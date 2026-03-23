@@ -476,6 +476,10 @@ class UnifiedActionExecutor:
                     params=params,
                     error=f"Approval hook failed: {str(e)}",
                     success=False,
+                    metadata={
+                        "approval_status": "error",
+                        "guard": "approval_hook_failed",
+                    },
                 )
 
         # Route to appropriate executor
@@ -611,6 +615,9 @@ class UnifiedActionExecutor:
             requires_approval=requires_approval,
             is_high_risk=is_high_risk,
             additional={
+                "tool_id": metadata_map.get("tool_id"),
+                "actual_tool_name": metadata_map.get("actual_tool_name") or tool_name,
+                "display_name": metadata_map.get("display_name") or tool_name,
                 "risk_level": risk_level or ("high" if is_high_risk else "low"),
                 "approval_scope": metadata_map.get("approval_scope"),
                 "approval_dedupe_keys": metadata_map.get("approval_dedupe_keys"),
@@ -637,9 +644,17 @@ class UnifiedActionExecutor:
         start_time = time.time()
 
         if capability.capability_type == "skill":
-            result = await self._execute_skill(tool_name, params)
+            result = await self._execute_skill(
+                tool_name,
+                params,
+                actual_tool_name=str(metadata.additional.get("actual_tool_name") or tool_name),
+            )
         elif capability.capability_type == "tool":
-            result = await self._execute_tool(tool_name, params)
+            result = await self._execute_tool(
+                tool_name,
+                params,
+                actual_tool_name=str(metadata.additional.get("actual_tool_name") or tool_name),
+            )
         elif capability.capability_type == "mcp":
             result = await self._execute_mcp(tool_name, params, metadata)
         else:
@@ -671,8 +686,15 @@ class UnifiedActionExecutor:
 
         return result
 
-    async def _execute_skill(self, tool_name: str, params: dict[str, Any]) -> ToolCallResult:
+    async def _execute_skill(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        *,
+        actual_tool_name: str | None = None,
+    ) -> ToolCallResult:
         """Execute a skill."""
+        actual_tool_name = str(actual_tool_name or tool_name or "").strip()
         if not self.skill_registry:
             return ToolCallResult(
                 tool_name=tool_name,
@@ -681,12 +703,12 @@ class UnifiedActionExecutor:
                 success=False,
             )
 
-        logger.debug(f"Executing skill: {tool_name}")
+        logger.debug(f"Executing skill: {actual_tool_name}")
         enriched_params = dict(params)
         enriched_params.setdefault("_runtime_context", self.runtime_context)
 
         try:
-            result = await self.skill_registry.execute(tool_name, enriched_params)
+            result = await self.skill_registry.execute(actual_tool_name, enriched_params)
             return ToolCallResult(
                 tool_name=tool_name,
                 params=params,
@@ -703,10 +725,16 @@ class UnifiedActionExecutor:
                 success=False,
             )
 
-    async def _execute_tool(self, tool_name: str, params: dict[str, Any]) -> ToolCallResult:
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        *,
+        actual_tool_name: str | None = None,
+    ) -> ToolCallResult:
         """Execute a built-in tool."""
         # Built-in tools are also in skill_registry for now
-        return await self._execute_skill(tool_name, params)
+        return await self._execute_skill(tool_name, params, actual_tool_name=actual_tool_name)
 
     async def _execute_mcp(
         self,
@@ -732,14 +760,14 @@ class UnifiedActionExecutor:
             )
 
         logger.debug(
-            f"Executing MCP tool: {tool_name} on server {metadata.mcp_server_name}"
+            f"Executing MCP tool: {metadata.additional.get('actual_tool_name') or tool_name} on server {metadata.mcp_server_name}"
         )
 
         try:
             # Call MCP client
             result = await self.mcp_client.call_tool(
                 server_id=metadata.mcp_server_id,
-                tool_name=tool_name,
+                tool_name=str(metadata.additional.get("actual_tool_name") or tool_name),
                 arguments=params,
             )
 

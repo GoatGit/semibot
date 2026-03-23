@@ -82,6 +82,13 @@ def _json_loads(value: Any, default: Any) -> Any:
     return default
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    existing = {str(row["name"]) for row in rows}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 class RuntimeConfigStore:
     """Persist tools/mcp config in local sqlite."""
 
@@ -245,11 +252,13 @@ class RuntimeConfigStore:
                   default_provider_key TEXT,
                   fallback_model TEXT,
                   fallback_provider_key TEXT,
+                  model_roles_json TEXT NOT NULL DEFAULT '{}',
                   providers_json TEXT NOT NULL DEFAULT '{}',
                   updated_at TEXT NOT NULL
                 );
                 """
             )
+            _ensure_column(conn, "llm_settings", "model_roles_json", "TEXT NOT NULL DEFAULT '{}'")
         db_key = str(self.db_path)
         with self._bootstrap_lock:
             if db_key in self._bootstrapped_paths:
@@ -422,6 +431,7 @@ class RuntimeConfigStore:
                 "default_provider_key": "",
                 "fallback_model": "",
                 "fallback_provider_key": "",
+                "model_roles": {},
                 "providers": {},
                 "updated_at": None,
             }
@@ -430,6 +440,7 @@ class RuntimeConfigStore:
             "default_provider_key": row["default_provider_key"] or "",
             "fallback_model": row["fallback_model"] or "",
             "fallback_provider_key": row["fallback_provider_key"] or "",
+            "model_roles": _json_loads(row["model_roles_json"], {}),
             "providers": _json_loads(row["providers_json"], {}),
             "updated_at": row["updated_at"],
         }
@@ -517,6 +528,7 @@ class RuntimeConfigStore:
             "default_provider_key": str(payload.get("default_provider_key", existing.get("default_provider_key", "")) or "").strip(),
             "fallback_model": str(payload.get("fallback_model", existing.get("fallback_model", "")) or "").strip(),
             "fallback_provider_key": str(payload.get("fallback_provider_key", existing.get("fallback_provider_key", "")) or "").strip(),
+            "model_roles": payload.get("model_roles") if isinstance(payload.get("model_roles"), dict) else existing.get("model_roles", {}),
             "providers": providers,
             "updated_at": now,
         }
@@ -524,13 +536,14 @@ class RuntimeConfigStore:
             conn.execute(
                 """
                 INSERT INTO llm_settings (
-                  id, default_model, default_provider_key, fallback_model, fallback_provider_key, providers_json, updated_at
-                ) VALUES ('default', ?, ?, ?, ?, ?, ?)
+                  id, default_model, default_provider_key, fallback_model, fallback_provider_key, model_roles_json, providers_json, updated_at
+                ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   default_model = excluded.default_model,
                   default_provider_key = excluded.default_provider_key,
                   fallback_model = excluded.fallback_model,
                   fallback_provider_key = excluded.fallback_provider_key,
+                  model_roles_json = excluded.model_roles_json,
                   providers_json = excluded.providers_json,
                   updated_at = excluded.updated_at
                 """,
@@ -539,6 +552,7 @@ class RuntimeConfigStore:
                     item["default_provider_key"],
                     item["fallback_model"],
                     item["fallback_provider_key"],
+                    _json_dumps(item["model_roles"]),
                     _json_dumps(item["providers"]),
                     item["updated_at"],
                 ),

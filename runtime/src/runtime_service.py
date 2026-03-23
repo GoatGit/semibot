@@ -126,6 +126,7 @@ async def run_task_once(
     system_prompt: str | None = None,
     skill_index: list[dict[str, Any]] | None = None,
     model_roles: dict[str, Any] | None = None,
+    recent_tool_usage: dict[str, int] | None = None,
     runtime_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     del approval_scope_id
@@ -150,6 +151,7 @@ async def run_task_once(
             "model_roles": model_roles,
         },
         "skill_index": [row for row in skill_index if isinstance(row, dict)] if isinstance(skill_index, list) else [],
+        "recent_tool_usage": dict(recent_tool_usage or {}),
         "events_db_path": db_path,
         "rules_path": rules_path,
     }

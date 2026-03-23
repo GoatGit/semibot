@@ -52,6 +52,17 @@ const EMPTY_MODEL_ROLES: ModelRoleConfig = {
   textProcessing: {},
 }
 
+function hasExplicitModelRoleConfig(config?: ModelRoleConfig | null): boolean {
+  if (!config) return false
+  return [config.plan, config.act, config.textProcessing].some(
+    (item) => Boolean(item?.model) || item?.temperature !== undefined
+  )
+}
+
+function deriveDefaultAgentModel(defaults: ModelRoleConfig, fallback: string): string {
+  return defaults.act?.model || defaults.plan?.model || defaults.textProcessing?.model || fallback
+}
+
 export default function AgentDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -62,6 +73,8 @@ export default function AgentDetailPage() {
 
   const [values, setValues] = useState<AgentFormValues>(EMPTY_VALUES)
   const [modelRoles, setModelRoles] = useState<ModelRoleConfig>(EMPTY_MODEL_ROLES)
+  const [defaultModelRoles, setDefaultModelRoles] = useState<ModelRoleConfig>(EMPTY_MODEL_ROLES)
+  const [modelRolesDirty, setModelRolesDirty] = useState(false)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [selectedMcpServerIds, setSelectedMcpServerIds] = useState<string[]>([])
   const [studioInputs, setStudioInputs] = useState<{ label: string; description: string }[]>([])
@@ -113,16 +126,44 @@ export default function AgentDetailPage() {
     void refetchModels()
   }, [models.length, modelsLoading, refetchModels])
 
+  useEffect(() => {
+    if (!isNew) return
+    let cancelled = false
+    const loadDefaults = async () => {
+      try {
+        const response = await apiClient.get<ApiResponse<{ modelRoles?: ModelRoleConfig }>>('/llm-providers/config')
+        if (!response.success || cancelled) return
+        const defaults: ModelRoleConfig = {
+          plan: response.data?.modelRoles?.plan ?? {},
+          act: response.data?.modelRoles?.act ?? {},
+          textProcessing: response.data?.modelRoles?.textProcessing ?? {},
+        }
+        setDefaultModelRoles(defaults)
+        setModelRoles((prev) => (hasExplicitModelRoleConfig(prev) ? prev : defaults))
+        setValues((prev) => ({
+          ...prev,
+          model: prev.model || deriveDefaultAgentModel(defaults, models[0]?.modelId || ''),
+        }))
+      } catch {
+        // ignore config bootstrap failure and keep existing local defaults
+      }
+    }
+    void loadDefaults()
+    return () => {
+      cancelled = true
+    }
+  }, [isNew, models])
+
   // 新建时：等 models 加载完后设置默认模型
   useEffect(() => {
     if (isNew && models.length > 0) {
       setValues((prev) => ({
         ...prev,
-        model: prev.model || models[0]?.modelId || '',
+        model: prev.model || deriveDefaultAgentModel(defaultModelRoles, models[0]?.modelId || ''),
       }))
       setIsLoading(false)
     }
-  }, [isNew, models])
+  }, [defaultModelRoles, isNew, models])
 
   // 编辑时：只在 agentId 变化时加载一次，不依赖 models
   useEffect(() => {
@@ -153,6 +194,7 @@ export default function AgentDetailPage() {
           act: agent.config?.modelRoles?.act ?? {},
           textProcessing: agent.config?.modelRoles?.textProcessing ?? {},
         })
+        setModelRolesDirty(false)
         setSelectedSkills(agent.skills || [])
         setSelectedMcpServerIds(agent.mcpServerIds || [])
         setStudioInputs(
@@ -213,11 +255,13 @@ export default function AgentDetailPage() {
           model: values.model,
           temperature: values.temperature,
           maxTokens: values.maxTokens,
-          modelRoles: {
-            plan: modelRoles.plan,
-            act: modelRoles.act,
-            textProcessing: modelRoles.textProcessing,
-          },
+          modelRoles: modelRolesDirty
+            ? {
+                plan: modelRoles.plan,
+                act: modelRoles.act,
+                textProcessing: modelRoles.textProcessing,
+              }
+            : undefined,
           studioSchema: studioInputs.length > 0
             ? { inputs: studioInputs.filter((h) => h.label.trim()).map((h) => ({ label: h.label.trim(), description: h.description.trim() || undefined })) }
             : undefined,
@@ -264,6 +308,7 @@ export default function AgentDetailPage() {
   }
 
   const handleRoleChange = (role: keyof ModelRoleConfig, patch: NodeModelConfig) => {
+    setModelRolesDirty(true)
     setModelRoles((prev: ModelRoleConfig) => ({ ...prev, [role]: patch }))
   }
 

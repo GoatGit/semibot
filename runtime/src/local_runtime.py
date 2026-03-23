@@ -675,8 +675,6 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
             "file_io",
             "semi_browser",
             "http_client",
-            "csv_xlsx",
-            "sql_query_readonly",
             "skill_installer",
         }:
             risk_level = "high"
@@ -689,8 +687,6 @@ def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolD
                 "file_io",
                 "semi_browser",
                 "http_client",
-                "csv_xlsx",
-                "sql_query_readonly",
                 "skill_installer",
             },
         )
@@ -871,6 +867,7 @@ async def run_task_once(
     fallback_provider_key: str | None = None,
     system_prompt: str | None = None,
     skill_index: list[dict[str, Any]] | None = None,
+    recent_tool_usage: dict[str, int] | None = None,
     runtime_event_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run one user task locally and return execution summary."""
@@ -1031,6 +1028,7 @@ async def run_task_once(
             "skill_registry": skill_registry,
             "skill_index": resolved_skill_index,
             "llm_provider": llm_provider,
+            "recent_tool_usage": dict(recent_tool_usage or {}),
             "session_working_dir": str(_session_working_dir(resolved_session_id)),
         },
         available_skills=_build_skill_definitions(skill_registry, resolved_skill_index),
