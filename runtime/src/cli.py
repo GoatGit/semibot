@@ -74,6 +74,7 @@ from src.events.models import Event, utc_now
 from src.events.rule_evaluator import RuleEvaluator
 from src.events.rule_loader import load_rules, rules_to_json, set_rule_active
 from src.server.api import create_app
+from src.server.cli_import_service import approve_cli_import_request, create_cli_import_request
 from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
 from src.utils.logging import setup_logging
@@ -3582,6 +3583,80 @@ def cmd_tools_run(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS if result.success else EXIT_EXTERNAL_ERROR
 
 
+def cmd_tools_import_cli(args: argparse.Namespace) -> int:
+    config_store = RuntimeConfigStore(db_path=str(getattr(args, "db_path", _default_db_path())))
+    os.environ["SEMIBOT_EVENTS_DB_PATH"] = str(getattr(args, "db_path", _default_db_path()))
+    registry = create_default_registry()
+    try:
+        item = asyncio.run(
+            create_cli_import_request(
+                config_store=config_store,
+                registry=registry,
+                command=[str(part) for part in getattr(args, "command", [])],
+                shape="group" if str(getattr(args, "shape", "direct")) == "group" else "direct",
+                source="cli",
+                requested_by=os.getenv("USER") or "cli",
+                display_name=getattr(args, "display_name", None),
+                description=getattr(args, "description", None),
+                tool_name=getattr(args, "tool_name", None),
+                reason=getattr(args, "reason", None),
+            )
+        )
+    except ValueError as exc:
+        _print_json(
+            _error_payload(
+                resource="tools",
+                action="import-cli",
+                code="IMPORT_INVALID",
+                message=str(exc),
+            )
+        )
+        return EXIT_ARGS_ERROR
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "tools",
+            "action": "import-cli",
+            "ok": True,
+            "request": item,
+        }
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_tools_import_cli_decision(args: argparse.Namespace) -> int:
+    config_store = RuntimeConfigStore(db_path=str(getattr(args, "db_path", _default_db_path())))
+    os.environ["SEMIBOT_EVENTS_DB_PATH"] = str(getattr(args, "db_path", _default_db_path()))
+    registry = create_default_registry()
+    item = approve_cli_import_request(
+        config_store=config_store,
+        registry=registry,
+        request_id=args.request_id,
+        approved=bool(args.approved),
+        reason=getattr(args, "reason", None),
+    )
+    if not item:
+        _print_json(
+            _error_payload(
+                resource="tools",
+                action="import-cli-decision",
+                code="REQUEST_NOT_FOUND",
+                message=f"cli import request not found: {args.request_id}",
+            )
+        )
+        return EXIT_NOT_FOUND
+    _print_json(
+        {
+            "version": CLI_VERSION,
+            "resource": "tools",
+            "action": "import-cli-decision",
+            "ok": True,
+            "request": item,
+        }
+    )
+    return EXIT_SUCCESS
+
+
 def _read_mcp_config(path: str) -> tuple[dict[str, Any] | None, str | None]:
     config_path = Path(path).expanduser()
     if not config_path.exists():
@@ -5689,6 +5764,25 @@ def build_parser() -> argparse.ArgumentParser:
     tools_run_parser.add_argument("tool_name", help="Tool name")
     tools_run_parser.add_argument("--args", default="{}", help="Tool args as JSON")
     tools_run_parser.set_defaults(func=cmd_tools_run)
+    tools_import_cli_parser = tools_subparsers.add_parser("import-cli", help="Import one CLI as a tool")
+    tools_import_cli_parser.add_argument("--shape", choices=["direct", "group"], required=True, help="CLI tool shape")
+    tools_import_cli_parser.add_argument("--tool-name", default=None, help="Override generated tool name")
+    tools_import_cli_parser.add_argument("--display-name", default=None, help="Display name override")
+    tools_import_cli_parser.add_argument("--description", default=None, help="Description override")
+    tools_import_cli_parser.add_argument("--reason", default=None, help="Import reason")
+    tools_import_cli_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
+    tools_import_cli_parser.add_argument("command", nargs="+", help="Command prefix to import")
+    tools_import_cli_parser.set_defaults(func=cmd_tools_import_cli)
+    tools_import_cli_approve_parser = tools_subparsers.add_parser("approve-import", help="Approve one pending CLI import")
+    tools_import_cli_approve_parser.add_argument("request_id", help="CLI import request ID")
+    tools_import_cli_approve_parser.add_argument("--reason", default=None, help="Approval reason")
+    tools_import_cli_approve_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
+    tools_import_cli_approve_parser.set_defaults(func=cmd_tools_import_cli_decision, approved=True)
+    tools_import_cli_reject_parser = tools_subparsers.add_parser("reject-import", help="Reject one pending CLI import")
+    tools_import_cli_reject_parser.add_argument("request_id", help="CLI import request ID")
+    tools_import_cli_reject_parser.add_argument("--reason", default=None, help="Rejection reason")
+    tools_import_cli_reject_parser.add_argument("--db-path", default=_default_db_path(), help="SQLite DB path")
+    tools_import_cli_reject_parser.set_defaults(func=cmd_tools_import_cli_decision, approved=False)
 
     mcp_parser = subparsers.add_parser("mcp", help="MCP operations")
     mcp_subparsers = mcp_parser.add_subparsers(dest="mcp_command", required=True)

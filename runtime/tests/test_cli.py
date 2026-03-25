@@ -1929,3 +1929,28 @@ def test_require_runtime_server_returns_error_when_unhealthy(monkeypatch) -> Non
         "runtime server unavailable at http://127.0.0.1:8765. "
         "please start it first with `semibot serve start`."
     )
+
+
+def test_tools_import_cli_command(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("src.cli.create_default_registry", lambda: object())
+    monkeypatch.setattr("src.cli.RuntimeConfigStore", lambda *args, **kwargs: object())
+
+    async def _fake_create_cli_import_request(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["command"] == ["opencli", "xiaohongshu"]
+        assert kwargs["shape"] == "group"
+        return {
+            "id": "cimp_1",
+            "status": "registered",
+            "tool_name": "opencli_xiaohongshu",
+        }
+
+    monkeypatch.setattr("src.cli.create_cli_import_request", _fake_create_cli_import_request)
+
+    parser = build_parser()
+    args = parser.parse_args(["tools", "import-cli", "--shape", "group", "opencli", "xiaohongshu"])
+    exit_code = args.func(args)
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "import-cli"
+    assert payload["request"]["tool_name"] == "opencli_xiaohongshu"

@@ -6558,6 +6558,31 @@ def test_build_llm_act_terminal_result_supports_missing_capability_contract():
     assert terminal_result.metadata["missing_capability"]["intent"] == "authenticated_browser_session"
 
 
+def test_build_llm_act_terminal_result_supports_proposed_cli_import_contract():
+    action = PlanStep(
+        id="step-6",
+        title="建议导入小红书 CLI",
+        intent="请求导入新的 CLI 工具",
+    )
+
+    terminal_result = _build_llm_act_terminal_result(
+        action=action,
+        payload={
+            "proposed_cli_import": {
+                "shape": "group",
+                "command": ["opencli", "xiaohongshu"],
+                "toolName": "opencli_xiaohongshu",
+                "reason": "Need Xiaohongshu browser actions",
+            }
+        },
+    )
+
+    assert terminal_result.metadata["proposed_cli_import"]["type"] == "proposed_cli_import"
+    assert terminal_result.metadata["proposed_cli_import"]["shape"] == "group"
+    assert terminal_result.metadata["proposed_cli_import"]["command"] == ["opencli", "xiaohongshu"]
+    assert terminal_result.metadata["proposed_cli_import"]["tool_name"] == "opencli_xiaohongshu"
+
+
 def test_build_plan_loop_messages_include_tool_catalog_cards():
     runtime_context = RuntimeSessionContext(
         user_id="user_1",

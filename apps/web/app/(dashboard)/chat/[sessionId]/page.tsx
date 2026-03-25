@@ -350,6 +350,7 @@ export default function ChatSessionPage() {
   const isLoadingApprovalsRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const activeAssistantRequestIdRef = useRef<string | null>(null)
   const latestAgent2UIMessagesRef = useRef<Agent2UIMessage[]>([])
   const historyCacheKey = `semibot:chat-history:${sessionId}`
@@ -818,9 +819,17 @@ export default function ChatSessionPage() {
     }
   }, [actingApprovalId, bulkApprovalAction, loadPendingApprovals, pendingApprovals, t])
 
+  // textarea 自适应高度
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [inputValue])
+
   // 键盘事件处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       handleSendMessage()
     }
@@ -1192,6 +1201,7 @@ export default function ChatSessionPage() {
               </button>
 
               <textarea
+                ref={textareaRef}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -1206,8 +1216,7 @@ export default function ChatSessionPage() {
                   'disabled:opacity-50'
                 )}
                 style={{
-                  height: 'auto',
-                  overflowY: inputValue.split('\n').length > 5 ? 'auto' : 'hidden',
+                  overflowY: textareaRef.current && textareaRef.current.scrollHeight > 200 ? 'auto' : 'hidden',
                 }}
               />
 

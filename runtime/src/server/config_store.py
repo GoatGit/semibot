@@ -136,6 +136,29 @@ class RuntimeConfigStore:
                 CREATE INDEX IF NOT EXISTS idx_tool_configs_name ON tool_configs(name);
                 CREATE INDEX IF NOT EXISTS idx_tool_configs_active ON tool_configs(is_active);
 
+                CREATE TABLE IF NOT EXISTS cli_import_requests (
+                  id TEXT PRIMARY KEY,
+                  source TEXT NOT NULL,
+                  shape TEXT NOT NULL,
+                  command_json TEXT NOT NULL DEFAULT '[]',
+                  requested_by TEXT,
+                  tool_name TEXT NOT NULL,
+                  proposed_tool_id TEXT NOT NULL,
+                  display_name TEXT,
+                  description TEXT,
+                  status TEXT NOT NULL,
+                  risk_level TEXT NOT NULL DEFAULT 'medium',
+                  reason TEXT,
+                  spec_json TEXT NOT NULL DEFAULT '{}',
+                  error_text TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  resolved_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_cli_import_requests_status ON cli_import_requests(status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_cli_import_requests_tool_name ON cli_import_requests(tool_name);
+
                 CREATE TABLE IF NOT EXISTS mcp_servers (
                   id TEXT PRIMARY KEY,
                   org_id TEXT,
@@ -422,6 +445,27 @@ class RuntimeConfigStore:
             "created_by": row["created_by"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+        }
+
+    def _cli_import_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "source": row["source"],
+            "shape": row["shape"],
+            "command": _json_loads(row["command_json"], []),
+            "requested_by": row["requested_by"],
+            "tool_name": row["tool_name"],
+            "proposed_tool_id": row["proposed_tool_id"],
+            "display_name": row["display_name"],
+            "description": row["description"],
+            "status": row["status"],
+            "risk_level": row["risk_level"],
+            "reason": row["reason"],
+            "spec": _json_loads(row["spec_json"], {}),
+            "error": row["error_text"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "resolved_at": row["resolved_at"],
         }
 
     def _llm_row_to_dict(self, row: sqlite3.Row | None) -> dict[str, Any]:
@@ -770,6 +814,149 @@ class RuntimeConfigStore:
 
     async def asoft_delete_tool(self, tool_id: str) -> bool:
         return await self._run_async(self.soft_delete_tool, tool_id, op_name="soft_delete_tool")
+
+    def list_active_imported_cli_tools(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM tool_configs
+                WHERE deleted_at IS NULL AND is_active = 1 AND type = 'cli'
+                ORDER BY name ASC
+                """
+            ).fetchall()
+        return [self._tool_row_to_dict(row) for row in rows]
+
+    async def alist_active_imported_cli_tools(self) -> list[dict[str, Any]]:
+        return await self._run_async(self.list_active_imported_cli_tools, op_name="list_active_imported_cli_tools")
+
+    def list_cli_import_requests(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["1=1"]
+        args: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            args.append(status)
+        if source:
+            clauses.append("source = ?")
+            args.append(source)
+        where_clause = " AND ".join(clauses)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM cli_import_requests
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*args, max(1, int(limit))),
+            ).fetchall()
+        return [self._cli_import_row_to_dict(row) for row in rows]
+
+    async def alist_cli_import_requests(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return await self._run_async(
+            self.list_cli_import_requests,
+            status=status,
+            source=source,
+            limit=limit,
+            op_name="list_cli_import_requests",
+        )
+
+    def get_cli_import_request(self, request_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cli_import_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+        return self._cli_import_row_to_dict(row) if row else None
+
+    async def aget_cli_import_request(self, request_id: str) -> dict[str, Any] | None:
+        return await self._run_async(self.get_cli_import_request, request_id, op_name="get_cli_import_request")
+
+    def create_cli_import_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(payload.get("id") or f"cimp_{uuid4().hex[:12]}")
+        now = _now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO cli_import_requests (
+                  id, source, shape, command_json, requested_by, tool_name, proposed_tool_id,
+                  display_name, description, status, risk_level, reason, spec_json, error_text,
+                  created_at, updated_at, resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request_id,
+                    str(payload.get("source") or "cli"),
+                    str(payload.get("shape") or "direct"),
+                    _json_dumps_list(payload.get("command") or []),
+                    payload.get("requested_by"),
+                    str(payload.get("tool_name") or "").strip(),
+                    str(payload.get("proposed_tool_id") or "").strip(),
+                    payload.get("display_name"),
+                    payload.get("description"),
+                    str(payload.get("status") or "discovered"),
+                    str(payload.get("risk_level") or "medium"),
+                    payload.get("reason"),
+                    _json_dumps(payload.get("spec") or {}),
+                    payload.get("error"),
+                    now,
+                    now,
+                    payload.get("resolved_at"),
+                ),
+            )
+        return self.get_cli_import_request(request_id) or {}
+
+    async def acreate_cli_import_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._run_async(self.create_cli_import_request, payload, op_name="create_cli_import_request")
+
+    def update_cli_import_request(self, request_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        existing = self.get_cli_import_request(request_id)
+        if not existing:
+            return None
+        now = _now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE cli_import_requests
+                SET display_name = ?,
+                    description = ?,
+                    status = ?,
+                    risk_level = ?,
+                    reason = ?,
+                    spec_json = ?,
+                    error_text = ?,
+                    updated_at = ?,
+                    resolved_at = ?
+                WHERE id = ?
+                """,
+                (
+                    patch.get("display_name", existing.get("display_name")),
+                    patch.get("description", existing.get("description")),
+                    patch.get("status", existing.get("status")),
+                    patch.get("risk_level", existing.get("risk_level")),
+                    patch.get("reason", existing.get("reason")),
+                    _json_dumps(patch.get("spec", existing.get("spec") or {})),
+                    patch.get("error", existing.get("error")),
+                    now,
+                    patch.get("resolved_at", existing.get("resolved_at")),
+                    request_id,
+                ),
+            )
+        return self.get_cli_import_request(request_id)
+
+    async def aupdate_cli_import_request(self, request_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        return await self._run_async(self.update_cli_import_request, request_id, patch, op_name="update_cli_import_request")
 
     def _mcp_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         return {

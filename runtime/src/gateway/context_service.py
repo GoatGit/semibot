@@ -20,7 +20,9 @@ from uuid import uuid4
 from src.events.event_store import EventStore
 from src.gateway.policies.addressing import AddressingDecision, decide_addressing
 from src.gateway.store.gateway_store import GatewayStore
+from src.server.cli_import_service import create_cli_import_request
 from src.server.config_store import RuntimeConfigStore
+from src.skills.bootstrap import create_default_registry
 from src.constants.config import (
     GATEWAY_APPROVAL_LIST_LIMIT,
     GATEWAY_APPROVAL_POLL_INTERVAL_SECONDS,
@@ -425,6 +427,26 @@ class GatewayContextService:
         return None
 
     @staticmethod
+    def _extract_proposed_cli_import(runtime_result: dict[str, Any]) -> dict[str, Any] | None:
+        tool_results = runtime_result.get("tool_results")
+        if not isinstance(tool_results, list):
+            return None
+        for item in tool_results:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            proposed = metadata.get("proposed_cli_import")
+            if not isinstance(proposed, dict):
+                continue
+            command = proposed.get("command")
+            shape = str(proposed.get("shape") or "").strip().lower()
+            if shape in {"direct", "group"} and isinstance(command, list) and any(str(part or "").strip() for part in command):
+                return dict(proposed)
+        return None
+
+    @staticmethod
     def _append_approval_hints(final_response: str, approval_ids: list[str]) -> str:
         if not approval_ids:
             return final_response
@@ -439,6 +461,21 @@ class GatewayContextService:
         if content:
             return f"{final_response}{hint}"
         return f"操作需要人工审批。{hint}"
+
+    @staticmethod
+    def _append_cli_import_hint(final_response: str, request_id: str) -> str:
+        request_id = str(request_id or "").strip()
+        if not request_id:
+            return final_response
+        content = final_response.strip()
+        if request_id in content:
+            return final_response
+        hint = (
+            f"\n\n系统已生成 CLI 导入审批请求：{request_id}。"
+            "\n请在工具中心批准后重试，或使用 `semibot tools approve-import "
+            f"{request_id}` 通过该请求。"
+        )
+        return f"{final_response}{hint}" if content else f"需要批准新的 CLI 工具导入。{hint}"
 
     async def _pending_approval_ids_for_session(self, session_id: str) -> list[str]:
         approvals = await asyncio.to_thread(self.event_store.list_approvals, status="pending", limit=GATEWAY_APPROVAL_LIST_LIMIT)
@@ -780,6 +817,7 @@ class GatewayContextService:
                 generated_files = self._extract_generated_files(runtime_result)
                 approval_ids = self._extract_pending_approval_ids(runtime_result)
                 missing_capability = self._extract_missing_capability(runtime_result)
+                proposed_cli_import = self._extract_proposed_cli_import(runtime_result)
                 tool_usage_events = self._extract_tool_usage_events(runtime_result, task_run_id=run["id"])
                 for event in tool_usage_events:
                     await self.store.acreate_tool_usage_event(
@@ -793,6 +831,25 @@ class GatewayContextService:
                         metadata=event.get("metadata") if isinstance(event.get("metadata"), dict) else None,
                     )
                 final_response = self._append_approval_hints(final_response, approval_ids)
+                cli_import_request = None
+                if proposed_cli_import:
+                    try:
+                        cli_registry = create_default_registry()
+                        cli_import_request = await create_cli_import_request(
+                            config_store=self.config_store,
+                            registry=cli_registry,
+                            command=[str(item) for item in (proposed_cli_import.get("command") or []) if str(item or "").strip()],
+                            shape="group" if str(proposed_cli_import.get("shape") or "") == "group" else "direct",
+                            source="channel_auto",
+                            requested_by=provider,
+                            display_name=str(proposed_cli_import.get("display_name") or proposed_cli_import.get("displayName") or "").strip() or None,
+                            description=str(proposed_cli_import.get("description") or "").strip() or None,
+                            tool_name=str(proposed_cli_import.get("tool_name") or proposed_cli_import.get("toolName") or "").strip() or None,
+                            reason=str(proposed_cli_import.get("reason") or "").strip() or None,
+                        )
+                        final_response = self._append_cli_import_hint(final_response, str(cli_import_request.get("id") or ""))
+                    except Exception as exc:
+                        logger.warning("gateway_cli_import_request_failed", extra={"error": str(exc), "provider": provider})
                 await self.store.aupdate_task_run(
                     run["id"],
                     status="done",
@@ -801,6 +858,8 @@ class GatewayContextService:
                         "runtime_result": runtime_result,
                         "generated_files": generated_files,
                         "missing_capability": missing_capability,
+                        "proposed_cli_import": proposed_cli_import,
+                        "cli_import_request": cli_import_request,
                     },
                 )
                 await self.store.aupdate_active_runtime_session_status(
@@ -819,6 +878,8 @@ class GatewayContextService:
                         "minimal_writeback": True,
                         "generated_files": generated_files,
                         "missing_capability": missing_capability,
+                        "proposed_cli_import": proposed_cli_import,
+                        "cli_import_request": cli_import_request,
                     },
                 )
                 if on_result:
@@ -828,6 +889,7 @@ class GatewayContextService:
                         "task_run_id": run["id"],
                         "runtime_session_id": runtime_session_id,
                         "files": generated_files,
+                        "cli_import_request": cli_import_request,
                     })
             except TimeoutError:
                 msg = f"任务执行超时（>{self.task_timeout_seconds}s），请重试或缩小任务范围。"

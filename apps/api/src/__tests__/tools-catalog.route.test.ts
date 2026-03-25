@@ -71,4 +71,59 @@ describe('tools catalog route', () => {
       await server.close()
     }
   })
+
+  it('proxies cli import creation and decision routes', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'cimp_1',
+            status: 'awaiting_approval',
+            tool_name: 'opencli_xhs',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'cimp_1',
+            status: 'registered',
+            tool_name: 'opencli_xhs',
+          },
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const server = await startTestServer()
+    try {
+      const createResp = await realFetch(`${server.baseUrl}/import-cli`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: ['opencli', 'xiaohongshu'],
+          shape: 'group',
+          source: 'web',
+        }),
+      })
+      expect(createResp.status).toBe(200)
+      const createPayload = (await createResp.json()) as { success: boolean; data?: { status?: string } }
+      expect(createPayload.success).toBe(true)
+      expect(createPayload.data?.status).toBe('awaiting_approval')
+
+      const decisionResp = await realFetch(`${server.baseUrl}/import-cli/cimp_1/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      })
+      expect(decisionResp.status).toBe(200)
+      const decisionPayload = (await decisionResp.json()) as { success: boolean; data?: { status?: string } }
+      expect(decisionPayload.success).toBe(true)
+      expect(decisionPayload.data?.status).toBe('registered')
+    } finally {
+      await server.close()
+    }
+  })
 })

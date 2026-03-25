@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { authenticate, requirePermission, type AuthRequest } from '../../middleware/auth'
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
+import { runtimeRequest } from '../../lib/runtime-client'
 import * as toolService from '../../services/tool.service'
 
 const router: Router = Router()
@@ -78,6 +79,22 @@ export const listToolsQuerySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((val) => val !== 'false'),
+})
+
+export const importCliSchema = z.object({
+  command: z.array(z.string().min(1)).min(1),
+  shape: z.enum(['direct', 'group']),
+  source: z.enum(['cli', 'web', 'channel_auto']).default('web').optional(),
+  requestedBy: z.string().min(1).max(100).optional(),
+  displayName: z.string().min(1).max(200).optional(),
+  description: z.string().min(1).max(1000).optional(),
+  toolName: z.string().min(1).max(200).optional(),
+  reason: z.string().min(1).max(1000).optional(),
+})
+
+export const importCliDecisionSchema = z.object({
+  approved: z.boolean(),
+  reason: z.string().max(1000).optional(),
 })
 
 // ═══════════════════════════════════════════════════════════════
@@ -161,6 +178,72 @@ router.get(
         message: errors.join('; ') || 'runtime unreachable',
       },
     })
+  })
+)
+
+router.get(
+  '/import-cli',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('tools:read'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const payload = await runtimeRequest<{ items?: unknown[] }>('/v1/tools/import-cli', {
+      query: {
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+        source: typeof req.query.source === 'string' ? req.query.source : undefined,
+        limit: typeof req.query.limit === 'string' ? req.query.limit : undefined,
+      },
+      timeoutMs: 5000,
+    })
+    res.json({ success: true, data: Array.isArray(payload.items) ? payload.items : [] })
+  })
+)
+
+router.post(
+  '/import-cli',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('tools:write'),
+  validate(importCliSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const payload = await runtimeRequest<{ data?: unknown }>('/v1/tools/import-cli', {
+      method: 'POST',
+      body: req.body,
+      timeoutMs: 15000,
+    })
+    res.json({ success: true, data: payload.data })
+  })
+)
+
+router.get(
+  '/import-cli/:id',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('tools:read'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const payload = await runtimeRequest<{ data?: unknown }>(`/v1/tools/import-cli/${encodeURIComponent(req.params.id)}`, {
+      timeoutMs: 5000,
+    })
+    res.json({ success: true, data: payload.data })
+  })
+)
+
+router.post(
+  '/import-cli/:id/decision',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('tools:write'),
+  validate(importCliDecisionSchema, 'body'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const payload = await runtimeRequest<{ data?: unknown }>(
+      `/v1/tools/import-cli/${encodeURIComponent(req.params.id)}/decision`,
+      {
+        method: 'POST',
+        body: req.body,
+        timeoutMs: 10000,
+      }
+    )
+    res.json({ success: true, data: payload.data })
   })
 )
 

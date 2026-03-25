@@ -49,6 +49,20 @@ interface McpServerItem {
   resources?: unknown[]
 }
 
+interface CliImportRequestItem {
+  id: string
+  source: 'cli' | 'web' | 'channel_auto'
+  shape: 'direct' | 'group'
+  command: string[]
+  tool_name: string
+  display_name?: string | null
+  description?: string | null
+  status: string
+  reason?: string | null
+  error?: string | null
+  created_at?: string
+}
+
 export default function ToolsPage() {
   const { t } = useLocale()
   const router = useRouter()
@@ -57,8 +71,13 @@ export default function ToolsPage() {
   const [activeTab, setActiveTab] = useState<ToolTab>('builtin')
   const [catalogItems, setCatalogItems] = useState<ToolCatalogItem[]>([])
   const [mcpServers, setMcpServers] = useState<McpServerItem[]>([])
+  const [cliImports, setCliImports] = useState<CliImportRequestItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isImportingCli, setIsImportingCli] = useState(false)
+  const [cliImportError, setCliImportError] = useState<string | null>(null)
+  const [cliCommand, setCliCommand] = useState('')
+  const [cliShape, setCliShape] = useState<'direct' | 'group'>('direct')
 
   const tSafe = useCallback(
     (key: string, fallback: string, params?: Record<string, string | number>) => {
@@ -72,9 +91,10 @@ export default function ToolsPage() {
     setIsLoading(true)
     setError(null)
     try {
-      const [catalogRes, mcpRes] = await Promise.allSettled([
+      const [catalogRes, mcpRes, cliImportsRes] = await Promise.allSettled([
         apiClient.get<ApiResponse<ToolCatalogResponse>>('/tools/catalog'),
         apiClient.get<ApiResponse<McpServerItem[]>>('/mcp', { params: { page: 1, limit: 100 } }),
+        apiClient.get<ApiResponse<CliImportRequestItem[]>>('/tools/import-cli'),
       ])
 
       const nextCatalog =
@@ -85,13 +105,19 @@ export default function ToolsPage() {
         mcpRes.status === 'fulfilled' && mcpRes.value.success
           ? mcpRes.value.data || []
           : []
+      const nextCliImports =
+        cliImportsRes.status === 'fulfilled' && cliImportsRes.value.success
+          ? cliImportsRes.value.data || []
+          : []
 
       setCatalogItems(nextCatalog)
       setMcpServers(nextMcpServers)
+      setCliImports(nextCliImports)
 
       if (
         (catalogRes.status === 'rejected' || !catalogRes.value.success) &&
-        (mcpRes.status === 'rejected' || !mcpRes.value.success)
+        (mcpRes.status === 'rejected' || !mcpRes.value.success) &&
+        (cliImportsRes.status === 'rejected' || !cliImportsRes.value.success)
       ) {
         setError(tSafe('toolsCenter.errors.load', 'Failed to load tools center'))
       }
@@ -236,6 +262,47 @@ export default function ToolsPage() {
     )
   }
 
+  const submitCliImport = useCallback(async () => {
+    const command = cliCommand
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (command.length === 0) {
+      setCliImportError(tSafe('toolsCenter.cli.import.empty', '请输入要导入的 CLI 命令前缀'))
+      return
+    }
+    setIsImportingCli(true)
+    setCliImportError(null)
+    try {
+      await apiClient.post<ApiResponse<CliImportRequestItem>>('/tools/import-cli', {
+        command,
+        shape: cliShape,
+        source: 'web',
+      })
+      setCliCommand('')
+      await loadData()
+    } catch (err) {
+      setCliImportError(err instanceof Error ? err.message : tSafe('toolsCenter.cli.import.failed', 'CLI 导入失败'))
+    } finally {
+      setIsImportingCli(false)
+    }
+  }, [cliCommand, cliShape, loadData, tSafe])
+
+  const resolveCliImport = useCallback(
+    async (requestId: string, approved: boolean) => {
+      try {
+        setCliImportError(null)
+        await apiClient.post<ApiResponse<CliImportRequestItem>>(`/tools/import-cli/${requestId}/decision`, {
+          approved,
+        })
+        await loadData()
+      } catch (err) {
+        setCliImportError(err instanceof Error ? err.message : tSafe('toolsCenter.cli.import.failed', 'CLI 导入失败'))
+      }
+    },
+    [loadData, tSafe]
+  )
+
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
@@ -349,11 +416,93 @@ export default function ToolsPage() {
                 </Button>
               </Link>
             </div>
+            <Card className="border-border-default">
+              <CardContent className="p-5 space-y-4">
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">
+                    {tSafe('toolsCenter.cli.import.title', '导入 CLI 工具')}
+                  </p>
+                  <p className="mt-1 text-sm text-text-secondary">
+                    {tSafe('toolsCenter.cli.import.description', '输入一个终端可用的命令前缀，按 direct 或 group 导入。')}
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-[1fr_160px_auto]">
+                  <input
+                    value={cliCommand}
+                    onChange={(event) => setCliCommand(event.target.value)}
+                    placeholder="opencli xiaohongshu"
+                    className="h-10 rounded-md border border-border-default bg-bg-surface px-3 text-sm text-text-primary outline-none"
+                  />
+                  <select
+                    value={cliShape}
+                    onChange={(event) => setCliShape(event.target.value === 'group' ? 'group' : 'direct')}
+                    className="h-10 rounded-md border border-border-default bg-bg-surface px-3 text-sm text-text-primary outline-none"
+                  >
+                    <option value="direct">direct</option>
+                    <option value="group">group</option>
+                  </select>
+                  <Button onClick={() => void submitCliImport()} disabled={isImportingCli}>
+                    {isImportingCli
+                      ? tSafe('toolsCenter.cli.import.importing', '导入中...')
+                      : tSafe('toolsCenter.cli.import.submit', '导入')}
+                  </Button>
+                </div>
+                {cliImportError ? <InlineErrorAlert message={cliImportError} onClose={() => setCliImportError(null)} /> : null}
+              </CardContent>
+            </Card>
             {renderToolList(
               cliTools,
               tSafe('toolsCenter.empty.cliTitle', '暂无 CLI 工具'),
               tSafe('toolsCenter.empty.cliDescription', '当前没有检测到来自本地 harness 或 package 的 CLI 工具。')
             )}
+            <Card className="border-border-default">
+              <CardContent className="p-5 space-y-4">
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">
+                    {tSafe('toolsCenter.cli.requests.title', 'CLI 导入请求')}
+                  </p>
+                  <p className="mt-1 text-sm text-text-secondary">
+                    {tSafe('toolsCenter.cli.requests.description', '展示最近的 CLI 导入与审批状态。')}
+                  </p>
+                </div>
+                {cliImports.length === 0 ? (
+                  <p className="text-sm text-text-secondary">
+                    {tSafe('toolsCenter.cli.requests.empty', '还没有 CLI 导入请求。')}
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {cliImports.map((item) => (
+                      <div key={item.id} className="rounded-lg border border-border-default p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold text-text-primary">
+                              {item.display_name || item.tool_name}
+                            </p>
+                            <p className="text-sm text-text-secondary">{(item.command || []).join(' ')}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">{item.shape}</Badge>
+                            <Badge variant="outline">{item.status}</Badge>
+                          </div>
+                        </div>
+                        {item.description ? <p className="mt-2 text-sm text-text-secondary">{item.description}</p> : null}
+                        {item.error ? <p className="mt-2 text-sm text-red-500">{item.error}</p> : null}
+                        {item.status === 'awaiting_approval' ? (
+                          <div className="mt-3 flex items-center gap-2">
+                            <Button size="sm" onClick={() => void resolveCliImport(item.id, true)}>
+                              {tSafe('toolsCenter.cli.requests.approve', '批准')}
+                            </Button>
+                            <Button variant="secondary" size="sm" onClick={() => void resolveCliImport(item.id, false)}>
+                              {tSafe('toolsCenter.cli.requests.reject', '拒绝')}
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         ) : null}
       </div>

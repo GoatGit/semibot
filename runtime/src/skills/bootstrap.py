@@ -2,8 +2,10 @@
 
 import os
 
+from src.server.config_store import RuntimeConfigStore
 from src.skills.semi_browser import SemiBrowserTool
 from src.skills.code_executor import CodeExecutorTool
+from src.skills.cli_importer import register_imported_cli_tools
 from src.skills.file_io import FileIOTool
 from src.skills.http_client import HttpClientTool
 from src.skills.memory import MemoryTool
@@ -63,6 +65,15 @@ def create_default_registry() -> SkillRegistry:
             "Indexed installed skills",
             extra={"indexed": load_result.get("indexed", [])},
         )
+    db_path = str(os.getenv("SEMIBOT_EVENTS_DB_PATH") or "").strip()
+    if db_path:
+        try:
+            imported_rows = RuntimeConfigStore(db_path=db_path).list_active_imported_cli_tools()
+            imported_names = register_imported_cli_tools(registry, imported_rows)
+            if imported_names:
+                logger.info("Registered imported CLI tools", extra={"tools": imported_names})
+        except Exception as exc:
+            logger.warning("imported_cli_registration_failed", extra={"error": str(exc), "db_path": db_path})
 
     logger.info(
         "Registry bootstrap complete",

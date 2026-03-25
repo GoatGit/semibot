@@ -44,6 +44,7 @@ from src.gateway.channels.feishu.notifier import SendFn
 from src.gateway.channels.telegram.notifier import SendFn as TelegramSendFn
 from src.gateway.parsers.approval_text import extract_message_text
 from src.runtime_service import run_task_once
+from src.server.cli_import_service import approve_cli_import_request, create_cli_import_request
 from src.server.config_store import RuntimeConfigStore
 from src.server.feature_flags import channels_enabled
 from src.server.routes.gateway import register_gateway_routes
@@ -178,6 +179,22 @@ class ChatStartRequest(BaseModel):
     skill_index: list[dict[str, Any]] = Field(default_factory=list)
     model_roles: dict[str, Any] | None = None
     stream: bool = False
+
+
+class CliImportRequest(BaseModel):
+    command: list[str] = Field(min_length=1)
+    shape: str = Field(default="direct", pattern="^(direct|group)$")
+    source: str = Field(default="web", pattern="^(cli|web|channel_auto)$")
+    requested_by: str | None = Field(default=None, alias="requestedBy")
+    display_name: str | None = Field(default=None, alias="displayName")
+    description: str | None = None
+    tool_name: str | None = Field(default=None, alias="toolName")
+    reason: str | None = None
+
+
+class CliImportDecisionRequest(BaseModel):
+    approved: bool = True
+    reason: str | None = None
 
 
 class ChatSessionRequest(BaseModel):
@@ -604,6 +621,55 @@ def create_app(
             "items": [entry.to_dict() for entry in entries],
             "generated_at": datetime.now(UTC).isoformat(),
         }
+
+    @app.get("/v1/tools/import-cli")
+    async def list_cli_import_requests(
+        status: str | None = Query(default=None),
+        source: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        items = await config_store.alist_cli_import_requests(status=status, source=source, limit=limit)
+        return {"items": items}
+
+    @app.get("/v1/tools/import-cli/{request_id}")
+    async def get_cli_import_request(request_id: str) -> dict[str, Any]:
+        item = await config_store.aget_cli_import_request(request_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="cli_import_request_not_found")
+        return {"data": item}
+
+    @app.post("/v1/tools/import-cli")
+    async def import_cli_tool(request: CliImportRequest) -> dict[str, Any]:
+        try:
+            item = await create_cli_import_request(
+                config_store=config_store,
+                registry=app.state.skill_registry,
+                command=[str(item) for item in request.command],
+                shape="group" if request.shape == "group" else "direct",
+                source=str(request.source),
+                requested_by=request.requested_by,
+                display_name=request.display_name,
+                description=request.description,
+                tool_name=request.tool_name,
+                reason=request.reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"data": item}
+
+    @app.post("/v1/tools/import-cli/{request_id}/decision")
+    async def resolve_cli_import_request(request_id: str, request: CliImportDecisionRequest) -> dict[str, Any]:
+        item = await asyncio.to_thread(
+            approve_cli_import_request,
+            config_store=config_store,
+            registry=app.state.skill_registry,
+            request_id=request_id,
+            approved=bool(request.approved),
+            reason=request.reason,
+        )
+        if not item:
+            raise HTTPException(status_code=404, detail="cli_import_request_not_found")
+        return {"data": item}
 
     @app.get("/v1/config/tools")
     async def list_config_tools(

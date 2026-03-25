@@ -310,6 +310,7 @@ def _build_llm_act_terminal_result(
     payload: dict[str, Any],
 ) -> ToolCallResult:
     missing_capability_payload = None
+    proposed_cli_import_payload = None
     raw_missing_capability = payload.get("missing_capability")
     if isinstance(raw_missing_capability, dict):
         normalized_missing_capability = {
@@ -340,6 +341,28 @@ def _build_llm_act_terminal_result(
             missing_capability_payload = MissingCapability(**normalized_missing_capability).model_dump()
         except Exception:
             missing_capability_payload = None
+
+    raw_proposed_cli_import = payload.get("proposed_cli_import")
+    if isinstance(raw_proposed_cli_import, dict):
+        normalized_proposed_cli_import = {
+            "type": "proposed_cli_import",
+            "version": str(raw_proposed_cli_import.get("version") or "1"),
+            "shape": str(raw_proposed_cli_import.get("shape") or "direct").strip().lower(),
+            "command": [
+                str(item or "").strip()
+                for item in (raw_proposed_cli_import.get("command") or [])
+                if str(item or "").strip()
+            ],
+            "tool_name": str(raw_proposed_cli_import.get("tool_name") or raw_proposed_cli_import.get("toolName") or "").strip() or None,
+            "display_name": str(raw_proposed_cli_import.get("display_name") or raw_proposed_cli_import.get("displayName") or "").strip() or None,
+            "description": str(raw_proposed_cli_import.get("description") or "").strip() or None,
+            "reason": str(raw_proposed_cli_import.get("reason") or "").strip() or None,
+        }
+        if (
+            normalized_proposed_cli_import["shape"] in {"direct", "group"}
+            and normalized_proposed_cli_import["command"]
+        ):
+            proposed_cli_import_payload = normalized_proposed_cli_import
 
     observations = payload.get("observations") if isinstance(payload.get("observations"), list) else []
     observation_summaries = [
@@ -437,6 +460,8 @@ def _build_llm_act_terminal_result(
         result_metadata["execution_concerns"] = execution_concerns
     if missing_capability_payload:
         result_metadata["missing_capability"] = missing_capability_payload
+    if proposed_cli_import_payload:
+        result_metadata["proposed_cli_import"] = proposed_cli_import_payload
     # Lazy import to avoid circular dependency (act_terminal ↔ act_tool_executor).
     from src.orchestrator.act_tool_executor import _ensure_step_result_handoff_contract
     return _ensure_step_result_handoff_contract(action, ToolCallResult(
