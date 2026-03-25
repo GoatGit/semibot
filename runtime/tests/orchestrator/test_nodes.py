@@ -21,6 +21,7 @@ from src.orchestrator.nodes_act import (
     _validate_llm_act_tool_call,
     act_node,
 )
+from src.orchestrator.act_llm_caller import build_per_turn_user_message
 from src.orchestrator.nodes_delegate import delegate_node
 from src.orchestrator.nodes_observe import (
     _build_failure_reflection,
@@ -198,6 +199,31 @@ def test_recent_user_messages_for_compact_plan_excludes_assistant_and_tool_histo
         {"role": "user", "content": "用户问题"},
         {"role": "user", "content": "补充要求"},
     ]
+
+
+def test_build_per_turn_user_message_prefers_existing_delivery_artifact():
+    content = build_per_turn_user_message(
+        act_phase="tool",
+        terminal_retry_count=0,
+        short_term_budget_text="",
+        step_memory={
+            "already_loaded_resources": [],
+            "modified_resources": [],
+            "current_step_outputs": [],
+            "current_primary_output": {
+                "artifact_result_text": "现有交付内容",
+                "artifact_name": "搜索结果摘要",
+            },
+        },
+        artifact_context=[],
+        current_step_output_contract={
+            "handoff_purpose": "user_delivery",
+            "handoff_mode": "final_delivery",
+        },
+    )
+
+    assert "Existing delivery-ready material is already available" in content
+    assert "return the terminal JSON now" in content
 
 
 def test_build_execution_state_for_planner_truncates_bound_text():
@@ -5815,6 +5841,87 @@ async def test_observe_node_advances_plan_from_advance_step_decision(mock_contex
     assert result["current_step"] == "act"
     assert result["observe_outcome"] == "continue_execution"
     assert "remaining work" in result["metadata"]["observe_reason"]
+
+
+@pytest.mark.asyncio
+async def test_observe_node_completes_early_when_only_delivery_followup_remains(mock_context, base_state):
+    base_state["plan"] = ExecutionPlan(
+        goal="test goal",
+        final_delivery_contract={"delivery_goal": "deliver summary"},
+        steps=[
+            PlanStep(
+                id="1",
+                title="搜索结果",
+                output_contract=StepOutputContract(
+                    primary_output_kind="search_results",
+                    handoff_mode="reasoning_text",
+                    artifact_role="raw_search_data",
+                    must_produce_text=True,
+                    must_materialize_file=False,
+                    handoff_purpose="reasoning_continuation",
+                ),
+            ),
+            PlanStep(
+                id="2",
+                title="整理成最终回复",
+                output_contract=StepOutputContract(
+                    primary_output_kind="inline_summary",
+                    handoff_mode="final_delivery",
+                    artifact_role="user_deliverable",
+                    must_produce_text=True,
+                    must_materialize_file=False,
+                    handoff_purpose="user_delivery",
+                ),
+            ),
+        ],
+        current_step_index=0,
+    )
+    base_state["pending_actions"] = [
+        PlanStep(
+            id="2",
+            title="整理成最终回复",
+            output_contract=StepOutputContract(
+                primary_output_kind="inline_summary",
+                handoff_mode="final_delivery",
+                artifact_role="user_deliverable",
+                must_produce_text=True,
+                must_materialize_file=False,
+                handoff_purpose="user_delivery",
+            ),
+        )
+    ]
+    base_state["tool_results"] = [
+        ToolCallResult(
+            tool_name="opencli_xiaohongshu_search",
+            params={"query": "今天AI资讯"},
+            result="ok",
+            success=True,
+            metadata={
+                "source_step_id": "1",
+                "artifact_result_text": "1. AI新闻A\n2. AI新闻B\n3. AI新闻C",
+                "artifact_type": "search_results",
+            },
+        ),
+        ToolCallResult(
+            tool_name="llm_act",
+            params={"title": "搜索结果"},
+            result="done",
+            success=True,
+            metadata={
+                "act_decision": "advance_step",
+                "act_step_id": "1",
+                "artifact_result_text": "1. AI新闻A\n2. AI新闻B\n3. AI新闻C",
+                "artifact_type": "search_results",
+            },
+        ),
+    ]
+    base_state["metadata"] = {"last_act_result_count": 2, "last_act_step_id": "1"}
+
+    result = await observe_node(base_state, mock_context)
+
+    assert result["current_step"] == "respond"
+    assert result["observe_outcome"] == "task_completed"
+    assert result["metadata"]["observe_reason"] == "task is complete; no further execution is needed"
 
 
 @pytest.mark.asyncio

@@ -428,8 +428,28 @@ def build_per_turn_user_message(
     short_term_budget_text: str,
     step_memory: dict[str, list[dict[str, Any]]],
     artifact_context: list[dict[str, Any]],
+    current_step_output_contract: dict[str, Any] | None = None,
 ) -> str:
     """Build the per-turn dynamic user message."""
+    current_primary_output = (
+        step_memory.get("current_primary_output", {})
+        if isinstance(step_memory.get("current_primary_output"), dict)
+        else {}
+    )
+    output_contract = current_step_output_contract if isinstance(current_step_output_contract, dict) else {}
+    handoff_purpose = str(output_contract.get("handoff_purpose") or "").strip().lower()
+    has_existing_artifact = bool(
+        str(current_primary_output.get("artifact_result_text") or "").strip()
+        or str(current_primary_output.get("artifact_result_path") or "").strip()
+    )
+    delivery_reuse_guidance = ""
+    if handoff_purpose == "user_delivery" and has_existing_artifact:
+        delivery_reuse_guidance = (
+            "Existing delivery-ready material is already available from prior execution context.\n"
+            "- Prefer using the existing artifact_result_text / artifact_result_path instead of calling more tools.\n"
+            "- If the existing artifact is already sufficient for the user's requested delivery, stop exploration and return the terminal JSON now.\n"
+            "- Only call another tool if the current artifact is clearly insufficient to satisfy the step completion criteria.\n\n"
+        )
     act_user_content = (
             (
                 "Execution phase:\n- terminal_phase\n\n"
@@ -455,6 +475,7 @@ def build_per_turn_user_message(
             + short_term_budget_text
             + _format_loaded_resource_summary(step_memory)
             + "\n\n"
+            + delivery_reuse_guidance
             + (
                 "Available generated artifacts:\n"
                 "- artifact_result_path: the real file path for downstream tool arguments\n"

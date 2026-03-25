@@ -26,6 +26,51 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _step_looks_like_pure_delivery_followup(step: Any) -> bool:
+    """Return True for narrow follow-up steps that only package an existing result."""
+    if step is None:
+        return False
+    output_contract = getattr(step, "output_contract", None)
+    if output_contract is None:
+        return False
+    handoff_purpose = str(getattr(output_contract, "handoff_purpose", "") or "").strip().lower()
+    handoff_mode = str(getattr(output_contract, "handoff_mode", "") or "").strip().lower()
+    must_materialize_file = bool(getattr(output_contract, "must_materialize_file", False))
+    must_produce_text = bool(getattr(output_contract, "must_produce_text", True))
+    return (
+        handoff_purpose == "user_delivery"
+        and handoff_mode == "final_delivery"
+        and not must_materialize_file
+        and must_produce_text
+    )
+
+
+def _can_finish_early_with_existing_delivery(ctx: ObserveContext) -> bool:
+    """Allow task completion when remaining work is only a delivery wrapper."""
+    if ctx.latest_structured_act_result is None or not _tool_result_success(ctx.latest_structured_act_result):
+        return False
+    if str(ctx.effective_act_decision or "").strip().lower() != "advance_step":
+        return False
+    if not ctx.next_actions:
+        return False
+    if not all(_step_looks_like_pure_delivery_followup(step) for step in ctx.next_actions):
+        return False
+
+    visible_artifacts = _collect_visible_artifacts(ctx.current_tool_results)
+    delivery_contract = (
+        ctx.plan.final_delivery_contract
+        if isinstance(ctx.plan, ExecutionPlan) and isinstance(ctx.plan.final_delivery_contract, dict)
+        else {}
+    )
+    delivery_fulfilled, _ = _final_delivery_contract_fulfilled(
+        final_delivery_contract=delivery_contract,
+        artifacts=visible_artifacts,
+        latest_structured_act_result=ctx.latest_structured_act_result,
+        execution_state=_build_execution_state_for_planner(ctx.state, prefer_existing=False),
+    )
+    return delivery_fulfilled
+
+
 # ---------------------------------------------------------------------------
 # Context & outcome dataclasses
 # ---------------------------------------------------------------------------
@@ -160,6 +205,18 @@ def _decide_task_complete(ctx: ObserveContext) -> ObserveOutcome | None:
         observe_outcome="task_completed",
         current_step="respond",
         reason="task is complete; no further execution is needed",
+    )
+
+
+def _decide_task_complete_early(ctx: ObserveContext) -> ObserveOutcome | None:
+    """Allow observe to end the task when only delivery wrapper steps remain."""
+    if not _can_finish_early_with_existing_delivery(ctx):
+        return None
+    return ObserveOutcome(
+        name="task_complete_early",
+        observe_outcome="task_completed",
+        current_step="respond",
+        reason="existing result already satisfies final delivery; skipping redundant follow-up delivery steps",
     )
 
 
@@ -318,6 +375,7 @@ OBSERVE_DECISIONS: list[Callable[[ObserveContext], ObserveOutcome | None]] = [
     _decide_max_iterations,
     _decide_pending_approval,
     _decide_task_complete,
+    _decide_task_complete_early,
     _decide_transient_network_retry,
     _decide_non_retryable_api_failure,
     _decide_execution_stall,

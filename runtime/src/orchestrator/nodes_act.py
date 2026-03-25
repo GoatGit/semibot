@@ -261,6 +261,7 @@ async def _execute_llm_act_step(
             short_term_budget_text=short_term_budget_text,
             step_memory=step_memory,
             artifact_context=artifact_context,
+            current_step_output_contract=_resolved_step_output_contract(action),
         )
         act_messages.append({"role": "user", "content": _truncate_act_prompt_text(act_user_content)})
 
