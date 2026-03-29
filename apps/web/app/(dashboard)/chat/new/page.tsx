@@ -1,14 +1,17 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle } from 'lucide-react'
+import { Code, FileSearch, BarChart3, PenTool, ArrowRight, AlertCircle, Paperclip, X, FileText } from 'lucide-react'
+import { AgentBotAvatar } from '@/components/ui/AgentBotAvatar'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { useFileUpload } from '@/hooks/useFileUpload'
 import { apiClient } from '@/lib/api'
+import { setInitialSessionFiles } from '@/lib/chat-draft-transfer'
 import type { ApiResponse, Agent } from '@/types'
 import { useLocale } from '@/components/providers/LocaleProvider'
 
@@ -28,7 +31,7 @@ function getDefaultTemplates(t: (key: string) => string): AgentOption[] {
       id: 'general',
       name: t('chatNew.templates.general.name'),
       description: t('chatNew.templates.general.description'),
-      icon: <Bot size={24} />,
+      icon: <AgentBotAvatar agentId="template-general" agentName="General" size={24} iconScale={0.68} />,
       color: 'primary',
       isFallback: true,
     },
@@ -82,7 +85,7 @@ function getAgentIcon(name: string): React.ReactNode {
   if (lowerName.includes('创意') || lowerName.includes('写作') || lowerName.includes('creative')) {
     return <PenTool size={24} />
   }
-  return <Bot size={24} />
+  return <AgentBotAvatar agentId={`icon:${name}`} agentName={name} size={24} iconScale={0.68} />
 }
 
 // 根据索引分配颜色
@@ -102,13 +105,17 @@ export default function NewChatPage() {
   const router = useRouter()
   const { t } = useLocale()
   const fallbackTemplates = useMemo(() => getDefaultTemplates(t), [t])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [agents, setAgents] = useState<AgentOption[]>([])
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [usingFallbackAgents, setUsingFallbackAgents] = useState(false)
+  const { files, addFiles, removeFile, hasFiles } = useFileUpload()
 
   // 加载 Agent 列表
   const loadAgents = useCallback(async () => {
@@ -150,8 +157,15 @@ export default function NewChatPage() {
     loadAgents()
   }, [loadAgents])
 
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [message])
+
   const handleStartChat = async () => {
-    if (!message.trim() && !selectedAgentId) return
+    if (!message.trim() && !selectedAgentId && !hasFiles) return
 
     setIsCreating(true)
     setError(null)
@@ -186,7 +200,14 @@ export default function NewChatPage() {
 
       const sessionId = response.data.id
       if (typeof window !== 'undefined') {
-        sessionStorage.setItem(`semibot:initialMessage:${sessionId}`, initialMessage)
+        try {
+          sessionStorage.setItem(`semibot:initialMessage:${sessionId}`, initialMessage)
+        } catch (error) {
+          console.warn('[NewChat] 初始消息缓存失败，改用 URL 传递:', error)
+        }
+        if (hasFiles) {
+          setInitialSessionFiles(sessionId, files.map((pending) => pending.file))
+        }
       }
 
       // 立即跳转到会话页面，通过 query 参数传递初始消息
@@ -276,7 +297,19 @@ export default function NewChatPage() {
                         colors.border
                       )}
                     >
-                      <div className={clsx('mb-3', colors.text)}>{agent.icon}</div>
+                      <div className={clsx('mb-3', colors.text)}>
+                        {agent.isFallback ? (
+                          agent.icon
+                        ) : (
+                          <AgentBotAvatar
+                            agentId={agent.id}
+                            agentName={agent.name}
+                            tone={agent.color}
+                            size={32}
+                            iconScale={0.66}
+                          />
+                        )}
+                      </div>
                       <div className="flex items-center gap-1.5">
                         <h3 className="text-sm font-medium text-text-primary">{agent.name}</h3>
                         {agent.isSystem && (
@@ -313,18 +346,95 @@ export default function NewChatPage() {
             <CardContent>
               <h2 className="text-sm font-medium text-text-secondary mb-3">{t('chatNew.quickStart')}</h2>
               <div className="space-y-4">
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder={t('chatNew.inputPlaceholder')}
+                {uploadError && <InlineErrorAlert message={uploadError} />}
+                <div
                   className={clsx(
-                    'w-full h-32 px-4 py-3 rounded-lg resize-none',
-                    'bg-bg-surface border border-border-default',
-                    'text-text-primary placeholder:text-text-tertiary',
-                    'focus:outline-none focus:border-primary-500 focus:shadow-glow-primary',
+                    'flex flex-col rounded-xl',
+                    'bg-bg-elevated border border-border-default',
+                    'focus-within:border-primary-500 focus-within:shadow-glow-primary',
                     'transition-all duration-fast'
                   )}
-                />
+                >
+                  {hasFiles && (
+                    <div className="flex flex-wrap gap-2 px-3 pt-3">
+                      {files.map((pending) => (
+                        <div
+                          key={pending.id}
+                          className="flex items-center gap-1.5 rounded border border-border-subtle bg-bg-base px-2 py-1 text-xs text-text-secondary"
+                        >
+                          {pending.preview ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={pending.preview} alt={pending.file.name} className="h-6 w-6 rounded object-cover" />
+                          ) : (
+                            <FileText size={14} className="text-text-tertiary" />
+                          )}
+                          <span className="max-w-[120px] truncate">{pending.file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeFile(pending.id)}
+                            className="rounded p-0.5 text-text-tertiary hover:bg-interactive-hover hover:text-text-primary"
+                            aria-label={t('chatNew.removeAttachment')}
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3 p-3">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files) {
+                          const uploadErr = addFiles(e.target.files)
+                          setUploadError(uploadErr)
+                          if (uploadErr) setTimeout(() => setUploadError(null), 3000)
+                        }
+                        e.target.value = ''
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className={clsx(
+                        'rounded-lg p-2 text-text-tertiary transition-colors duration-fast',
+                        'hover:bg-interactive-hover hover:text-text-primary'
+                      )}
+                      aria-label={t('chatNew.addAttachment')}
+                    >
+                      <Paperclip size={20} />
+                    </button>
+                    <textarea
+                      ref={textareaRef}
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      placeholder={t('chatNew.inputPlaceholder')}
+                      rows={1}
+                      className={clsx(
+                        'min-h-[24px] max-h-[200px] flex-1 resize-none bg-transparent',
+                        'text-text-primary placeholder:text-text-tertiary',
+                        'focus:outline-none'
+                      )}
+                      style={{
+                        overflowY: textareaRef.current && textareaRef.current.scrollHeight > 200 ? 'auto' : 'hidden',
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleStartChat}
+                      loading={isCreating}
+                      disabled={(!message.trim() && !selectedAgentId && !hasFiles) || usingFallbackAgents}
+                      rightIcon={<ArrowRight size={16} />}
+                    >
+                      {t('chatNew.startChat')}
+                    </Button>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-text-tertiary">
                     {selectedAgentId && (
@@ -333,14 +443,9 @@ export default function NewChatPage() {
                       </span>
                     )}
                   </div>
-                  <Button
-                    onClick={handleStartChat}
-                    loading={isCreating}
-                    disabled={(!message.trim() && !selectedAgentId) || usingFallbackAgents}
-                    rightIcon={<ArrowRight size={16} />}
-                  >
-                    {t('chatNew.startChat')}
-                  </Button>
+                  <p className="text-xs text-text-tertiary">
+                    {hasFiles ? t('chatNew.attachmentsCount', { count: files.length }) : t('chatNew.attachmentsHint')}
+                  </p>
                 </div>
               </div>
             </CardContent>

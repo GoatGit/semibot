@@ -2,7 +2,6 @@ import type { Server } from 'http'
 import { createRequire } from 'module'
 import crypto from 'node:crypto'
 import jwt from 'jsonwebtoken'
-import { v4 as uuidv4 } from 'uuid'
 import fs from 'fs-extra'
 import path from 'path'
 
@@ -32,6 +31,21 @@ import { getRuntimeLlmConfig } from '../lib/runtime-config-client'
 const wsLogger = createLogger('ws-server')
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const ALLOWED_MEMORY_TYPES = new Set(['episodic', 'semantic', 'procedural'] as const)
+
+function executionCompleteIndicatesAwaitingApproval(event: Record<string, unknown>): boolean {
+  const status = String(event.status || '').trim().toLowerCase()
+  if (status === 'awaiting_approval') return true
+  const ids = event.pending_approval_ids
+  if (Array.isArray(ids) && ids.some((item) => String(item || '').trim())) return true
+  const text = String(event.final_response || event.content || '').trim()
+  if (!text) return false
+  const lowered = text.toLowerCase()
+  return (
+    text.includes('操作需要人工审批后继续') ||
+    text.includes('待审批 ID:') ||
+    lowered.includes('pending approval')
+  )
+}
 
 function normalizeSessionIdForDb(sessionId: string): string | null {
   return UUID_PATTERN.test(sessionId) ? sessionId : null
@@ -623,13 +637,17 @@ export class WSServer {
     }
 
     if (isExecutionComplete(normalized)) {
-      const finalResponse = (normalized.final_response as string) ?? (normalized.content as string) ?? ''
+      const isAwaitingApproval = executionCompleteIndicatesAwaitingApproval(normalized)
       const processMessages = this.processBufferBySession.get(msg.session_id) ?? []
       this.processBufferBySession.delete(msg.session_id)
-      let messageId = uuidv4()
-      if (finalResponse) {
-        try {
-          const saved = await sessionService.addMessage(msg.session_id, {
+      let persistedMessageId: string | undefined
+
+      if (!isAwaitingApproval) {
+        const finalResponse = String(normalized.final_response || normalized.content || '').trim()
+        if (finalResponse) {
+          const persisted = await sessionService.addMessage(msg.session_id, {
+            attemptId: typeof normalized.attempt_id === 'string' ? normalized.attempt_id : undefined,
+            userMessageId: typeof normalized.user_message_id === 'string' ? normalized.user_message_id : undefined,
             role: 'assistant',
             content: finalResponse,
             metadata: processMessages.length > 0
@@ -641,19 +659,17 @@ export class WSServer {
                 }
               : undefined,
           })
-          messageId = saved.id
-        } catch (error) {
-          wsLogger.error('execution_complete 落库失败', error as Error, {
-            sessionId: msg.session_id,
-            userId: conn.userId,
-            finalResponseLength: finalResponse.length,
-          })
+          persistedMessageId = persisted.id
         }
       }
 
       forwardSSE(msg.session_id, 'execution_complete', {
         sessionId: msg.session_id,
-        messageId,
+        messageId: persistedMessageId,
+        status: isAwaitingApproval ? 'awaiting_approval' : (normalized.status as string | undefined),
+        pendingApprovalIds: Array.isArray(normalized.pending_approval_ids)
+          ? normalized.pending_approval_ids
+          : [],
       })
       closeSessionConnections(msg.session_id)
       return
@@ -695,6 +711,8 @@ export class WSServer {
       type === 'plan_step' ||
       type === 'tool_call' ||
       type === 'tool_result' ||
+      type === 'skill_call' ||
+      type === 'skill_result' ||
       type === 'mcp_call' ||
       type === 'mcp_result'
     )

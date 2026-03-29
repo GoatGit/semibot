@@ -15,6 +15,7 @@ import {
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { apiClient } from '@/lib/api'
 import { useLocale } from '@/components/providers/LocaleProvider'
 import { useAgents } from '@/hooks/useAgents'
@@ -240,15 +241,15 @@ export default function UsagePage() {
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-5xl px-6 py-8 space-y-6">
         {/* ── Header ── */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-text-primary">{t('usage.title')}</h1>
-            <p className="mt-1 text-sm text-text-secondary">{t('usage.subtitle')}</p>
-          </div>
-          <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={load} disabled={isLoading}>
-            {t('common.refresh')}
-          </Button>
-        </div>
+        <PageHeader
+          title={t('usage.title')}
+          subtitle={t('usage.subtitle')}
+          actions={
+            <Button variant="secondary" leftIcon={<RefreshCw size={16} />} onClick={load} disabled={isLoading}>
+              {t('common.refresh')}
+            </Button>
+          }
+        />
 
         {/* ── 时间范围 + 分组选择器 ── */}
         <Card className="border-border-default">

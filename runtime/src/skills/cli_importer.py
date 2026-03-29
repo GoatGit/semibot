@@ -152,9 +152,23 @@ def _parse_usage_tokens(usage_line: str, command: list[str]) -> list[str]:
     return tokens
 
 
-def _supports_json_output(help_text: str) -> bool:
+def _detect_json_flag(help_text: str) -> str | None:
+    """Detect which CLI flag enables JSON output.
+
+    Returns the flag tokens to append (e.g. ``"--json"`` or ``"--format json"``),
+    or ``None`` if the help text does not advertise JSON output.
+    """
     text = help_text.lower()
-    return "--json" in text
+    if "--json" in text:
+        return "--json"
+    # opencli-style: -f, --format <fmt>  Output format: table, json, ...
+    if re.search(r"--format\b.*\bjson\b", text):
+        return "--format json"
+    return None
+
+
+def _supports_json_output(help_text: str) -> bool:
+    return _detect_json_flag(help_text) is not None
 
 
 def _extract_group_commands(help_text: str) -> list[tuple[str, str]]:
@@ -210,11 +224,12 @@ async def extract_direct_cli_spec(
     usage_line = _find_usage_line(help_text, command)
     required_tokens = _parse_usage_tokens(usage_line, command)
     json_mode = _supports_json_output(help_text)
+    json_flag = _detect_json_flag(help_text)
     command_template = list(command)
     for token in required_tokens:
         command_template.append("{" + token + "}")
-    if json_mode:
-        command_template.append("--json")
+    if json_flag:
+        command_template.extend(json_flag.split())
     final_tool_name = tool_name or _build_tool_name(command)
     final_display_name = display_name or " ".join(command)
     final_description = description or help_text.splitlines()[0].strip() or final_display_name
@@ -259,11 +274,12 @@ async def extract_group_cli_spec(
         usage_line = _find_usage_line(leaf_help, leaf_prefix)
         required_tokens = _parse_usage_tokens(usage_line, leaf_prefix)
         json_mode = _supports_json_output(leaf_help)
+        json_flag = _detect_json_flag(leaf_help)
         action_template = list(leaf_prefix)
         for token in required_tokens:
             action_template.append("{" + token + "}")
-        if json_mode:
-            action_template.append("--json")
+        if json_flag:
+            action_template.extend(json_flag.split())
         action_templates[action_name] = action_template
         branch_properties: dict[str, Any] = {
             "command": {"const": action_name},
@@ -538,6 +554,17 @@ def register_imported_cli_tools(registry: SkillRegistry, rows: list[dict[str, An
                     "shape": spec.shape,
                     "entry_command": spec.entry_command,
                     "resolved_command_path": spec.resolved_command_path,
+                    "actions": [
+                        {
+                            "command": item.command,
+                            "description": item.description,
+                            "parameters": item.parameters,
+                            "command_template": item.command_template,
+                            "json_mode": item.json_mode,
+                            "output_schema": item.output_schema,
+                        }
+                        for item in spec.actions
+                    ],
                     "imported_cli": True,
                 },
             ),

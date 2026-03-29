@@ -77,6 +77,11 @@ export async function extractFileContent(
       return await extractXlsx(filePath, mimeType)
     }
 
+    // PPTX
+    if (ext === '.pptx' || mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+      return await extractPptx(filePath, mimeType)
+    }
+
     // 其他：返回元信息
     extractorLogger.info('不支持内容提取的文件类型', { ext, mimeType, originalName })
     return { text: null, mimeType, isImage: false }
@@ -182,6 +187,57 @@ async function extractImage(filePath: string, mimeType: string): Promise<Extract
   const buffer = await fs.readFile(filePath)
   const base64 = buffer.toString('base64')
   return { text: null, base64, mimeType, isImage: true }
+}
+
+async function extractPptx(filePath: string, mimeType: string): Promise<ExtractedContent> {
+  const { default: AdmZip } = await import('adm-zip')
+  const zip = new AdmZip(filePath)
+  const slideEntries = zip
+    .getEntries()
+    .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.entryName))
+    .sort((a, b) => {
+      const aNum = Number(a.entryName.match(/slide(\d+)\.xml/i)?.[1] || 0)
+      const bNum = Number(b.entryName.match(/slide(\d+)\.xml/i)?.[1] || 0)
+      return aNum - bNum
+    })
+
+  const parts: string[] = []
+  for (const entry of slideEntries) {
+    const xml = entry.getData().toString('utf8')
+    const text = extractReadableTextFromXml(xml)
+    if (!text) continue
+    const slideNum = Number(entry.entryName.match(/slide(\d+)\.xml/i)?.[1] || parts.length + 1)
+    parts.push(`--- Slide ${slideNum} ---\n${text}`)
+  }
+
+  let text = parts.join('\n\n')
+  if (text.length > CHAT_UPLOAD_TEXT_TRUNCATE_LENGTH) {
+    extractorLogger.warn('PPTX 文本超出限制，已截断', {
+      originalLength: text.length,
+      limit: CHAT_UPLOAD_TEXT_TRUNCATE_LENGTH,
+    })
+    text = text.slice(0, CHAT_UPLOAD_TEXT_TRUNCATE_LENGTH) + '\n...[内容已截断]'
+  }
+
+  return { text: text || null, mimeType, isImage: false }
+}
+
+function extractReadableTextFromXml(xml: string): string {
+  return xml
+    .replace(/<\/a:p>/gi, '\n')
+    .replace(/<\/a:tr>/gi, '\n')
+    .replace(/<\/a:br>/gi, '\n')
+    .replace(/<a:tab\/>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
 }
 
 async function extractPdfWithPdfJs(buffer: Buffer): Promise<string> {

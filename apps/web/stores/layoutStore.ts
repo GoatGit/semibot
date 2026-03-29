@@ -21,13 +21,107 @@ export interface DetailCanvasContent {
   content: string
 }
 
+export interface RuntimeSessionDetailContent {
+  kind: 'runtime-session'
+  title: string
+  sessionId: string
+  attemptId?: string
+  latestRevision?: number
+  latestCheckpointRevision?: number
+  latestCheckpointStatus?: string
+  pendingEventOutboxCount?: number
+  pendingCheckpointOutboxCount?: number
+  terminalReason?: string
+  statusLabel: string
+  actionLabel: string
+  summary: string
+  lastSeenAt: string
+  idleFor: string
+  failures: number
+  loopAlerts: number
+  drUpgrades: number
+  totalTokens: string
+  toolName?: string
+  routeMode?: string
+  routeReason?: string
+  routeAt?: string
+  drStatus?: string
+  drReason?: string
+  drAt?: string
+  upgradeAt?: string
+  upgradeReason?: string
+  initialFocusedIncidentId?: string
+  pathTransitions: Array<{
+    id: string
+    title: string
+    detail: string
+    createdAt: string
+    variant: 'default' | 'success' | 'warning' | 'error'
+  }>
+  incidents: Array<{
+    id: string
+    type: string
+    title: string
+    detail: string
+    createdAt: string
+    raw?: Record<string, unknown>
+  }>
+}
+
+export interface RuntimeAttemptDetailContent {
+  kind: 'runtime-attempt'
+  title: string
+  attemptId: string
+  sessionId: string
+  userMessageId: string
+  status: string
+  executionMode: string
+  latestRevision: number
+  resumeCount: number
+  approvalSetRevision: number
+  terminalReason?: string
+  latestCheckpoint: {
+    checkpointId: string
+    revision: number
+    status: string
+    createdAt: string
+  } | null
+  pendingEventOutboxCount: number
+  pendingCheckpointOutboxCount: number
+  notices: Array<{
+    kind: string
+    message: string
+  }>
+}
+
+export interface DocumentChunkDetailContent {
+  kind: 'document-chunk'
+  title: string
+  sessionId: string
+  docId: string
+  docTitle: string
+  version: number
+  totalChunks: number
+  chunks: Array<{
+    chunkId: string
+    content: string
+  }>
+  selectedChunkId: string
+}
+
+export type DetailCanvasPayload =
+  | DetailCanvasContent
+  | RuntimeSessionDetailContent
+  | RuntimeAttemptDetailContent
+  | DocumentChunkDetailContent
+
 interface LayoutState {
   // 状态
   navBarExpanded: boolean
   detailCanvasMode: DetailCanvasMode
   hasDetailContent: boolean
   currentPath: string
-  detailContent: DetailCanvasContent | null
+  detailContent: DetailCanvasPayload | null
 
   // 动作
   toggleNavBar: () => void
@@ -41,7 +135,7 @@ interface LayoutState {
 
   setHasDetailContent: (hasContent: boolean) => void
   setCurrentPath: (path: string) => void
-  openDetailContent: (content: DetailCanvasContent) => void
+  openDetailContent: (content: DetailCanvasPayload) => void
   clearDetailContent: () => void
 }
 

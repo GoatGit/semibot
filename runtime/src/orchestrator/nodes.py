@@ -1,5 +1,8 @@
 """Compatibility re-export surface for orchestrator node modules."""
 
+from src.orchestrator.nodes_route import route_node
+from src.orchestrator.nodes_dr import dr_node
+from src.orchestrator.nodes_observe_dr import observe_dr_node
 from src.orchestrator.nodes_observe import observe_node
 from src.orchestrator.nodes_delegate import delegate_node
 from src.orchestrator.nodes_start import start_node

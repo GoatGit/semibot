@@ -179,6 +179,7 @@ class SemiBrowserTool(BaseTool):
             allow_localhost=self.allow_localhost,
             allowed_domains=self.allowed_domains,
             blocked_domains=self.blocked_domains,
+            allow_fake_ip_override=False,
         )
 
     def _resolve_screenshot_path(self, session_id: str, provided_path: str | None) -> Path:
@@ -373,7 +374,13 @@ class SemiBrowserTool(BaseTool):
                 url = str(kwargs.get("url") or "").strip()
                 if not url:
                     return ToolResult.error_result("url is required for action=open")
-                valid, error = self._validate_url(url)
+                valid, error = _validate_remote_url(
+                    url,
+                    allow_localhost=self.allow_localhost,
+                    allowed_domains=self.allowed_domains,
+                    blocked_domains=self.blocked_domains,
+                    allow_fake_ip_override=_to_bool(kwargs.get("_approved_fake_ip_override"), False),
+                )
                 if not valid:
                     return ToolResult.error_result(error or "Invalid URL")
 

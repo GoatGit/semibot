@@ -65,6 +65,7 @@ export const PATHS_WITHOUT_DETAIL = [
   '/mcp',
   '/tools',
   '/events',
+  '/runtime',
   '/rules',
   '/approvals',
   '/studio',

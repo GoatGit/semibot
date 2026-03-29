@@ -218,3 +218,24 @@ async def test_file_io_skill_scope_list_is_read_only_and_whitelisted(tmp_path, m
     assert all(item.get("path") != "scripts/secret.py" for item in items)
     assert write_result.success is False
     assert "read-only" in str(write_result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_file_io_missing_doc_chunk_returns_structured_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SEMIBOT_FILE_IO_ROOT", str(tmp_path / "global-root"))
+    session_root = tmp_path / "session-workdir"
+    runtime_context = SimpleNamespace(metadata={"session_working_dir": str(session_root)})
+    tool = FileIOTool()
+
+    result = await tool.execute(
+        action="read",
+        path="docs/doc-001/v2/chunks/c0007.txt",
+        _runtime_context=runtime_context,
+    )
+
+    assert result.success is False
+    assert "File not found" in str(result.error or "")
+    metadata = result.metadata or {}
+    assert metadata.get("missing_chunk_ids") == ["c0007"]
+    assert metadata.get("doc_id") == "doc-001"
+    assert metadata.get("doc_version") == "v2"

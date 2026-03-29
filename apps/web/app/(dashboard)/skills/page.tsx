@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
 import { FileUpload } from '@/components/ui/FileUpload'
 import { Modal } from '@/components/ui/Modal'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { apiClient } from '@/lib/api'
 import { toast } from '@/stores/toastStore'
 import type { SkillDefinition } from '@semibot/shared-types'
@@ -451,93 +452,89 @@ export default function SkillDefinitionsPage() {
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
         {/* 头部 */}
-        <header className="border-b border-border-subtle pb-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-semibold text-text-primary">{t('skillsPage.title')}</h1>
-              <p className="text-sm text-text-secondary mt-1">
-                {t('skillsPage.subtitlePrefix')} {definitions.length} {t('skillsPage.subtitleSuffix')}
-              </p>
-            </div>
+        <PageHeader
+          title={t('skillsPage.title')}
+          subtitle={`${t('skillsPage.subtitlePrefix')} ${definitions.length} ${t('skillsPage.subtitleSuffix')}`}
+          actions={
             <Button leftIcon={<Plus size={16} />} onClick={() => setShowCreateDialog(true)}>
               {installLabel}
             </Button>
-          </div>
+          }
+        />
 
-          {/* 错误提示 */}
-          {error && (
-            <div className="mt-3 rounded-md px-3 py-2 border bg-error-500/10 border-error-500/20">
-              <div className="flex items-start">
-                <AlertCircle className="w-4 h-4 text-error-500 mr-2 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-error-500">{error}</p>
-              </div>
+        {/* 错误提示 */}
+        {error && (
+          <div className="rounded-md px-3 py-2 border bg-error-500/10 border-error-500/20">
+            <div className="flex items-start">
+              <AlertCircle className="w-4 h-4 text-error-500 mr-2 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-error-500">{error}</p>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* 搜索栏 */}
-          <div className="flex items-center gap-4 mt-4">
-            <div className="flex-1 max-w-md">
-              <Input
-                placeholder={t('skillsPage.searchPlaceholder')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                leftIcon={<Search size={16} />}
+        {/* 搜索栏 */}
+        <div className="flex items-center gap-4">
+          <div className="flex-1 max-w-md">
+            <Input
+              placeholder={t('skillsPage.searchPlaceholder')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
+          </div>
+          <Button variant="secondary" onClick={loadDefinitions}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            {t('common.refresh')}
+          </Button>
+          {filteredDefinitions.length > 0 && (
+            <label className="flex items-center gap-2 text-sm text-text-secondary">
+              <input
+                data-testid="skills-select-all"
+                type="checkbox"
+                className="rounded border-border-default"
+                checked={allFilteredSelected}
+                onChange={toggleSelectAllFiltered}
+                disabled={actionLoading}
               />
-            </div>
-            <Button variant="secondary" onClick={loadDefinitions}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              {t('common.refresh')}
-            </Button>
-            {filteredDefinitions.length > 0 && (
-              <label className="flex items-center gap-2 text-sm text-text-secondary">
-                <input
-                  data-testid="skills-select-all"
-                  type="checkbox"
-                  className="rounded border-border-default"
-                  checked={allFilteredSelected}
-                  onChange={toggleSelectAllFiltered}
-                  disabled={actionLoading}
-                />
-                {t('skillsPage.batch.selectAllVisible')}
-              </label>
-            )}
-          </div>
-
-          {selectedCount > 0 && (
-            <div className="mt-3 rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
-              <span className="text-sm text-text-primary">
-                {t('skillsPage.batch.selectedCount', { count: selectedCount })}
-              </span>
-              <Button
-                data-testid="skills-batch-enable"
-                variant="secondary"
-                size="sm"
-                disabled={actionLoading}
-                onClick={() => handleBatchSetActive(true)}
-              >
-                {t('skillsPage.batch.enable')}
-              </Button>
-              <Button
-                data-testid="skills-batch-disable"
-                variant="secondary"
-                size="sm"
-                disabled={actionLoading}
-                onClick={() => handleBatchSetActive(false)}
-              >
-                {t('skillsPage.batch.disable')}
-              </Button>
-              <Button
-                data-testid="skills-batch-delete"
-                variant="secondary"
-                size="sm"
-                disabled={actionLoading}
-                onClick={handleBatchDelete}
-              >
-                {t('skillsPage.batch.delete')}
-              </Button>
-            </div>
+              {t('skillsPage.batch.selectAllVisible')}
+            </label>
           )}
-        </header>
+        </div>
+
+        {selectedCount > 0 && (
+          <div className="rounded-md border border-primary-500/30 bg-primary-500/10 px-3 py-2 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-text-primary">
+              {t('skillsPage.batch.selectedCount', { count: selectedCount })}
+            </span>
+            <Button
+              data-testid="skills-batch-enable"
+              variant="secondary"
+              size="sm"
+              disabled={actionLoading}
+              onClick={() => handleBatchSetActive(true)}
+            >
+              {t('skillsPage.batch.enable')}
+            </Button>
+            <Button
+              data-testid="skills-batch-disable"
+              variant="secondary"
+              size="sm"
+              disabled={actionLoading}
+              onClick={() => handleBatchSetActive(false)}
+            >
+              {t('skillsPage.batch.disable')}
+            </Button>
+            <Button
+              data-testid="skills-batch-delete"
+              variant="secondary"
+              size="sm"
+              disabled={actionLoading}
+              onClick={handleBatchDelete}
+            >
+              {t('skillsPage.batch.delete')}
+            </Button>
+          </div>
+        )}
 
         {/* 技能列表 */}
         <div>

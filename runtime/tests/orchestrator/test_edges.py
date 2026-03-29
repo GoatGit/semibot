@@ -4,7 +4,9 @@ import pytest
 
 from src.orchestrator.edges import (
     route_after_observe,
+    route_after_observe_dr,
     route_after_plan,
+    route_after_route,
 )
 from src.orchestrator.context import SubAgentDefinition
 from src.orchestrator.state import ExecutionPlan, PlanStep
@@ -86,6 +88,38 @@ class TestRouteAfterPlan:
         assert result == "respond"
 
 
+class TestRouteAfterRoute:
+    """Tests for route_after_route function."""
+
+    def test_route_to_respond_for_direct_answer(self, sample_agent_state):
+        state = {**sample_agent_state, "execution_mode": "direct_answer"}
+
+        result = route_after_route(state)
+
+        assert result == "respond"
+
+    def test_route_to_dr_for_direct_reasoning(self, sample_agent_state):
+        state = {**sample_agent_state, "execution_mode": "direct_reasoning"}
+
+        result = route_after_route(state)
+
+        assert result == "dr"
+
+    def test_route_to_delegate(self, sample_agent_state):
+        state = {**sample_agent_state, "execution_mode": "delegate"}
+
+        result = route_after_route(state)
+
+        assert result == "delegate"
+
+    def test_route_defaults_to_plan(self, sample_agent_state):
+        state = {**sample_agent_state, "execution_mode": "plan_act"}
+
+        result = route_after_route(state)
+
+        assert result == "plan"
+
+
 class TestRouteAfterObserve:
     """Tests for route_after_observe function."""
 
@@ -127,3 +161,33 @@ class TestRouteAfterObserve:
         result = route_after_observe(state)
 
         assert result == "reflect"
+
+
+class TestRouteAfterObserveDr:
+    """Tests for DR observe routing."""
+
+    def test_upgrade_routes_to_plan(self, sample_agent_state):
+        state = {
+            **sample_agent_state,
+            "observe_dr_outcome": {
+                "outcome": "upgrade_to_plan_act",
+                "reason": "task became multi-stage",
+            },
+        }
+
+        result = route_after_observe_dr(state)
+
+        assert result == "plan"
+
+    def test_success_routes_to_respond(self, sample_agent_state):
+        state = {
+            **sample_agent_state,
+            "observe_dr_outcome": {
+                "outcome": "respond_success",
+                "reason": "direct reasoning completed",
+            },
+        }
+
+        result = route_after_observe_dr(state)
+
+        assert result == "respond"

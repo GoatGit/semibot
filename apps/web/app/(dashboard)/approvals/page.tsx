@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ShieldCheck, RefreshCw, CheckCircle2, XCircle } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { RefreshCw, CheckCircle2, XCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -9,9 +10,15 @@ import { Select } from '@/components/ui/Select'
 import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { useApprovals } from '@/hooks/useApprovals'
-import type { ApprovalRecord } from '@/types'
+import type { ApprovalRecord, RuntimeAttemptView } from '@/types'
 import { useLocale } from '@/components/providers/LocaleProvider'
+import { copyToClipboard } from '@/lib/utils'
+import { extractApprovalAttemptId, extractApprovalSessionId, tailId } from '@/lib/runtime-attempt-ui'
+import { apiClient } from '@/lib/api'
+import { useLayoutStore } from '@/stores/layoutStore'
+import { buildAttemptDetailContent, buildAttemptDetailTitle } from '@/lib/runtime-attempt-detail'
 
 function mapRiskVariant(risk: ApprovalRecord['riskLevel']): 'success' | 'warning' | 'error' {
   if (risk === 'high') return 'error'
@@ -68,6 +75,9 @@ function extractSkillOrchestrationTrace(approval: ApprovalRecord): Record<string
 
 export default function ApprovalsPage() {
   const { locale, t } = useLocale()
+  const router = useRouter()
+  const { openDetailContent } = useLayoutStore()
+  const searchParams = useSearchParams()
   const statusOptions = [
     { value: 'all', label: t('approvals.status.all') },
     { value: 'pending', label: t('approvals.status.pending') },
@@ -75,7 +85,10 @@ export default function ApprovalsPage() {
     { value: 'rejected', label: t('approvals.status.rejected') },
     { value: 'expired', label: t('approvals.status.expired') },
   ]
-  const [status, setStatus] = useState<'all' | ApprovalRecord['status']>('all')
+  const isValidStatus = (value: string | null): value is 'all' | ApprovalRecord['status'] =>
+    value === 'all' || value === 'pending' || value === 'approved' || value === 'rejected' || value === 'expired'
+  const queryStatus = searchParams.get('status')
+  const [status, setStatus] = useState<'all' | ApprovalRecord['status']>(isValidStatus(queryStatus) ? queryStatus : 'all')
   const [resolvingId, setResolvingId] = useState<string | null>(null)
   const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -90,8 +103,22 @@ export default function ApprovalsPage() {
   } = useApprovals()
 
   useEffect(() => {
+    const next = isValidStatus(queryStatus) ? queryStatus : 'all'
+    setStatus((current) => (current === next ? current : next))
+  }, [queryStatus])
+
+  useEffect(() => {
     void loadApprovals({ status, limit: 100 })
   }, [loadApprovals, status])
+
+  const updateStatus = (next: 'all' | ApprovalRecord['status']) => {
+    setStatus(next)
+    const params = new URLSearchParams(searchParams.toString())
+    if (next === 'all') params.delete('status')
+    else params.set('status', next)
+    const query = params.toString()
+    router.replace(query ? `/approvals?${query}` : '/approvals', { scroll: false })
+  }
 
   const stats = useMemo(() => {
     const pending = approvals.filter((item) => item.status === 'pending').length
@@ -131,33 +158,61 @@ export default function ApprovalsPage() {
     }
   }
 
+  const handleOpenAttemptDetail = async (attemptId: string) => {
+    try {
+      const response = await apiClient.get<{ success?: boolean; data?: RuntimeAttemptView }>(`/sessions/attempts/${encodeURIComponent(attemptId)}`)
+      const view = response?.data
+      if (!view) return
+      openDetailContent(buildAttemptDetailContent(view, locale))
+    } catch (error) {
+      openDetailContent({
+        kind: 'markdown',
+        title: buildAttemptDetailTitle(attemptId),
+        filename: `attempt-${attemptId}.md`,
+        content: [
+          `# Attempt ${attemptId}`,
+          '',
+          '加载 attempt 详情失败。',
+          '',
+          '```text',
+          error instanceof Error ? error.message : String(error),
+          '```',
+        ].join('\n'),
+      })
+    }
+  }
+
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
-        <Card className="border-border-default">
-          <CardContent className="p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
-                  <ShieldCheck size={22} className="text-primary-400" />
-                  {t('approvals.title')}
-                </h1>
-                <p className="mt-2 text-sm text-text-secondary">
-                  {t('approvals.subtitle')}
-                </p>
-                <p className="mt-2 text-xs text-text-tertiary">
-                  {t('approvals.pending')} {stats.pending} / {t('approvals.total')} {stats.total}
-                </p>
+        <PageHeader
+          title={t('approvals.title')}
+          subtitle={`${t('approvals.subtitle')} · ${t('approvals.pending')} ${stats.pending} / ${t('approvals.total')} ${stats.total}`}
+          actions={
+            <Button
+              variant="secondary"
+              leftIcon={<RefreshCw size={16} />}
+              onClick={() => void loadApprovals({ status, limit: 100 })}
+              disabled={isLoading}
+            >
+              {t('common.refresh')}
+            </Button>
+          }
+        />
+
+        <PageHelpStrip text={t('help.nav.approvals')} ctaLabel={t('nav.helpCenter')} />
+
+        <Card className="border-border-default relative z-10">
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="max-w-xs flex-1">
+                <Select
+                  value={status}
+                  options={statusOptions}
+                  onChange={(value) => updateStatus(value as 'all' | ApprovalRecord['status'])}
+                />
               </div>
-              <div className="flex items-center gap-2 flex-wrap justify-end">
-                <Button
-                  variant="secondary"
-                  leftIcon={<RefreshCw size={16} />}
-                  onClick={() => void loadApprovals({ status, limit: 100 })}
-                  disabled={isLoading}
-                >
-                  {t('common.refresh')}
-                </Button>
+              <div className="flex items-center gap-2">
                 <Button
                   variant="secondary"
                   onClick={() => void handleBulkResolve('approve')}
@@ -175,20 +230,6 @@ export default function ApprovalsPage() {
                   {t('chatSession.rejectAll')}
                 </Button>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <PageHelpStrip text={t('help.nav.approvals')} ctaLabel={t('nav.helpCenter')} />
-
-        <Card className="border-border-default">
-          <CardContent className="p-4">
-            <div className="max-w-xs">
-              <Select
-                value={status}
-                options={statusOptions}
-                onChange={(value) => setStatus(value as 'all' | ApprovalRecord['status'])}
-              />
             </div>
           </CardContent>
         </Card>
@@ -222,6 +263,8 @@ export default function ApprovalsPage() {
             approvals.map((approval) => {
               const detailText = buildApprovalDetail(approval, t)
               const orchestrationTrace = extractSkillOrchestrationTrace(approval)
+              const sessionId = extractApprovalSessionId(approval)
+              const attemptId = extractApprovalAttemptId(approval)
               return (
                 <Card key={approval.id} className="border-border-subtle">
                   <CardContent className="p-4">
@@ -242,6 +285,20 @@ export default function ApprovalsPage() {
                         <div className="mt-1 text-xs text-text-secondary">
                           {approval.eventType || t('approvals.unknownEvent')} · {formatTime(approval.createdAt, locale)}
                         </div>
+                        {(sessionId || attemptId) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {sessionId ? (
+                              <Badge variant="outline">
+                                {t('runtimeMonitor.drawer.fields.session')}: {tailId(sessionId)}
+                              </Badge>
+                            ) : null}
+                            {attemptId ? (
+                              <Badge variant="outline">
+                                Attempt: {tailId(attemptId)}
+                              </Badge>
+                            ) : null}
+                          </div>
+                        )}
                         {detailText && (
                           <p className="mt-2 text-sm text-text-primary break-words">
                             {detailText}
@@ -280,6 +337,33 @@ export default function ApprovalsPage() {
 
                       {approval.status === 'pending' && (
                         <div className="flex items-center gap-2">
+                          {attemptId ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => void copyToClipboard(attemptId)}
+                            >
+                              复制 Attempt
+                            </Button>
+                          ) : null}
+                          {attemptId ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => void handleOpenAttemptDetail(attemptId)}
+                            >
+                              查看 Attempt
+                            </Button>
+                          ) : null}
+                          {sessionId ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => router.push(`/chat/${sessionId}`)}
+                            >
+                              {t('runtimeMonitor.actions.openSession')}
+                            </Button>
+                          ) : null}
                           <Button
                             size="sm"
                             variant="secondary"

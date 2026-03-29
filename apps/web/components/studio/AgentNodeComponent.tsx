@@ -2,7 +2,8 @@
 
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { Bot, ChevronRight } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
+import { AgentBotAvatar } from '@/components/ui/AgentBotAvatar'
 import type { StudioInputHint } from '@/types'
 
 export interface AgentNodeData {
@@ -36,9 +37,14 @@ export const AgentNodeComponent = memo(function AgentNodeComponent({ data, selec
       <div className="h-0.5 w-full bg-gradient-to-r from-primary/60 via-primary to-primary/60" />
 
       <div className="px-3 py-2.5 flex items-center gap-2">
-        <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-          <Bot size={14} className="text-primary" />
-        </div>
+        <AgentBotAvatar
+          agentId={nodeData.agentId}
+          agentName={nodeData.agentName}
+          size={28}
+          iconScale={0.64}
+          monochrome
+          className="shrink-0 text-primary"
+        />
         <div className="min-w-0 flex-1">
           <div className="font-semibold text-sm truncate leading-tight">{nodeData.agentName}</div>
           <div className="text-[10px] text-muted-foreground font-mono truncate mt-0.5">

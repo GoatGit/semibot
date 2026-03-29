@@ -140,7 +140,7 @@ class TestStartNodeMemory:
         assert "Relevant knowledge:" in result["memory_context"]
         assert result["memory_snapshot"]["short_term"] == "[user] 之前的对话内容"
         assert result["memory_snapshot"]["long_term_results"] == [{"content": "用户偏好：中文回复"}]
-        assert result["current_step"] == "plan"
+        assert result["current_step"] == "route"
 
     @pytest.mark.asyncio
     async def test_loads_short_term_only(self, base_state, memory_system):
@@ -184,7 +184,7 @@ class TestStartNodeMemory:
 
         assert result["memory_context"] == ""
         assert result["memory_snapshot"]["budget"]["budget_chars"] == 12000
-        assert result["current_step"] == "plan"
+        assert result["current_step"] == "route"
 
     @pytest.mark.asyncio
     async def test_memory_exception_is_swallowed(self, base_state, memory_system):
@@ -197,7 +197,7 @@ class TestStartNodeMemory:
         # Should degrade gracefully
         assert result["memory_context"] == ""
         assert result["memory_snapshot"]["memory_context"] == ""
-        assert result["current_step"] == "plan"
+        assert result["current_step"] == "route"
 
     @pytest.mark.asyncio
     async def test_empty_messages(self, base_state, memory_system):
@@ -469,9 +469,21 @@ class TestRespondNodeMemory:
         assert result["messages"][0]["content"] == "这是流式回复"
         assert memory_system.append_short_term.await_count == 2
 
-        # Verify assistant message content
-        second_call = memory_system.append_short_term.call_args_list[1]
-        assert "这是流式回复" in second_call.kwargs["content"]
+    @pytest.mark.asyncio
+    async def test_dr_success_path_also_saves_memory(self, base_state, memory_system):
+        base_state["dr_result"] = {"answer": "这是 DR 最终回答"}
+        base_state["observe_dr_outcome"] = {"outcome": "respond_success"}
+
+        ctx = {
+            "memory_system": memory_system,
+            "event_emitter": None,
+        }
+
+        result = await respond_node(base_state, ctx)
+
+        assert result["messages"][0]["content"] == "这是 DR 最终回答"
+        assert memory_system.append_short_term.await_count == 2
+        assert "[assistant] 这是 DR 最终回答" in memory_system.append_short_term.call_args_list[1].kwargs["content"]
 
     @pytest.mark.asyncio
     async def test_empty_response_uses_deterministic_fallback_and_saves_assistant(self, base_state, memory_system):

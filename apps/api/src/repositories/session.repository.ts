@@ -59,7 +59,7 @@ export async function updateTitle(id: string, title: string): Promise<local.Loca
 
 export async function updateFields(
   id: string,
-  fields: { title?: string; status?: local.SessionStatus }
+  fields: { title?: string; status?: local.SessionStatus; currentAttemptId?: string | null }
 ): Promise<local.LocalSessionRow | null> {
   return local.localUpdateSessionFields(id, fields)
 }

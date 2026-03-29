@@ -10,6 +10,30 @@ from typing import Literal
 from src.orchestrator.state import AgentState
 
 
+def route_after_route(
+    state: AgentState,
+) -> Literal["respond", "dr", "plan", "delegate"]:
+    """Route after ROUTE node based on execution_mode."""
+    mode = str(state.get("execution_mode") or "").strip().lower()
+    if mode == "direct_answer":
+        return "respond"
+    if mode == "direct_reasoning":
+        return "dr"
+    if mode == "delegate":
+        return "delegate"
+    return "plan"
+
+
+def route_after_observe_dr(
+    state: AgentState,
+) -> Literal["respond", "plan"]:
+    """Route after OBSERVE_DR node."""
+    outcome = str(((state.get("observe_dr_outcome") or {}).get("outcome") or "")).strip().lower()
+    if outcome == "upgrade_to_plan_act":
+        return "plan"
+    return "respond"
+
+
 def _can_delegate(state: AgentState) -> bool:
     """Check whether delegation is actually available in current runtime context."""
     plan = state.get("plan")
@@ -61,20 +85,12 @@ def route_after_plan(
     if not plan:
         return "respond"
 
-    current_step = str(state.get("current_step") or "").strip().lower()
-
     if plan.plan_type == "delegate" and _can_delegate(state):
         return "delegate"
 
     if plan.plan_type == "terminate":
         return "respond"
 
-    # PlanStep V2 is semantic-first and may not pre-bind any tool. If the
-    # planner returned non-empty semantic steps, route into ACT.
-    if current_step == "act":
-        return "act"
-    if plan.steps and any(getattr(step, "tool", None) for step in plan.steps):
-        return "act"
     if plan.steps:
         return "act"
 
@@ -110,3 +126,10 @@ def route_after_observe(
     if observe_outcome == "task_completed":
         return "respond"
     return "reflect"
+
+
+def route_after_observe_workflow(
+    state: AgentState,
+) -> Literal["plan", "act", "respond", "reflect"]:
+    """Alias for workflow observe routing to keep new naming explicit."""
+    return route_after_observe(state)

@@ -1,4 +1,8 @@
 {
+  "metadata": {
+    "title": "Semibot",
+    "description": "A local-first, installable, collaborative, and evolvable general-purpose agent."
+  },
   "common": {
     "confirm": "Confirm",
     "cancel": "Cancel",
@@ -23,6 +27,7 @@
     "agents": "Agents",
     "sessions": "Sessions",
     "events": "Events",
+    "runtimeMonitor": "Monitor",
     "rules": "Rules",
     "approvals": "Approvals",
     "usage": "Usage",
@@ -36,7 +41,7 @@
     "webhooks": "Webhooks",
     "memory": "Memory",
     "evolution": "Evolution",
-    "studio": "Agent Studio",
+    "studio": "Studio",
     "language": "Language",
     "switchLanguage": "Switch language",
     "languageOptions": {
@@ -44,7 +49,169 @@
       "en-US": "English",
       "ja-JP": "日本語"
     },
-    "helpCenter": "Help Center"
+    "helpCenter": "Help Center",
+    "toggleTheme": "Toggle theme",
+    "themeDark": "Dark",
+    "themeLight": "Light",
+    "themeSystem": "System",
+    "upgradeNow": "Update now",
+    "upgrading": "Updating",
+    "upgradeSubmitted": "Upgrade task submitted",
+    "upgradeFailed": "Failed to start upgrade",
+    "upgradeErrorDetail": "Upgrade error details",
+    "releaseNotes": "Release notes",
+    "upgradeTooltip": "Install and restart to latest version in background",
+    "newVersionFound": "New version {version} found, current {current}",
+    "currentVersion": "Current version {version}"
+  },
+  "runtimeMonitor": {
+    "title": "Runtime Monitor",
+    "subtitle": "Turn runtime events into diagnosis, impact, and next actions so you can quickly see which sessions are stalled, looping, or expensive.",
+    "searchPlaceholder": "Filter runtime events by session_id...",
+    "openEventsCenter": "Open Events Center",
+    "copyEvent": "Copy event payload",
+    "errors": {
+      "load": "Failed to load Runtime Monitor"
+    },
+    "cards": {
+      "actionable": "Needs attention",
+      "actionableHint": "Non-healthy sessions that need a decision.",
+      "stalled": "Stalled",
+      "stalledHint": "Sessions with no recent heartbeat.",
+      "looping": "Looping",
+      "loopingHint": "Sessions showing loop signals.",
+      "expensive": "Expensive",
+      "expensiveHint": "24h token total {value}",
+      "directReasoning": "Direct Reasoning",
+      "directReasoningHint": "{value} sessions upgraded to Plan-Act"
+    },
+    "sections": {
+      "routeModeMix": "Route mode mix",
+      "needsAttention": "Needs Attention",
+      "needsAttentionHint": "Rank sessions by risk and show the summary plus recommended action.",
+      "incidentGroups": "Incident Groups",
+      "incidentGroupsHint": "Aggregate by problem type instead of showing a raw event flood.",
+      "recentIncidents": "Recent Incidents",
+      "recentIncidentsHint": "Only failures, loop signals, and high-cost usage stay here. Raw event flow is secondary.",
+      "healthySessions": "Relatively Healthy Sessions",
+      "healthySessionsHint": "Sessions without obvious issues, kept for low-frequency checks."
+    },
+    "labels": {
+      "runtimeSignal": "Runtime Signal",
+      "runtimeFailure": "Runtime Failure",
+      "heartbeat": "Heartbeat",
+      "tokenUsage": "Token Usage",
+      "routeDecision": "Route",
+      "directReasoning": "Direct Reasoning",
+      "drUpgrade": "DR Upgrade",
+      "actionableCount": "Actionable {count}",
+      "lastHeartbeatAt": "Last heartbeat",
+      "sessionId": "Session",
+      "toolName": "Tool",
+      "toolCalls": "Tool calls",
+      "idleFor": "Idle for",
+      "recommendedAction": "Recommended action",
+      "failures": "Failures",
+      "tokens": "Tokens",
+      "justNow": "Just now"
+    },
+    "modes": {
+      "directAnswer": "Direct Answer",
+      "directReasoning": "Direct Reasoning",
+      "planAct": "Plan-Act",
+      "delegate": "Delegate"
+    },
+    "statuses": {
+      "stale": "Stalled",
+      "looping": "Looping",
+      "upgraded": "Upgraded",
+      "failure": "Recent failure",
+      "expensive": "Expensive",
+      "healthy": "Healthy"
+    },
+    "actions": {
+      "inspectHeartbeat": "Inspect heartbeat and session detail",
+      "inspectLoop": "Inspect loop signals and consider stopping",
+      "inspectUpgrade": "Inspect the upgrade reason before deeper execution",
+      "inspectFailure": "Inspect the latest failure before retrying",
+      "inspectCost": "Check whether the spend produced useful output",
+      "monitorOnly": "Monitor only",
+      "viewRuntime": "View runtime",
+      "copySession": "Copy session ID",
+      "openSession": "Open session"
+    },
+    "diagnostics": {
+      "staleSummary": "No new heartbeat for a long time. Check whether the run is stuck or already broken.",
+      "loopSummary": "Detected {count} loop/repeat signals. Check whether the same tool is being called repeatedly.",
+      "upgradeSummary": "Direct Reasoning upgraded {count} time(s), which means the task outgrew the lightweight path.",
+      "failureSummary": "Observed {count} recent failures. Start with the latest failure reason.",
+      "costSummary": "Token spend reached {count}. Verify that the spend produced useful output.",
+      "healthySummary": "Recent heartbeats with no obvious issues. Low-frequency monitoring is enough."
+    },
+    "groups": {
+      "staleSessions": "Stalled sessions",
+      "staleSessionsHint": "No heartbeat, likely timed out or interrupted.",
+      "loopAlerts": "Loop alerts",
+      "loopAlertsHint": "Repeated signals usually indicate empty execution.",
+      "drUpgrades": "DR upgrades",
+      "drUpgradesHint": "Direct Reasoning did not converge and escalated into Plan-Act.",
+      "retryableFailures": "Retryable failures",
+      "retryableFailuresHint": "Timeouts, rate limits, context overflow, and other recoverable issues.",
+      "timeoutFailures": "Timeout failures",
+      "timeoutFailuresHint": "Check whether the timeout came from the model or the tool layer.",
+      "toolFailures": "Tool failures",
+      "toolFailuresHint": "More likely provider, permission, or parameter issues."
+    },
+    "empty": {
+      "title": "No runtime events yet",
+      "description": "No runtime middleware events are available yet. Refresh or start a new execution."
+    },
+    "noStaleSessions": "No healthy sessions to show right now.",
+    "noSignals": "No incidents require attention right now.",
+    "noFailures": "No recent runtime failures.",
+    "drawer": {
+      "title": "Events Center",
+      "subtitle": "Open the original generic business event center in the side drawer so you can cross-check it without leaving Runtime Monitor.",
+      "loading": "Loading events center data...",
+      "error": "Failed to load events center.",
+      "summary": {
+        "count": "Recent events: {count}"
+      },
+      "fields": {
+        "reason": "Reason",
+        "type": "Type",
+        "time": "Time",
+        "session": "Session",
+        "attempt": "Attempt",
+        "tool": "Tool",
+        "subject": "Subject",
+        "source": "Source"
+      },
+      "rawHint": "Use the copy button on timeline or hotspot cards to get the raw JSON payload."
+    },
+    "sessionDrawer": {
+      "title": "Session Runtime Detail",
+      "eventCount": "Related events: {count}",
+      "pathTitle": "Path transitions",
+      "pathHint": "See how this session moved from Route to Direct Reasoning, then converged or escalated.",
+      "incidentsTitle": "Incident Sequence",
+      "incidentsHint": "Review the latest runtime signals, failures, and expensive steps for this session in order.",
+      "noIncidents": "No incident sequence is available for this session."
+    },
+    "boundary": {
+      "runtime": {
+        "title": "What Runtime Monitor shows",
+        "body": "Only execution-core signals, failures, heartbeats, and token usage. Use it to debug ACT/tool loops, budgets, and liveness."
+      },
+      "events": {
+        "title": "What Events shows",
+        "body": "Keep rules, approvals, business events, tool traces, and broader system activity in the generic Events center."
+      },
+      "recommendation": {
+        "title": "Recommended boundary",
+        "body": "Do not merge the full Events center into Runtime Monitor. Keep Runtime Monitor specialized and link out to Events for deeper investigation."
+      }
+    }
   },
   "auth": {
     "login": "Login",
@@ -994,6 +1161,10 @@
     "smartAssistant": "General agent",
     "quickStart": "Quick Start",
     "inputPlaceholder": "Describe your question or task...",
+    "addAttachment": "Upload files",
+    "removeAttachment": "Remove attachment",
+    "attachmentsHint": "Attach documents, spreadsheets, or images to start with context",
+    "attachmentsCount": "{count} file(s) attached",
     "selectedPrefix": "Selected:",
     "startChat": "Start Chat",
     "suggestionsTitle": "Try These Prompts",
@@ -1022,10 +1193,10 @@
       }
     },
     "suggestions": {
-      "item1": "Analyze this sales data and generate a report",
-      "item2": "Build a React component for file upload",
+      "item1": "Organize these meeting notes and extract action items with owners",
+      "item2": "Draft a status update email to my manager based on this weekly summary",
       "item3": "Search latest AI industry news and summarize",
-      "item4": "Optimize the performance of this Python code"
+      "item4": "Write a professional project delay explanation for a client"
     },
     "warning": {
       "noAvailableAgent": "No available agent loaded. Unable to start chat.",
@@ -1075,6 +1246,7 @@
       "loadApprovals": "Failed to load approvals",
       "bulkApproval": "Bulk approval failed",
       "loadSession": "Failed to load session",
+      "streamDisconnected": "Live updates disconnected. Click retry to reconnect.",
       "messageWithReason": "Sorry, an error occurred: {message}"
     },
     "responseLabel": "Semibot Response",
@@ -1093,6 +1265,109 @@
   },
   "dashboard": {
     "subtitle": "A Crab that works, reminds, collaborates, evolves.",
+    "hero": {
+      "eyebrow": "System Overview",
+      "title": "Semibot Home",
+      "productSubtitle": "Half a General Agent",
+      "subtitle": "Use one home screen to see system scale, runtime posture, and the numbers that need attention.",
+      "primaryCta": "Start New Chat",
+      "badges": {
+        "runtime": "Runtime",
+        "production": "Production",
+        "attention": "Attention"
+      },
+      "status": {
+        "online": "Online",
+        "degraded": "Degraded"
+      }
+    },
+    "workspace": {
+      "title": "Workbench",
+      "heading": "See movement before raw counts.",
+      "subtitle": "Split the home screen into work queues, active runtime, and system surface so operators stop bouncing across tabs.",
+      "openControlRoom": "Open Productions",
+      "items": {
+        "work": {
+          "title": "Needs Attention",
+          "label": "Approvals, reviews, and escalations",
+          "meta": "Approvals {approvals} · Reviews {reviews} · Escalations {escalations}"
+        },
+        "runtime": {
+          "title": "In Flight",
+          "label": "Active execution paths",
+          "meta": "Sessions {total} · Bot threads {channels}"
+        },
+        "surface": {
+          "title": "Capability Surface",
+          "label": "Production / Agent / Skill / MCP",
+          "meta": "Agents {agents} · Skills {skills} · MCP {mcp}"
+        }
+      }
+    },
+    "launchpad": {
+      "title": "Launchpad",
+      "heading": "Put the newest surfaces in the center.",
+      "subtitle": "Jump straight into the pages you now use most, instead of searching through the nav.",
+      "items": {
+        "newChat": {
+          "title": "New Chat",
+          "desc": "Create a web session and start executing immediately."
+        },
+        "productions": {
+          "title": "Productions",
+          "desc": "Open APS projects, reviews, and escalations."
+        },
+        "agents": {
+          "title": "Agents",
+          "desc": "Manage agent definitions, role models, and capabilities."
+        },
+        "tools": {
+          "title": "Tools",
+          "desc": "Open tools, MCP, and capability integrations."
+        },
+        "skills": {
+          "title": "Skills",
+          "desc": "Review installed skills and their definitions."
+        },
+        "runtime": {
+          "title": "Monitor",
+          "desc": "Inspect runtime signals, failures, and health."
+        }
+      }
+    },
+    "attention": {
+      "title": "Attention",
+      "heading": "These queues can block production movement directly.",
+      "badgeHot": "{count} to handle",
+      "badgeClear": "All clear",
+      "items": {
+        "approvals": {
+          "title": "Approvals",
+          "desc": "High-risk actions are still waiting for a human decision."
+        },
+        "reviews": {
+          "title": "Production Reviews",
+          "desc": "The review inbox still has pending work."
+        },
+        "escalations": {
+          "title": "Escalations",
+          "desc": "Automation has stopped and needs human recovery."
+        }
+      }
+    },
+    "surface": {
+      "title": "Surface",
+      "heading": "The home page should show system scale too.",
+      "subtitle": "You should be able to judge the size of Agents, Productions, Skills, and MCP without opening each page.",
+      "items": {
+        "agents": "Agents",
+        "sessions": "Sessions",
+        "productions": "Productions",
+        "productionsHint": "Open APS projects, reviews, and escalations.",
+        "skills": "Skills",
+        "mcp": "MCP"
+      }
+    },
     "cards": {
       "agents": {
         "label": "Agents",
@@ -1101,6 +1376,14 @@
       "sessions": {
         "label": "Sessions",
         "hint": "active {count}"
+      },
+      "tools": {
+        "label": "Tools",
+        "hint": "available tool capabilities"
+      },
+      "productions": {
+        "label": "Productions",
+        "hint": "total APS projects"
       },
       "mcp": {
         "hint": "external integrations",
@@ -1115,20 +1398,9 @@
         "hint": "pending approvals {count}"
       }
     },
-    "recentSessions": {
-      "title": "Recent Sessions",
-      "viewAll": "View all",
-      "empty": "No sessions yet. Create your first chat task.",
-      "sources": {
-        "web": "Web",
-        "telegram": "Telegram",
-        "feishu": "Feishu",
-        "discord": "Discord",
-        "whatsapp": "WhatsApp",
-        "imessage": "iMessage",
-        "gateway": "Bot",
-        "channel": "Bot"
-      }
+    "actions": {
+      "website": "Website",
+      "github": "GitHub"
     },
     "quickLinks": {
       "title": "Quick Links",
@@ -1168,9 +1440,26 @@
         }
       }
     },
+    "recentSessions": {
+      "title": "Recent Activity",
+      "heading": "Recent web sessions and channel conversations.",
+      "viewAll": "View all",
+      "empty": "No sessions yet. Create your first chat task.",
+      "sources": {
+        "web": "Web",
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "discord": "Discord",
+        "whatsapp": "WhatsApp",
+        "imessage": "iMessage",
+        "gateway": "Bot",
+        "channel": "Bot"
+      }
+    },
     "recentEvents": {
-      "title": "Recent Events",
-      "open": "Open Event Center",
+      "title": "Signals",
+      "heading": "Latest system events and anomaly hints.",
+      "open": "Open Monitor",
       "empty": "No events yet"
     },
     "error": {
@@ -1532,6 +1821,43 @@
       "stepSummary": "Executed {count} steps",
       "failedSummary": "{count} failed",
       "summarySeparator": ", ",
+      "route": {
+        "title": "Route",
+        "reason": "Reason",
+        "goal": "Goal",
+        "mode": {
+          "directAnswer": "Direct Answer",
+          "directReasoning": "Direct Reasoning",
+          "planAct": "Plan-Act",
+          "delegate": "Delegate",
+          "unknown": "Unknown"
+        }
+      },
+      "directReasoning": {
+        "title": "Direct Reasoning",
+        "toolCalls": "Tool calls",
+        "upgradeReason": "Upgrade reason",
+        "status": {
+          "completed": "Completed",
+          "partial": "Partial",
+          "upgradeRequired": "Upgrade required",
+          "failed": "Failed"
+        }
+      },
+      "observeDr": {
+        "title": "DR Observe",
+        "reason": "Reason",
+        "upgradeReason": "Upgrade reason",
+        "outcome": {
+          "respondSuccess": "Respond directly",
+          "respondPartial": "Respond partially",
+          "upgradeToPlanAct": "Upgrade to Plan-Act",
+          "unknown": "Unknown"
+        }
+      },
+      "delegate": {
+        "title": "Delegate"
+      },
       "status": {
         "thinking": "Deep thinking in progress",
         "completed": "Thinking completed",
@@ -1579,6 +1905,7 @@
       "dashboard": "View overall system health, key metrics, and latest activity.",
       "sessions": "Create and manage conversations, with context and execution traces.",
       "events": "Search system events, inspect details, and replay selected events.",
+      "runtimeMonitor": "Inspect runtime middleware signals, failures, heartbeats, and token usage in one place.",
       "rules": "Configure event matching rules, actions, and risk strategies.",
       "approvals": "Review and decide high-risk action approvals in one place.",
       "usage": "View LLM token consumption stats, grouped by node, model, session, or agent.",
@@ -1757,6 +2084,141 @@
       "run": "Failed to start run",
       "cancel": "Failed to cancel",
       "invalidJson": "Invalid JSON format"
+    }
+  },
+  "aps": {
+    "common": { "beta": "Beta" },
+    "buttons": {
+      "humanInbox": "Human Inbox", "reviewInbox": "Review Inbox", "escalationInbox": "Escalation Inbox", "newProduction": "New Pipeline", "openApsBeta": "Open APS",
+      "openLegacyStudio": "Open Legacy Studio", "viewControlRoom": "View Control Room", "process": "Process", "dispatchOne": "Dispatch One",
+      "quickReplan": "Quick Replan", "graph": "Graph", "run": "Run", "backToProductions": "Back to Pipelines", "backToProductionDetail": "Back to Pipeline Detail",
+      "approve": "Approve", "requestRevision": "Request Revision", "reject": "Reject", "resumeRun": "Resume", "viewProduction": "View Pipeline",
+      "openStage": "Open Stage", "openTask": "Open Task", "copyContent": "Copy Content", "copyMetadata": "Copy Metadata", "saveSummary": "Save Summary", "workspace": "Workspace"
+    },
+    "errors": {
+      "loadControlRoom": "Failed to load APS Control Room", "createProduction": "Failed to create pipeline", "loadProductionDetail": "Failed to load pipeline detail",
+      "runProduction": "Failed to run pipeline", "dispatchTask": "Failed to dispatch next task", "submitReview": "Failed to submit review", "resolveEscalation": "Failed to resolve escalation",
+      "replan": "Failed to replan", "loadArtifactContent": "Failed to load artifact content", "loadReviewInbox": "Failed to load review inbox", "loadEscalationInbox": "Failed to load escalation inbox",
+      "loadHumanInbox": "Failed to load human inbox", "loadArtifactWorkspace": "Failed to load artifact workspace", "loadArtifactDiff": "Failed to load artifact diff",
+      "saveArtifactSummary": "Failed to save artifact summary", "loadProductionGraph": "Failed to load production graph", "loadGraphDiff": "Failed to load graph diff",
+      "loadStageDetail": "Failed to load stage detail", "loadTaskDetail": "Failed to load task detail", "loadAttemptDetail": "Failed to load attempt detail", "copy": "Copy failed"
+    },
+    "toast": {
+      "productionStarted": "Pipeline started", "reviewSubmitted": "Review submitted: {decision}", "escalationResolved": "Escalation resolved and pipeline resumed",
+      "escalationRestored": "Escalation restored", "replanned": "New plan snapshot created for the pipeline", "artifactSummarySaved": "Artifact summary saved",
+      "artifactContentCopied": "Artifact content copied", "artifactMetadataCopied": "Artifact metadata copied"
+    },
+    "controlRoom": {
+      "title": "Studio Control Room", "subtitle": "Aggregate pending reviews, human interventions, and blocked stages by pipeline so the next item to handle is obvious.",
+      "parallelTitle": "APS Workspace", "parallelBody": "The workspace entry now points directly to the APS production pipeline system.",
+      "empty": "No APS control room data yet."
+    },
+    "create": {
+      "title": "New Pipeline", "name": "Name", "namePlaceholder": "Enter pipeline name", "goal": "Goal",
+      "goalPlaceholder": "Example: Adapt this novel into a 12-episode anime, starting with the world bible, character sheets, and first three episode outlines.",
+      "defaultAgent": "Default Agent", "selectAgent": "Select an agent"
+    },
+    "metrics": {
+      "totalProductions": "Pipelines", "active": "Active", "awaitingHuman": "Awaiting Human", "pendingReviewEscalation": "Pending Review / Escalation",
+      "blockedStages": "Blocked Stages", "runningTasks": "Running Tasks", "openEscalations": "Open Escalations", "totalTokens": "Total Tokens",
+      "pendingReviews": "Pending Reviews", "humanIntervention": "Human Intervention", "revisionChains": "Revision Chains"
+    },
+    "sections": {
+      "productions": "Pipelines", "productionsHint": "Start with the full pipeline list, current stage, and next action before drilling into a single control room.",
+      "priority": "Priority Queue", "priorityHint": "Use the summary on the right to see where the portfolio is stuck first.",
+      "portfolioHotspots": "Portfolio Hotspots", "portfolioHotspotsHint": "See global blockers from the pipeline perspective before drilling into details.",
+      "healthy": "Relatively Healthy"
+    },
+    "portfolioIssue": {
+      "awaitingHumanTitle": "Awaiting Human",
+      "awaitingHumanDescription": "Escalations or human decisions are currently blocking progress.",
+      "blockedStageTitle": "Blocked Stage",
+      "blockedStageDescription": "A stage is blocked by failed tasks or rejected reviews.",
+      "pendingReviewsTitle": "Pending Reviews",
+      "pendingReviewsDescription": "There are unfinished review jobs slowing progression.",
+      "failedTasksTitle": "Failed Tasks",
+      "failedTasksDescription": "Review failure causes or consider replanning.",
+      "runningTitle": "In Progress",
+      "runningDescription": "The production still has running tasks to observe.",
+      "healthyTitle": "Relatively Healthy",
+      "healthyDescription": "No obvious blockers right now; low-frequency monitoring is enough."
+    },
+    "detail": {
+      "controlRoom": "Control Room", "controlRoomHint": "Show items that block stage gates or require human action first.", "latestSignals": "Latest Signals",
+      "latestSignalsHint": "Recent production events that show whether the current stage is still advancing.", "stageHealth": "Stage Health",
+      "stageHealthHint": "Aggregate task and review state by stage to spot risky segments quickly.", "attemptHotspots": "Attempt Hotspots",
+      "attemptHotspotsHint": "The most token-expensive attempts to identify cost spikes and retry hotspots.", "stagesAndTasks": "Stages & Tasks",
+      "stagesAndTasksHint": "View materialized tasks by stage.", "escalations": "Escalations", "escalationsHint": "Rejected reviews or policy failures enter the human queue.",
+      "reviewJobs": "Review Jobs", "reviewJobsHint": "Submit manual decisions for artifacts that require review.", "attempts": "Attempts", "attemptsHint": "Recent execution instances.",
+      "artifactsHint": "Registered artifact versions that you can preview directly.", "artifactPreview": "Artifact Preview", "eventsHint": "Recent production events."
+    },
+    "reviewInbox": { "subtitle": "Process all pending APS review items without opening each production detail page." },
+    "escalationInbox": { "subtitle": "Process human interventions caused by review rejections or policy failures." },
+    "humanInbox": { "subtitle": "A unified queue for reviews and escalations that require human judgment." },
+    "artifact": {
+      "contentTitle": "Artifact Content", "contentHint": "The main body of the current version. MVP is read-only for now.",
+      "previewMode": { "json": "Structured Preview", "markdown": "Document Preview", "text": "Text Preview" },
+      "lineageTitle": "Lineage", "diffTitle": "Diff", "diffHint": "Compare with the previous version by default, or switch to another version in the lineage.",
+      "autoSelectPrevious": "Auto-select previous version", "summaryTitle": "Summary", "summaryHint": "Human-written summary for the Control Room, inboxes, and artifact workspace.",
+      "summaryPlaceholder": "Write a concise summary describing this artifact version's purpose, changes, and issues."
+    },
+    "graph": {
+      "title": "Pipeline Graph", "subtitle": "A minimal debugging view for the current plan, the previous plan, and superseded tasks.",
+      "autoSelectPreviousPlan": "Auto-select previous plan", "planVersion": "plan v{version}", "currentPlan": "Current Plan", "basePlan": "Base Plan",
+      "addedTasks": "Added Tasks", "removedTasks": "Removed Tasks", "superseded": "Superseded", "supersededBadge": "superseded",
+      "dependsOn": "Depends On", "planHistory": "Plan History", "planHistoryHint": "Inspect planner/replan snapshots by version.",
+      "currentBadge": "current", "replanDiff": "Replan Diff", "replanDiffHint": "Focus on structures added or removed compared with the base plan.",
+      "addedStages": "Added Stages", "removedStages": "Removed Stages"
+    },
+    "stage": { "tasksTitle": "Stage Tasks", "tasksHint": "Tasks in this stage and their current runtime state." },
+    "attempt": {
+      "inputEnvelope": "Input Envelope",
+      "outputUsage": "Output / Usage",
+      "typedResult": "Typed Result",
+      "repairEvents": "Repair Events",
+      "repairEventsHint": "Shows repair rounds triggered when the output did not satisfy the contract.",
+      "noRepairEvents": "No repair events were recorded for this attempt."
+    },
+    "fields": {
+      "status": "Status", "stage": "Stage", "task": "Task", "artifact": "Artifact", "productionStatus": "Pipeline Status", "createdAt": "Created At",
+      "goal": "Goal", "started": "Started", "ended": "Ended", "failure": "Failure", "heartbeat": "Heartbeat", "artifactKey": "Artifact Key",
+      "version": "Version", "createdByTask": "Created By Task", "storage": "Storage", "base": "Base", "added": "Added", "removed": "Removed", "events": "Events"
+    },
+    "labels": {
+      "attentionCount": "{count} need attention", "productionCount": "{count} pipelines", "currentStage": "Current Stage", "reviewCount": "Review", "escalationCount": "Escalation",
+      "runningCount": "Running", "tokens": "Tokens", "tokensLower": "tokens", "tasksDone": "tasks", "reviewPending": "review pending",
+      "rejected": "rejected", "tasks": "tasks", "sequence": "sequence", "attemptNumber": "attempt #{number}", "ok": "ok",
+      "needsHumanIntervention": "needs human intervention", "taskFailed": "task failed", "loadingArtifactContent": "Loading artifact content…",
+      "previousVersion": "previous", "pending": "pending", "review": "review", "escalation": "escalation",
+      "defaultRevisionInstruction": "Please revise the current artifact according to the latest review findings.",
+      "defaultHumanRevisionInstruction": "Please revise the current artifact according to the human review feedback."
+    },
+    "health": {
+      "healthy": "Healthy",
+      "waitingReview": "Waiting Review",
+      "blocked": "Blocked",
+      "atRisk": "At Risk",
+      "completed": "Completed"
+    },
+    "reason": {
+      "reviewRejected": "A review rejected the output and requires human intervention.",
+      "multipleReviewsRejected": "Multiple reviews rejected the stage and escalated it.",
+      "reviewRequestedRevision": "A review requested revision before the stage can continue.",
+      "multipleReviewsRequestedRevision": "Multiple reviews requested revision and need consolidation.",
+      "pendingReviews": "There are still pending review jobs.",
+      "failedTasks": "There are failed tasks blocking the stage.",
+      "runningTasks": "The stage still has running tasks.",
+      "stageReadyToAdvance": "The stage is ready to advance.",
+      "stageNotReady": "The stage is not ready to advance yet."
+    },
+    "empty": {
+      "noUrgent": "No high-priority blockers right now.", "noHealthy": "No low-priority healthy productions right now.", "noStageYet": "No stage yet",
+      "productionNotFound": "Production pipeline not found", "noControlRoomItems": "No high-priority blockers right now.", "noEvents": "No events yet.",
+      "noAttemptHotspots": "No attempt hotspots yet.", "noEscalations": "No escalations right now.", "noReviewJobs": "No review jobs right now.",
+      "noAttempts": "No attempts yet.", "noArtifacts": "No artifacts yet.", "noArtifactContent": "This artifact has no readable text content.",
+      "artifactNotFound": "Artifact not found", "unlinked": "Unlinked", "noBaseVersion": "No base version", "noArtifactDiff": "No text diff available.",
+      "noArtifactDiffData": "No diff data available yet.", "noGraphDiff": "No graph diff data available.", "stageNotFound": "Stage not found",
+      "taskNotFound": "Task not found", "attemptNotFound": "Attempt not found", "noHumanInbox": "No APS items currently require human attention."
     }
   }
 }

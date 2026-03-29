@@ -319,6 +319,42 @@ def _is_abstract_reasoning_step(step: PlanStep) -> bool:  # noqa: ARG001
     return False
 
 
+def _dr_upgrade_message(state: AgentState) -> dict[str, str] | None:
+    """Expose DR intermediate context when upgrading into Plan-Act Mode."""
+    observe_dr_outcome = state.get("observe_dr_outcome") or {}
+    if str(observe_dr_outcome.get("outcome") or "").strip().lower() != "upgrade_to_plan_act":
+        return None
+    dr_result = state.get("dr_result") or {}
+    if not isinstance(dr_result, dict):
+        return None
+    parts: list[str] = []
+    upgrade_reason = str(dr_result.get("upgrade_reason") or "").strip()
+    if upgrade_reason:
+        parts.append(f"Direct Reasoning upgrade reason: {upgrade_reason}")
+    intermediate_context = dr_result.get("intermediate_context")
+    if intermediate_context:
+        parts.append(f"Direct Reasoning intermediate context:\n{intermediate_context}")
+    evidence = dr_result.get("evidence")
+    if evidence:
+        parts.append(f"Direct Reasoning evidence:\n{evidence}")
+    resource_usage = dr_result.get("resource_usage")
+    if resource_usage:
+        parts.append(f"Direct Reasoning resource usage:\n{resource_usage}")
+    failure = dr_result.get("failure")
+    if failure:
+        parts.append(f"Direct Reasoning failure:\n{failure}")
+    if not parts:
+        return None
+    return {
+        "role": "system",
+        "content": (
+            "The request has been upgraded from Direct Reasoning Mode to Plan-Act Mode. "
+            "Reuse the existing evidence and intermediate context below. "
+            "Do not redo work that Direct Reasoning has already completed unless necessary.\n\n"
+            + "\n\n".join(str(part).strip() for part in parts if str(part).strip())
+        ),
+    }
+
 
 async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
     """
@@ -384,13 +420,24 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
     loaded_skill_content = ctx.loaded_skill_content
     if ctx.skill_preload_message:
         planning_messages.append(ctx.skill_preload_message)
+    dr_upgrade_message = _dr_upgrade_message(state)
+    if dr_upgrade_message:
+        planning_messages.append(dr_upgrade_message)
 
     requires_fresh_research_plan = ctx.requires_fresh_research_plan
     plan: ExecutionPlan | None = None
     planner_loop_trace: list[dict[str, Any]] = []
-    # Skip tool phase when there are no skills to read and no sub-agents to inspect.
+    # Skip tool phase when there are no SKILL.md files to read and no sub-agents to inspect.
     # This avoids wasted LLM calls (read_skill with empty params, etc.) for simple queries.
-    _has_inspectable_resources = bool(ctx.available_skills) or bool(ctx.sub_agents_for_planner)
+    # Note: ctx.available_tool_schemas is tool schemas (search, web_fetch, etc.), NOT skill index.
+    # We check metadata.skill_index for actual readable SKILL.md files.
+    _has_readable_skills = False
+    if ctx.runtime_context:
+        _meta = getattr(ctx.runtime_context, "metadata", None)
+        if isinstance(_meta, dict):
+            _skill_idx = _meta.get("skill_index")
+            _has_readable_skills = isinstance(_skill_idx, list) and len(_skill_idx) > 0
+    _has_inspectable_resources = _has_readable_skills or bool(ctx.sub_agents_for_planner)
     tools_available = not bool(loaded_skill_id) and _has_inspectable_resources
     compact_mode = False
     plan_strategy = resolve_plan_execution_strategy(

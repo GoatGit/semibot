@@ -8,8 +8,8 @@ import pytest
 
 from src.llm.base import LLMConfig
 from src.local_runtime import (
-    _build_skill_definitions,
     _build_approval_policy,
+    _build_skill_definitions,
     _create_llm_provider,
     _guard_rule_authoring_success_claim,
     _maybe_bootstrap_llm_from_control_plane,

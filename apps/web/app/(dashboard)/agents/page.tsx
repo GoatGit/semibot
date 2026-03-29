@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, Plus, Search, Settings, Trash2, Loader2, Power, Sparkles } from 'lucide-react'
+import { Plus, Search, Settings, Trash2, Loader2, Power, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -12,6 +12,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Select, type SelectGroup } from '@/components/ui/Select'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { AgentBotAvatar } from '@/components/ui/AgentBotAvatar'
 import { apiClient } from '@/lib/api'
 import { toast } from '@/stores/toastStore'
 import type { ApiResponse, Agent } from '@/types'
@@ -190,65 +192,59 @@ export default function AgentsPage() {
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
         {/* 头部 */}
-        <header className="border-b border-border-subtle pb-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-semibold text-text-primary">{t('agents.header.title')}</h1>
-              <p className="text-sm text-text-secondary mt-1">
-                {t('agents.header.prefix')} {agents.length} {t('agents.header.suffix')}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Tooltip content={t('help.nav.agents')}>
-                <div>
-                  <Button
-                    leftIcon={<Plus size={16} />}
-                    data-testid="create-agent-btn"
-                    onClick={openCreateForm}
-                  >
-                    {t('agents.new')}
-                  </Button>
-                </div>
-              </Tooltip>
-            </div>
-          </div>
-
-          {/* 搜索和筛选 */}
-          <div className="flex items-center gap-4 mt-4">
-            <div className="flex-1 max-w-md">
-              <Input
-                placeholder={t('agents.searchPlaceholder')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                leftIcon={<Search size={16} />}
-                data-testid="agent-search"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              {(['all', 'active', 'inactive'] as const).map((status) => (
-                <button
-                  key={status}
-                  onClick={() => setStatusFilter(status)}
-                  className={clsx(
-                    'px-3 py-1.5 rounded-md text-sm font-medium',
-                    'transition-colors duration-fast',
-                    statusFilter === status
-                      ? 'bg-primary-500/20 text-primary-400'
-                      : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
-                  )}
+        <PageHeader
+          title={t('agents.header.title')}
+          subtitle={`${t('agents.header.prefix')} ${agents.length} ${t('agents.header.suffix')}`}
+          actions={
+            <Tooltip content={t('help.nav.agents')}>
+              <div>
+                <Button
+                  leftIcon={<Plus size={16} />}
+                  data-testid="create-agent-btn"
+                  onClick={openCreateForm}
                 >
-                  {status === 'all' && (t('agents.filter.all'))}
-                  {status === 'active' && (t('agents.filter.active'))}
-                  {status === 'inactive' && (t('agents.filter.inactive'))}
-                  <span className="ml-1 text-xs text-text-tertiary">
-                    ({status === 'all' ? statusCounts.all : status === 'active' ? statusCounts.active : statusCounts.inactive})
-                  </span>
-                </button>
-              ))}
-            </div>
+                  {t('agents.new')}
+                </Button>
+              </div>
+            </Tooltip>
+          }
+        />
+
+        {/* 搜索和筛选 */}
+        <div className="flex items-center gap-4">
+          <div className="flex-1 max-w-md">
+            <Input
+              placeholder={t('agents.searchPlaceholder')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+              data-testid="agent-search"
+            />
           </div>
-        </header>
+
+          <div className="flex items-center gap-2">
+            {(['all', 'active', 'inactive'] as const).map((status) => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={clsx(
+                  'px-3 py-1.5 rounded-md text-sm font-medium',
+                  'transition-colors duration-fast',
+                  statusFilter === status
+                    ? 'bg-primary-500/20 text-primary-400'
+                    : 'text-text-secondary hover:bg-interactive-hover hover:text-text-primary'
+                )}
+              >
+                {status === 'all' && (t('agents.filter.all'))}
+                {status === 'active' && (t('agents.filter.active'))}
+                {status === 'inactive' && (t('agents.filter.inactive'))}
+                <span className="ml-1 text-xs text-text-tertiary">
+                  ({status === 'all' ? statusCounts.all : status === 'active' ? statusCounts.active : statusCounts.inactive})
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
 
         <PageHelpStrip text={t('help.nav.agents')} ctaLabel={t('nav.helpCenter')} />
 
@@ -363,9 +359,12 @@ function AgentCard({ agent, locale, onEdit, onDelete, onToggleActive, isToggling
           {/* 头部 */}
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-primary-500/20 flex items-center justify-center">
-                <Bot size={20} className="text-primary-400" />
-              </div>
+              <AgentBotAvatar
+                agentId={agent.id}
+                agentName={agent.name}
+                size={40}
+                iconScale={0.68}
+              />
               <div>
                 <div className="flex items-center gap-2">
                   <h3
@@ -497,9 +496,13 @@ function EmptyState({ hasSearch, onClear, onCreate }: EmptyStateProps) {
   const { t } = useLocale()
   return (
     <div className="flex flex-col items-center justify-center h-full py-12">
-      <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-4">
-        <Bot size={32} className="text-text-tertiary" />
-      </div>
+      <AgentBotAvatar
+        agentId="agents-empty-state"
+        agentName="Semibot"
+        size={64}
+        iconScale={0.7}
+        className="mb-4"
+      />
       {hasSearch ? (
         <>
           <h3 className="text-lg font-medium text-text-primary">{t('agents.empty.filteredTitle')}</h3>

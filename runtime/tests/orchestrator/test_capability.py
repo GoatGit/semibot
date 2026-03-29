@@ -228,6 +228,44 @@ def test_capability_graph_build():
     assert "github_create_issue" in graph.capabilities_by_name
 
 
+def test_capability_graph_adds_projected_group_action_capabilities():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(
+                name="opencli_xiaohongshu",
+                description="Usage: opencli xiaohongshu [options] [command]",
+                metadata={
+                    "source_type": "cli",
+                    "provider_id": "opencli",
+                    "shape": "group",
+                    "actions": [
+                        {
+                            "command": "search",
+                            "description": "Search Xiaohongshu notes",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"query": {"type": "string"}},
+                                "required": ["query"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+
+    graph = CapabilityGraph(runtime_context)
+    graph.build()
+
+    assert "opencli_xiaohongshu" in graph.capabilities_by_name
+    assert "opencli_xiaohongshu_search" in graph.capabilities_by_name
+
+
 def test_capability_graph_skips_skills_from_executable_capabilities():
     """Skills should not be exposed as executable capabilities."""
     doc_skill = SkillDefinition(

@@ -21,6 +21,15 @@ import {
 } from './constants/config'
 import { createLogger } from './lib/logger'
 import { initWSServer } from './ws/ws-server'
+import { startApsLifecycleSweep, stopApsLifecycleSweep } from './services/production-lifecycle.service'
+import {
+  startRuntimeAttemptWatchdogSweep,
+  stopRuntimeAttemptWatchdogSweep,
+} from './services/runtime-attempt-watchdog.service'
+import {
+  startRuntimeAttemptOutboxSweep,
+  stopRuntimeAttemptOutboxSweep,
+} from './services/runtime-attempt-outbox.service'
 
 const serverLogger = createLogger('server')
 
@@ -129,12 +138,19 @@ const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
   })
 })
 
+startApsLifecycleSweep()
+startRuntimeAttemptWatchdogSweep()
+startRuntimeAttemptOutboxSweep()
+
 // 初始化控制平面 WS 服务（执行平面反向连接入口）
 const wsServer = initWSServer(server)
 
 // 优雅关闭
 process.on('SIGTERM', () => {
   serverLogger.info('收到 SIGTERM 信号，正在优雅关闭...')
+  stopApsLifecycleSweep()
+  stopRuntimeAttemptWatchdogSweep()
+  stopRuntimeAttemptOutboxSweep()
   wsServer.close()
   server.close(() => {
     serverLogger.info('服务器已关闭')
@@ -144,6 +160,9 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   serverLogger.info('收到 SIGINT 信号，正在优雅关闭...')
+  stopApsLifecycleSweep()
+  stopRuntimeAttemptWatchdogSweep()
+  stopRuntimeAttemptOutboxSweep()
   wsServer.close()
   server.close(() => {
     serverLogger.info('服务器已关闭')

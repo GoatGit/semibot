@@ -2,6 +2,7 @@
 
 import os
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
 from operator import add
 from typing import Annotated, Any, Literal
@@ -11,6 +12,51 @@ from typing_extensions import TypedDict
 from zoneinfo import ZoneInfo
 
 from src.orchestrator.context import RuntimeSessionContext
+
+
+def _resolve_system_timezone_name() -> str:
+    tz_env = str(os.getenv("TZ") or "").strip()
+    if tz_env:
+        return tz_env
+
+    localtime_path = Path("/etc/localtime")
+    if localtime_path.exists():
+        try:
+            resolved = localtime_path.resolve()
+            resolved_str = str(resolved)
+            marker = "/zoneinfo/"
+            if marker in resolved_str:
+                return resolved_str.split(marker, 1)[1].strip() or "UTC"
+        except Exception:
+            pass
+
+    try:
+        local_tz = datetime.now().astimezone().tzinfo
+        if isinstance(local_tz, ZoneInfo):
+            key = str(getattr(local_tz, "key", "") or "").strip()
+            if key:
+                return key
+    except Exception:
+        pass
+
+    return "UTC"
+
+
+def _resolve_effective_tzinfo(timezone_name: str) -> tuple[str, timezone | ZoneInfo]:
+    try:
+        return timezone_name, ZoneInfo(timezone_name)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Invalid timezone '%s', falling back to system timezone", timezone_name
+        )
+    system_timezone_name = _resolve_system_timezone_name()
+    try:
+        return system_timezone_name, ZoneInfo(system_timezone_name)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "System timezone '%s' is invalid, falling back to UTC", system_timezone_name
+        )
+        return "UTC", timezone.utc
 
 
 class StepInputRef(BaseModel):
@@ -303,6 +349,51 @@ class Message(TypedDict):
     tool_call_id: str | None
 
 
+class DrPolicy(TypedDict, total=False):
+    """Policy contract for Direct Reasoning Mode."""
+
+    single_shot: bool
+    allow_tools: bool
+    allow_skills: bool
+    max_tool_calls: int
+    max_wall_clock_ms: int
+    max_prompt_tokens: int
+    max_react_iterations: int
+    allow_parallel_tools: bool
+
+
+class RoutingDecision(TypedDict, total=False):
+    """Structured decision produced by ROUTE node."""
+
+    mode: Literal["direct_answer", "direct_reasoning", "plan_act", "delegate"]
+    goal: str
+    reason: str
+    delegate_to: str | None
+    dr_policy: DrPolicy | None
+
+
+class DirectReasoningResult(TypedDict, total=False):
+    """Structured execution result produced by DR node."""
+
+    status: Literal["completed", "partial", "upgrade_required", "failed"]
+    answer: str | None
+    artifacts: list[dict[str, Any]]
+    tool_usage: dict[str, Any]
+    evidence: list[dict[str, Any]]
+    upgrade_reason: str | None
+    failure: dict[str, Any] | None
+    diagnostics: dict[str, Any]
+    intermediate_context: dict[str, Any] | None
+    resource_usage: dict[str, Any] | None
+
+
+class DirectReasoningObserveOutcome(TypedDict, total=False):
+    """Decision produced by OBSERVE_DR node."""
+
+    outcome: Literal["respond_success", "respond_partial", "upgrade_to_plan_act", "awaiting_approval"]
+    reason: str
+
+
 class AgentState(TypedDict):
     """
     Agent execution state for LangGraph.
@@ -337,7 +428,19 @@ class AgentState(TypedDict):
     messages: Annotated[list[Message], add]
 
     # State machine control
-    current_step: Literal["start", "plan", "act", "delegate", "observe", "reflect", "respond"]
+    current_step: Literal[
+        "start",
+        "route",
+        "plan",
+        "act",
+        "dr",
+        "delegate",
+        "observe",
+        "observe_dr",
+        "reflect",
+        "respond",
+    ]
+    execution_mode: Literal["direct_answer", "direct_reasoning", "plan_act", "delegate"] | None
     observe_outcome: (
         Literal[
             "task_completed",
@@ -347,11 +450,14 @@ class AgentState(TypedDict):
         ]
         | None
     )
+    observe_dr_outcome: DirectReasoningObserveOutcome | None
 
     # Planning state
     plan: ExecutionPlan | None
+    routing_decision: RoutingDecision | None
     pending_actions: list[PlanStep]
     execution_state: dict[str, Any]
+    dr_result: DirectReasoningResult | None
 
     # Execution state - uses add reducer to accumulate results
     tool_results: Annotated[list[ToolCallResult], add]
@@ -390,7 +496,7 @@ def _resolve_session_timezone(
             value = str(runtime_metadata.get(key) or "").strip()
             if value:
                 return value
-    return str(os.getenv("TZ") or "UTC").strip() or "UTC"
+    return _resolve_system_timezone_name()
 
 
 def build_session_time_metadata(
@@ -399,14 +505,7 @@ def build_session_time_metadata(
 ) -> dict[str, Any]:
     merged = dict(metadata or {})
     timezone_name = _resolve_session_timezone(merged, context)
-    try:
-        tzinfo = ZoneInfo(timezone_name)
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "Invalid timezone '%s', falling back to UTC", timezone_name
-        )
-        timezone_name = "UTC"
-        tzinfo = timezone.utc
+    timezone_name, tzinfo = _resolve_effective_tzinfo(timezone_name)
     now = datetime.now(tzinfo)
     merged.setdefault("current_date", now.strftime("%Y-%m-%d"))
     merged.setdefault("current_weekday", now.strftime("%A"))
@@ -420,11 +519,10 @@ def resolve_time_context(
     *,
     prefer_plan: bool = False,
 ) -> tuple[str, str, str]:
-    metadata_map = dict(metadata or {})
-    fallback_now = datetime.now(timezone.utc)
-    current_date = str(metadata_map.get("current_date") or "").strip() or fallback_now.strftime("%Y-%m-%d")
-    current_weekday = str(metadata_map.get("current_weekday") or "").strip() or fallback_now.strftime("%A")
-    current_timezone = str(metadata_map.get("current_timezone") or "").strip() or "UTC"
+    metadata_map = build_session_time_metadata(metadata)
+    current_date = str(metadata_map.get("current_date") or "").strip()
+    current_weekday = str(metadata_map.get("current_weekday") or "").strip()
+    current_timezone = str(metadata_map.get("current_timezone") or "").strip()
     if isinstance(plan, ExecutionPlan):
         plan_date = str(plan.current_date or "").strip()
         plan_weekday = str(plan.current_weekday or "").strip()
@@ -489,8 +587,11 @@ def create_initial_state(
         context=context,
         messages=initial_messages,
         current_step="start",
+        execution_mode=None,
         observe_outcome=None,
+        observe_dr_outcome=None,
         plan=None,
+        routing_decision=None,
         pending_actions=[],
         execution_state={
             "completed_steps": [],
@@ -503,6 +604,7 @@ def create_initial_state(
             "remaining_budget_or_limits": [],
             "step_input_bindings": {},
         },
+        dr_result=None,
         tool_results=[],
         memory_context="",
         memory_snapshot={

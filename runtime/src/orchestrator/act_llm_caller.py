@@ -11,6 +11,7 @@ from src.orchestrator.act_context import (
     _resolved_step_output_contract,
     _truncate_act_prompt_text,
 )
+from src.orchestrator.runtime_middleware import RuntimeFailure, RuntimeSignal
 from src.orchestrator.state import AgentState, ExecutionPlan, PlanStep, ToolCallResult
 from src.utils.logging import get_logger
 
@@ -68,6 +69,13 @@ def handle_act_llm_error(
     )
     if is_rate_limit:
         new_rl_count = rate_limit_retry_count + 1
+        runtime_failure = RuntimeFailure(
+            family="llm",
+            kind="rate_limit",
+            retryable=new_rl_count <= max_rate_limit_retries,
+            source="llm_provider",
+            message=llm_error_text[:300],
+        )
         if new_rl_count > max_rate_limit_retries:
             logger.warning(
                 "act_inner_loop_rate_limit_retries_exhausted",
@@ -81,7 +89,7 @@ def handle_act_llm_error(
                     success=False,
                 )
             )
-            return {"action": "return"}
+            return {"action": "return", "runtime_failure": runtime_failure.to_dict()}
         backoff_seconds = 5 * (2 ** (new_rl_count - 1))
         logger.info(
             "act_inner_loop_rate_limited_retry",
@@ -94,6 +102,14 @@ def handle_act_llm_error(
             "timeout_retry_count": timeout_retry_count,
             "backoff_seconds": backoff_seconds,
             "step_transcript": step_transcript,
+            "runtime_failure": runtime_failure.to_dict(),
+            "runtime_signal": RuntimeSignal(
+                kind="retry",
+                source="budget_guard",
+                reason="llm_rate_limit_retry",
+                message="Rate limited; retrying ACT LLM call",
+                data={"retry_count": new_rl_count, "backoff_seconds": backoff_seconds},
+            ).to_dict(),
         }
 
     is_context_overflow = any(
@@ -102,6 +118,13 @@ def handle_act_llm_error(
     )
     if is_context_overflow and len(step_transcript) > 4:
         new_co_count = context_overflow_retry_count + 1
+        runtime_failure = RuntimeFailure(
+            family="llm",
+            kind="context_overflow",
+            retryable=new_co_count <= max_context_overflow_retries,
+            source="llm_provider",
+            message=llm_error_text[:300],
+        )
         if new_co_count > max_context_overflow_retries:
             logger.warning(
                 "act_inner_loop_context_overflow_retries_exhausted",
@@ -115,7 +138,7 @@ def handle_act_llm_error(
                     success=False,
                 )
             )
-            return {"action": "return"}
+            return {"action": "return", "runtime_failure": runtime_failure.to_dict()}
         trimmed = step_transcript[:2] + step_transcript[-2:]
         _persist_step_transcript_to_state(state, action.id, trimmed)
         logger.info(
@@ -129,6 +152,14 @@ def handle_act_llm_error(
             "timeout_retry_count": timeout_retry_count,
             "backoff_seconds": 0,
             "step_transcript": trimmed,
+            "runtime_failure": runtime_failure.to_dict(),
+            "runtime_signal": RuntimeSignal(
+                kind="retry",
+                source="budget_guard",
+                reason="llm_context_overflow_retry",
+                message="Transcript trimmed after context overflow",
+                data={"retry_count": new_co_count},
+            ).to_dict(),
         }
 
     # Transient timeout / connection errors — retry with backoff
@@ -143,6 +174,13 @@ def handle_act_llm_error(
     )
     if is_timeout:
         new_to_count = timeout_retry_count + 1
+        runtime_failure = RuntimeFailure(
+            family="llm",
+            kind="timeout",
+            retryable=new_to_count <= max_timeout_retries,
+            source="llm_provider",
+            message=llm_error_text[:300],
+        )
         if new_to_count > max_timeout_retries:
             logger.warning(
                 "act_inner_loop_timeout_retries_exhausted",
@@ -156,7 +194,7 @@ def handle_act_llm_error(
                     success=False,
                 )
             )
-            return {"action": "return"}
+            return {"action": "return", "runtime_failure": runtime_failure.to_dict()}
         backoff_seconds = 3 * (2 ** (new_to_count - 1))
         logger.info(
             "act_inner_loop_timeout_retry",
@@ -169,6 +207,14 @@ def handle_act_llm_error(
             "timeout_retry_count": new_to_count,
             "backoff_seconds": backoff_seconds,
             "step_transcript": step_transcript,
+            "runtime_failure": runtime_failure.to_dict(),
+            "runtime_signal": RuntimeSignal(
+                kind="retry",
+                source="budget_guard",
+                reason="llm_timeout_retry",
+                message="Transient LLM timeout; retrying ACT LLM call",
+                data={"retry_count": new_to_count, "backoff_seconds": backoff_seconds},
+            ).to_dict(),
         }
 
     # Fatal / unrecoverable error
@@ -186,7 +232,17 @@ def handle_act_llm_error(
             params={"title": action.title},
             error=f"LLM API call failed: {llm_error_text[:500]}",
             success=False,
-            metadata={"payload_summary": payload_summary} if isinstance(payload_summary, dict) else {},
+            metadata={
+                **({"payload_summary": payload_summary} if isinstance(payload_summary, dict) else {}),
+                "runtime_failure": RuntimeFailure(
+                    family="llm",
+                    kind="provider_error",
+                    retryable=False,
+                    source="llm_provider",
+                    message=llm_error_text[:500],
+                    meta={"payload_summary": payload_summary} if isinstance(payload_summary, dict) else {},
+                ).to_dict(),
+            },
         )
     )
     return {"action": "return"}
@@ -281,7 +337,17 @@ def build_act_system_messages(
                 current_weekday=current_weekday,
                 current_timezone=current_timezone,
             ),
-        }
+        },
+        {
+            "role": "system",
+            "content": (
+                "Document context protocol:\n"
+                "- If the user message includes [DOCUMENT_CONTEXT_BEGIN]/[DOCUMENT_CONTEXT_END], treat it as authoritative document digest.\n"
+                "- When you need original evidence, read chunk files via file_io path docs/<doc_id>/v<version>/chunks/<chunk_id>.txt.\n"
+                "- If file_io returns missing_chunk_ids, provide a conservative answer based on existing digest and state missing chunks explicitly.\n"
+                "- Keep chunk citations in final answers using [chunk:cXXXX] format; do not strip citations."
+            ),
+        },
     ]
 
 

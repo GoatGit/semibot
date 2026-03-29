@@ -12,8 +12,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.execution.runtime_facade import (
+    build_runtime_facade_result,
+    serialize_tool_results_from_runtime_events,
+)
 from src.local_runtime import (
-    _guard_rule_authoring_success_claim,
     _maybe_bootstrap_llm_from_control_plane,
     _maybe_load_local_env_files,
 )
@@ -91,26 +94,6 @@ class _LocalSemigraphClient:
         return {}
 
 
-def _serialize_tool_results_from_events(runtime_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    serialized: list[dict[str, Any]] = []
-    for item in runtime_events:
-        if str(item.get("event") or "") != "tool_call_complete":
-            continue
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-        serialized.append(
-            {
-                "tool_name": str(item.get("tool_name") or "").strip(),
-                "params": {},
-                "result": item.get("result"),
-                "error": item.get("error"),
-                "duration_ms": int(item.get("duration") or 0),
-                "success": bool(item.get("success")),
-                "metadata": metadata,
-            }
-        )
-    return serialized
-
-
 async def run_task_once(
     *,
     task: str,
@@ -118,6 +101,8 @@ async def run_task_once(
     rules_path: str,
     agent_id: str = "semibot",
     session_id: str | None = None,
+    attempt_id: str | None = None,
+    user_message_id: str | None = None,
     approval_scope_id: str | None = None,
     model: str | None = None,
     model_provider_key: str | None = None,
@@ -129,7 +114,6 @@ async def run_task_once(
     recent_tool_usage: dict[str, int] | None = None,
     runtime_event_callback: Any | None = None,
 ) -> dict[str, Any]:
-    del approval_scope_id
     _maybe_load_local_env_files()
     await _maybe_bootstrap_llm_from_control_plane()
 
@@ -138,6 +122,8 @@ async def run_task_once(
     init_data = _build_local_init_data(db_path=db_path, rules_path=rules_path)
     start_payload = {
         "session_id": resolved_session_id,
+        "attempt_id": attempt_id,
+        "user_message_id": user_message_id,
         "runtime_type": "semigraph",
         "agent_id": agent_id,
         "agent_config": {
@@ -152,6 +138,7 @@ async def run_task_once(
         },
         "skill_index": [row for row in skill_index if isinstance(row, dict)] if isinstance(skill_index, list) else [],
         "recent_tool_usage": dict(recent_tool_usage or {}),
+        "approval_scope_id": str(approval_scope_id or "").strip() or None,
         "events_db_path": db_path,
         "rules_path": rules_path,
     }
@@ -168,7 +155,19 @@ async def run_task_once(
 
     await adapter.start()
     try:
-        await adapter.handle_user_message({"message": task, "metadata": {"entrypoint": "runtime_service.run_task_once"}})
+        await adapter.handle_user_message(
+            {
+                "message": task,
+                "approval_scope_id": str(approval_scope_id or "").strip() or None,
+                "attempt_id": attempt_id,
+                "user_message_id": user_message_id,
+                "metadata": {
+                    "entrypoint": "runtime_service.run_task_once",
+                    "attempt_id": attempt_id,
+                    "user_message_id": user_message_id,
+                },
+            }
+        )
         task_handle = adapter._task
         if task_handle is not None:
             await task_handle
@@ -179,46 +178,26 @@ async def run_task_once(
         checkpoint = snapshot.get("checkpoint") if isinstance(snapshot, dict) else {}
         checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
 
-        tool_results = checkpoint.get("tool_results") if isinstance(checkpoint.get("tool_results"), list) else []
-        if not tool_results:
-            tool_results = _serialize_tool_results_from_events(client.runtime_events)
-
-        error = str(checkpoint.get("error") or "").strip() or None
-
-        terminal = client.terminal_payload or {}
-        terminal_type = str(terminal.get("type") or "").strip()
-        final_response = str(
-            checkpoint.get("final_response")
-            or terminal.get("final_response")
-            or ""
+        return build_runtime_facade_result(
+            session_id=resolved_session_id,
+            attempt_id=attempt_id,
+            user_message_id=user_message_id,
+            agent_id=agent_id,
+            checkpoint=checkpoint,
+            terminal_payload=client.terminal_payload,
+            runtime_events=client.runtime_events,
+            llm_configured=adapter.llm_provider is not None,
         )
-        final_response = _guard_rule_authoring_success_claim(
-            final_response,
-            tool_results if isinstance(tool_results, list) else [],
-        )
-
-        status = "failed" if error or terminal_type == "execution_error" else str(checkpoint.get("status") or "completed")
-        if status not in {"completed", "failed", "cancelled"}:
-            status = "failed" if error else "completed"
-
-        return {
-            "status": status,
-            "session_id": resolved_session_id,
-            "agent_id": agent_id,
-            "final_response": final_response,
-            "error": error,
-            "tool_results": tool_results if isinstance(tool_results, list) else [],
-            "runtime_events": client.runtime_events,
-            "llm_configured": adapter.llm_provider is not None,
-        }
     except Exception as exc:
         return {
             "status": "failed",
             "session_id": resolved_session_id,
+            "attempt_id": attempt_id,
+            "user_message_id": user_message_id,
             "agent_id": agent_id,
             "final_response": "",
             "error": str(exc),
-            "tool_results": _serialize_tool_results_from_events(client.runtime_events),
+            "tool_results": serialize_tool_results_from_runtime_events(client.runtime_events),
             "runtime_events": client.runtime_events,
             "llm_configured": adapter.llm_provider is not None,
         }

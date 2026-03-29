@@ -24,12 +24,15 @@ import type {
   PlanStepData,
   ToolCallData,
   ToolResultData,
+  SkillCallData,
+  SkillResultData,
   McpCallData,
   McpResultData,
 } from '@/types'
 
 export interface ProcessCardProps {
   isActive: boolean
+  awaitingApproval?: boolean
   thinking: ThinkingData | null
   isThinking: boolean
   plan: PlanData | null
@@ -47,6 +50,8 @@ const TIMELINE_TYPES = new Set<Agent2UIType>([
   'plan_step',
   'tool_call',
   'tool_result',
+  'skill_call',
+  'skill_result',
   'mcp_call',
   'mcp_result',
 ])
@@ -175,6 +180,34 @@ function readStringArrayField(record: Record<string, unknown> | null, key: strin
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
 }
 
+function readNumberField(record: Record<string, unknown> | null, ...keys: string[]): number | null {
+  if (!record) return null
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return null
+}
+
+function isPendingTimelineMessage(message: Agent2UIMessage): boolean {
+  if (message.type !== 'tool_result') return false
+  const data = message.data as ToolResultData
+  const resultRecord = asRecord(data.result)
+  if (data.error === 'approval_pending') return true
+  if (String(resultRecord?.status ?? '').trim().toLowerCase() === 'pending') return true
+  if (data.toolName === 'observe_dr' && String(resultRecord?.outcome ?? '').trim().toLowerCase() === 'awaiting_approval') {
+    return true
+  }
+  if (data.toolName === 'direct_reasoning' && String(resultRecord?.status ?? '').trim().toLowerCase() === 'awaiting_approval') {
+    return true
+  }
+  return false
+}
+
 function formatPlanMode(planMode: string | null, t: (key: string) => string): string {
   switch (planMode) {
     case 'initial':
@@ -188,6 +221,34 @@ function formatPlanMode(planMode: string | null, t: (key: string) => string): st
   }
 }
 
+function formatExecutionMode(mode: string | null, t: (key: string) => string): string {
+  switch (mode) {
+    case 'direct_answer':
+      return t('agent2ui.process.route.mode.directAnswer')
+    case 'direct_reasoning':
+      return t('agent2ui.process.route.mode.directReasoning')
+    case 'plan_act':
+      return t('agent2ui.process.route.mode.planAct')
+    case 'delegate':
+      return t('agent2ui.process.route.mode.delegate')
+    default:
+      return t('agent2ui.process.route.mode.unknown')
+  }
+}
+
+function formatObserveDrOutcome(outcome: string | null, t: (key: string) => string): string {
+  switch (outcome) {
+    case 'respond_success':
+      return t('agent2ui.process.observeDr.outcome.respondSuccess')
+    case 'respond_partial':
+      return t('agent2ui.process.observeDr.outcome.respondPartial')
+    case 'upgrade_to_plan_act':
+      return t('agent2ui.process.observeDr.outcome.upgradeToPlanAct')
+    default:
+      return t('agent2ui.process.observeDr.outcome.unknown')
+  }
+}
+
 // ---------------------------------------------------------------------------
 // TimelineEntry — 每条时序日志的行内组件
 // ---------------------------------------------------------------------------
@@ -196,9 +257,9 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
   const { locale, t } = useLocale()
   const [expanded, setExpanded] = useState(false)
   const time = formatTime(message.timestamp, locale)
-  const rowClass = 'mx-3 my-2 rounded-xl border border-white/8 bg-white/[0.015] px-3 py-2.5'
-  const timeClass = 'text-[11px] text-text-tertiary/80 font-mono shrink-0 mt-0.5 w-[64px]'
-  const detailButtonClass = 'ml-auto text-[11px] text-primary-400/90 hover:text-primary-300 transition-colors shrink-0'
+  const rowClass = 'group border-t border-border-subtle py-3 px-4 hover:bg-interactive-hover transition-colors'
+  const timeClass = 'text-xs text-text-tertiary font-mono shrink-0 w-20'
+  const detailButtonClass = 'text-xs text-text-tertiary hover:text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity shrink-0'
 
   switch (message.type) {
     case 'thinking': {
@@ -213,25 +274,25 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
         : truncate(content, 80)
       return (
         <div className={rowClass}>
-          <div className="flex items-start gap-2.5">
+          <div className="flex items-center gap-4">
             <span className={timeClass}>{time}</span>
-            <div className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-lg bg-primary-500/12 ring-1 ring-primary-500/20 shrink-0">
-              <Brain className="w-3.5 h-3.5 text-primary-300" />
+            <div className="text-text-tertiary shrink-0">
+              <Brain className="w-4 h-4" />
             </div>
             <div className="flex-1 min-w-0">
               {expanded ? (
                 <div className="space-y-1">
                   {segments.map((seg, i) => (
-                    <p key={i} className="text-[12px] leading-5 text-text-secondary">{seg}</p>
+                    <p key={i} className="text-xs text-text-secondary">{seg}</p>
                   ))}
                 </div>
               ) : (
-                <span className="text-[12px] leading-5 text-text-secondary">{preview}</span>
+                <span className="text-xs text-text-secondary">{preview}</span>
               )}
               {needExpand && (
                 <button
                   onClick={() => setExpanded(!expanded)}
-                  className="ml-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors"
+                  className="ml-1 text-xs text-text-tertiary hover:text-text-secondary transition-colors"
                 >
                   {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.expand')}
                 </button>
@@ -249,19 +310,19 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
         .filter((s) => s.length > 0)
       return (
         <div className={rowClass}>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-4">
             <span className={timeClass}>{time}</span>
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-500/12 ring-1 ring-amber-500/20 shrink-0">
-              <ClipboardList className="w-3.5 h-3.5 text-amber-300" />
+            <div className="text-text-tertiary shrink-0">
+              <ClipboardList className="w-4 h-4" />
             </div>
-            <span className="text-[12px] font-medium text-text-primary">
+            <span className="text-sm font-medium text-text-primary">
               {t('agent2ui.process.planSummary', { count: data.steps.length })}
             </span>
           </div>
           {stepTitles.length > 0 && (
-            <div className="mt-2 ml-[74px] space-y-1">
+            <div className="mt-2 pl-28 space-y-1">
               {stepTitles.map((title, idx) => (
-                <div key={`${message.id}-plan-${idx}`} className="text-[12px] leading-5 text-text-secondary truncate">
+                <div key={`${message.id}-plan-${idx}`} className="text-xs text-text-tertiary truncate">
                   {idx + 1}. {title}
                 </div>
               ))}
@@ -288,24 +349,26 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
             ? t('agent2ui.plan.status.failed')
             : t('agent2ui.plan.status.pending')
       return (
-        <div className={clsx(rowClass, 'flex items-center gap-2.5')}>
-          <span className={timeClass}>{time}</span>
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-500/12 ring-1 ring-amber-500/20 shrink-0">
-            <ClipboardList className="w-3.5 h-3.5 text-amber-300" />
-          </div>
-          <span className="text-[12px] font-medium text-text-primary flex-1 min-w-0 truncate">{data.title}</span>
-          <div className="flex items-center gap-1 shrink-0">
-            {statusIcon}
-            {statusLabel && (
-              <span className={clsx(
-                'text-[11px]',
-                data.status === 'completed' && 'text-success-500',
-                data.status === 'running' && 'text-primary-500',
-                data.status === 'failed' && 'text-error-500',
-              )}>
-                {statusLabel}
-              </span>
-            )}
+        <div className={rowClass}>
+          <div className="flex items-center gap-4">
+            <span className={timeClass}>{time}</span>
+            <div className="text-text-tertiary shrink-0">
+              <ClipboardList className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-mono text-text-primary flex-1 min-w-0 truncate">{data.title}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              {statusIcon}
+              {statusLabel && (
+                <span className={clsx(
+                  'text-xs',
+                  data.status === 'completed' && 'text-success-500',
+                  data.status === 'running' && 'text-primary-500',
+                  data.status === 'failed' && 'text-error-500',
+                )}>
+                  {statusLabel}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )
@@ -314,29 +377,35 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
     case 'tool_call': {
       const data = message.data as ToolCallData
       return (
-        <div className={clsx(rowClass, 'flex items-center gap-2.5')}>
-          <span className={timeClass}>{time}</span>
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/[0.06] ring-1 ring-white/10 shrink-0">
-            <Wrench className="w-3.5 h-3.5 text-text-secondary" />
+        <div className={rowClass}>
+          <div className="flex items-center gap-4">
+            <span className={timeClass}>{time}</span>
+            <div className="text-text-tertiary shrink-0">
+              <Wrench className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-mono text-text-primary">{data.toolName}</span>
+            {data.status === 'calling' && (
+              <Loader2 className="w-4 h-4 text-primary-500 animate-spin shrink-0" />
+            )}
+            {data.status === 'success' && (
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center">
+                  <Check className="w-3 h-3 text-success-500" />
+                </div>
+                {data.duration != null && (
+                  <span className="text-xs text-text-tertiary">{(data.duration / 1000).toFixed(1)}s</span>
+                )}
+              </div>
+            )}
+            {data.status === 'error' && (
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <div className="w-5 h-5 rounded-full bg-error-500/10 flex items-center justify-center">
+                  <XCircle className="w-3 h-3 text-error-500" />
+                </div>
+                <span className="text-xs text-text-tertiary">{t('agent2ui.process.failed')}</span>
+              </div>
+            )}
           </div>
-          <span className="text-[12px] font-mono text-text-primary">{data.toolName}</span>
-          {data.status === 'calling' && (
-            <Loader2 className="w-3 h-3 text-primary-500 animate-spin shrink-0" />
-          )}
-          {data.status === 'success' && (
-            <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-success-500/10 px-2 py-0.5 ring-1 ring-success-500/20">
-              <Check className="w-3 h-3 text-success-500" />
-              {data.duration != null && (
-                <span className="text-[11px] text-success-500">{(data.duration / 1000).toFixed(1)}s</span>
-              )}
-            </div>
-          )}
-          {data.status === 'error' && (
-            <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-error-500/10 px-2 py-0.5 ring-1 ring-error-500/20">
-              <XCircle className="w-3 h-3 text-error-500" />
-              <span className="text-[11px] text-error-500">{t('agent2ui.process.failed')}</span>
-            </div>
-          )}
         </div>
       )
     }
@@ -344,6 +413,138 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
     case 'tool_result': {
       const data = message.data as ToolResultData
       const resultRecord = asRecord(data.result)
+      if (data.toolName === 'route') {
+        const mode = formatExecutionMode(readStringField(resultRecord, 'mode'), t)
+        const reason = readStringField(resultRecord, 'reason')
+        const goal = readStringField(resultRecord, 'goal')
+        const hasDetails = Boolean(reason || goal)
+        return (
+          <div className={rowClass}>
+            <div className="flex items-center gap-4">
+              <span className={timeClass}>{time}</span>
+              <div className="text-text-tertiary shrink-0">
+                <ClipboardList className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.route.title')}</span>
+                  <span className="rounded-full bg-primary-500/10 px-2 py-0.5 text-xs text-primary-500">
+                    {mode}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center">
+                  <Check className="w-3 h-3 text-success-500" />
+                </div>
+                {hasDetails && (
+                  <button onClick={() => setExpanded(!expanded)} className={detailButtonClass}>
+                    {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
+                  </button>
+                )}
+              </div>
+            </div>
+            {expanded && hasDetails && (
+              <div className="mt-2 pl-28 space-y-1">
+                {reason && (
+                  <div className="text-xs text-text-tertiary whitespace-pre-wrap break-words">
+                    {t('agent2ui.process.route.reason')}: {reason}
+                  </div>
+                )}
+                {goal && (
+                  <div className="text-xs text-text-tertiary whitespace-pre-wrap break-words">
+                    {t('agent2ui.process.route.goal')}: {goal}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      }
+      if (data.toolName === 'direct_reasoning') {
+        const status = readStringField(resultRecord, 'status') || (data.success ? 'completed' : 'failed')
+        const answer = readStringField(resultRecord, 'answer')
+        const upgradeReason = readStringField(resultRecord, 'upgradeReason')
+        const toolUsageRecord = asRecord(resultRecord?.toolUsage)
+        const resourceUsageRecord = asRecord(resultRecord?.resourceUsage)
+        const toolCalls =
+          readNumberField(toolUsageRecord, 'tool_calls', 'toolCalls') ??
+          readNumberField(resourceUsageRecord, 'tool_calls', 'toolCalls')
+        const statusLabel =
+          status === 'failed'
+            ? t('agent2ui.process.directReasoning.status.failed')
+            : status === 'partial'
+              ? t('agent2ui.process.directReasoning.status.partial')
+              : status === 'upgrade_required'
+                ? t('agent2ui.process.directReasoning.status.upgradeRequired')
+                : t('agent2ui.process.directReasoning.status.completed')
+        return (
+          <div className={rowClass}>
+            <div className="flex items-center gap-4">
+              <span className={timeClass}>{time}</span>
+              <div className="text-text-tertiary shrink-0">
+                <Brain className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.directReasoning.title')}</span>
+                  <span className={clsx(
+                    'rounded-full px-2 py-0.5 text-xs',
+                    status === 'failed' ? 'bg-error-500/10 text-error-500' : 'bg-success-500/10 text-success-500',
+                  )}>
+                    {statusLabel}
+                  </span>
+                  {toolCalls != null && (
+                    <span className="text-xs text-text-tertiary">
+                      {t('agent2ui.process.directReasoning.toolCalls')}: {toolCalls}
+                    </span>
+                  )}
+                </div>
+                {answer && <div className="mt-1 text-xs text-text-tertiary truncate">{answer}</div>}
+                {upgradeReason && (
+                  <div className="mt-1 text-xs text-warning-500 truncate">
+                    {t('agent2ui.process.directReasoning.upgradeReason')}: {upgradeReason}
+                  </div>
+                )}
+                {!answer && data.error && <div className="mt-1 text-xs text-error-500 truncate">{data.error}</div>}
+              </div>
+            </div>
+          </div>
+        )
+      }
+      if (data.toolName === 'observe_dr') {
+        const outcome = formatObserveDrOutcome(readStringField(resultRecord, 'outcome'), t)
+        const reason = readStringField(resultRecord, 'reason')
+        const upgradeReason = readStringField(resultRecord, 'upgradeReason')
+        return (
+          <div className={rowClass}>
+            <div className="flex items-center gap-4">
+              <span className={timeClass}>{time}</span>
+              <div className="text-text-tertiary shrink-0">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.observeDr.title')}</span>
+                  <span className="rounded-full bg-warning-500/10 px-2 py-0.5 text-xs text-warning-500">
+                    {outcome}
+                  </span>
+                </div>
+                {reason && (
+                  <div className="mt-1 text-xs text-text-tertiary truncate">
+                    {t('agent2ui.process.observeDr.reason')}: {reason}
+                  </div>
+                )}
+                {upgradeReason && (
+                  <div className="mt-1 text-xs text-warning-500 truncate">
+                    {t('agent2ui.process.observeDr.upgradeReason')}: {upgradeReason}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      }
       if (data.toolName === 'skill_orchestration') {
         const skillId =
           readStringField(
@@ -369,6 +570,22 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
             ? rawStepCount
             : (typeof rawStepCount === 'string' && Number.isFinite(Number(rawStepCount)) ? Number(rawStepCount) : stepTitles.length)
         const isReplan = resultRecord?.is_replan === true
+        const isPlaceholderSummary =
+          skillId === t('agent2ui.process.skillOrchestration.noSkill') &&
+          planMode === t('agent2ui.process.skillOrchestration.planMode.unknown') &&
+          stepCount <= 0 &&
+          !selectedSkillKind &&
+          !loadedSkillId &&
+          !plannerLoadedSkillId &&
+          !roundGoal &&
+          !observeOutcome &&
+          !observeReason &&
+          !lastRejectionReason &&
+          stepTitles.length === 0 &&
+          !isReplan
+        if (isPlaceholderSummary) {
+          return null
+        }
         const hasDetails = Boolean(
           roundGoal ||
           observeOutcome ||
@@ -381,23 +598,23 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
 
         return (
           <div className={rowClass}>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-4">
               <span className={timeClass}>{time}</span>
-              <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-cyan-500/12 ring-1 ring-cyan-500/20 shrink-0">
-                <Wrench className="w-3.5 h-3.5 text-cyan-300" />
+              <div className="text-text-tertiary shrink-0">
+                <Wrench className="w-4 h-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-[12px] font-medium text-text-primary">
+                  <span className="text-sm font-medium text-text-primary">
                     {t('agent2ui.process.skillOrchestration.title')}
                   </span>
                   {isReplan && (
-                    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300 ring-1 ring-amber-500/20">
+                    <span className="rounded-full bg-warning-500/10 px-2 py-0.5 text-xs text-warning-500">
                       {t('agent2ui.process.skillOrchestration.replan')}
                     </span>
                   )}
                 </div>
-                <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-text-secondary">
+                <div className="mt-1 flex flex-wrap gap-2 text-xs text-text-tertiary">
                   <span>{t('agent2ui.process.skillOrchestration.skill')}: {skillId}</span>
                   <span>{t('agent2ui.process.skillOrchestration.planMode.label')}: {planMode}</span>
                   <span>{t('agent2ui.process.skillOrchestration.stepCount')}: {stepCount}</span>
@@ -406,41 +623,47 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
                   )}
                 </div>
               </div>
-              {data.success ? (
-                <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-success-500/10 px-2 py-0.5 ring-1 ring-success-500/20">
-                  <Check className="w-3 h-3 text-success-500" />
-                  {data.duration != null && (
-                    <span className="text-[11px] text-success-500">{(data.duration / 1000).toFixed(1)}s</span>
-                  )}
-                </div>
-              ) : (
-                <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-error-500/10 px-2 py-0.5 ring-1 ring-error-500/20">
-                  <XCircle className="w-3 h-3 text-error-500" />
-                  <span className="text-[11px] text-error-500">{t('agent2ui.process.failed')}</span>
-                </div>
-              )}
-              {hasDetails && (
-                <button onClick={() => setExpanded(!expanded)} className={detailButtonClass}>
-                  {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
-                </button>
-              )}
+              <div className="flex items-center gap-3 shrink-0">
+                {data.success ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center">
+                      <Check className="w-3 h-3 text-success-500" />
+                    </div>
+                    {data.duration != null && (
+                      <span className="text-xs text-text-tertiary">{(data.duration / 1000).toFixed(1)}s</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <div className="w-5 h-5 rounded-full bg-error-500/10 flex items-center justify-center">
+                      <XCircle className="w-3 h-3 text-error-500" />
+                    </div>
+                    <span className="text-xs text-text-tertiary">{t('agent2ui.process.failed')}</span>
+                  </div>
+                )}
+                {hasDetails && (
+                  <button onClick={() => setExpanded(!expanded)} className={detailButtonClass}>
+                    {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
+                  </button>
+                )}
+              </div>
             </div>
             {stepTitles.length > 0 && (
-              <div className="mt-2 ml-[74px] space-y-1">
+              <div className="mt-2 pl-28 space-y-1">
                 {stepTitles.slice(0, expanded ? stepTitles.length : 3).map((title, idx) => (
-                  <div key={`${message.id}-skill-step-${idx}`} className="text-[12px] leading-5 text-text-secondary truncate">
+                  <div key={`${message.id}-skill-step-${idx}`} className="text-xs text-text-tertiary truncate">
                     {idx + 1}. {title}
                   </div>
                 ))}
                 {!expanded && stepTitles.length > 3 && (
-                  <div className="text-[11px] text-text-tertiary">
+                  <div className="text-xs text-text-tertiary">
                     {t('agent2ui.process.skillOrchestration.moreSteps', { count: stepTitles.length - 3 })}
                   </div>
                 )}
               </div>
             )}
             {expanded && (roundGoal || observeOutcome || observeReason || lastRejectionReason) && (
-              <div className="mt-2 ml-[74px] space-y-1 rounded-xl border border-white/8 bg-bg-elevated p-3 text-[11px] leading-5 text-text-secondary">
+              <div className="mt-2 pl-28 space-y-1 text-xs text-text-secondary">
                 {roundGoal && (
                   <div>
                     <span className="text-text-tertiary">{t('agent2ui.process.skillOrchestration.roundGoal')}:</span> {roundGoal}
@@ -489,47 +712,53 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
         : (data.error || '')
       return (
         <div className={rowClass}>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-4">
             <span className={timeClass}>{time}</span>
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/[0.06] ring-1 ring-white/10 shrink-0">
-              <Wrench className="w-3.5 h-3.5 text-text-secondary" />
+            <div className="text-text-tertiary shrink-0">
+              <Wrench className="w-4 h-4" />
             </div>
-            <span className="text-[12px] font-mono text-text-primary">{data.toolName}</span>
-            {isPendingApproval ? (
-              <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 ring-1 ring-amber-500/20">
-                <Loader2 className="w-3 h-3 text-amber-400 animate-spin" />
-                <span className="text-[11px] text-amber-400">{t('approvals.pending')}</span>
-              </div>
-            ) : data.success ? (
-              <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-success-500/10 px-2 py-0.5 ring-1 ring-success-500/20">
-                <Check className="w-3 h-3 text-success-500" />
-                {data.duration != null && (
-                  <span className="text-[11px] text-success-500">{(data.duration / 1000).toFixed(1)}s</span>
-                )}
-              </div>
-            ) : (
-              <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-error-500/10 px-2 py-0.5 ring-1 ring-error-500/20">
-                <XCircle className="w-3 h-3 text-error-500" />
-                <span className="text-[11px] text-error-500">{t('agent2ui.process.failed')}</span>
-              </div>
-            )}
-            {hasDetails && (
-              <button
-                onClick={() => setExpanded(!expanded)}
-                className={detailButtonClass}
-              >
-                {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
-              </button>
-            )}
+            <span className="text-sm font-mono text-text-primary">{data.toolName}</span>
+            <div className="flex items-center gap-3 shrink-0 ml-auto">
+              {isPendingApproval ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 text-warning-500 animate-spin" />
+                  <span className="text-xs text-warning-500">{t('approvals.pending')}</span>
+                </div>
+              ) : data.success ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center">
+                    <Check className="w-3 h-3 text-success-500" />
+                  </div>
+                  {data.duration != null && (
+                    <span className="text-xs text-text-tertiary">{(data.duration / 1000).toFixed(1)}s</span>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-error-500/10 flex items-center justify-center">
+                    <XCircle className="w-3 h-3 text-error-500" />
+                  </div>
+                  <span className="text-xs text-text-tertiary">{t('agent2ui.process.failed')}</span>
+                </div>
+              )}
+              {hasDetails && (
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className={detailButtonClass}
+                >
+                  {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
+                </button>
+              )}
+            </div>
           </div>
           {expanded && hasDetails && (
             <pre className={clsx(
-              'mt-2 ml-[74px] text-[11px] leading-5 font-mono p-3 rounded-xl overflow-x-auto max-h-40 border',
+              'mt-2 pl-28 text-xs font-mono p-3 overflow-x-auto max-h-40',
               isPendingApproval
-                ? 'text-amber-300 bg-amber-500/10 border-amber-500/20'
+                ? 'text-warning-500'
                 : data.success
-                  ? 'text-text-secondary bg-bg-elevated border-white/8'
-                  : 'text-error-400 bg-error-500/10 border-error-500/20',
+                  ? 'text-text-secondary'
+                  : 'text-error-500',
             )}>
               {detailText}
             </pre>
@@ -541,28 +770,113 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
     case 'mcp_call': {
       const data = message.data as McpCallData
       return (
-        <div className={clsx(rowClass, 'flex items-center gap-2.5')}>
-          <span className={timeClass}>{time}</span>
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-violet-500/12 ring-1 ring-violet-500/20 shrink-0">
-            <Wrench className="w-3.5 h-3.5 text-violet-300" />
+        <div className={rowClass}>
+          <div className="flex items-center gap-4">
+            <span className={timeClass}>{time}</span>
+            <div className="text-info-500 shrink-0">
+              <Wrench className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-mono text-text-primary">{data.toolName}</span>
+            {data.status === 'calling' && (
+              <Loader2 className="w-4 h-4 text-primary-500 animate-spin shrink-0" />
+            )}
+            {data.status === 'success' && (
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center">
+                  <Check className="w-3 h-3 text-success-500" />
+                </div>
+                {data.duration != null && (
+                  <span className="text-xs text-text-tertiary">{(data.duration / 1000).toFixed(1)}s</span>
+                )}
+              </div>
+            )}
+            {data.status === 'error' && (
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <div className="w-5 h-5 rounded-full bg-error-500/10 flex items-center justify-center">
+                  <XCircle className="w-3 h-3 text-error-500" />
+                </div>
+                <span className="text-xs text-text-tertiary">{t('agent2ui.process.failed')}</span>
+              </div>
+            )}
           </div>
-          <span className="text-[12px] font-mono text-text-primary">{data.toolName}</span>
-          {data.status === 'calling' && (
-            <Loader2 className="w-3 h-3 text-primary-500 animate-spin shrink-0" />
-          )}
-          {data.status === 'success' && (
-            <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-success-500/10 px-2 py-0.5 ring-1 ring-success-500/20">
-              <Check className="w-3 h-3 text-success-500" />
-              {data.duration != null && (
-                <span className="text-[11px] text-success-500">{(data.duration / 1000).toFixed(1)}s</span>
+        </div>
+      )
+    }
+
+    case 'skill_call': {
+      const data = message.data as SkillCallData
+      return (
+        <div className={rowClass}>
+          <div className="flex items-center gap-4">
+            <span className={timeClass}>{time}</span>
+            <div className="text-text-tertiary shrink-0">
+              <ClipboardList className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-mono text-text-primary">
+              {t('agent2ui.process.delegate.title')}: {data.skillName || data.skillId}
+            </span>
+            {data.status === 'calling' && (
+              <Loader2 className="w-4 h-4 text-primary-500 animate-spin shrink-0" />
+            )}
+          </div>
+        </div>
+      )
+    }
+
+    case 'skill_result': {
+      const data = message.data as SkillResultData
+      const hasDetails =
+        data.result !== undefined && data.result !== null
+          ? true
+          : typeof data.error === 'string' && data.error.trim().length > 0
+      const detailText = data.result !== undefined && data.result !== null
+        ? (typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2))
+        : (data.error || '')
+      return (
+        <div className={rowClass}>
+          <div className="flex items-center gap-4">
+            <span className={timeClass}>{time}</span>
+            <div className="text-text-tertiary shrink-0">
+              <ClipboardList className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-mono text-text-primary">
+              {t('agent2ui.process.delegate.title')}: {data.skillName || data.skillId}
+            </span>
+            <div className="flex items-center gap-3 shrink-0 ml-auto">
+              {data.success ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center">
+                    <Check className="w-3 h-3 text-success-500" />
+                  </div>
+                  {data.duration != null && (
+                    <span className="text-xs text-text-tertiary">{(data.duration / 1000).toFixed(1)}s</span>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-error-500/10 flex items-center justify-center">
+                    <XCircle className="w-3 h-3 text-error-500" />
+                  </div>
+                  <span className="text-xs text-text-tertiary">{t('agent2ui.process.failed')}</span>
+                </div>
+              )}
+              {hasDetails && (
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className={detailButtonClass}
+                >
+                  {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
+                </button>
               )}
             </div>
-          )}
-          {data.status === 'error' && (
-            <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-error-500/10 px-2 py-0.5 ring-1 ring-error-500/20">
-              <XCircle className="w-3 h-3 text-error-500" />
-              <span className="text-[11px] text-error-500">{t('agent2ui.process.failed')}</span>
-            </div>
+          </div>
+          {expanded && hasDetails && (
+            <pre className={clsx(
+              'mt-2 pl-28 text-xs font-mono p-3 overflow-x-auto max-h-40',
+              data.success ? 'text-text-secondary' : 'text-error-500',
+            )}>
+              {detailText}
+            </pre>
           )}
         </div>
       )
@@ -579,38 +893,44 @@ function TimelineEntry({ message }: { message: Agent2UIMessage }) {
         : (data.error || '')
       return (
         <div className={rowClass}>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-4">
             <span className={timeClass}>{time}</span>
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-violet-500/12 ring-1 ring-violet-500/20 shrink-0">
-              <Wrench className="w-3.5 h-3.5 text-violet-300" />
+            <div className="text-info-500 shrink-0">
+              <Wrench className="w-4 h-4" />
             </div>
-            <span className="text-[12px] font-mono text-text-primary">{data.toolName}</span>
-            {data.success ? (
-              <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-success-500/10 px-2 py-0.5 ring-1 ring-success-500/20">
-                <Check className="w-3 h-3 text-success-500" />
-                {data.duration != null && (
-                  <span className="text-[11px] text-success-500">{(data.duration / 1000).toFixed(1)}s</span>
-                )}
-              </div>
-            ) : (
-              <div className="ml-auto flex items-center gap-1 shrink-0 rounded-full bg-error-500/10 px-2 py-0.5 ring-1 ring-error-500/20">
-                <XCircle className="w-3 h-3 text-error-500" />
-                <span className="text-[11px] text-error-500">{t('agent2ui.process.failed')}</span>
-              </div>
-            )}
-            {hasDetails && (
-              <button
-                onClick={() => setExpanded(!expanded)}
-                className={detailButtonClass}
-              >
-                {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
-              </button>
-            )}
+            <span className="text-sm font-mono text-text-primary">{data.toolName}</span>
+            <div className="flex items-center gap-3 shrink-0 ml-auto">
+              {data.success ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center">
+                    <Check className="w-3 h-3 text-success-500" />
+                  </div>
+                  {data.duration != null && (
+                    <span className="text-xs text-text-tertiary">{(data.duration / 1000).toFixed(1)}s</span>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-error-500/10 flex items-center justify-center">
+                    <XCircle className="w-3 h-3 text-error-500" />
+                  </div>
+                  <span className="text-xs text-text-tertiary">{t('agent2ui.process.failed')}</span>
+                </div>
+              )}
+              {hasDetails && (
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className={detailButtonClass}
+                >
+                  {expanded ? t('agent2ui.process.collapse') : t('agent2ui.process.details')}
+                </button>
+              )}
+            </div>
           </div>
           {expanded && hasDetails && (
             <pre className={clsx(
-              'mt-2 ml-[74px] text-[11px] leading-5 font-mono p-3 rounded-xl overflow-x-auto max-h-40 border',
-              data.success ? 'text-text-secondary bg-bg-elevated border-white/8' : 'text-error-400 bg-error-500/10 border-error-500/20',
+              'mt-2 pl-28 text-xs font-mono p-3 overflow-x-auto max-h-40',
+              data.success ? 'text-text-secondary' : 'text-error-500',
             )}>
               {detailText}
             </pre>
@@ -632,6 +952,7 @@ TimelineEntry.displayName = 'TimelineEntry'
 
 export function ProcessCard({
   isActive,
+  awaitingApproval = false,
   thinking,
   isThinking,
   plan,
@@ -653,10 +974,17 @@ export function ProcessCard({
     setExpanded(isActive)
   }, [isActive])
 
-  const pendingCount = toolCalls.filter((tc) => isPendingToolCall(tc)).length
+  const timelineMessages = useMemo(() => {
+    if (!messages || messages.length === 0) return []
+    const filtered = messages.filter((m) => TIMELINE_TYPES.has(m.type))
+    return deduplicateTimeline(filtered)
+  }, [messages])
+
+  const pendingMessageCount = timelineMessages.filter((msg) => isPendingTimelineMessage(msg)).length
+  const pendingCount = Math.max(toolCalls.filter((tc) => isPendingToolCall(tc)).length, pendingMessageCount)
   const failedCount = toolCalls.filter((tc) => tc.status === 'error' && !isPendingToolCall(tc)).length
   const hasFailure = failedCount > 0
-  const hasPending = pendingCount > 0
+  const hasPending = awaitingApproval || pendingCount > 0
 
   const status: CardStatus = isActive
     ? 'active'
@@ -677,18 +1005,11 @@ export function ProcessCard({
     if (failedCount > 0) {
       parts.push(t('agent2ui.process.failedSummary', { count: failedCount }))
     }
-    if (pendingCount > 0) {
-      parts.push(`${t('approvals.pending')} ${pendingCount} 项`)
+    if (hasPending) {
+      parts.push(`${t('approvals.pending')} ${pendingCount > 0 ? pendingCount : 1} 项`)
     }
     return parts.join(t('agent2ui.process.summarySeparator'))
-  }, [failedCount, pendingCount, plan, t, toolCalls])
-
-  // 过滤出时序日志中需要展示的消息，并去重
-  const timelineMessages = useMemo(() => {
-    if (!messages || messages.length === 0) return []
-    const filtered = messages.filter((m) => TIMELINE_TYPES.has(m.type))
-    return deduplicateTimeline(filtered)
-  }, [messages])
+  }, [failedCount, hasPending, pendingCount, plan, t, toolCalls])
 
   const hasContent = thinking || plan || toolCalls.length > 0 || isThinking || isActive || timelineMessages.length > 0
 
@@ -697,29 +1018,28 @@ export function ProcessCard({
   return (
     <div
       className={clsx(
-        'overflow-hidden rounded-[20px] border transition-colors duration-200 shadow-[0_18px_60px_rgba(0,0,0,0.18)]',
-        status === 'active' && 'border-primary-500/20 bg-[linear-gradient(180deg,rgba(59,130,246,0.10),rgba(59,130,246,0.03))]',
-        status === 'pending' && 'border-amber-500/20 bg-[linear-gradient(180deg,rgba(245,158,11,0.10),rgba(245,158,11,0.03))]',
-        status === 'completed' && 'border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015))]',
-        status === 'failed' && 'border-error-500/20 bg-[linear-gradient(180deg,rgba(239,68,68,0.10),rgba(239,68,68,0.03))]',
+        'overflow-hidden rounded-2xl border transition-colors duration-200 bg-bg-elevated',
+        status === 'active' && 'border-primary-500/20',
+        status === 'pending' && 'border-warning-500/20',
+        status === 'completed' && 'border-border-default',
+        status === 'failed' && 'border-error-500/20',
         className
       )}
     >
       {/* Header */}
       <div
         className={clsx(
-          'flex items-center gap-3 px-5 py-4 cursor-pointer',
-          'hover:bg-white/[0.03] transition-colors duration-fast'
+          'flex items-center gap-3 px-6 py-4 cursor-pointer border-b border-border-subtle',
+          'hover:bg-interactive-hover transition-colors'
         )}
         onClick={() => setExpanded((prev) => !prev)}
       >
         {status === 'active' && (
           <>
-            <div className="relative flex-shrink-0">
-              <Brain className="w-5 h-5 text-primary-400" />
-              <span className="absolute inset-0 rounded-full bg-primary-500/30 animate-ping" />
+            <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center shrink-0">
+              <Brain className="w-3 h-3 text-success-500" />
             </div>
-            <span className="text-[15px] font-semibold text-text-primary">{t('agent2ui.process.status.thinking')}</span>
+            <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.status.thinking')}</span>
             <div className="flex items-center gap-1 ml-1">
               <span className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse" style={{ animationDelay: '0ms' }} />
               <span className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse" style={{ animationDelay: '200ms' }} />
@@ -729,28 +1049,34 @@ export function ProcessCard({
         )}
         {status === 'completed' && (
           <>
-            <CheckCircle2 className="w-5 h-5 text-success-500 flex-shrink-0" />
-            <span className="text-[15px] font-semibold text-text-primary">{t('agent2ui.process.status.completed')}</span>
+            <div className="w-5 h-5 rounded-full bg-success-500/10 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-3 h-3 text-success-500" />
+            </div>
+            <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.status.completed')}</span>
             {summary && (
-              <span className="text-[14px] text-text-tertiary ml-2">{summary}</span>
+              <span className="text-xs text-text-tertiary ml-2">{summary}</span>
             )}
           </>
         )}
         {status === 'pending' && (
           <>
-            <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
-            <span className="text-[15px] font-semibold text-text-primary">{t('approvals.pending')}</span>
+            <div className="w-5 h-5 rounded-full bg-warning-500/10 flex items-center justify-center shrink-0">
+              <AlertCircle className="w-3 h-3 text-warning-500" />
+            </div>
+            <span className="text-sm font-medium text-text-primary">{t('approvals.pending')}</span>
             {summary && (
-              <span className="text-[14px] text-text-tertiary ml-2">{summary}</span>
+              <span className="text-xs text-text-tertiary ml-2">{summary}</span>
             )}
           </>
         )}
         {status === 'failed' && (
           <>
-            <AlertCircle className="w-5 h-5 text-error-500 flex-shrink-0" />
-            <span className="text-[15px] font-semibold text-text-primary">{t('agent2ui.process.status.failed')}</span>
+            <div className="w-5 h-5 rounded-full bg-error-500/10 flex items-center justify-center shrink-0">
+              <AlertCircle className="w-3 h-3 text-error-500" />
+            </div>
+            <span className="text-sm font-medium text-text-primary">{t('agent2ui.process.status.failed')}</span>
             {summary && (
-              <span className="text-[14px] text-text-tertiary ml-2">{summary}</span>
+              <span className="text-xs text-text-tertiary ml-2">{summary}</span>
             )}
           </>
         )}
@@ -772,7 +1098,7 @@ export function ProcessCard({
         <div className="overflow-hidden">
           {/* Timeline — 按时序展示所有过程消息 */}
           {timelineMessages.length > 0 ? (
-            <div className="border-t border-white/8 bg-black/10 px-1 py-1.5">
+            <div className="divide-y divide-border-subtle">
               {timelineMessages.map((msg) => (
                 <TimelineEntry key={msg.id} message={msg} />
               ))}
@@ -815,8 +1141,8 @@ export function ProcessCard({
 
           {/* Footer summary */}
           {summary && (
-            <div className="px-5 py-3 bg-black/15 border-t border-white/8">
-              <span className="text-[12px] text-text-tertiary">{summary}</span>
+            <div className="px-6 py-4 border-t border-border-subtle">
+              <span className="text-xs text-text-tertiary">{summary}</span>
             </div>
           )}
         </div>

@@ -8,6 +8,7 @@ import { authenticate, requirePermission, type AuthRequest } from '../../middlew
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
 import { runtimeRequest } from '../../lib/runtime-client'
+import { resolveApprovalAndMaybeResume } from '../../services/chat.service'
 
 const router: Router = Router()
 
@@ -47,16 +48,18 @@ router.post(
   requirePermission('approvals:write'),
   validate(resolveApprovalSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const resolved = await runtimeRequest<{ approval_id: string; status: string }>(
-      `/v1/approvals/${encodeURIComponent(req.params.id)}/approve`,
-      { method: 'POST' }
-    )
+    const resolved = await resolveApprovalAndMaybeResume(req.params.id, 'approve')
 
     res.json({
       success: true,
-      id: resolved.approval_id,
+      id: resolved.approvalId,
       status: resolved.status,
       resolved: true,
+      resumed: resolved.resumed,
+      sessionId: resolved.sessionId,
+      attemptId: resolved.attemptId,
+      userMessageId: resolved.userMessageId,
+      assistantMessageId: resolved.assistantMessageId,
     })
   })
 )
@@ -68,16 +71,16 @@ router.post(
   requirePermission('approvals:write'),
   validate(resolveApprovalSchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const resolved = await runtimeRequest<{ approval_id: string; status: string }>(
-      `/v1/approvals/${encodeURIComponent(req.params.id)}/reject`,
-      { method: 'POST' }
-    )
+    const resolved = await resolveApprovalAndMaybeResume(req.params.id, 'reject')
 
     res.json({
       success: true,
-      id: resolved.approval_id,
+      id: resolved.approvalId,
       status: resolved.status,
       resolved: true,
+      resumed: resolved.resumed,
+      attemptId: resolved.attemptId,
+      userMessageId: resolved.userMessageId,
     })
   })
 )

@@ -8,12 +8,10 @@ import Image from 'next/image'
 import clsx from 'clsx'
 import {
   LayoutDashboard,
-  Bot,
   SlidersHorizontal,
   MessageSquare,
   Sparkles,
   Wrench,
-  Activity,
   Workflow,
   ShieldCheck,
   Languages,
@@ -28,6 +26,7 @@ import {
 import { LANGUAGES } from '@/constants/config'
 import { useLocale } from '@/components/providers/LocaleProvider'
 import { useTheme } from '@/components/providers/ThemeProvider'
+import { AgentBotAvatar } from '@/components/ui/AgentBotAvatar'
 import { apiClient } from '@/lib/api'
 
 interface NavItem {
@@ -40,14 +39,28 @@ interface NavItem {
 const navItems: NavItem[] = [
   { icon: <LayoutDashboard size={20} />, labelKey: 'nav.dashboard', helpKey: 'help.nav.dashboard', href: '/dashboard' },
   { icon: <MessageSquare size={20} />, labelKey: 'nav.sessions', helpKey: 'help.nav.sessions', href: '/chat' },
-  { icon: <Activity size={20} />, labelKey: 'nav.events', helpKey: 'help.nav.events', href: '/events' },
+  {
+    icon: (
+      <AgentBotAvatar
+        agentId="nav-agents"
+        agentName="Agents"
+        size={24}
+        iconScale={0.92}
+        monochrome
+        className="text-current"
+      />
+    ),
+    labelKey: 'nav.agents',
+    helpKey: 'help.nav.agents',
+    href: '/agents',
+  },
+  { icon: <Wrench size={20} />, labelKey: 'nav.tools', helpKey: 'help.nav.tools', href: '/tools' },
+  { icon: <Sparkles size={20} />, labelKey: 'nav.skills', helpKey: 'help.nav.skills', href: '/skills' },
+  { icon: <Monitor size={20} />, labelKey: 'nav.runtimeMonitor', helpKey: 'help.nav.runtimeMonitor', href: '/runtime' },
+  { icon: <Clapperboard size={20} />, labelKey: 'nav.studio', helpKey: 'help.nav.studio', href: '/productions' },
   { icon: <Workflow size={20} />, labelKey: 'nav.rules', helpKey: 'help.nav.rules', href: '/rules' },
   { icon: <ShieldCheck size={20} />, labelKey: 'nav.approvals', helpKey: 'help.nav.approvals', href: '/approvals' },
   { icon: <BarChart2 size={20} />, labelKey: 'nav.usage', helpKey: 'help.nav.usage', href: '/usage' },
-  { icon: <Bot size={20} />, labelKey: 'nav.agents', helpKey: 'help.nav.agents', href: '/agents' },
-  { icon: <Clapperboard size={20} />, labelKey: 'nav.studio', helpKey: 'help.nav.studio', href: '/studio' },
-  { icon: <Sparkles size={20} />, labelKey: 'nav.skills', helpKey: 'help.nav.skills', href: '/skills' },
-  { icon: <Wrench size={20} />, labelKey: 'nav.tools', helpKey: 'help.nav.tools', href: '/tools' },
   { icon: <SlidersHorizontal size={20} />, labelKey: 'nav.config', helpKey: 'help.nav.config', href: '/config' },
 ]
 
@@ -259,14 +272,14 @@ export function NavBar() {
       }>('/version/upgrade', {})
       const data = response?.data
       setUpgradeStatus(String(data?.status || 'queued'))
-      setUpgradeMessage(data?.message || '升级任务已提交')
+      setUpgradeMessage(data?.message || t('nav.upgradeSubmitted'))
       setUpgradeError(data?.error || null)
     } catch (error) {
       setUpgradeStatus('failed')
-      setUpgradeMessage('启动升级失败')
-      setUpgradeError(error instanceof Error ? error.message : '启动升级失败')
+      setUpgradeMessage(t('nav.upgradeFailed'))
+      setUpgradeError(error instanceof Error ? error.message : t('nav.upgradeFailed'))
     }
-  }, [updateAvailable, upgradeInFlight])
+  }, [updateAvailable, upgradeInFlight, t])
 
   return (
     <nav
@@ -369,12 +382,12 @@ export function NavBar() {
               'flex items-center justify-center p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-interactive-hover transition-colors',
               isExpanded ? 'flex-1' : 'w-10 h-10'
             )}
-            title="切换主题"
+            title={t('nav.toggleTheme')}
           >
             {theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Monitor size={16} />}
             {isExpanded && (
               <span className="ml-2 text-xs font-medium">
-                {theme === 'dark' ? '夜间' : theme === 'light' ? '日间' : '跟随系统'}
+                {theme === 'dark' ? t('nav.themeDark') : theme === 'light' ? t('nav.themeLight') : t('nav.themeSystem')}
               </span>
             )}
           </button>
@@ -390,7 +403,7 @@ export function NavBar() {
               updateAvailable ? 'text-amber-500 hover:text-amber-400' : 'text-text-tertiary hover:text-text-secondary',
               isExpanded ? 'flex-1' : 'w-10 h-10 flex-col'
             )}
-            title={updateAvailable && latestVersion ? `发现新版本 ${latestVersion}，当前 ${appVersion}` : `当前版本 ${appVersion}`}
+            title={updateAvailable && latestVersion ? t('nav.newVersionFound', { version: latestVersion, current: appVersion }) : t('nav.currentVersion', { version: appVersion })}
           >
             {isExpanded ? (
               <>
@@ -409,7 +422,7 @@ export function NavBar() {
           </button>
           {isExpanded && updateAvailable && latestVersion && (
             <div className="px-2 text-[10px] text-amber-500">
-              发现新版本 {latestVersion}
+              {t('nav.newVersionFound', { version: latestVersion, current: appVersion })}
             </div>
           )}
           {isExpanded && updateAvailable && (
@@ -424,18 +437,18 @@ export function NavBar() {
                     ? 'bg-amber-500/10 text-amber-400 cursor-not-allowed'
                     : 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/20'
                 )}
-                title="后台安装并重启到最新版本"
+                title={t('nav.upgradeTooltip')}
               >
-                {upgradeInFlight ? '更新中' : '立即更新'}
+                {upgradeInFlight ? t('nav.upgrading') : t('nav.upgradeNow')}
               </button>
               {releaseNotesUrl && (
                 <button
                   type="button"
                   onClick={handleOpenReleaseNotes}
                   className="px-2 py-2 rounded-md text-[10px] font-medium text-text-secondary hover:bg-interactive-hover hover:text-text-primary transition-colors"
-                  title="查看发布说明"
+                  title={t('nav.releaseNotes')}
                 >
-                  发布说明
+                  {t('nav.releaseNotes')}
                 </button>
               )}
             </div>
@@ -448,7 +461,7 @@ export function NavBar() {
           {isExpanded && upgradeError && upgradeStatus === 'failed' && (
             <div
               className="mx-2 max-h-32 overflow-y-auto rounded-md border border-red-500/20 bg-red-500/5 px-2 py-1 text-[10px] text-red-400 break-all"
-              title="升级错误详情"
+              title={t('nav.upgradeErrorDetail')}
             >
               {upgradeError}
             </div>

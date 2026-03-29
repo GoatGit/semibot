@@ -129,6 +129,23 @@ router.post(
 )
 
 /**
+ * GET /chat/sessions/:sessionId/stream - 重新订阅已有会话的 SSE 流
+ *
+ * 用于页面刷新或断线后恢复当前活跃会话的实时状态。
+ */
+router.get(
+  '/sessions/:sessionId/stream',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('chat:write'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId
+    const sessionId = req.params.sessionId
+    await chatService.subscribeChatStream(userId, sessionId, res)
+  })
+)
+
+/**
  * POST /chat/start - 创建新会话并发送消息 (SSE)
  *
  * 支持两种 Content-Type:

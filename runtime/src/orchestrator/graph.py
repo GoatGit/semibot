@@ -10,15 +10,20 @@ from typing import Any, TYPE_CHECKING
 from langgraph.graph import END, StateGraph
 
 from src.orchestrator.edges import (
-    route_after_observe,
+    route_after_observe_dr,
+    route_after_observe_workflow,
+    route_after_route,
     route_after_plan,
 )
 from src.orchestrator.nodes_act import act_node
 from src.orchestrator.nodes_delegate import delegate_node
+from src.orchestrator.nodes_dr import dr_node
 from src.orchestrator.nodes_observe import observe_node
+from src.orchestrator.nodes_observe_dr import observe_dr_node
 from src.orchestrator.nodes_plan import plan_node
 from src.orchestrator.nodes_reflect import reflect_node
 from src.orchestrator.nodes_respond import respond_node
+from src.orchestrator.nodes_route import route_node
 from src.orchestrator.nodes_start import start_node
 from src.orchestrator.state import AgentState
 
@@ -36,9 +41,11 @@ def create_agent_graph(
     This builds a LangGraph StateGraph that orchestrates the Agent's
     execution flow through the following states:
 
-    START -> PLAN -> ACT/DELEGATE -> OBSERVE -> REFLECT -> RESPOND -> END
-                 ↑______|              |
-                        |______________|
+    START -> ROUTE -> RESPOND
+                 ├-> DR -> OBSERVE_DR -> RESPOND
+                 │                  └-> PLAN
+                 ├-> PLAN -> ACT/DELEGATE -> OBSERVE -> REFLECT/RESPOND
+                 └-> DELEGATE -> RESPOND
 
     Args:
         context: Injected dependencies for nodes (llm_provider, etc.)
@@ -91,6 +98,15 @@ def create_agent_graph(
     async def _start(state: AgentState) -> dict[str, Any]:
         return await start_node(state, context)
 
+    async def _route(state: AgentState) -> dict[str, Any]:
+        return await route_node(state, context)
+
+    async def _dr(state: AgentState) -> dict[str, Any]:
+        return await dr_node(state, context)
+
+    async def _observe_dr(state: AgentState) -> dict[str, Any]:
+        return await observe_dr_node(state, context)
+
     async def _plan(state: AgentState) -> dict[str, Any]:
         return await plan_node(state, context)
 
@@ -111,6 +127,9 @@ def create_agent_graph(
 
     # Add nodes to the graph
     graph.add_node("start", _start)
+    graph.add_node("route", _route)
+    graph.add_node("dr", _dr)
+    graph.add_node("observe_dr", _observe_dr)
     graph.add_node("plan", _plan)
     graph.add_node("act", _act)
     graph.add_node("delegate", _delegate)
@@ -122,8 +141,31 @@ def create_agent_graph(
     graph.set_entry_point("start")
 
     # Add edges
-    # START always goes to PLAN
-    graph.add_edge("start", "plan")
+    # START always goes to ROUTE
+    graph.add_edge("start", "route")
+
+    # ROUTE selects one of the four execution modes.
+    graph.add_conditional_edges(
+        "route",
+        route_after_route,
+        {
+            "respond": "respond",
+            "dr": "dr",
+            "plan": "plan",
+            "delegate": "delegate",
+        },
+    )
+
+    # Direct Reasoning is a single-shot bounded execution path.
+    graph.add_edge("dr", "observe_dr")
+    graph.add_conditional_edges(
+        "observe_dr",
+        route_after_observe_dr,
+        {
+            "respond": "respond",
+            "plan": "plan",
+        },
+    )
 
     # PLAN conditionally routes to ACT, DELEGATE, or RESPOND
     graph.add_conditional_edges(
@@ -139,13 +181,13 @@ def create_agent_graph(
     # ACT always goes to OBSERVE
     graph.add_edge("act", "observe")
 
-    # DELEGATE always goes to OBSERVE
-    graph.add_edge("delegate", "observe")
+    # DELEGATE returns directly to RESPOND.
+    graph.add_edge("delegate", "respond")
 
     # OBSERVE conditionally routes to PLAN (replan), ACT (continue current plan), RESPOND, or REFLECT.
     graph.add_conditional_edges(
         "observe",
-        route_after_observe,
+        route_after_observe_workflow,
         {
             "plan": "plan",
             "act": "act",
@@ -193,6 +235,15 @@ def create_agent_graph_with_checkpointer(
     async def _start(state: AgentState) -> dict[str, Any]:
         return await start_node(state, context)
 
+    async def _route(state: AgentState) -> dict[str, Any]:
+        return await route_node(state, context)
+
+    async def _dr(state: AgentState) -> dict[str, Any]:
+        return await dr_node(state, context)
+
+    async def _observe_dr(state: AgentState) -> dict[str, Any]:
+        return await observe_dr_node(state, context)
+
     async def _plan(state: AgentState) -> dict[str, Any]:
         return await plan_node(state, context)
 
@@ -213,6 +264,9 @@ def create_agent_graph_with_checkpointer(
 
     # Add nodes
     graph.add_node("start", _start)
+    graph.add_node("route", _route)
+    graph.add_node("dr", _dr)
+    graph.add_node("observe_dr", _observe_dr)
     graph.add_node("plan", _plan)
     graph.add_node("act", _act)
     graph.add_node("delegate", _delegate)
@@ -224,17 +278,28 @@ def create_agent_graph_with_checkpointer(
     graph.set_entry_point("start")
 
     # Add edges (same as above)
-    graph.add_edge("start", "plan")
+    graph.add_edge("start", "route")
+    graph.add_conditional_edges(
+        "route",
+        route_after_route,
+        {"respond": "respond", "dr": "dr", "plan": "plan", "delegate": "delegate"},
+    )
+    graph.add_edge("dr", "observe_dr")
+    graph.add_conditional_edges(
+        "observe_dr",
+        route_after_observe_dr,
+        {"respond": "respond", "plan": "plan"},
+    )
     graph.add_conditional_edges(
         "plan",
         route_after_plan,
         {"act": "act", "delegate": "delegate", "respond": "respond"},
     )
     graph.add_edge("act", "observe")
-    graph.add_edge("delegate", "observe")
+    graph.add_edge("delegate", "respond")
     graph.add_conditional_edges(
         "observe",
-        route_after_observe,
+        route_after_observe_workflow,
         {"plan": "plan", "act": "act", "reflect": "reflect", "respond": "respond"},
     )
     graph.add_edge("reflect", "respond")

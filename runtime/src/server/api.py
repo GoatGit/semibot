@@ -26,6 +26,10 @@ from src.events.models import Event
 from src.events.runtime_action_executor import RuntimeActionExecutor
 from src.gateway.context_service import GatewayContextService
 from src.gateway.manager import GatewayManager
+from src.execution.runtime_approval_resume import (
+    approve_and_maybe_resume,
+    reject_and_finalize,
+)
 from src.orchestrator.missing_capability import (
     build_missing_capability_query,
     build_missing_capability_recommendation,
@@ -75,6 +79,11 @@ class HeartbeatRequest(BaseModel):
     source: str = "system.api"
     subject: str | None = "system"
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalResolveRequest(BaseModel):
+    reason: str | None = None
+    resume: bool = True
 
 
 class CronJobUpsertRequest(BaseModel):
@@ -171,6 +180,8 @@ class ChatStartRequest(BaseModel):
     message: str
     agent_id: str = "semibot"
     session_id: str | None = None
+    attempt_id: str | None = None
+    user_message_id: str | None = None
     model: str | None = None
     model_provider_key: str | None = None
     fallback_model: str | None = None
@@ -200,6 +211,8 @@ class CliImportDecisionRequest(BaseModel):
 class ChatSessionRequest(BaseModel):
     message: str
     agent_id: str = "semibot"
+    attempt_id: str | None = None
+    user_message_id: str | None = None
     model: str | None = None
     model_provider_key: str | None = None
     fallback_model: str | None = None
@@ -451,7 +464,10 @@ def create_app(
             "approval_id": item.approval_id,
             "rule_id": item.rule_id,
             "event_id": item.event_id,
+            "attempt_id": getattr(item, "attempt_id", None),
+            "user_message_id": getattr(item, "user_message_id", None),
             "risk_level": item.risk_level,
+            "blocking": bool(getattr(item, "blocking", True)),
             "status": item.status,
             "created_at": item.created_at.isoformat(),
             "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
@@ -1307,6 +1323,8 @@ def create_app(
         message: str,
         agent_id: str,
         session_id: str | None,
+        attempt_id: str | None,
+        user_message_id: str | None,
         model: str | None,
         model_provider_key: str | None,
         fallback_model: str | None,
@@ -1323,6 +1341,8 @@ def create_app(
                 rules_path=rules,
                 agent_id=agent_id,
                 session_id=session_id,
+                attempt_id=attempt_id,
+                user_message_id=user_message_id,
                 model=model,
                 model_provider_key=model_provider_key,
                 fallback_model=fallback_model,
@@ -1350,6 +1370,8 @@ def create_app(
                         rules_path=rules,
                         agent_id=agent_id,
                         session_id=session_id,
+                        attempt_id=attempt_id,
+                        user_message_id=user_message_id,
                         model=model,
                         model_provider_key=model_provider_key,
                         fallback_model=fallback_model,
@@ -1364,9 +1386,15 @@ def create_app(
                             "event": "done",
                             "status": result.get("status"),
                             "final_response": result.get("final_response"),
+                            "awaiting_approval_message": result.get("awaiting_approval_message"),
                             "error": result.get("error"),
+                            "pending_approval_ids": result.get("pending_approval_ids") or [],
                             "session_id": result.get("session_id"),
+                            "attempt_id": result.get("attempt_id"),
+                            "user_message_id": result.get("user_message_id"),
                             "agent_id": result.get("agent_id"),
+                            "revision": result.get("revision"),
+                            "terminal_reason": result.get("terminal_reason"),
                         }
                     )
                 except Exception as exc:
@@ -1377,7 +1405,10 @@ def create_app(
                             "final_response": "",
                             "error": str(exc),
                             "session_id": session_id,
+                            "attempt_id": attempt_id,
+                            "user_message_id": user_message_id,
                             "agent_id": agent_id,
+                            "terminal_reason": "graph_exception",
                         }
                     )
                 finally:
@@ -1386,6 +1417,8 @@ def create_app(
             start = {
                 "event": "start",
                 "session_id": session_id,
+                "attempt_id": attempt_id,
+                "user_message_id": user_message_id,
                 "agent_id": agent_id,
             }
             yield f"data: {json.dumps(start, ensure_ascii=False)}\n\n"
@@ -1421,6 +1454,8 @@ def create_app(
             message=req.message,
             agent_id=req.agent_id,
             session_id=req.session_id,
+            attempt_id=req.attempt_id,
+            user_message_id=req.user_message_id,
             model=req.model,
             model_provider_key=req.model_provider_key,
             fallback_model=req.fallback_model,
@@ -1437,6 +1472,8 @@ def create_app(
             message=req.message,
             agent_id=req.agent_id,
             session_id=session_id,
+            attempt_id=req.attempt_id,
+            user_message_id=req.user_message_id,
             model=req.model,
             model_provider_key=req.model_provider_key,
             fallback_model=req.fallback_model,
@@ -1883,17 +1920,28 @@ def create_app(
         )
 
     @app.post("/v1/approvals/{approval_id}/approve")
-    async def approve(approval_id: str) -> dict[str, Any]:
-        approval = await engine.resolve_approval(approval_id, "approved")
-        if not approval:
+    async def approve(approval_id: str, req: ApprovalResolveRequest | None = None) -> dict[str, Any]:
+        result = await approve_and_maybe_resume(
+            engine=engine,
+            checkpointer=checkpointer,
+            approval_id=approval_id,
+            db_path=db,
+            rules_path=rules,
+            task_runner=_task_runner,
+            auto_resume=True if req is None else bool(req.resume),
+        )
+        if not result:
             raise HTTPException(status_code=404, detail="approval_not_found")
-        return {"approval_id": approval.approval_id, "status": approval.status}
+        return result.to_dict()
 
     @app.post("/v1/approvals/{approval_id}/reject")
     async def reject(approval_id: str) -> dict[str, Any]:
-        approval = await engine.resolve_approval(approval_id, "rejected")
-        if not approval:
+        result = await reject_and_finalize(
+            engine=engine,
+            approval_id=approval_id,
+        )
+        if not result:
             raise HTTPException(status_code=404, detail="approval_not_found")
-        return {"approval_id": approval.approval_id, "status": approval.status}
+        return result.to_dict()
 
     return app

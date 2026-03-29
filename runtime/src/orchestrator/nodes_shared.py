@@ -14,6 +14,17 @@ _PROMPT_PAYLOAD_MAX_DICT_ITEMS = 24
 _PROMPT_PAYLOAD_MAX_DEPTH = 5
 
 
+def _latest_user_text(state: AgentState) -> str:
+    messages = state.get("messages") or []
+    for item in reversed(messages):
+        if str(item.get("role") or "").strip() != "user":
+            continue
+        content = str(item.get("content") or "").strip()
+        if content:
+            return content
+    return ""
+
+
 def _tool_result_error_text(result: ToolCallResult | dict[str, Any]) -> str:
     """Extract a normalized error text from a tool result object/dict."""
     if isinstance(result, dict):

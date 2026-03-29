@@ -31,6 +31,29 @@ function getAuthToken(): string | undefined {
   return localStorage.getItem('auth_token') ?? undefined
 }
 
+function getLastEventIdStorageKey(sessionId?: string): string | null {
+  return sessionId ? `semibot:last-event-id:${sessionId}` : null
+}
+
+function isTransientStreamLoadError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const name = String(error.name || '')
+  const message = String(error.message || '')
+  if (name === 'AbortError') return false
+  return (
+    message.includes('Load failed') ||
+    message.includes('Failed to fetch') ||
+    message.includes('NetworkError') ||
+    message.includes('fetch failed')
+  )
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+type StreamTerminalState = 'none' | 'awaiting_approval' | 'completed' | 'failed'
+
 // ═══════════════════════════════════════════════════════════════
 // 类型定义
 // ═══════════════════════════════════════════════════════════════
@@ -55,6 +78,8 @@ export interface UseChatReturn {
   isSending: boolean
   /** 发送消息 */
   sendMessage: (message: string, parentMessageId?: string, files?: File[]) => Promise<void>
+  /** 重新订阅当前会话正在进行中的流 */
+  resumeSession: () => Promise<void>
   /** 停止生成 */
   stopGeneration: () => void
   /** 重试最后一条消息 */
@@ -78,10 +103,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const abortRef = useRef<AbortController | null>(null)
   // 请求轮次 ID，用于隔离不同轮次的 SSE 消息
   const requestIdRef = useRef<number>(0)
+  const isUnmountingRef = useRef(false)
 
   // 组件卸载时中止进行中的 SSE 请求，防止会话间数据泄漏
   useEffect(() => {
+    isUnmountingRef.current = false
     return () => {
+      isUnmountingRef.current = true
+      requestIdRef.current += 1
       abortRef.current?.abort()
       abortRef.current = null
     }
@@ -103,6 +132,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const latestOnMessageRef = useRef(onMessage)
   const latestOnCompleteRef = useRef(onComplete)
   const latestOnErrorRef = useRef(onError)
+  const lastEventIdStorageKey = getLastEventIdStorageKey(sessionId)
 
   useEffect(() => {
     latestAgent2UIStateRef.current = agent2ui.state
@@ -187,7 +217,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
     if (latestState.streamingText) {
       addMessage({
-        id: data.messageId,
+        id: data.messageId || `assistant-${Date.now()}`,
         sessionId: data.sessionId,
         role: 'assistant',
         content: latestState.streamingText,
@@ -209,6 +239,141 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     console.error('[Chat] 错误:', error)
     latestOnErrorRef.current?.(error)
   }, [setIsThinking])
+
+  const persistLastEventId = useCallback((eventId: string | null) => {
+    if (typeof window === 'undefined' || !lastEventIdStorageKey) return
+    try {
+      if (eventId && eventId.trim()) {
+        window.sessionStorage.setItem(lastEventIdStorageKey, eventId.trim())
+      } else {
+        window.sessionStorage.removeItem(lastEventIdStorageKey)
+      }
+    } catch {
+      // ignore storage failures
+    }
+  }, [lastEventIdStorageKey])
+
+  const readLastEventId = useCallback((): string | null => {
+    if (typeof window === 'undefined' || !lastEventIdStorageKey) return null
+    try {
+      return window.sessionStorage.getItem(lastEventIdStorageKey)
+    } catch {
+      return null
+    }
+  }, [lastEventIdStorageKey])
+
+  const openSSEStream = useCallback(async (
+    url: string,
+    fetchOptions: RequestInit,
+    options?: { preserveStreamingState?: boolean }
+  ): Promise<{ terminalState: StreamTerminalState }> => {
+    const preserveStreamingState = options?.preserveStreamingState === true
+    const currentRequestId = requestIdRef.current
+    const headers = new Headers(fetchOptions.headers || {})
+    const lastEventId = readLastEventId()
+    if (lastEventId) {
+      headers.set('Last-Event-ID', lastEventId)
+    }
+    fetchOptions.headers = headers
+
+    let terminalState: StreamTerminalState = 'none'
+    const response = await fetch(url, fetchOptions)
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error?.message ?? `HTTP ${response.status}`)
+    }
+
+    if (!response.body) {
+      throw new Error('响应体为空')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    let currentEvent = ''
+    let currentId = ''
+    let dataLines: string[] = []
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read()
+
+      if (done) {
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (line.startsWith('id:')) {
+          currentId = line.slice(3).trim()
+        } else if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim()
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trim())
+        } else if (line === '') {
+          if (dataLines.length > 0) {
+            const rawData = dataLines.join('\n')
+            dataLines = []
+
+            try {
+              const data = JSON.parse(rawData)
+              if (currentId) {
+                persistLastEventId(currentId)
+              }
+
+              if (currentRequestId !== requestIdRef.current) {
+                break
+              }
+
+              switch (currentEvent) {
+                case 'message':
+                  handleMessage(data)
+                  break
+                case 'done':
+                case 'execution_complete':
+                  terminalState = String(data?.status || '').trim().toLowerCase() === 'awaiting_approval'
+                    ? 'awaiting_approval'
+                    : 'completed'
+                  persistLastEventId(null)
+                  handleDone(data)
+                  break
+                case 'error':
+                case 'execution_error':
+                  terminalState = 'failed'
+                  handleError(data)
+                  break
+                default:
+                  break
+              }
+            } catch (e) {
+              console.error('[Chat] 解析事件失败:', e, rawData)
+            }
+          }
+          currentEvent = ''
+          currentId = ''
+        }
+      }
+    }
+
+    if (terminalState === 'none' && currentRequestId === requestIdRef.current) {
+      if (isUnmountingRef.current) {
+        return { terminalState }
+      }
+      if (!preserveStreamingState) {
+        handleError({
+          code: 'SSE_STREAM_ERROR',
+          message: 'SSE stream ended before completion',
+        })
+      }
+    }
+
+    return { terminalState }
+  }, [handleDone, handleError, handleMessage, persistLastEventId, readLastEventId])
 
   /**
    * 发送消息
@@ -316,97 +481,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     abortRef.current = controller
     fetchOptions.signal = controller.signal
 
-    // 发起 SSE 请求
     try {
-      let receivedTerminalEvent = false
-      const response = await fetch(url, fetchOptions)
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error?.message ?? `HTTP ${response.status}`)
-      }
-
-      if (!response.body) {
-        throw new Error('响应体为空')
-      }
-
-      // 读取 SSE 流
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      // SSE 解析状态（跨 chunk 保持）
-      let currentEvent = ''
-      let dataLines: string[] = []
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read()
-
-        if (done) {
-          break
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-
-        // 按行分割，保留最后一个不完整的行
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (line.startsWith('event:')) {
-            currentEvent = line.slice(6).trim()
-          } else if (line.startsWith('data:')) {
-            dataLines.push(line.slice(5).trim())
-          } else if (line === '') {
-            // 空行表示事件结束
-            if (dataLines.length > 0) {
-              const rawData = dataLines.join('\n')
-              dataLines = []
-
-              try {
-                const data = JSON.parse(rawData)
-
-                // 丢弃过期轮次的消息（用户已发送新请求）
-                if (currentRequestId !== requestIdRef.current) {
-                  break
-                }
-
-                switch (currentEvent) {
-                  case 'message':
-                    handleMessage(data)
-                    break
-                  case 'done':
-                  case 'execution_complete':
-                    receivedTerminalEvent = true
-                    handleDone(data)
-                    break
-                  case 'error':
-                  case 'execution_error':
-                    receivedTerminalEvent = true
-                    handleError(data)
-                    break
-                  // heartbeat 等其他事件静默忽略
-                }
-              } catch (e) {
-                console.error('[Chat] 解析事件失败:', e, rawData)
-              }
-            }
-            currentEvent = ''
-          }
-        }
-      }
-
-      // 流结束但未收到终态事件时，视为流异常中断，不能当作成功完成。
-      if (!receivedTerminalEvent && currentRequestId === requestIdRef.current) {
-        handleError({
-          code: 'SSE_STREAM_ERROR',
-          message: 'SSE stream ended before completion',
-        })
-      }
+      await openSSEStream(url, fetchOptions)
     } catch (error) {
       // AbortError 是用户主动中止，不需要报错
       if ((error as Error).name === 'AbortError') {
+        return
+      }
+      if (isUnmountingRef.current || currentRequestId !== requestIdRef.current) {
         return
       }
 
@@ -416,7 +498,78 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       }
       handleError(errorData)
     }
-  }, [sessionId, agentId, isSending, agent2ui, addMessage, handleMessage, handleDone, handleError])
+  }, [sessionId, agentId, isSending, agent2ui, addMessage, handleError, openSSEStream])
+
+  const resumeSession = useCallback(async () => {
+    if (!sessionId || isSending) return
+
+    abortRef.current?.abort()
+    abortRef.current = null
+
+    requestIdRef.current += 1
+    const currentRequestId = requestIdRef.current
+    setIsSending(true)
+
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    try {
+      const token = getAuthToken()
+
+      // 自动重连循环：SSE 流断开后静默重试，直到收到终端事件或组件卸载
+      const MAX_RECONNECTS = 30
+      for (let reconnect = 0; reconnect < MAX_RECONNECTS; reconnect += 1) {
+        if (controller.signal.aborted) break
+        if (isUnmountingRef.current || currentRequestId !== requestIdRef.current) return
+
+        try {
+          const streamResult = await openSSEStream(
+            `${getSseBaseUrl()}/chat/sessions/${sessionId}/stream`,
+            {
+              method: 'GET',
+              headers: {
+                Accept: 'text/event-stream',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              signal: controller.signal,
+            },
+            { preserveStreamingState: true }
+          )
+          if (
+            streamResult.terminalState === 'completed' ||
+            streamResult.terminalState === 'failed' ||
+            streamResult.terminalState === 'awaiting_approval'
+          ) {
+            break
+          }
+          // 流正常结束（无终端事件），可能是服务端断开——等待后重连
+        } catch (error) {
+          if ((error as Error).name === 'AbortError') throw error
+          if (isUnmountingRef.current || currentRequestId !== requestIdRef.current) return
+          if (!isTransientStreamLoadError(error)) {
+            throw error
+          }
+          // 瞬态网络错误（Load failed / Failed to fetch），等待后重连
+        }
+
+        // 指数退避：500ms, 1s, 2s, 3s, ... 最大 5s
+        const delay = Math.min(500 * (reconnect + 1), 5000)
+        await sleep(delay)
+      }
+
+      // 超过最大重连次数，静默停止
+      if (currentRequestId === requestIdRef.current && !isUnmountingRef.current) {
+        setIsSending(false)
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') return
+      if (isUnmountingRef.current || currentRequestId !== requestIdRef.current) return
+      handleError({
+        code: 'CHAT_RESUME_ERROR',
+        message: error instanceof Error ? error.message : '恢复会话失败',
+      })
+    }
+  }, [handleError, isSending, openSSEStream, sessionId])
 
   /**
    * 停止生成
@@ -455,6 +608,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     agent2uiState: agent2ui.state,
     isSending,
     sendMessage,
+    resumeSession,
     stopGeneration,
     retry,
     reset,

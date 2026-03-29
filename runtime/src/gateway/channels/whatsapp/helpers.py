@@ -26,16 +26,6 @@ def _query_value(query_params: Mapping[str, str] | None, *keys: str) -> str | No
     return query_value(query_params, *keys)
 
 
-def _query_value(query_params: Mapping[str, str] | None, *keys: str) -> str | None:
-    if not query_params:
-        return None
-    for key in keys:
-        value = str(query_params.get(key, "")).strip()
-        if value:
-            return value
-    return None
-
-
 def resolve_instance_for_ingest(
     manager: GatewayManager,
     *,

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Workflow, RefreshCw, Plus, Pencil, Power, Trash2 } from 'lucide-react'
+import { RefreshCw, Plus, Pencil, Power, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/Select'
 import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { useRules } from '@/hooks/useRules'
 import { apiClient } from '@/lib/api'
 import type { RuleActionMode, RuleActionType, RiskLevel } from '@/types'
@@ -612,41 +613,29 @@ export default function RulesPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
-        <Card className="border-border-default">
-          <CardContent className="p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                <h1 className="text-2xl font-semibold text-text-primary flex items-center gap-2">
-                  <Workflow size={22} className="text-primary-400" />
-                  {t('rules.title')}
-                </h1>
-                <p className="mt-2 text-sm text-text-secondary">
-                  {t('rules.subtitle')}
-                </p>
-                <p className="mt-2 text-xs text-text-tertiary">
-                  {t('rules.enabled')} {activeStats.active} / {activeStats.total}
-                </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    leftIcon={<RefreshCw size={16} />}
-                  onClick={() => void loadRules()}
-                  disabled={isLoading}
-                >
-                  {t('common.refresh')}
-                </Button>
-                <Button
-                  leftIcon={<Plus size={16} />}
-                  onClick={openCreateEditor}
-                  disabled={!apiAvailable}
-                >
-                  {t('rules.new')}
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <PageHeader
+          title={t('rules.title')}
+          subtitle={`${t('rules.subtitle')} · ${t('rules.enabled')} ${activeStats.active} / ${activeStats.total}`}
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                leftIcon={<RefreshCw size={16} />}
+                onClick={() => void loadRules()}
+                disabled={isLoading}
+              >
+                {t('common.refresh')}
+              </Button>
+              <Button
+                leftIcon={<Plus size={16} />}
+                onClick={openCreateEditor}
+                disabled={!apiAvailable}
+              >
+                {t('rules.new')}
+              </Button>
+            </>
+          }
+        />
 
         <PageHelpStrip text={t('help.nav.rules')} ctaLabel={t('nav.helpCenter')} />
 

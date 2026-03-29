@@ -16,6 +16,7 @@ from src.orchestrator.context import (
     McpServerDefinition,
     ToolCatalogEntry,
 )
+from src.orchestrator.tool_catalog import expand_catalog_entry_for_llm
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -387,9 +388,15 @@ class CapabilityGraph:
             )
 
         for entry in self.context.get_tool_catalog():
-            capability = self._capability_from_catalog_entry(entry)
-            self.capabilities[entry.tool_id] = capability
-            self.capabilities_by_name[entry.tool_name] = capability
+            entry_variants = [entry, *expand_catalog_entry_for_llm(entry)]
+            seen_variant_ids: set[str] = set()
+            for variant in entry_variants:
+                if variant.tool_id in seen_variant_ids:
+                    continue
+                seen_variant_ids.add(variant.tool_id)
+                capability = self._capability_from_catalog_entry(variant)
+                self.capabilities[variant.tool_id] = capability
+                self.capabilities_by_name[variant.tool_name] = capability
             logger.debug(
                 "Added catalog capability",
                 extra={

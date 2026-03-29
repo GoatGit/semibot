@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { authenticate, type AuthRequest } from '../../middleware/auth'
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
+import { runtimeRequest } from '../../lib/runtime-client'
 import { handleFileUpload, type UploadRequest } from '../../middleware/upload'
 import fs from 'fs-extra'
 import type { Dirent } from 'fs'
@@ -139,6 +140,11 @@ const runtimeSkillsCliSchema = z.object({
   skill: z.string().min(1).max(200).optional(),
 })
 
+const runtimeMonitorQuerySchema = z.object({
+  limit: z.coerce.number().min(20).max(500).optional(),
+  sessionId: z.string().min(1).max(120).optional(),
+})
+
 const controlPlaneActionParamsSchema = z.object({
   domain: z.string().min(1).max(64),
   action: z.string().min(1).max(64),
@@ -150,6 +156,133 @@ const controlPlaneActionBodySchema = z.object({
 })
 
 const SKILLS_CLI_TIMEOUT_MS = 120_000
+const RUNTIME_MONITOR_EVENT_TYPES = [
+  'runtime.signal',
+  'runtime.failure',
+  'act.heartbeat',
+  'llm.usage',
+  'route.started',
+  'route.mode_selected',
+  'route.completed',
+  'dr.started',
+  'dr.completed',
+  'dr.failed',
+  'observe_dr.started',
+  'observe_dr.respond_success',
+  'observe_dr.respond_partial',
+  'observe_dr.upgrade_to_plan_act',
+] as const
+const RUNTIME_MONITOR_STALE_SECONDS = 120
+
+type RuntimeMonitorEvent = {
+  id: string
+  eventType: string
+  source: string
+  subject?: string
+  payload?: Record<string, unknown>
+  riskHint?: 'low' | 'medium' | 'high'
+  createdAt: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function readNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+function normalizeRuntimeMonitorEvent(raw: unknown): RuntimeMonitorEvent | null {
+  if (!isRecord(raw)) return null
+  const id = readString(raw.id) || readString(raw.event_id)
+  const eventType = readString(raw.eventType) || readString(raw.event_type)
+  const createdAt = readString(raw.createdAt) || readString(raw.created_at) || readString(raw.timestamp)
+  if (!id || !eventType || !createdAt) return null
+  return {
+    id,
+    eventType,
+    source: readString(raw.source) || 'runtime',
+    subject: readString(raw.subject) || undefined,
+    payload: isRecord(raw.payload) ? raw.payload : undefined,
+    riskHint: (readString(raw.riskHint) || readString(raw.risk_hint) || undefined) as RuntimeMonitorEvent['riskHint'],
+    createdAt,
+  }
+}
+
+function eventSessionId(event: RuntimeMonitorEvent): string | null {
+  const payload = event.payload
+  if (!payload) return null
+  const direct = readString(payload.session_id) || readString(payload.sessionId)
+  return direct || null
+}
+
+function summarizeTokenUsageFromEvents(events: RuntimeMonitorEvent[]): {
+  callCount: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+} {
+  const usage = events.filter((event) => event.eventType === 'llm.usage')
+  return usage.reduce(
+    (acc, event) => {
+      const payload = event.payload || {}
+      acc.callCount += 1
+      acc.promptTokens += readNumber(payload.prompt_tokens)
+      acc.completionTokens += readNumber(payload.completion_tokens)
+      acc.totalTokens += readNumber(payload.total_tokens)
+      return acc
+    },
+    { callCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+  )
+}
+
+function latestTimestamp(events: RuntimeMonitorEvent[]): string | null {
+  return events.length > 0 ? events[0]?.createdAt || null : null
+}
+
+function buildRouteModeCounts(routeEvents: RuntimeMonitorEvent[]): Record<string, number> {
+  return routeEvents.reduce<Record<string, number>>((acc, event) => {
+    const mode = readString(event.payload?.mode)
+    if (!mode) return acc
+    acc[mode] = (acc[mode] || 0) + 1
+    return acc
+  }, {
+    direct_answer: 0,
+    direct_reasoning: 0,
+    plan_act: 0,
+    delegate: 0,
+  })
+}
+
+function buildStaleSessions(heartbeats: RuntimeMonitorEvent[]): Array<{ sessionId: string; lastHeartbeatAt: string; ageSeconds: number }> {
+  const latestBySession = new Map<string, string>()
+  for (const event of heartbeats) {
+    const sessionId = eventSessionId(event)
+    if (!sessionId || latestBySession.has(sessionId)) continue
+    latestBySession.set(sessionId, event.createdAt)
+  }
+  const now = Date.now()
+  const stale: Array<{ sessionId: string; lastHeartbeatAt: string; ageSeconds: number }> = []
+  for (const [sessionId, createdAt] of latestBySession.entries()) {
+    const timestamp = Date.parse(createdAt)
+    if (Number.isNaN(timestamp)) continue
+    const ageSeconds = Math.max(0, Math.floor((now - timestamp) / 1000))
+    if (ageSeconds >= RUNTIME_MONITOR_STALE_SECONDS) {
+      stale.push({ sessionId, lastHeartbeatAt: createdAt, ageSeconds })
+    }
+  }
+  stale.sort((a, b) => b.ageSeconds - a.ageSeconds)
+  return stale
+}
 
 function sanitizeSkillName(raw: string): string {
   const text = String(raw || '').trim()
@@ -399,6 +532,152 @@ router.get(
         errors,
       },
     })
+  })
+)
+
+router.get(
+  '/monitor',
+  authenticate,
+  combinedRateLimit,
+  validate(runtimeMonitorQuerySchema, 'query'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { limit, sessionId } = req.query as z.infer<typeof runtimeMonitorQuerySchema>
+    const fetchLimit = limit ?? 200
+    const targetSessionId = readString(sessionId) || undefined
+
+    try {
+      const response = await runtimeRequest<{ items?: unknown[] }>('/v1/events', {
+        method: 'GET',
+        query: {
+          event_types: RUNTIME_MONITOR_EVENT_TYPES.join(','),
+          limit: fetchLimit,
+          ...(targetSessionId ? { session_id: targetSessionId } : {}),
+        },
+        timeoutMs: 4000,
+      })
+      const items = Array.isArray(response.items) ? response.items : []
+      const events = items
+        .map(normalizeRuntimeMonitorEvent)
+        .filter((item): item is RuntimeMonitorEvent => item !== null)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+
+      const signals = events.filter((event) => event.eventType === 'runtime.signal')
+      const failures = events.filter((event) => event.eventType === 'runtime.failure')
+      const heartbeats = events.filter((event) => event.eventType === 'act.heartbeat')
+      const usageEvents = events.filter((event) => event.eventType === 'llm.usage')
+      const routeEvents = events.filter((event) => event.eventType === 'route.mode_selected')
+      const drEvents = events.filter((event) => event.eventType === 'dr.completed' || event.eventType === 'dr.failed')
+      const drUpgradeEvents = events.filter((event) => event.eventType === 'observe_dr.upgrade_to_plan_act')
+
+      let tokenUsage = summarizeTokenUsageFromEvents(usageEvents)
+      if (!targetSessionId) {
+        try {
+          const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+          const usageResponse = await runtimeRequest<{
+            totals?: {
+              call_count?: number
+              prompt_tokens?: number
+              completion_tokens?: number
+              total_tokens?: number
+            }
+          }>('/v1/stats/token-usage', {
+            method: 'GET',
+            query: { since },
+            timeoutMs: 4000,
+          })
+          if (isRecord(usageResponse.totals)) {
+            tokenUsage = {
+              callCount: readNumber(usageResponse.totals.call_count),
+              promptTokens: readNumber(usageResponse.totals.prompt_tokens),
+              completionTokens: readNumber(usageResponse.totals.completion_tokens),
+              totalTokens: readNumber(usageResponse.totals.total_tokens),
+            }
+          }
+        } catch {
+          // Fall back to the fetched usage events when stats endpoint is unavailable.
+        }
+      }
+
+      const staleSessions = buildStaleSessions(heartbeats)
+      const routeModeCounts = buildRouteModeCounts(routeEvents)
+      const activeSessionCount = new Set(
+        [...signals, ...failures, ...heartbeats]
+          .map(eventSessionId)
+          .filter((value): value is string => Boolean(value))
+      ).size
+
+      res.json({
+        success: true,
+        data: {
+          available: true,
+          summary: {
+            signalCount: signals.length,
+            failureCount: failures.length,
+            heartbeatCount: heartbeats.length,
+            usageCallCount: tokenUsage.callCount,
+            routeDecisionCount: routeEvents.length,
+            routeModeCounts,
+            drRunCount: drEvents.length,
+            drUpgradeCount: drUpgradeEvents.length,
+            promptTokens24h: tokenUsage.promptTokens,
+            completionTokens24h: tokenUsage.completionTokens,
+            totalTokens24h: tokenUsage.totalTokens,
+            latestSignalAt: latestTimestamp(signals),
+            latestFailureAt: latestTimestamp(failures),
+            latestHeartbeatAt: latestTimestamp(heartbeats),
+            loopAlertCount: signals.filter((event) => String(event.payload?.reason || '').includes('loop')).length,
+            retryableFailureCount: failures.filter((event) => Boolean(event.payload?.retryable)).length,
+            activeSessionCount,
+            staleSessionCount: staleSessions.length,
+          },
+          timeline: events.slice(0, 120),
+          signals: signals.slice(0, 60),
+          failures: failures.slice(0, 60),
+          heartbeats: heartbeats.slice(0, 60),
+          usage: usageEvents.slice(0, 60),
+          staleSessions: staleSessions.slice(0, 20),
+        },
+      })
+    } catch (error) {
+      res.json({
+        success: true,
+        data: {
+          available: false,
+          error: stringifyError(error),
+          summary: {
+            signalCount: 0,
+            failureCount: 0,
+            heartbeatCount: 0,
+            usageCallCount: 0,
+            routeDecisionCount: 0,
+            routeModeCounts: {
+              direct_answer: 0,
+              direct_reasoning: 0,
+              plan_act: 0,
+              delegate: 0,
+            },
+            drRunCount: 0,
+            drUpgradeCount: 0,
+            promptTokens24h: 0,
+            completionTokens24h: 0,
+            totalTokens24h: 0,
+            latestSignalAt: null,
+            latestFailureAt: null,
+            latestHeartbeatAt: null,
+            loopAlertCount: 0,
+            retryableFailureCount: 0,
+            activeSessionCount: 0,
+            staleSessionCount: 0,
+          },
+          timeline: [],
+          signals: [],
+          failures: [],
+          heartbeats: [],
+          usage: [],
+          staleSessions: [],
+        },
+      })
+    }
   })
 )
 

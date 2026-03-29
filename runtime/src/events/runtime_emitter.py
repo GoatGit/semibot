@@ -38,6 +38,14 @@ async def emit_runtime_event(
     )
     try:
         await emitter.emit(event)
+        return
+    except TypeError:
+        # Queue-style runtime emitters use emit(event_type, data) instead of emit(Event).
+        pass
     except Exception:
         # Emission is side-channel and must not break main execution path.
+        return
+    try:
+        await emitter.emit(event_type, payload)
+    except Exception:
         return

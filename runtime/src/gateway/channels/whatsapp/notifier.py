@@ -113,6 +113,7 @@ class WhatsAppNotifier:
         else:
             text = str(
                 payload.get("summary")
+                or payload.get("awaiting_approval_message")
                 or payload.get("final_response")
                 or payload.get("message")
                 or f"event_type={event.event_type}"

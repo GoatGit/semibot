@@ -3,10 +3,11 @@ import './globals.css'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { ToastContainer } from '@/components/ui/Toast'
 import { LocaleProvider } from '@/components/providers/LocaleProvider'
+import { DynamicMetadata } from '@/components/providers/DynamicMetadata'
 
 export const metadata: Metadata = {
-  title: 'Semibot - 半个通用智能体',
-  description: '能干活、能提醒、能协作、能自己变强的大闸蟹。一个本地优先、可安装、可协作、可进化的通用智能体产品。',
+  title: 'Semibot',
+  description: 'A local-first, installable, collaborative, and evolvable general-purpose agent.',
   icons: {
     icon: '/semibot-logo.png',
     shortcut: '/semibot-logo.png',
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <body className="min-h-screen bg-bg-base text-text-primary antialiased">
         <ThemeProvider>
           <LocaleProvider>
+            <DynamicMetadata />
             {children}
           </LocaleProvider>
           <ToastContainer />

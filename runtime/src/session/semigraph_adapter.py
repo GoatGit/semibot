@@ -15,41 +15,63 @@ from src.events.event_store import EventStore
 from src.events.models import Event
 from src.events.orchestrator_bridge import OrchestratorBridge
 from src.events.runtime_action_executor import RuntimeActionExecutor
-from src.llm.base import LLMConfig, LLMProvider
+from src.events.runtime_event_persistence import persist_runtime_event_to_store
+from src.execution.runtime_components import (
+    build_runtime_policy,
+    build_runtime_skill_definitions,
+    build_runtime_tool_definitions,
+    resolve_runtime_db_path,
+)
+from src.execution.runtime_execution_core import (
+    build_graph_context,
+    build_initial_execution_state,
+    build_unified_action_executor,
+    emit_chat_message_received,
+    invoke_graph_once,
+)
+from src.execution.runtime_llm import (
+    instantiate_llm_provider,
+    pick_openai_compatible_provider_key,
+    provider_base,
+    provider_cfg_base_url,
+)
+from src.execution.runtime_response import (
+    derive_terminal_failure_reason,
+    rewrite_premature_final_response,
+)
+from src.execution.runtime_result import (
+    normalize_execution_result,
+)
+from src.execution.runtime_terminal import derive_terminal_execution_result
 from src.llm.anthropic_provider import AnthropicProvider
+from src.llm.base import LLMProvider
 from src.llm.kimi_provider import KimiProvider
 from src.llm.openai_provider import OpenAIProvider
 from src.llm.provider_factory import (
     MODEL_PROVIDER_HINTS,
     SUPPORTED_PROVIDER_BASES,
     infer_provider_base_from_model,
-    resolve_provider_protocol,
 )
 from src.memory.service import RuntimeMemoryService
 from src.orchestrator.context import (
     AgentConfig,
     McpServerDefinition,
-    ModelRoleConfig,
-    NodeModelConfig,
+    RuntimePolicy,
     RuntimeSessionContext,
     SkillDefinition,
     SubAgentDefinition,
     ToolDefinition,
+)
+from src.orchestrator.context import (
     parse_model_roles as _parse_model_roles,
-    parse_node_model_config as _parse_node_model_config,
 )
 from src.orchestrator.graph import create_agent_graph
-from src.orchestrator.nodes_respond import (
-    _build_inline_delivery_fallback,
-    _extract_search_results,
-    _infer_delivery_language,
-    _looks_like_premature_final_response,
-)
-from src.orchestrator.state import ToolCallResult, create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
 from src.session.runtime_adapter import RuntimeAdapter
 from src.session.workspace import (
     materialize_skill_index as _materialize_skill_index,
+)
+from src.session.workspace import (
     session_working_dir as _shared_session_working_dir,
 )
 from src.skills.bootstrap import create_default_registry
@@ -64,6 +86,10 @@ try:
     from src.mcp.bootstrap import setup_mcp_client
 except Exception:  # pragma: no cover - optional dependency in local runtime mode
     setup_mcp_client = None
+
+
+def create_initial_state(*, context: RuntimeSessionContext, **kwargs):
+    return build_initial_execution_state(runtime_context=context, **kwargs)
 
 
 def _session_working_dir(session_id: str) -> str:
@@ -152,6 +178,7 @@ class SemiGraphAdapter(RuntimeAdapter):
         self.start_payload = start_payload
         self._task: asyncio.Task[Any] | None = None
 
+        self._bind_runtime_db_env()
         self.skill_registry = create_default_registry()
         self.llm_provider = self._create_llm_provider()
         self.event_emitter: EventEmitter | None = None
@@ -176,97 +203,43 @@ class SemiGraphAdapter(RuntimeAdapter):
         self._rule_jobs_dropped = 0
         self._rule_jobs_completed = 0
         self._rule_jobs_failed = 0
+        self._streamed_response_parts: list[str] = []
 
-    @staticmethod
-    def _extract_final_response(result: dict[str, Any]) -> str:
-        final_response = ""
-        messages = result.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            if isinstance(last_msg, dict):
-                final_response = str(last_msg.get("content", ""))
-            else:
-                final_response = str(getattr(last_msg, "content", ""))
-        return final_response
+    def _attempt_identity(self) -> dict[str, Any]:
+        attempt_id = str(self.start_payload.get("attempt_id") or "").strip() or None
+        user_message_id = str(self.start_payload.get("user_message_id") or "").strip() or None
+        return {
+            "attempt_id": attempt_id,
+            "user_message_id": user_message_id,
+        }
 
-    @staticmethod
-    def _normalize_tool_results(raw_results: Any) -> list[ToolCallResult]:
-        if not isinstance(raw_results, list):
-            return []
-        normalized: list[ToolCallResult] = []
-        for row in raw_results:
-            if isinstance(row, ToolCallResult):
-                normalized.append(row)
-                continue
-            if not isinstance(row, dict):
-                continue
-            tool_name = str(row.get("tool_name") or "").strip()
-            params = row.get("params") if isinstance(row.get("params"), dict) else {}
-            result = row.get("result")
-            error = str(row.get("error") or "") or None
-            duration_ms_raw = row.get("duration_ms")
-            duration_ms = int(duration_ms_raw) if isinstance(duration_ms_raw, (int, float)) else 0
-            success_raw = row.get("success")
-            success = bool(success_raw) if isinstance(success_raw, bool) else error is None
-            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
-            normalized.append(
-                ToolCallResult(
-                    tool_name=tool_name or "unknown",
-                    params=params,
-                    result=result,
-                    error=error,
-                    duration_ms=duration_ms,
-                    success=success,
-                    metadata=metadata,
-                )
-            )
-        return normalized
+    async def _next_checkpoint_revision(self) -> int:
+        latest = await self.checkpointer.load_latest(self.session_id)
+        current = 0
+        if isinstance(latest, dict):
+            try:
+                current = int(latest.get("revision") or 0)
+            except Exception:
+                current = 0
+        return max(1, current + 1)
 
-    @classmethod
-    def _final_response_with_guard(cls, result: dict[str, Any]) -> str:
-        final_response = cls._extract_final_response(result)
-        if not _looks_like_premature_final_response(final_response):
-            return final_response
+    def _bind_runtime_db_env(self) -> None:
+        db_path = self._resolve_event_db_path()
+        if db_path:
+            os.environ["SEMIBOT_EVENTS_DB_PATH"] = db_path
 
-        tool_results = cls._normalize_tool_results(result.get("tool_results"))
-        if not any(r.success for r in tool_results):
-            return final_response
-
-        query = ""
-        messages = result.get("messages") if isinstance(result.get("messages"), list) else []
-        for message in reversed(messages):
-            if not isinstance(message, dict):
-                continue
-            if str(message.get("role") or "").strip() != "user":
-                continue
-            content = str(message.get("content") or "").strip()
-            if content and not content.startswith("[SYSTEM]"):
-                query = content
-                break
-
-        fallback = ""
-        search_rows = _extract_search_results(tool_results)
-        if search_rows:
-            fallback = _build_inline_delivery_fallback(
-                title=query or "current request",
-                source_items=[
-                    {
-                        "title": str(item.get("title") or "").strip() or f"Result {index}",
-                        "url": str(item.get("url") or "").strip(),
-                        "summary": str(item.get("snippet") or item.get("content") or "").strip(),
-                    }
-                    for index, item in enumerate(search_rows[:6], start=1)
-                ],
-                language=_infer_delivery_language(query),
-            )
-
-        fallback = str(fallback or "").strip()
-        if not fallback:
-            return final_response
-        if fallback == final_response.strip():
-            return final_response
-        logger.warning("semigraph_premature_final_response_rewritten")
-        return fallback
+    def _refresh_session_registry(self) -> None:
+        previous_count = len(self.skill_registry.list_tools()) if self.skill_registry is not None else 0
+        self._bind_runtime_db_env()
+        self.skill_registry = create_default_registry()
+        logger.info(
+            "semigraph_registry_refreshed",
+            extra={
+                "session_id": self.session_id,
+                "previous_tool_count": previous_count,
+                "current_tool_count": len(self.skill_registry.list_tools()),
+            },
+        )
 
     @staticmethod
     def _serialize_checkpoint_value(value: Any) -> Any:
@@ -284,34 +257,9 @@ class SemiGraphAdapter(RuntimeAdapter):
             return [SemiGraphAdapter._serialize_checkpoint_value(item) for item in value]
         return value
 
-    @classmethod
-    def _terminal_failure_reason(cls, result: dict[str, Any], final_response: str) -> str | None:
-        tool_results = cls._normalize_tool_results(result.get("tool_results"))
-        raw_plan = result.get("plan")
-        plan_steps = []
-        if hasattr(raw_plan, "steps"):
-            plan_steps = list(getattr(raw_plan, "steps", []) or [])
-        elif isinstance(raw_plan, dict) and isinstance(raw_plan.get("steps"), list):
-            plan_steps = list(raw_plan.get("steps") or [])
-
-        normalized = str(final_response or "").strip()
-        lowered = normalized.lower()
-        if normalized and (
-            '"tool_calls"' in normalized
-            or "<function_calls>" in lowered
-            or ">functions." in lowered
-            or ('"decision"' in normalized and '"tool_call"' in normalized and '"selectedTool"' in normalized)
-        ):
-            return "Model emitted unexecuted tool-call text in the terminal response."
-
-        if plan_steps and not tool_results:
-            return "Planner produced a non-empty plan, but no act/tool results were executed."
-
-        return None
-
     @staticmethod
     def _provider_base(provider_key: str) -> str:
-        return str(provider_key or "").strip().lower().split(":", 1)[0]
+        return provider_base(provider_key)
 
     @classmethod
     def _infer_openai_compatible_provider_base(cls, model: str) -> str | None:
@@ -325,44 +273,16 @@ class SemiGraphAdapter(RuntimeAdapter):
         *,
         strict_preferred_base: bool = False,
     ) -> str | None:
-        candidates = [
-            key
-            for key, value in api_keys.items()
-            if value and cls._provider_base(key) in _OPENAI_COMPATIBLE_PROVIDER_BASES
-        ]
-        if not candidates:
-            return None
-
-        preferred_base = cls._infer_openai_compatible_provider_base(model)
-        if preferred_base:
-            if preferred_base in api_keys and api_keys.get(preferred_base):
-                return preferred_base
-            scoped = sorted(
-                key for key in candidates if key.startswith(f"{preferred_base}:")
-            )
-            if scoped:
-                return scoped[0]
-            if strict_preferred_base:
-                return None
-
-        for base in _OPENAI_COMPATIBLE_PROVIDER_BASES:
-            if base in api_keys and api_keys.get(base):
-                return base
-            scoped = sorted(key for key in candidates if key.startswith(f"{base}:"))
-            if scoped:
-                return scoped[0]
-
-        return sorted(candidates)[0]
+        return pick_openai_compatible_provider_key(
+            model,
+            api_keys,
+            set(_OPENAI_COMPATIBLE_PROVIDER_BASES),
+            strict_preferred_base=strict_preferred_base,
+        )
 
     @staticmethod
     def _provider_cfg_base_url(raw_cfg: Any) -> str | None:
-        if not isinstance(raw_cfg, dict):
-            return None
-        base_url = raw_cfg.get("base_url") or raw_cfg.get("baseUrl")
-        if not isinstance(base_url, str):
-            return None
-        trimmed = base_url.strip()
-        return trimmed or None
+        return provider_cfg_base_url(raw_cfg)
 
     def _create_llm_provider(self) -> LLMProvider | None:
         api_keys_raw = self.init_data.get("api_keys") or {}
@@ -482,22 +402,15 @@ class SemiGraphAdapter(RuntimeAdapter):
             },
         )
 
-        protocol = resolve_provider_protocol(provider_base, base_url)
-        provider_cls = (
-            KimiProvider
-            if protocol == "kimi"
-            else AnthropicProvider
-            if protocol == "anthropic"
-            else OpenAIProvider
-        )
-        return provider_cls(
-            LLMConfig(
-                model=model,
-                api_key=api_key,
-                base_url=base_url,
-                provider_base=provider_base,
-                timeout=120,
-            )
+        return instantiate_llm_provider(
+            model=model,
+            api_key=api_key,
+            provider_key=selected_provider_key,
+            base_url=base_url,
+            timeout=120,
+            openai_provider_cls=OpenAIProvider,
+            kimi_provider_cls=KimiProvider,
+            anthropic_provider_cls=AnthropicProvider,
         )
 
     async def start(self) -> None:
@@ -536,15 +449,17 @@ class SemiGraphAdapter(RuntimeAdapter):
 
     async def _run(self, payload: dict[str, Any]) -> None:
         run_started_at = time.time()
+        self._streamed_response_parts = []
         emitter = EventEmitter()
         self.event_emitter = emitter
-        self.memory_system.event_emitter = emitter
+        self._sync_memory_runtime_hooks(emitter=emitter, runtime_context=None)
         forward_task = asyncio.create_task(self._forward_events(emitter))
         mcp_client: Any = None
         event_engine = self._get_or_create_event_engine()
         event_engine.reload_rules()
 
         try:
+            self._refresh_session_registry()
             agent_cfg = self.start_payload.get("agent_config") or {}
             agent_id = str(self.start_payload.get("agent_id") or self.session_id)
             mcp_servers_raw = self.start_payload.get("mcp_servers") or []
@@ -595,79 +510,37 @@ class SemiGraphAdapter(RuntimeAdapter):
                 )
                 effective_model = runtime_llm_model
 
-            runtime_context = RuntimeSessionContext(
-                user_id=self.user_id,
+            tool_definitions = self._build_tool_definitions()
+            runtime_context = self._create_runtime_context(
                 agent_id=agent_id,
-                session_id=self.session_id,
-                agent_config=AgentConfig(
-                    id=agent_id,
-                    name=agent_id,
-                    system_prompt=agent_cfg.get("system_prompt"),
-                    model=effective_model,
-                    temperature=float(agent_cfg.get("temperature", 0.7)),
-                    max_tokens=int(agent_cfg.get("max_tokens", 4096)),
-                    model_roles=_parse_model_roles(agent_cfg.get("model_roles")),
-                ),
-                metadata={
-                    "event_emitter": event_engine,
-                    "org_id": str(self.init_data.get("org_id") or "").strip() or None,
-                    "skill_registry": self.skill_registry,
-                    "llm_provider": self.llm_provider,
-                    "memory_service": self.memory_system,
-                    "skill_index": self.start_payload.get("skill_index") if isinstance(self.start_payload.get("skill_index"), list) else [],
-                    "recent_tool_usage": dict(self.start_payload.get("recent_tool_usage") or {}) if isinstance(self.start_payload.get("recent_tool_usage"), dict) else {},
-                    "session_working_dir": _session_working_dir(self.session_id),
-                },
-                available_skills=self._build_skill_definitions(),
-                available_tools=self._build_tool_definitions(),
-                available_mcp_servers=mcp_servers,
-                available_sub_agents=self._build_sub_agent_definitions(),
+                agent_name=agent_id,
+                agent_cfg=agent_cfg,
+                model_override=effective_model,
+                event_engine=event_engine,
+                emitter=emitter,
+                tool_definitions=tool_definitions,
+                mcp_servers=mcp_servers,
+                sub_agent_definitions=self._build_sub_agent_definitions(),
             )
-
-            # Propagate act-role model to memory service now that agent_cfg is resolved
-            _act_role = runtime_context.agent_config.model_roles.act
-            self.memory_system.act_model = _act_role.model or runtime_context.agent_config.model or None
-
-            unified_executor = UnifiedActionExecutor(
+            graph, initial_state = self._build_execution_graph_state(
                 runtime_context=runtime_context,
-                skill_registry=self.skill_registry,
+                event_engine=event_engine,
+                emitter=emitter,
                 mcp_client=mcp_client,
-                event_emitter=event_engine,
-            )
-
-            graph_context: dict[str, Any] = {
-                "event_emitter": emitter,
-                "skill_registry": self.skill_registry,
-                "unified_executor": unified_executor,
-                "memory_system": self.memory_system,
-            }
-            if self.llm_provider:
-                graph_context["llm_provider"] = self.llm_provider
-
-            graph = create_agent_graph(context=graph_context, runtime_context=runtime_context)
-
-            initial_state = create_initial_state(
+                approval_scope_id=str(payload.get("approval_scope_id") or "").strip() or None,
                 session_id=self.session_id,
                 agent_id=agent_id,
                 user_message=str(payload.get("message", "")),
-                context=runtime_context,
                 history_messages=await self._resolve_history(payload),
                 metadata=payload.get("metadata") or {},
             )
 
-            await event_engine.emit(
-                Event(
-                    event_id=f"evt_{self.session_id}_{int(time.time() * 1000)}",
-                    event_type="chat.message.received",
-                    source="runtime.semigraph_adapter",
-                    subject=self.session_id,
-                    payload={
-                        "session_id": self.session_id,
-                        "agent_id": agent_id,
-                        "message": str(payload.get("message", "")),
-                    },
-                    risk_hint="low",
-                )
+            await emit_chat_message_received(
+                event_engine,
+                source="runtime.semigraph_adapter",
+                session_id=self.session_id,
+                agent_id=agent_id,
+                message=str(payload.get("message", "")),
             )
             await self.client.send_runtime_event(
                 self.session_id,
@@ -690,9 +563,10 @@ class SemiGraphAdapter(RuntimeAdapter):
                     "tool_count": len(runtime_context.available_tools or []),
                 },
             )
-            result = await asyncio.wait_for(
-                graph.ainvoke(initial_state),
-                timeout=_SEMIGRAPH_RUN_HARD_TIMEOUT_SECONDS,
+            result = await invoke_graph_once(
+                graph,
+                initial_state,
+                timeout_seconds=_SEMIGRAPH_RUN_HARD_TIMEOUT_SECONDS,
             )
             await self.client.send_runtime_event(
                 self.session_id,
@@ -715,16 +589,38 @@ class SemiGraphAdapter(RuntimeAdapter):
                 },
             )
 
-            final_response = self._final_response_with_guard(result)
-            terminal_failure = self._terminal_failure_reason(result, final_response)
+            final_response = rewrite_premature_final_response(result)
+            terminal_failure = derive_terminal_failure_reason(result, final_response)
+            normalized_result = normalize_execution_result(
+                result,
+                final_response=final_response,
+                terminal_failure_reason=terminal_failure,
+            )
+            live_pending_approval_ids = self._filter_live_pending_approval_ids(
+                list(normalized_result.pending_approval_ids)
+            )
+            if live_pending_approval_ids != normalized_result.pending_approval_ids:
+                normalized_result.pending_approval_ids = live_pending_approval_ids
+                if live_pending_approval_ids:
+                    if not normalized_result.awaiting_approval_message:
+                        normalized_result.awaiting_approval_message = final_response or None
+                    normalized_result.final_response = ""
+                else:
+                    normalized_result.final_response = final_response
+                    normalized_result.awaiting_approval_message = None
+            terminal_result = derive_terminal_execution_result(normalized_result)
+            terminal_revision = await self._next_checkpoint_revision()
 
-            if terminal_failure:
+            if terminal_result.status == "failed":
                 await self.client.send_sse_event(
                     self.session_id,
                     {
                         "type": "execution_error",
                         "code": "INVALID_TERMINAL_RESULT",
-                        "error": terminal_failure,
+                        "error": terminal_result.error,
+                        "terminal_reason": terminal_result.terminal_reason,
+                        "revision": terminal_revision,
+                        **self._attempt_identity(),
                     },
                 )
                 await event_engine.emit(
@@ -736,8 +632,11 @@ class SemiGraphAdapter(RuntimeAdapter):
                         payload={
                             "session_id": self.session_id,
                             "agent_id": agent_id,
-                            "error": terminal_failure,
-                            "final_response": final_response,
+                            "error": terminal_result.error,
+                            "terminal_reason": terminal_result.terminal_reason,
+                            "final_response": terminal_result.final_response,
+                            "revision": terminal_revision,
+                            **self._attempt_identity(),
                         },
                         risk_hint="medium",
                     )
@@ -746,7 +645,8 @@ class SemiGraphAdapter(RuntimeAdapter):
                     status="failed",
                     payload=payload,
                     result=result,
-                    error=terminal_failure,
+                    error=terminal_result.error,
+                    revision=terminal_revision,
                 )
                 await self._sync_snapshot()
                 logger.info(
@@ -759,31 +659,90 @@ class SemiGraphAdapter(RuntimeAdapter):
                 )
                 return
 
+            if terminal_result.status == "awaiting_approval":
+                await self.client.send_sse_event(
+                    self.session_id,
+                    {
+                        "type": "execution_complete",
+                        "final_response": terminal_result.final_response,
+                        "awaiting_approval_message": terminal_result.awaiting_approval_message,
+                        "status": "awaiting_approval",
+                        "pending_approval_ids": terminal_result.pending_approval_ids,
+                        "terminal_reason": terminal_result.terminal_reason,
+                        "revision": terminal_revision,
+                        **self._attempt_identity(),
+                    },
+                )
+                await event_engine.emit(
+                    Event(
+                        event_id=f"evt_{self.session_id}_{int(time.time() * 1000)}_awaiting_approval",
+                        event_type="task.awaiting_approval",
+                        source="runtime.semigraph_adapter",
+                        subject=self.session_id,
+                        payload={
+                            "session_id": self.session_id,
+                            "agent_id": agent_id,
+                            "final_response": terminal_result.final_response,
+                            "awaiting_approval_message": terminal_result.awaiting_approval_message,
+                            "pending_approval_ids": terminal_result.pending_approval_ids,
+                            "terminal_reason": terminal_result.terminal_reason,
+                            "revision": terminal_revision,
+                            **self._attempt_identity(),
+                        },
+                        risk_hint=terminal_result.risk_hint,
+                    )
+                )
+                await self._save_checkpoint(
+                    status="awaiting_approval",
+                    payload=payload,
+                    result=result,
+                    revision=terminal_revision,
+                )
+                await self._sync_snapshot()
+                logger.info(
+                    "semigraph_execution_awaiting_approval",
+                    extra={
+                        "session_id": self.session_id,
+                        "agent_id": agent_id,
+                        "duration_ms": int((time.time() - run_started_at) * 1000),
+                        "pending_approval_ids": terminal_result.pending_approval_ids,
+                    },
+                )
+                return
+
             await self.client.send_sse_event(
                 self.session_id,
                 {
                     "type": "execution_complete",
-                    "final_response": final_response,
+                    "final_response": terminal_result.final_response,
+                    "status": "completed",
+                    "terminal_reason": terminal_result.terminal_reason,
+                    "revision": terminal_revision,
+                    **self._attempt_identity(),
                 },
             )
             await event_engine.emit(
                 Event(
                     event_id=f"evt_{self.session_id}_{int(time.time() * 1000)}_done",
-                    event_type="task.completed",
+                    event_type=terminal_result.event_type,
                     source="runtime.semigraph_adapter",
                     subject=self.session_id,
                     payload={
                         "session_id": self.session_id,
                         "agent_id": agent_id,
-                        "final_response": final_response,
+                        "final_response": terminal_result.final_response,
+                        "terminal_reason": terminal_result.terminal_reason,
+                        "revision": terminal_revision,
+                        **self._attempt_identity(),
                     },
-                    risk_hint="low",
+                    risk_hint=terminal_result.risk_hint,
                 )
             )
             await self._save_checkpoint(
                 status="completed",
                 payload=payload,
                 result=result,
+                revision=terminal_revision,
             )
             await self._sync_snapshot()
             logger.info(
@@ -797,11 +756,16 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
 
         except asyncio.CancelledError:
+            terminal_revision = await self._next_checkpoint_revision()
             await self.client.send_sse_event(
                 self.session_id,
                 {
                     "type": "execution_complete",
                     "cancelled": True,
+                    "status": "cancelled",
+                    "terminal_reason": "cancelled",
+                    "revision": terminal_revision,
+                    **self._attempt_identity(),
                 },
             )
             await event_engine.emit(
@@ -810,13 +774,19 @@ class SemiGraphAdapter(RuntimeAdapter):
                     event_type="task.cancelled",
                     source="runtime.semigraph_adapter",
                     subject=self.session_id,
-                    payload={"session_id": self.session_id},
+                    payload={
+                        "session_id": self.session_id,
+                        "terminal_reason": "cancelled",
+                        "revision": terminal_revision,
+                        **self._attempt_identity(),
+                    },
                     risk_hint="low",
                 )
             )
             await self._save_checkpoint(
                 status="cancelled",
                 payload=payload,
+                revision=terminal_revision,
             )
             await self._sync_snapshot()
             logger.info(
@@ -828,6 +798,7 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
         except TimeoutError:
             error_text = f"graph execution timed out after {_SEMIGRAPH_RUN_HARD_TIMEOUT_SECONDS:g}s"
+            terminal_revision = await self._next_checkpoint_revision()
             await self.client.send_runtime_event(
                 self.session_id,
                 {
@@ -846,6 +817,9 @@ class SemiGraphAdapter(RuntimeAdapter):
                     "type": "execution_error",
                     "code": "GRAPH_TIMEOUT",
                     "error": error_text,
+                    "terminal_reason": "graph_timeout",
+                    "revision": terminal_revision,
+                    **self._attempt_identity(),
                 },
             )
             await event_engine.emit(
@@ -858,6 +832,9 @@ class SemiGraphAdapter(RuntimeAdapter):
                         "session_id": self.session_id,
                         "agent_id": agent_id,
                         "error": error_text,
+                        "terminal_reason": "graph_timeout",
+                        "revision": terminal_revision,
+                        **self._attempt_identity(),
                     },
                     risk_hint="medium",
                 )
@@ -866,6 +843,7 @@ class SemiGraphAdapter(RuntimeAdapter):
                 status="failed",
                 payload=payload,
                 error=error_text,
+                revision=terminal_revision,
             )
             await self._sync_snapshot()
             logger.warning(
@@ -882,6 +860,7 @@ class SemiGraphAdapter(RuntimeAdapter):
                 "semigraph_execution_failed",
                 extra={"session_id": self.session_id, "error": str(exc)},
             )
+            terminal_revision = await self._next_checkpoint_revision()
             await self.client.send_runtime_event(
                 self.session_id,
                 {
@@ -900,6 +879,9 @@ class SemiGraphAdapter(RuntimeAdapter):
                     "type": "execution_error",
                     "code": "INTERNAL_ERROR",
                     "error": str(exc),
+                    "terminal_reason": "graph_exception",
+                    "revision": terminal_revision,
+                    **self._attempt_identity(),
                 },
             )
             await event_engine.emit(
@@ -911,6 +893,9 @@ class SemiGraphAdapter(RuntimeAdapter):
                     payload={
                         "session_id": self.session_id,
                         "error": str(exc),
+                        "terminal_reason": "graph_exception",
+                        "revision": terminal_revision,
+                        **self._attempt_identity(),
                     },
                     risk_hint="medium",
                 )
@@ -919,6 +904,7 @@ class SemiGraphAdapter(RuntimeAdapter):
                 status="failed",
                 payload=payload,
                 error=str(exc),
+                revision=terminal_revision,
             )
             await self._sync_snapshot()
             logger.info(
@@ -959,11 +945,44 @@ class SemiGraphAdapter(RuntimeAdapter):
         )
         return str(Path(str(configured)).expanduser())
 
+    def _filter_live_pending_approval_ids(self, approval_ids: list[str]) -> list[str]:
+        if not approval_ids:
+            return []
+
+        store = EventStore(self._resolve_event_db_path())
+        filtered: list[str] = []
+        for item in approval_ids:
+            approval_id = str(item or "").strip()
+            if not approval_id:
+                continue
+            try:
+                approval = store.get_approval(approval_id)
+            except Exception:
+                approval = None
+            if approval is None:
+                filtered.append(approval_id)
+                continue
+            if str(approval.status or "").strip().lower() == "pending":
+                filtered.append(approval_id)
+        return list(dict.fromkeys(filtered))
+
     def _get_or_create_event_engine(self) -> EventEngine:
         if self._event_engine is not None:
             return self._event_engine
 
+        identity = self._attempt_identity()
+        attempt_id = identity["attempt_id"]
+        user_message_id = identity["user_message_id"]
+
         async def _runtime_event_sink(event: dict[str, Any]) -> None:
+            if attempt_id or user_message_id:
+                data = event.get("data")
+                normalized_data = dict(data) if isinstance(data, dict) else {}
+                if attempt_id:
+                    normalized_data.setdefault("attempt_id", attempt_id)
+                if user_message_id:
+                    normalized_data.setdefault("user_message_id", user_message_id)
+                event = {**event, "data": normalized_data}
             await self.client.send_runtime_event(self.session_id, event)
 
         action_executor = RuntimeActionExecutor(
@@ -1271,87 +1290,69 @@ class SemiGraphAdapter(RuntimeAdapter):
         trace_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        self._refresh_session_registry()
         event_engine = self._get_or_create_event_engine()
+        emitter = EventEmitter()
+        self.event_emitter = emitter
+        self._sync_memory_runtime_hooks(emitter=emitter, runtime_context=None)
+        forward_task = asyncio.create_task(self._forward_events(emitter))
         agent_cfg = self.start_payload.get("agent_config") or {}
         resolved_cfg = self._resolve_agent_config(agent_id, agent_cfg)
-
-        runtime_context = RuntimeSessionContext(
-            user_id=self.user_id,
-            agent_id=agent_id,
-            session_id=self.session_id,
-            agent_config=AgentConfig(
-                id=agent_id,
-                name=str(resolved_cfg.get("name") or agent_id),
-                system_prompt=resolved_cfg.get("system_prompt"),
-                model=resolved_cfg.get("model"),
-                temperature=float(resolved_cfg.get("temperature", 0.7)),
-                max_tokens=int(resolved_cfg.get("max_tokens", 4096)),
-            ),
-            metadata={
-                "event_emitter": event_engine,
-                "org_id": str(self.init_data.get("org_id") or "").strip() or None,
-                "llm_provider": self.llm_provider,
-                "memory_service": self.memory_system,
-                "skill_index": self.start_payload.get("skill_index") if isinstance(self.start_payload.get("skill_index"), list) else [],
-                "recent_tool_usage": dict(self.start_payload.get("recent_tool_usage") or {}) if isinstance(self.start_payload.get("recent_tool_usage"), dict) else {},
-                "session_working_dir": _session_working_dir(self.session_id),
-            },
-            available_skills=self._build_skill_definitions(),
-            available_tools=self._build_tool_definitions(),
-            available_mcp_servers=[],
-            available_sub_agents=self._build_sub_agent_definitions(),
-        )
-
-        unified_executor = UnifiedActionExecutor(
-            runtime_context=runtime_context,
-            skill_registry=self.skill_registry,
-            mcp_client=None,
-            event_emitter=event_engine,
-        )
-
-        graph_context: dict[str, Any] = {
-            "skill_registry": self.skill_registry,
-            "unified_executor": unified_executor,
-                "memory_system": self.memory_system,
-            }
-        if self.llm_provider:
-            graph_context["llm_provider"] = self.llm_provider
-
-        graph = create_agent_graph(context=graph_context, runtime_context=runtime_context)
-        initial_state = create_initial_state(
-            session_id=self.session_id,
-            agent_id=agent_id,
-            user_message=message,
-            context=runtime_context,
-            history_messages=None,
-            metadata={
-                "trigger": "event_rule",
-                "trace_id": trace_id,
-                "event_payload": payload,
-            },
-        )
-
-        result = await graph.ainvoke(initial_state)
-        final_response = self._final_response_with_guard(result)
-
-        await self.client.send_runtime_event(
-            self.session_id,
-            {
-                "event": "rule.run_agent.completed",
-                "data": {
+        try:
+            tool_definitions = self._build_tool_definitions()
+            sub_agent_definitions = self._build_sub_agent_definitions()
+            runtime_context = self._create_runtime_context(
+                agent_id=agent_id,
+                agent_name=str(resolved_cfg.get("name") or agent_id),
+                agent_cfg=resolved_cfg,
+                event_engine=event_engine,
+                emitter=emitter,
+                tool_definitions=tool_definitions,
+                mcp_servers=[],
+                sub_agent_definitions=sub_agent_definitions,
+                enable_delegation=bool(sub_agent_definitions),
+            )
+            graph, initial_state = self._build_execution_graph_state(
+                runtime_context=runtime_context,
+                event_engine=event_engine,
+                emitter=emitter,
+                mcp_client=None,
+                approval_scope_id=str(payload.get("approval_scope_id") or "").strip() or None,
+                session_id=self.session_id,
+                agent_id=agent_id,
+                user_message=message,
+                history_messages=None,
+                metadata={
+                    "trigger": "event_rule",
                     "trace_id": trace_id,
-                    "agent_id": agent_id,
-                    "message": message,
-                    "final_response": final_response,
+                    "event_payload": payload,
                 },
-            },
-        )
-        return {
-            "success": True,
-            "agent_id": agent_id,
-            "trace_id": trace_id,
-            "final_response": final_response,
-        }
+            )
+
+            result = await invoke_graph_once(graph, initial_state)
+            final_response = rewrite_premature_final_response(result)
+
+            await self.client.send_runtime_event(
+                self.session_id,
+                {
+                    "event": "rule.run_agent.completed",
+                    "data": {
+                        "trace_id": trace_id,
+                        "agent_id": agent_id,
+                        "message": message,
+                        "final_response": final_response,
+                    },
+                },
+            )
+            return {
+                "success": True,
+                "agent_id": agent_id,
+                "trace_id": trace_id,
+                "final_response": final_response,
+            }
+        finally:
+            await emitter.close()
+            await forward_task
 
     def _resolve_agent_config(self, agent_id: str, base_config: dict[str, Any]) -> dict[str, Any]:
         """Resolve effective agent config by target id (main agent or sub-agent)."""
@@ -1367,23 +1368,125 @@ class SemiGraphAdapter(RuntimeAdapter):
                 return merged
         return base_config
 
+    def _runtime_metadata(self, event_engine: EventEngine) -> dict[str, Any]:
+        return {
+            "event_emitter": event_engine,
+            "org_id": str(self.init_data.get("org_id") or "").strip() or None,
+            "skill_registry": self.skill_registry,
+            "llm_provider": self.llm_provider,
+            "memory_service": self.memory_system,
+            "skill_index": self.start_payload.get("skill_index")
+            if isinstance(self.start_payload.get("skill_index"), list)
+            else [],
+            "recent_tool_usage": dict(self.start_payload.get("recent_tool_usage") or {})
+            if isinstance(self.start_payload.get("recent_tool_usage"), dict)
+            else {},
+            "session_working_dir": _session_working_dir(self.session_id),
+        }
+
+    def _create_runtime_context(
+        self,
+        *,
+        agent_id: str,
+        agent_name: str,
+        agent_cfg: dict[str, Any],
+        event_engine: EventEngine,
+        emitter: EventEmitter,
+        tool_definitions: list[ToolDefinition],
+        mcp_servers: list[McpServerDefinition],
+        sub_agent_definitions: list[SubAgentDefinition],
+        model_override: str | None = None,
+        enable_delegation: bool | None = None,
+    ) -> RuntimeSessionContext:
+        runtime_context = RuntimeSessionContext(
+            user_id=self.user_id,
+            agent_id=agent_id,
+            session_id=self.session_id,
+            agent_config=AgentConfig(
+                id=agent_id,
+                name=agent_name,
+                system_prompt=agent_cfg.get("system_prompt"),
+                model=model_override if model_override is not None else agent_cfg.get("model"),
+                temperature=float(agent_cfg.get("temperature", 0.7)),
+                max_tokens=int(agent_cfg.get("max_tokens", 4096)),
+                model_roles=_parse_model_roles(agent_cfg.get("model_roles")),
+            ),
+            metadata=self._runtime_metadata(event_engine),
+            available_skills=self._build_skill_definitions(),
+            available_tools=tool_definitions,
+            available_mcp_servers=mcp_servers,
+            available_sub_agents=sub_agent_definitions,
+            runtime_policy=self._build_runtime_policy(
+                tool_definitions,
+                enable_delegation=enable_delegation,
+            ),
+        )
+        self._sync_memory_runtime_hooks(emitter=emitter, runtime_context=runtime_context)
+        return runtime_context
+
+    def _build_execution_graph_state(
+        self,
+        *,
+        runtime_context: RuntimeSessionContext,
+        event_engine: EventEngine,
+        emitter: EventEmitter,
+        mcp_client: Any,
+        approval_scope_id: str | None = None,
+        session_id: str,
+        agent_id: str,
+        user_message: str,
+        history_messages: list[dict[str, Any]] | None,
+        metadata: dict[str, Any],
+    ) -> tuple[Any, dict[str, Any]]:
+        unified_executor = build_unified_action_executor(
+            runtime_context=runtime_context,
+            skill_registry=self.skill_registry,
+            event_engine=event_engine,
+            default_session_id=self.session_id,
+            approval_scope_id=approval_scope_id or self.session_id,
+            attempt_id=str(metadata.get("attempt_id") or self.start_payload.get("attempt_id") or "").strip() or None,
+            user_message_id=str(metadata.get("user_message_id") or self.start_payload.get("user_message_id") or "").strip() or None,
+            mcp_client=mcp_client,
+            executor_cls=UnifiedActionExecutor,
+        )
+        graph_context = build_graph_context(
+            skill_registry=self.skill_registry,
+            unified_executor=unified_executor,
+            emitter=emitter,
+            memory_system=self.memory_system,
+            llm_provider=self.llm_provider,
+        )
+        graph = create_agent_graph(context=graph_context, runtime_context=runtime_context)
+        initial_state = create_initial_state(
+            session_id=session_id,
+            agent_id=agent_id,
+            user_message=user_message,
+            context=runtime_context,
+            history_messages=history_messages,
+            metadata=metadata,
+        )
+        return graph, initial_state
+
     async def _forward_events(self, emitter: EventEmitter) -> None:
+        attempt_id = str(self.start_payload.get("attempt_id") or "").strip() or None
+        user_message_id = str(self.start_payload.get("user_message_id") or "").strip() or None
         async for event in emitter:
+            if isinstance(event, dict) and str(event.get("event") or "") in {"text_chunk", "text"}:
+                data = event.get("data")
+                if isinstance(data, dict):
+                    content = str(data.get("content") or "")
+                    if content:
+                        self._streamed_response_parts.append(content)
+            if isinstance(event, dict) and (attempt_id or user_message_id):
+                data = event.get("data")
+                normalized_data = dict(data) if isinstance(data, dict) else {}
+                if attempt_id:
+                    normalized_data.setdefault("attempt_id", attempt_id)
+                if user_message_id:
+                    normalized_data.setdefault("user_message_id", user_message_id)
+                event = {**event, "data": normalized_data}
             await self.client.send_runtime_event(self.session_id, event)
-            # Persist llm.usage events to EventStore for token usage stats
-            event_type = event.get("event") or ""
-            if event_type == "llm.usage" and self._event_engine is not None:
-                data = event.get("data") or {}
-                try:
-                    self._event_engine.store.append_event(Event(
-                        event_id=uuid4().hex,
-                        event_type="llm.usage",
-                        source="orchestrator",
-                        subject=data.get("session_id"),
-                        payload=data,
-                    ))
-                except Exception:
-                    logger.debug("llm_usage_event_persist_failed", exc_info=True)
+            persist_runtime_event_to_store(self._event_engine, event)
 
     async def _resolve_history(self, payload: dict[str, Any]) -> Any:
         history = payload.get("history")
@@ -1424,6 +1527,52 @@ class SemiGraphAdapter(RuntimeAdapter):
             sanitized.append({"role": role, "content": text})
         return sanitized or None
 
+    @staticmethod
+    def _read_pending_approval_ids(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        ids: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                ids.append(text)
+        return ids
+
+    @classmethod
+    def _is_awaiting_approval_history_message(
+        cls,
+        item: dict[str, Any],
+        *,
+        awaiting_approval_message: str,
+    ) -> bool:
+        role = str(item.get("role") or "").strip().lower()
+        if role != "assistant":
+            return False
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict):
+            status = str(metadata.get("status") or "").strip().lower()
+            if status == "awaiting_approval":
+                return True
+            if cls._read_pending_approval_ids(metadata.get("pending_approval_ids")):
+                return True
+        content = str(item.get("content") or "").strip()
+        return bool(awaiting_approval_message and content and content == awaiting_approval_message)
+
+    @staticmethod
+    def _extract_last_assistant_message_content(messages: Any) -> str:
+        if not isinstance(messages, list):
+            return ""
+        for item in reversed(messages):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            if role != "assistant":
+                continue
+            content = str(item.get("content") or "").strip()
+            if content:
+                return content
+        return ""
+
     async def _save_checkpoint(
         self,
         *,
@@ -1431,15 +1580,18 @@ class SemiGraphAdapter(RuntimeAdapter):
         payload: dict[str, Any],
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        revision: int | None = None,
     ) -> None:
         messages = result.get("messages") if isinstance(result, dict) else None
         if not isinstance(messages, list):
             messages = payload.get("history")
         final_response = (
-            self._final_response_with_guard(result)
+            rewrite_premature_final_response(result)
             if isinstance(result, dict)
             else ""
         )
+        if not final_response.strip() and self._streamed_response_parts:
+            final_response = "".join(self._streamed_response_parts).strip()
         tool_results = (
             [row.model_dump() if hasattr(row, "model_dump") else dict(row) if isinstance(row, dict) else {
                 "tool_name": str(getattr(row, "tool_name", "") or ""),
@@ -1470,17 +1622,106 @@ class SemiGraphAdapter(RuntimeAdapter):
             checkpoint_current_weekday = str(result_metadata.get("current_weekday") or "").strip()
         if not checkpoint_current_timezone:
             checkpoint_current_timezone = str(result_metadata.get("current_timezone") or "").strip()
+        checkpoint_status = str(status or "").strip().lower()
+        is_awaiting_approval = checkpoint_status == "awaiting_approval"
+        awaiting_approval_message = (
+            str(result_metadata.get("awaiting_approval_message") or "").strip()
+            if is_awaiting_approval
+            else ""
+        )
+        if is_awaiting_approval and not awaiting_approval_message:
+            awaiting_approval_message = final_response
+        if is_awaiting_approval and not awaiting_approval_message:
+            awaiting_approval_message = self._extract_last_assistant_message_content(messages)
+        pending_approval_ids = self._read_pending_approval_ids(
+            result_metadata.get("pending_approval_ids") if isinstance(result_metadata, dict) else None
+        )
+        checkpoint_history = messages if isinstance(messages, list) else []
+        if is_awaiting_approval:
+            filtered_history: list[dict[str, Any]] = []
+            for item in checkpoint_history:
+                if not isinstance(item, dict):
+                    continue
+                if self._is_awaiting_approval_history_message(
+                    item,
+                    awaiting_approval_message=awaiting_approval_message,
+                ):
+                    continue
+                filtered_history.append(item)
+            checkpoint_history = filtered_history
+            if not checkpoint_history:
+                last_user_message = str(payload.get("message", "")).strip()
+                if last_user_message:
+                    checkpoint_history = [{"role": "user", "content": last_user_message}]
+            final_response = ""
+        if not checkpoint_history and final_response:
+            last_user_message = str(payload.get("message", "")).strip()
+            rebuilt_history: list[dict[str, Any]] = []
+            if last_user_message:
+                rebuilt_history.append({"role": "user", "content": last_user_message})
+            rebuilt_history.append({"role": "assistant", "content": final_response})
+            checkpoint_history = rebuilt_history
+        agent_cfg = self.start_payload.get("agent_config")
+        resume_task_config: dict[str, Any] = {}
+        if isinstance(agent_cfg, dict):
+            raw_model_roles = agent_cfg.get("model_roles")
+            if isinstance(raw_model_roles, dict):
+                resume_task_config["model_roles"] = self._serialize_checkpoint_value(raw_model_roles)
+            for field in (
+                "model",
+                "model_provider_key",
+                "fallback_model",
+                "fallback_provider_key",
+                "system_prompt",
+            ):
+                value = agent_cfg.get(field)
+                if isinstance(value, str):
+                    text = value.strip()
+                    if text:
+                        resume_task_config[field] = text
+        agent_id = str(self.start_payload.get("agent_id") or "").strip()
+        if agent_id:
+            resume_task_config["agent_id"] = agent_id
+        approval_scope_id = str(
+            payload.get("approval_scope_id")
+            or self.start_payload.get("approval_scope_id")
+            or ""
+        ).strip()
+        if approval_scope_id:
+            resume_task_config["approval_scope_id"] = approval_scope_id
+        attempt_id = str(
+            payload.get("attempt_id")
+            or self.start_payload.get("attempt_id")
+            or ""
+        ).strip()
+        user_message_id = str(
+            payload.get("user_message_id")
+            or self.start_payload.get("user_message_id")
+            or ""
+        ).strip()
+        if attempt_id:
+            resume_task_config["attempt_id"] = attempt_id
+        if user_message_id:
+            resume_task_config["user_message_id"] = user_message_id
+        checkpoint_revision = max(1, int(revision or 1))
+
         checkpoint = {
             "id": str(int(time.time() * 1000)),
             "session_id": self.session_id,
+            "attempt_id": attempt_id or None,
+            "user_message_id": user_message_id or None,
             "status": status,
-            "history": messages if isinstance(messages, list) else [],
-            "conversation_history": self._sanitize_conversation_history(messages if isinstance(messages, list) else []),
+            "revision": checkpoint_revision,
+            "history": checkpoint_history,
+            "conversation_history": self._sanitize_conversation_history(checkpoint_history),
             "last_user_message": str(payload.get("message", "")),
             "updated_at": int(time.time()),
             "final_response": final_response,
             "tool_results": tool_results,
+            "resume_task_config": resume_task_config,
         }
+        if pending_approval_ids:
+            checkpoint["pending_approval_ids"] = pending_approval_ids
         if checkpoint_current_date:
             checkpoint["current_date"] = checkpoint_current_date
         if checkpoint_current_weekday:
@@ -1496,8 +1737,26 @@ class SemiGraphAdapter(RuntimeAdapter):
                 )
         if result_metadata:
             checkpoint["metadata"] = dict(result_metadata)
+        if awaiting_approval_message:
+            metadata = checkpoint.setdefault("metadata", {})
+            if isinstance(metadata, dict):
+                metadata["awaiting_approval_message"] = awaiting_approval_message
+            checkpoint["awaiting_approval_message"] = awaiting_approval_message
         if error:
             checkpoint["error"] = error
+        terminal_reason = ""
+        if isinstance(result_metadata, dict):
+            terminal_reason = str(result_metadata.get("terminal_reason") or "").strip()
+        if not terminal_reason:
+            terminal_reason = str(payload.get("terminal_reason") or "").strip()
+        if not terminal_reason and checkpoint_status == "cancelled":
+            terminal_reason = "cancelled"
+        if not terminal_reason and checkpoint_status == "completed":
+            terminal_reason = "completed_normally"
+        if error and not terminal_reason:
+            terminal_reason = "graph_exception"
+        if terminal_reason:
+            checkpoint["terminal_reason"] = terminal_reason
         await self.checkpointer.save(self.session_id, checkpoint)
 
     async def _sync_snapshot(self) -> None:
@@ -1517,76 +1776,59 @@ class SemiGraphAdapter(RuntimeAdapter):
             )
 
     def _build_tool_definitions(self) -> list[ToolDefinition]:
-        tools: list[ToolDefinition] = []
-        for tool_name in self.skill_registry.list_tools():
-            tool = self.skill_registry.get_tool(tool_name)
-            if not tool:
-                continue
-            tool_metadata = self.skill_registry.get_tool_metadata(tool_name)
-            additional = (
-                dict(getattr(tool_metadata, "additional", {}) or {})
-                if tool_metadata is not None
-                else {}
-            )
-            source = str(getattr(tool_metadata, "source", None) or "builtin").strip() or "builtin"
-            tools.append(
-                ToolDefinition(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=tool.parameters,
-                    metadata={
-                        "source": source,
-                        **additional,
-                    },
-                )
-            )
-        return tools
+        return build_runtime_tool_definitions(
+            self.skill_registry,
+            resolve_runtime_db_path(),
+            metadata_resolver=self._resolve_tool_definition_metadata,
+        )
+
+    def _resolve_tool_definition_metadata(self, tool_name: str) -> dict[str, Any]:
+        tool_metadata = self.skill_registry.get_tool_metadata(tool_name)
+        additional = (
+            dict(getattr(tool_metadata, "additional", {}) or {})
+            if tool_metadata is not None
+            else {}
+        )
+        source = str(getattr(tool_metadata, "source", None) or "builtin").strip() or "builtin"
+        return {
+            **additional,
+            "source": source,
+        }
+
+    def _build_runtime_policy(
+        self,
+        tools: list[ToolDefinition],
+        *,
+        enable_delegation: bool | None = None,
+    ) -> RuntimePolicy:
+        return build_runtime_policy(
+            tools,
+            enable_delegation=(
+                bool(self._build_sub_agent_definitions())
+                if enable_delegation is None
+                else enable_delegation
+            ),
+        )
+
+    def _sync_memory_runtime_hooks(
+        self,
+        *,
+        emitter: EventEmitter | None,
+        runtime_context: RuntimeSessionContext | None,
+    ) -> None:
+        self.memory_system.event_emitter = emitter
+        if runtime_context is None:
+            return
+        act_role = runtime_context.agent_config.model_roles.act
+        self.memory_system.act_model = act_role.model or runtime_context.agent_config.model or None
 
     def _build_skill_definitions(self) -> list[SkillDefinition]:
-        definitions: list[SkillDefinition] = []
         raw_index = self.start_payload.get("skill_index")
-        if not isinstance(raw_index, list):
-            return definitions
-
-        for item in raw_index:
-            if not isinstance(item, dict):
-                continue
-            skill_id = str(item.get("id") or item.get("name") or "").strip()
-            if not skill_id:
-                continue
-            package = item.get("package")
-            package_files: list[str] = []
-            if isinstance(package, dict):
-                files = package.get("files")
-                if isinstance(files, list):
-                    package_files = [
-                        str(f.get("path") or "")
-                        for f in files
-                        if isinstance(f, dict) and str(f.get("path") or "").strip()
-                    ]
-            inventory = item.get("file_inventory") if isinstance(item.get("file_inventory"), dict) else {}
-            inventory_scripts = inventory.get("script_files")
-            normalized_inventory_scripts = {
-                str(path).strip()
-                for path in (inventory_scripts if isinstance(inventory_scripts, list) else [])
-                if str(path).strip()
-            }
-            definitions.append(
-                SkillDefinition(
-                    id=skill_id,
-                    name=skill_id,
-                    description=str(item.get("description") or "").strip() or None,
-                    version=str(item.get("version") or "").strip() or None,
-                    source=str(item.get("source") or "local"),
-                    schema={},
-                    metadata={
-                        "has_skill_md": "SKILL.md" in package_files,
-                        "package_files": package_files[:50],
-                        "script_files": sorted(normalized_inventory_scripts)[:50],
-                    },
-                )
-            )
-        return definitions
+        return build_runtime_skill_definitions(
+            self.skill_registry,
+            raw_index if isinstance(raw_index, list) else None,
+            include_registry_skills=False,
+        )
 
     def _build_sub_agent_definitions(self) -> list[SubAgentDefinition]:
         defs: list[SubAgentDefinition] = []

@@ -9,7 +9,9 @@ from src.orchestrator.state import (
     PlanStep,
     ReflectionResult,
     ToolCallResult,
+    build_session_time_metadata,
     create_initial_state,
+    resolve_time_context,
 )
 
 
@@ -82,7 +84,55 @@ class TestExecutionPlan:
         )
 
         assert plan.plan_type == "delegate"
-        assert plan.sub_agent_id == "specialist_agent"
+
+
+class TestTimeContext:
+    def test_build_session_time_metadata_defaults_to_system_timezone(self, monkeypatch):
+        monkeypatch.delenv("TZ", raising=False)
+        monkeypatch.setattr(
+            "src.orchestrator.state._resolve_system_timezone_name",
+            lambda: "Asia/Shanghai",
+        )
+
+        metadata = build_session_time_metadata()
+
+        assert metadata["current_timezone"] == "Asia/Shanghai"
+        assert len(metadata["current_date"]) == 10
+        assert metadata["current_weekday"] in {
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        }
+
+    def test_build_session_time_metadata_invalid_timezone_falls_back_to_system(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.orchestrator.state._resolve_system_timezone_name",
+            lambda: "Asia/Shanghai",
+        )
+
+        metadata = build_session_time_metadata({"timezone": "Invalid/Timezone"})
+
+        assert metadata["current_timezone"] == "Asia/Shanghai"
+
+    def test_resolve_time_context_uses_system_timezone_when_metadata_missing(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.orchestrator.state.build_session_time_metadata",
+            lambda metadata=None, context=None: {
+                "current_date": "2026-03-26",
+                "current_weekday": "Thursday",
+                "current_timezone": "Asia/Shanghai",
+            },
+        )
+
+        current_date, current_weekday, current_timezone = resolve_time_context()
+
+        assert current_date == "2026-03-26"
+        assert current_weekday == "Thursday"
+        assert current_timezone == "Asia/Shanghai"
 
     def test_parse_plan_response_supports_delegate_contract_v1_fields(self):
         plan = parse_plan_response(

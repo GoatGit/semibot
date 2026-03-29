@@ -45,6 +45,8 @@ export type {
   ProgressData,
   ToolCallData,
   ToolResultData,
+  SkillCallData,
+  SkillResultData,
   McpCallData,
   McpResultData,
   ErrorData,
@@ -99,6 +101,34 @@ export type {
   CreateStudioInput,
   UpdateStudioInput,
   TriggerStudioRunInput,
+  Production,
+  ProductionPlan,
+  ProductionStage,
+  ProductionTask,
+  TaskAttempt,
+  ArtifactVersion,
+  ArtifactLineageSummary,
+  ArtifactDiffSummary,
+  ReviewJob,
+  ReviewDecision,
+  Escalation,
+  HumanDecision,
+  ProductionEvent,
+  ProductionStageHealth,
+  ProductionControlRoomSummary,
+  ProductionPlanSnapshot,
+  ProductionGraphDiffSummary,
+  ProductionPortfolioIssue,
+  ProductionPortfolioItem,
+  ProductionPortfolioSummary,
+  ProductionStatus,
+  ProductionStageStatus,
+  ProductionTaskStatus,
+  ProductionTaskKind,
+  CreateProductionInput,
+  ReplanProductionInput,
+  UpdateProductionInput,
+  DispatchProductionTaskInput,
 } from '@semibot/shared-types'
 
 // ═══════════════════════════════════════════════════════════════
@@ -206,7 +236,9 @@ export interface SSEEvent {
 
 export interface SSEDoneData {
   sessionId: string
-  messageId: string
+  messageId?: string
+  status?: string
+  pendingApprovalIds?: string[]
 }
 
 export interface SSEErrorData {
@@ -306,6 +338,9 @@ export interface ApprovalRecord {
   id: string
   eventId?: string
   eventType?: string
+  sessionId?: string
+  attemptId?: string
+  userMessageId?: string
   status: 'pending' | 'approved' | 'rejected' | 'expired'
   riskLevel: RiskLevel
   reason?: string
@@ -316,4 +351,144 @@ export interface ApprovalRecord {
   context?: Record<string, unknown>
   createdAt: string
   resolvedAt?: string
+}
+
+export interface RuntimeMonitorSummary {
+  signalCount: number
+  failureCount: number
+  heartbeatCount: number
+  usageCallCount: number
+  routeDecisionCount: number
+  routeModeCounts: {
+    direct_answer: number
+    direct_reasoning: number
+    plan_act: number
+    delegate: number
+  }
+  drRunCount: number
+  drUpgradeCount: number
+  promptTokens24h: number
+  completionTokens24h: number
+  totalTokens24h: number
+  latestSignalAt?: string | null
+  latestFailureAt?: string | null
+  latestHeartbeatAt?: string | null
+  loopAlertCount: number
+  retryableFailureCount: number
+  activeSessionCount: number
+  staleSessionCount: number
+}
+
+export interface RuntimeStaleSession {
+  sessionId: string
+  lastHeartbeatAt: string
+  ageSeconds: number
+}
+
+export interface RuntimeMonitorSnapshot {
+  available: boolean
+  error?: string
+  summary: RuntimeMonitorSummary
+  timeline: EventRecord[]
+  signals: EventRecord[]
+  failures: EventRecord[]
+  heartbeats: EventRecord[]
+  usage: EventRecord[]
+  staleSessions: RuntimeStaleSession[]
+}
+
+export interface SessionNotice {
+  kind: 'awaiting_approval' | 'error' | 'warning'
+  code: string
+  message: string
+  approvalIds?: string[]
+}
+
+export interface SessionRunStateView {
+  sessionId: string
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled' | 'idle'
+  pendingApprovalIds: string[]
+  updatedAt: string
+  error?: string
+}
+
+export interface SessionProcessTraceView {
+  version: 1
+  messages: import('@semibot/shared-types').Agent2UIMessage[]
+}
+
+export interface RuntimeAttemptSummary {
+  id: string
+  sessionId: string
+  userMessageId: string
+  agentId: string
+  attemptSeq: number
+  executionMode: string
+  status: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled'
+  approvalSetRevision: number
+  approvalBlockCount: number
+  resumeCount: number
+  latestRevision: number
+  checkpointId?: string
+  artifactMessageId?: string
+  terminalReason?: string
+  leasedBy?: string
+  leaseExpiresAt?: string
+  heartbeatAt?: string
+  metadata?: Record<string, unknown>
+  startedAt: string
+  updatedAt: string
+  endedAt?: string
+}
+
+export interface RuntimeAttemptCheckpointView {
+  checkpointId: string
+  attemptId: string
+  sessionId: string
+  userMessageId: string
+  status: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled'
+  revision: number
+  payload?: Record<string, unknown>
+  createdAt: string
+}
+
+export interface RuntimeAttemptOutboxEventView {
+  id: string
+  revision: number
+  eventType: string
+  status: string
+  createdAt: string
+  deliveredAt?: string
+}
+
+export interface RuntimeAttemptOutboxCheckpointView {
+  id: string
+  checkpointId: string
+  revision: number
+  projectionTarget: string
+  status: string
+  createdAt: string
+  deliveredAt?: string
+}
+
+export interface SessionView {
+  session: import('@semibot/shared-types').Session
+  messages: import('@semibot/shared-types').Message[]
+  currentAttempt?: RuntimeAttemptSummary | null
+  attemptsSummary?: RuntimeAttemptSummary[]
+  runState: SessionRunStateView | null
+  notices: SessionNotice[]
+  processTrace: SessionProcessTraceView | null
+}
+
+export interface RuntimeAttemptView {
+  attempt: RuntimeAttemptSummary
+  session: import('@semibot/shared-types').Session
+  messages: import('@semibot/shared-types').Message[]
+  latestCheckpoint: RuntimeAttemptCheckpointView | null
+  eventOutbox: RuntimeAttemptOutboxEventView[]
+  checkpointOutbox: RuntimeAttemptOutboxCheckpointView[]
+  runState: SessionRunStateView | null
+  notices: SessionNotice[]
+  processTrace: SessionProcessTraceView | null
 }

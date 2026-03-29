@@ -463,10 +463,21 @@ def _check_code_executor_relative_tool_runs(ctx: ToolValidationContext) -> str |
 # ---------------------------------------------------------------------------
 
 def _check_semi_browser_not_justified(ctx: ToolValidationContext) -> str | None:
+    has_search_failure = any(
+        str(getattr(row, "tool_name", "") or "").strip() == "search" and not bool(getattr(row, "success", False))
+        for row in ctx.current_step_results
+    )
+    has_web_fetch_failure = any(
+        str(getattr(row, "tool_name", "") or "").strip() == "web_fetch" and not bool(getattr(row, "success", False))
+        for row in ctx.current_step_results
+    )
+    if has_search_failure and has_web_fetch_failure:
+        return None
     if not _step_requires_interactive_browser(ctx.action, ctx.latest_user_text):
         return (
             "semi_browser is not justified for this step. "
-            "Prefer search and web_fetch for research/retrieval steps unless the step explicitly requires interactive page actions."
+            "Prefer search and web_fetch for research/retrieval steps unless the step explicitly requires interactive page actions. "
+            "If both search and web_fetch have already failed in the current step, semi_browser may be used as a controlled fallback."
         )
     return None
 

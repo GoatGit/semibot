@@ -190,7 +190,7 @@ class TelegramNotifier:
             text = (
                 f"*Semibot* `{event.event_type}`\n"
                 f"subject: `{event.subject or payload.get('session_id') or 'n/a'}`\n"
-                f"summary: {payload.get('summary') or payload.get('final_response') or payload.get('message') or '任务已完成。'}"
+                f"summary: {payload.get('summary') or payload.get('awaiting_approval_message') or payload.get('final_response') or payload.get('message') or '任务已完成。'}"
             )
         chat_id = str(payload.get("chat_id")) if payload.get("chat_id") else None
         await self.send_message(text=text, chat_id=chat_id)

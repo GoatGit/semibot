@@ -34,7 +34,10 @@ class ApprovalManager:
             approval_id=f"appr_{uuid4().hex}",
             rule_id=rule_id,
             event_id=event_id,
+            attempt_id=str(normalized_context.get("attempt_id") or "").strip() or None,
+            user_message_id=str(normalized_context.get("user_message_id") or "").strip() or None,
             risk_level=risk_level,
+            blocking=bool(normalized_context.get("blocking", True)),
             context=normalized_context,
             status="pending",
         )

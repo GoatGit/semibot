@@ -16,6 +16,45 @@ export interface MarkdownBlockProps {
   data: MarkdownData
   className?: string
   variant?: 'chat' | 'report'
+  onEvidenceClick?: (href: string, label: string) => void
+}
+
+function stripInjectedDocumentBlocks(text: string): string {
+  if (!text) return ''
+  return String(text)
+    .replace(/\[DOCUMENT_CONTEXT_BEGIN\][\s\S]*?\[DOCUMENT_CONTEXT_END\]\s*/gi, '')
+    .replace(/\[DOCUMENT_CHUNK_EXPANSION_BEGIN\][\s\S]*?\[DOCUMENT_CHUNK_EXPANSION_END\]\s*/gi, '')
+    .trim()
+}
+
+function renderChunkEvidenceLinks(text: string): string {
+  if (!text) return ''
+  let rendered = stripInjectedDocumentBlocks(text)
+  const citationOrder = new Map<string, number>()
+  const getCitationNumber = (signature: string): number => {
+    const existing = citationOrder.get(signature)
+    if (existing) return existing
+    const next = citationOrder.size + 1
+    citationOrder.set(signature, next)
+    return next
+  }
+
+  rendered = rendered.replace(/\[doc:([A-Za-z0-9_-]+)\s+chunk:(c\d{3,})\]/gi, (_match, docId, chunkId) => {
+    const safeDocId = encodeURIComponent(String(docId).trim())
+    const safeChunkId = encodeURIComponent(String(chunkId).trim().toLowerCase())
+    const labelNumber = getCitationNumber(`doc:${String(docId).trim()}:chunk:${String(chunkId).trim().toLowerCase()}`)
+    return `[[${labelNumber}]](/__semibot_evidence__?doc_id=${safeDocId}&chunk_id=${safeChunkId})`
+  })
+  rendered = rendered.replace(/\[chunk:([^\]]+)\]/gi, (_match, body) => {
+    const chunkIds = String(body)
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => /^c\d{3,}$/i.test(item))
+    if (chunkIds.length === 0) return _match
+    const labelNumber = getCitationNumber(`chunk:${chunkIds.join(',')}`)
+    return `[[${labelNumber}]](/__semibot_evidence__?chunk_ids=${encodeURIComponent(chunkIds.join(','))})`
+  })
+  return rendered
 }
 
 export function slugifyHeading(text: string): string {
@@ -58,8 +97,9 @@ export function extractMarkdownHeadings(markdown: string): MarkdownHeadingItem[]
     })
 }
 
-export function MarkdownBlock({ data, className, variant = 'chat' }: MarkdownBlockProps) {
+export function MarkdownBlock({ data, className, variant = 'chat', onEvidenceClick }: MarkdownBlockProps) {
   const isReport = variant === 'report'
+  const renderedContent = renderChunkEvidenceLinks(data.content)
   return (
     <div
       className={clsx(
@@ -159,11 +199,30 @@ export function MarkdownBlock({ data, className, variant = 'chat' }: MarkdownBlo
               </h4>
             )
           },
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const label = flattenChildren(children)
+            if (href?.startsWith('/__semibot_evidence__')) {
+              return (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    const normalizedHref = href.replace('/__semibot_evidence__', 'semibot-evidence://chunk')
+                    onEvidenceClick?.(normalizedHref, label)
+                  }}
+                  className="inline appearance-none border-0 bg-transparent p-0 align-baseline text-[0.92em] text-primary-300 underline underline-offset-2 shadow-none outline-none transition-colors hover:text-primary-200 focus-visible:text-primary-200"
+                >
+                  {children}
+                </button>
+              )
+            }
+            return (
+              <a href={href} target="_blank" rel="noopener noreferrer">
+                {children}
+              </a>
+            )
+          },
           pre: ({ children }) => <>{children}</>,
           code: ({ className: codeClassName, children, ...props }) => {
             const language = /language-(\w+)/.exec(codeClassName || '')?.[1] || 'text'
@@ -190,7 +249,7 @@ export function MarkdownBlock({ data, className, variant = 'chat' }: MarkdownBlo
           ),
         }}
       >
-        {data.content}
+        {renderedContent}
       </ReactMarkdown>
     </div>
   )

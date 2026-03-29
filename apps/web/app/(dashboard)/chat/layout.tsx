@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { Bot, MessageSquare, Plus, RefreshCw } from 'lucide-react'
+import { MessageSquare, Plus, RefreshCw } from 'lucide-react'
+import { AgentBotAvatar } from '@/components/ui/AgentBotAvatar'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
 import { apiClient } from '@/lib/api'
@@ -257,7 +258,13 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
                   {item.kind === 'web' ? (
                     <MessageSquare size={14} className="mt-0.5 flex-shrink-0 text-text-tertiary" />
                   ) : (
-                    <Bot size={14} className="mt-0.5 flex-shrink-0 text-text-tertiary" />
+                    <AgentBotAvatar
+                      agentId={item.id}
+                      agentName={item.title}
+                      size={14}
+                      iconScale={0.72}
+                      className="mt-0.5 flex-shrink-0"
+                    />
                   )}
                   <div className="min-w-0">
                     <p className="text-sm truncate">{item.title || t('chatLayout.untitled')}</p>

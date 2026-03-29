@@ -17,10 +17,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.orchestrator.nodes_act import (
-    _build_tool_transcript_message,
+from src.orchestrator.act_context import (
     _filter_historical_tool_results_for_artifact_context,
+    _truncate_act_prompt_text,
 )
+from src.orchestrator.act_tool_executor import _build_tool_transcript_message
 from src.orchestrator.nodes_plan import (
     _build_plan_loop_messages,
     _MAX_SKILLS_IN_PROMPT,
@@ -280,16 +281,12 @@ class TestPriority3StaticContentInSystemMessage:
 
     def test_truncate_act_prompt_text_limits_length(self):
         """_truncate_act_prompt_text should cap content at max_chars."""
-        from src.orchestrator.nodes_act import _truncate_act_prompt_text
-
         long_text = "x" * 40000
         result = _truncate_act_prompt_text(long_text, max_chars=32000)
         assert len(result) <= 32000
 
     def test_truncate_act_prompt_text_passthrough_short(self):
         """Short text should pass through unchanged."""
-        from src.orchestrator.nodes_act import _truncate_act_prompt_text
-
         short = "hello world"
         assert _truncate_act_prompt_text(short) == short
 

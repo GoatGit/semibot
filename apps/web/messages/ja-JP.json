@@ -1,4 +1,8 @@
 {
+  "metadata": {
+    "title": "Semibot",
+    "description": "ローカルファースト、インストール可能、コラボレーション可能、進化する汎用エージェント。"
+  },
   "common": {
     "confirm": "確認",
     "cancel": "キャンセル",
@@ -23,6 +27,7 @@
     "agents": "エージェント",
     "sessions": "会話",
     "events": "イベント",
+    "runtimeMonitor": "監視",
     "rules": "ルール",
     "approvals": "承認",
     "usage": "使用量",
@@ -36,7 +41,7 @@
     "webhooks": "Webhook",
     "memory": "メモリ",
     "evolution": "進化",
-    "studio": "Agent Studio",
+    "studio": "スタジオ",
     "language": "言語",
     "switchLanguage": "言語を切り替える",
     "languageOptions": {
@@ -44,7 +49,169 @@
       "en-US": "英語",
       "ja-JP": "日本語"
     },
-    "helpCenter": "ヘルプセンター"
+    "helpCenter": "ヘルプセンター",
+    "toggleTheme": "テーマ切替",
+    "themeDark": "ダーク",
+    "themeLight": "ライト",
+    "themeSystem": "システム",
+    "upgradeNow": "今すぐ更新",
+    "upgrading": "更新中",
+    "upgradeSubmitted": "アップグレードタスクを送信しました",
+    "upgradeFailed": "アップグレードの開始に失敗しました",
+    "upgradeErrorDetail": "アップグレードエラーの詳細",
+    "releaseNotes": "リリースノート",
+    "upgradeTooltip": "バックグラウンドで最新版をインストールして再起動",
+    "newVersionFound": "新バージョン {version} が見つかりました（現在 {current}）",
+    "currentVersion": "現在のバージョン {version}"
+  },
+  "runtimeMonitor": {
+    "title": "Runtime Monitor",
+    "subtitle": "runtime event を診断結果と次のアクションに変換し、停止・空回り・高コストの session を先に見つけます。",
+    "searchPlaceholder": "session_id で runtime event を絞り込み...",
+    "openEventsCenter": "イベントセンターを開く",
+    "copyEvent": "イベントデータをコピー",
+    "errors": {
+      "load": "Runtime Monitor の読み込みに失敗しました"
+    },
+    "cards": {
+      "actionable": "対応が必要",
+      "actionableHint": "判断が必要な session。",
+      "stalled": "停止中",
+      "stalledHint": "最近 heartbeat がない session。",
+      "looping": "空回り",
+      "loopingHint": "loop signal が出ている session。",
+      "expensive": "高コスト",
+      "expensiveHint": "24時間 Token 合計 {value}",
+      "directReasoning": "Direct Reasoning",
+      "directReasoningHint": "{value} 件の session が Plan-Act に昇格"
+    },
+    "sections": {
+      "routeModeMix": "Route モード分布",
+      "needsAttention": "要対応",
+      "needsAttentionHint": "session をリスク順に並べ、要約と推奨アクションを出します。",
+      "incidentGroups": "異常グループ",
+      "incidentGroupsHint": "生 event の列ではなく、問題タイプごとに集約します。",
+      "recentIncidents": "最近の異常",
+      "recentIncidentsHint": "failure、loop、高コスト usage だけを残し、生 event は補助に下げます。",
+      "healthySessions": "比較的健全な Session",
+      "healthySessionsHint": "明確な異常がない session は低頻度で巡回します。"
+    },
+    "labels": {
+      "runtimeSignal": "Runtime Signal",
+      "runtimeFailure": "Runtime Failure",
+      "heartbeat": "Heartbeat",
+      "tokenUsage": "Token Usage",
+      "routeDecision": "Route",
+      "directReasoning": "Direct Reasoning",
+      "drUpgrade": "DR Upgrade",
+      "actionableCount": "要対応 {count}",
+      "lastHeartbeatAt": "最終 heartbeat",
+      "sessionId": "Session",
+      "toolName": "Tool",
+      "toolCalls": "Tool 呼び出し",
+      "idleFor": "停止時間",
+      "recommendedAction": "推奨アクション",
+      "failures": "Failure 数",
+      "tokens": "Token",
+      "justNow": "たった今"
+    },
+    "modes": {
+      "directAnswer": "Direct Answer",
+      "directReasoning": "Direct Reasoning",
+      "planAct": "Plan-Act",
+      "delegate": "Delegate"
+    },
+    "statuses": {
+      "stale": "停止中",
+      "looping": "空回り中",
+      "upgraded": "昇格済み",
+      "failure": "最近 Failure",
+      "expensive": "コスト高",
+      "healthy": "健全"
+    },
+    "actions": {
+      "inspectHeartbeat": "heartbeat と session 詳細を確認",
+      "inspectLoop": "loop signal を確認して停止判断",
+      "inspectUpgrade": "昇格理由を確認して深掘り継続を判断",
+      "inspectFailure": "再試行前に直近 Failure を確認",
+      "inspectCost": "コストに見合う出力があるか確認",
+      "monitorOnly": "監視のみ",
+      "viewRuntime": "runtime を表示",
+      "copySession": "Session ID をコピー",
+      "openSession": "Session を開く"
+    },
+    "diagnostics": {
+      "staleSummary": "長時間 heartbeat がありません。run が停止したか実行鎖が切れた可能性があります。",
+      "loopSummary": "{count} 件の loop / repeat signal を検出しました。同じ tool を繰り返していないか確認してください。",
+      "upgradeSummary": "Direct Reasoning が {count} 回 Plan-Act に昇格しました。軽量経路では足りない複雑さです。",
+      "failureSummary": "最近 {count} 件の failure がありました。まず最新の failure reason を確認してください。",
+      "costSummary": "Token 消費が {count} に達しています。この消費が有効な成果につながったか確認してください。",
+      "healthySummary": "最近 heartbeat があり、目立つ異常もありません。低頻度の監視で十分です。"
+    },
+    "groups": {
+      "staleSessions": "停止 Session",
+      "staleSessionsHint": "heartbeat がなく、timeout または中断の可能性があります。",
+      "loopAlerts": "Loop アラート",
+      "loopAlertsHint": "繰り返し signal は空回りの典型です。",
+      "drUpgrades": "DR 昇格",
+      "drUpgradesHint": "Direct Reasoning が収束せず、Plan-Act に昇格しました。",
+      "retryableFailures": "再試行可能 Failure",
+      "retryableFailuresHint": "timeout、rate limit、context overflow など回復可能な問題です。",
+      "timeoutFailures": "Timeout Failure",
+      "timeoutFailuresHint": "モデル起因か tool 起因かを切り分けます。",
+      "toolFailures": "Tool Failure",
+      "toolFailuresHint": "provider、権限、パラメータの問題である可能性が高いです。"
+    },
+    "empty": {
+      "title": "runtime event はまだありません",
+      "description": "表示できる runtime middleware event がありません。再読み込みするか、新しい実行を開始してください。"
+    },
+    "noStaleSessions": "表示すべき健全 session は今のところありません。",
+    "noSignals": "今は注目すべき異常がありません。",
+    "noFailures": "新しい runtime failure はありません。",
+    "drawer": {
+      "title": "イベントセンター",
+      "subtitle": "元の汎用業務イベントセンターをサイドドロワーで開き、Runtime Monitor を離れずに照合できます。",
+      "loading": "イベントセンターを読み込み中...",
+      "error": "イベントセンターの読み込みに失敗しました。",
+      "summary": {
+        "count": "最近のイベント数: {count}"
+      },
+      "fields": {
+        "reason": "理由",
+        "type": "タイプ",
+        "time": "時刻",
+        "session": "Session",
+        "attempt": "Attempt",
+        "tool": "Tool",
+        "subject": "Subject",
+        "source": "Source"
+      },
+      "rawHint": "生の JSON はタイムラインまたはホットスポットのカードにあるコピーボタンから取得してください。"
+    },
+    "sessionDrawer": {
+      "title": "Session Runtime 詳細",
+      "eventCount": "関連 event 数: {count}",
+      "pathTitle": "経路の分岐",
+      "pathHint": "この session が Route から Direct Reasoning に入り、収束したか Plan-Act に昇格したかを確認します。",
+      "incidentsTitle": "異常シーケンス",
+      "incidentsHint": "この session の最近の runtime signal、failure、高コスト step を時系列で確認します。",
+      "noIncidents": "この session に表示できる異常シーケンスはありません。"
+    },
+    "boundary": {
+      "runtime": {
+        "title": "Runtime Monitor が見るもの",
+        "body": "signal、failure、heartbeat、token usage など実行内核の情報だけを見ます。ACT/tool loop、budget、liveness の診断用です。"
+      },
+      "events": {
+        "title": "Events が見るもの",
+        "body": "ルール、承認、業務イベント、tool trace、より広いシステムイベントは引き続き Events センターに残します。"
+      },
+      "recommendation": {
+        "title": "推奨境界",
+        "body": "Events 全体を Runtime Monitor に統合するべきではありません。Runtime Monitor は専用ビューのままにし、深掘りは Events に遷移させるのが適切です。"
+      }
+    }
   },
   "auth": {
     "login": "ログイン",
@@ -994,6 +1161,10 @@
     "smartAssistant": "汎用エージェント",
     "quickStart": "クイックスタート",
     "inputPlaceholder": "質問やタスク内容を入力してください…",
+    "addAttachment": "ファイルをアップロード",
+    "removeAttachment": "添付を削除",
+    "attachmentsHint": "書類・表計算・画像を添付して会話を始められます",
+    "attachmentsCount": "{count} 件のファイルを追加済み",
     "selectedPrefix": "選択中:",
     "startChat": "会話を開始",
     "suggestionsTitle": "おすすめプロンプト",
@@ -1022,10 +1193,10 @@
       }
     },
     "suggestions": {
-      "item1": "この売上データを分析してレポートを作成してください",
-      "item2": "ファイルアップロード用の React コンポーネントを作ってください",
+      "item1": "この会議メモを整理して、担当者付きのアクション項目を抽出してください",
+      "item2": "この週報をもとに、上司向けの報告メールを下書きしてください",
       "item3": "最新の AI 業界ニュースを調べて要約してください",
-      "item4": "この Python コードのパフォーマンスを最適化してください"
+      "item4": "取引先向けに、丁寧なプロジェクト遅延説明文を作成してください"
     },
     "warning": {
       "noAvailableAgent": "利用可能なエージェントがありません。会話を開始できません。",
@@ -1075,6 +1246,7 @@
       "loadApprovals": "承認一覧の読み込みに失敗しました",
       "bulkApproval": "一括承認に失敗しました",
       "loadSession": "セッションの読み込みに失敗しました",
+      "streamDisconnected": "リアルタイム更新が切断されました。再試行をクリックして再接続してください。",
       "messageWithReason": "エラーが発生しました: {message}"
     },
     "responseLabel": "Semibot 出力",
@@ -1093,6 +1265,109 @@
   },
   "dashboard": {
     "subtitle": "実行・リマインド・協調・成長を続ける Crab。",
+    "hero": {
+      "eyebrow": "システム概況",
+      "title": "Semibot ホーム",
+      "productSubtitle": "半分の汎用エージェント",
+      "subtitle": "ひとつのホーム画面で、システム規模、実行状態、注目すべき数値をすばやく確認します。",
+      "primaryCta": "新しい会話を開始",
+      "badges": {
+        "runtime": "Runtime",
+        "production": "Production",
+        "attention": "対応待ち"
+      },
+      "status": {
+        "online": "正常",
+        "degraded": "要確認"
+      }
+    },
+    "workspace": {
+      "title": "ワークベンチ",
+      "heading": "単なる件数より、まず進行状況を見る。",
+      "subtitle": "対応待ち、実行中、能力面の 3 軸に分けて、複数ページを往復しなくても判断できるようにします。",
+      "openControlRoom": "Productions を開く",
+      "items": {
+        "work": {
+          "title": "対応が必要",
+          "label": "承認・Review・Escalation",
+          "meta": "承認 {approvals} · Review {reviews} · Escalation {escalations}"
+        },
+        "runtime": {
+          "title": "進行中",
+          "label": "現在動いている実行経路",
+          "meta": "セッション {total} · Bot スレッド {channels}"
+        },
+        "surface": {
+          "title": "能力面",
+          "label": "Production / Agent / Skill / MCP",
+          "meta": "Agent {agents} · Skill {skills} · MCP {mcp}"
+        }
+      }
+    },
+    "launchpad": {
+      "title": "ランチパッド",
+      "heading": "新しい主要機能を中央に置く。",
+      "subtitle": "ナビゲーションを探し回るのではなく、今よく使うページへすぐ入れます。",
+      "items": {
+        "newChat": {
+          "title": "新しい会話",
+          "desc": "Web セッションを作成してすぐ実行を開始。"
+        },
+        "productions": {
+          "title": "Productions",
+          "desc": "APS のプロジェクト、Review、Escalation を確認。"
+        },
+        "agents": {
+          "title": "エージェント",
+          "desc": "Agent 定義、役割モデル、能力面を管理。"
+        },
+        "tools": {
+          "title": "ツール",
+          "desc": "ツール、MCP、各種接続を確認。"
+        },
+        "skills": {
+          "title": "スキル",
+          "desc": "インストール済み Skill と定義を確認。"
+        },
+        "runtime": {
+          "title": "監視",
+          "desc": "Runtime の信号、障害、健全性を確認。"
+        }
+      }
+    },
+    "attention": {
+      "title": "対応待ち",
+      "heading": "これらのキューは Production の進行を直接止めます。",
+      "badgeHot": "{count} 件対応待ち",
+      "badgeClear": "現在クリア",
+      "items": {
+        "approvals": {
+          "title": "承認",
+          "desc": "高リスク操作がまだ人の判断待ちです。"
+        },
+        "reviews": {
+          "title": "Production Reviews",
+          "desc": "Review inbox に未処理の項目があります。"
+        },
+        "escalations": {
+          "title": "Escalations",
+          "desc": "自動処理が停止し、人手での復旧が必要です。"
+        }
+      }
+    },
+    "surface": {
+      "title": "能力面",
+      "heading": "ホームでもシステム規模が見えるべきです。",
+      "subtitle": "各ページを開かなくても、Agent・Production・Skill・MCP の規模感を把握できます。",
+      "items": {
+        "agents": "Agent",
+        "sessions": "セッション",
+        "productions": "Production",
+        "productionsHint": "APS プロジェクト、Review、Escalation を確認。",
+        "skills": "Skill",
+        "mcp": "MCP"
+      }
+    },
     "cards": {
       "agents": {
         "label": "エージェント",
@@ -1101,6 +1376,14 @@
       "sessions": {
         "label": "セッション",
         "hint": "稼働中 {count}"
+      },
+      "tools": {
+        "label": "ツール",
+        "hint": "利用可能なツール能力"
+      },
+      "productions": {
+        "label": "Production",
+        "hint": "APS プロジェクト総数"
       },
       "mcp": {
         "hint": "外部との連携",
@@ -1115,20 +1398,9 @@
         "hint": "承認待ち {count}"
       }
     },
-    "recentSessions": {
-      "title": "最近の会話",
-      "viewAll": "すべて表示",
-      "empty": "まだ会話がありません。最初の対話を開始してください。",
-      "sources": {
-        "web": "ウェブ",
-        "telegram": "Telegram",
-        "feishu": "Feishu",
-        "discord": "Discord",
-        "whatsapp": "WhatsApp",
-        "imessage": "iMessage",
-        "gateway": "Bot",
-        "channel": "Bot"
-      }
+    "actions": {
+      "website": "公式サイト",
+      "github": "GitHub"
     },
     "quickLinks": {
       "title": "クイックリンク",
@@ -1168,9 +1440,26 @@
         }
       }
     },
+    "recentSessions": {
+      "title": "最近のアクティビティ",
+      "heading": "最近動いた Web セッションとチャネル会話。",
+      "viewAll": "すべて表示",
+      "empty": "まだ会話がありません。最初の対話を開始してください。",
+      "sources": {
+        "web": "ウェブ",
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "discord": "Discord",
+        "whatsapp": "WhatsApp",
+        "imessage": "iMessage",
+        "gateway": "Bot",
+        "channel": "Bot"
+      }
+    },
     "recentEvents": {
-      "title": "最近のイベント",
-      "open": "イベントセンターを開く",
+      "title": "シグナル",
+      "heading": "最近のシステムイベントと異常のヒント。",
+      "open": "監視を開く",
       "empty": "イベントがありません"
     },
     "error": {
@@ -1532,6 +1821,43 @@
       "stepSummary": "{count} ステップを実行",
       "failedSummary": "{count} 件失敗",
       "summarySeparator": "、 ",
+      "route": {
+        "title": "ルーティング",
+        "reason": "理由",
+        "goal": "目標",
+        "mode": {
+          "directAnswer": "直接回答",
+          "directReasoning": "直接推論",
+          "planAct": "Plan-Act",
+          "delegate": "委譲",
+          "unknown": "不明"
+        }
+      },
+      "directReasoning": {
+        "title": "直接推論",
+        "toolCalls": "ツール呼び出し",
+        "upgradeReason": "昇格理由",
+        "status": {
+          "completed": "完了",
+          "partial": "部分完了",
+          "upgradeRequired": "昇格待ち",
+          "failed": "失敗"
+        }
+      },
+      "observeDr": {
+        "title": "DR 観察",
+        "reason": "理由",
+        "upgradeReason": "昇格理由",
+        "outcome": {
+          "respondSuccess": "直接返信",
+          "respondPartial": "部分返信",
+          "upgradeToPlanAct": "Plan-Act へ昇格",
+          "unknown": "不明"
+        }
+      },
+      "delegate": {
+        "title": "委譲"
+      },
       "status": {
         "thinking": "詳細な思考を実行中",
         "completed": "思考が完了しました",
@@ -1579,6 +1905,7 @@
       "dashboard": "システム全体の状態、主要指標、最新アクティビティを確認します。",
       "sessions": "会話の作成・管理を行い、文脈と実行結果を確認します。",
       "events": "システムイベントを検索し、詳細確認やリプレイを行います。",
+      "runtimeMonitor": "runtime middleware の signal、failure、heartbeat、token usage を一箇所で確認します。",
       "rules": "イベント条件、実行アクション、リスク戦略を設定します。",
       "approvals": "高リスク操作の承認を一元管理します。",
       "usage": "LLM トークン消費統計を確認し、ノード・モデル・セッション・エージェント別に分析します。",
@@ -1757,6 +2084,141 @@
       "run": "実行の開始に失敗しました",
       "cancel": "キャンセルに失敗しました",
       "invalidJson": "JSON 形式が無効です"
+    }
+  },
+  "aps": {
+    "common": { "beta": "Beta" },
+    "buttons": {
+      "humanInbox": "Human Inbox", "reviewInbox": "Review Inbox", "escalationInbox": "Escalation Inbox", "newProduction": "新しいパイプライン", "openApsBeta": "APS を開く",
+      "openLegacyStudio": "旧 Studio を開く", "viewControlRoom": "コントロールルームを見る", "process": "処理", "dispatchOne": "1 ステップ実行",
+      "quickReplan": "クイック Replan", "graph": "Graph", "run": "実行", "backToProductions": "パイプライン一覧に戻る", "backToProductionDetail": "パイプライン詳細に戻る",
+      "approve": "承認", "requestRevision": "修正依頼", "reject": "拒否", "resumeRun": "再開", "viewProduction": "パイプラインを見る",
+      "openStage": "Stage を開く", "openTask": "Task を開く", "copyContent": "内容をコピー", "copyMetadata": "メタデータをコピー", "saveSummary": "概要を保存", "workspace": "ワークスペース"
+    },
+    "errors": {
+      "loadControlRoom": "APS Control Room の読み込みに失敗しました", "createProduction": "パイプラインの作成に失敗しました", "loadProductionDetail": "パイプライン詳細の読み込みに失敗しました",
+      "runProduction": "パイプラインの実行に失敗しました", "dispatchTask": "次の task の dispatch に失敗しました", "submitReview": "review の送信に失敗しました", "resolveEscalation": "escalation の処理に失敗しました",
+      "replan": "Replan に失敗しました", "loadArtifactContent": "artifact 内容の読み込みに失敗しました", "loadReviewInbox": "Review Inbox の読み込みに失敗しました", "loadEscalationInbox": "Escalation Inbox の読み込みに失敗しました",
+      "loadHumanInbox": "Human Inbox の読み込みに失敗しました", "loadArtifactWorkspace": "Artifact Workspace の読み込みに失敗しました", "loadArtifactDiff": "Artifact Diff の読み込みに失敗しました",
+      "saveArtifactSummary": "Artifact 概要の保存に失敗しました", "loadProductionGraph": "Production Graph の読み込みに失敗しました", "loadGraphDiff": "Graph Diff の読み込みに失敗しました",
+      "loadStageDetail": "Stage 詳細の読み込みに失敗しました", "loadTaskDetail": "Task 詳細の読み込みに失敗しました", "loadAttemptDetail": "Attempt 詳細の読み込みに失敗しました", "copy": "コピーに失敗しました"
+    },
+    "toast": {
+      "productionStarted": "パイプラインを開始しました", "reviewSubmitted": "Review を送信しました: {decision}", "escalationResolved": "Escalation を処理しパイプラインを再開しました",
+      "escalationRestored": "Escalation を再開しました", "replanned": "パイプラインの新しい plan snapshot を生成しました", "artifactSummarySaved": "Artifact 概要を保存しました",
+      "artifactContentCopied": "Artifact 内容をコピーしました", "artifactMetadataCopied": "Artifact メタデータをコピーしました"
+    },
+    "controlRoom": {
+      "title": "スタジオコントロールルーム", "subtitle": "パイプライン単位で pending review、人工介入、blocked stage を集約し、次に対処すべき項目を見やすくします。",
+      "parallelTitle": "APS ワークスペース", "parallelBody": "ワークスペース入口は APS パイプラインシステムに統一されました。",
+      "empty": "APS Control Room に表示するデータがありません。"
+    },
+    "create": {
+      "title": "新しいパイプライン", "name": "名前", "namePlaceholder": "パイプライン名を入力", "goal": "目標",
+      "goalPlaceholder": "例: この小説を 12 話のアニメに再構成し、世界観聖書・キャラクター設定・冒頭 3 話の大綱を先に作成する。",
+      "defaultAgent": "既定 Agent", "selectAgent": "Agent を選択"
+    },
+    "metrics": {
+      "totalProductions": "パイプライン数", "active": "実行中", "awaitingHuman": "人手待ち", "pendingReviewEscalation": "未処理 Review / Escalation",
+      "blockedStages": "Blocked Stage", "runningTasks": "実行中 Task", "openEscalations": "Open Escalation", "totalTokens": "総 Tokens",
+      "pendingReviews": "未処理 Review", "humanIntervention": "人工介入", "revisionChains": "修正チェーン"
+    },
+    "sections": {
+      "productions": "パイプライン", "productionsHint": "まず全パイプラインの状態、現在 Stage、次の操作を一覧し、その後で個別コントロールルームに入ります。",
+      "priority": "優先対応", "priorityHint": "右側の要約で、まず全体のどこが詰まっているかを把握します。",
+      "portfolioHotspots": "全体ホットスポット", "portfolioHotspotsHint": "個別詳細へ入る前に、パイプライン観点で全体の詰まりを確認します。",
+      "healthy": "比較的健全"
+    },
+    "portfolioIssue": {
+      "awaitingHumanTitle": "人手対応待ち",
+      "awaitingHumanDescription": "エスカレーションや人間判断が進行を止めています。",
+      "blockedStageTitle": "停止中の Stage",
+      "blockedStageDescription": "失敗 task または拒否 review により Stage が止まっています。",
+      "pendingReviewsTitle": "未処理 Review",
+      "pendingReviewsDescription": "未完了の review job があり、進行を遅らせています。",
+      "failedTasksTitle": "失敗 Task",
+      "failedTasksDescription": "失敗原因を確認するか、replan を検討してください。",
+      "runningTitle": "進行中",
+      "runningDescription": "まだ実行中の task があり、継続監視が必要です。",
+      "healthyTitle": "比較的健全",
+      "healthyDescription": "明確な blocker はなく、低頻度の監視で十分です。"
+    },
+    "detail": {
+      "controlRoom": "Control Room", "controlRoomHint": "stage gate を止める項目や人手が必要な項目を優先表示します。", "latestSignals": "Latest Signals",
+      "latestSignalsHint": "最近の production event から現在の stage が進んでいるかを確認します。", "stageHealth": "Stage Health",
+      "stageHealthHint": "stage ごとに task/review 状態を集約し、リスク箇所をすばやく把握します。", "attemptHotspots": "Attempt Hotspots",
+      "attemptHotspotsHint": "token 消費が大きい attempt を見てコスト異常や再試行ホットスポットを見つけます。", "stagesAndTasks": "Stages & Tasks",
+      "stagesAndTasksHint": "stage ごとに物化された task を確認します。", "escalations": "Escalations", "escalationsHint": "reject や policy failure は人手キューへ送られます。",
+      "reviewJobs": "Review Jobs", "reviewJobsHint": "review が必要な artifact に手動 decision を送信します。", "attempts": "Attempts", "attemptsHint": "最近の実行インスタンスです。",
+      "artifactsHint": "登録済み artifact version をそのままプレビューできます。", "artifactPreview": "Artifact Preview", "eventsHint": "最近の production event。"
+    },
+    "reviewInbox": { "subtitle": "各 Production 詳細へ入らずに、保留中の APS review をまとめて処理します。" },
+    "escalationInbox": { "subtitle": "review の reject や policy failure で発生した人工介入タスクをまとめて処理します。" },
+    "humanInbox": { "subtitle": "人間の判断が必要な review と escalation を 1 つの受信箱にまとめます。" },
+    "artifact": {
+      "contentTitle": "Artifact Content", "contentHint": "現在バージョンの本文です。MVP では読み取り専用です。",
+      "previewMode": { "json": "構造化プレビュー", "markdown": "ドキュメントプレビュー", "text": "テキストプレビュー" },
+      "lineageTitle": "Lineage", "diffTitle": "Diff", "diffHint": "デフォルトでは前バージョンと比較し、lineage 上の別バージョンにも切り替えられます。",
+      "autoSelectPrevious": "前バージョンを自動選択", "summaryTitle": "Summary", "summaryHint": "Control Room、Inbox、Artifact Workspace で使う人手要約です。",
+      "summaryPlaceholder": "この artifact バージョンの用途、変更点、課題を簡潔に記述してください。"
+    },
+    "graph": {
+      "title": "パイプラインフロー図", "subtitle": "現行 plan、前回 plan、superseded task を見る最小デバッグビューです。",
+      "autoSelectPreviousPlan": "前回 plan を自動選択", "planVersion": "plan v{version}", "currentPlan": "Current Plan", "basePlan": "Base Plan",
+      "addedTasks": "Added Tasks", "removedTasks": "Removed Tasks", "superseded": "Superseded", "supersededBadge": "superseded",
+      "dependsOn": "Depends On", "planHistory": "Plan History", "planHistoryHint": "planner / replan の snapshot を version ごとに確認します。",
+      "currentBadge": "current", "replanDiff": "Replan Diff", "replanDiffHint": "基準 plan と比べて追加/削除された構造を先に確認します。",
+      "addedStages": "Added Stages", "removedStages": "Removed Stages"
+    },
+    "stage": { "tasksTitle": "Stage Tasks", "tasksHint": "この Stage 配下の task 一覧と現在の実行状態です。" },
+    "attempt": {
+      "inputEnvelope": "Input Envelope",
+      "outputUsage": "Output / Usage",
+      "typedResult": "構造化結果",
+      "repairEvents": "修復イベント",
+      "repairEventsHint": "出力が contract を満たさなかったために発生した修復ラウンドを表示します。",
+      "noRepairEvents": "この attempt には修復イベントがありません。"
+    },
+    "fields": {
+      "status": "状態", "stage": "Stage", "task": "Task", "artifact": "Artifact", "productionStatus": "パイプライン状態", "createdAt": "作成日時",
+      "goal": "Goal", "started": "Started", "ended": "Ended", "failure": "Failure", "heartbeat": "Heartbeat", "artifactKey": "Artifact Key",
+      "version": "Version", "createdByTask": "Created By Task", "storage": "Storage", "base": "Base", "added": "Added", "removed": "Removed", "events": "Events"
+    },
+    "labels": {
+      "attentionCount": "{count} 件の要対応", "productionCount": "{count} 件のパイプライン", "currentStage": "現在の Stage", "reviewCount": "Review", "escalationCount": "Escalation",
+      "runningCount": "Running", "tokens": "Tokens", "tokensLower": "tokens", "tasksDone": "tasks", "reviewPending": "review pending",
+      "rejected": "rejected", "tasks": "tasks", "sequence": "sequence", "attemptNumber": "attempt #{number}", "ok": "ok",
+      "needsHumanIntervention": "人手対応が必要", "taskFailed": "task failed", "loadingArtifactContent": "artifact 内容を読み込み中…",
+      "previousVersion": "前版", "pending": "pending", "review": "review", "escalation": "escalation",
+      "defaultRevisionInstruction": "最新のレビュー指摘に従って現在の artifact を修正してください。",
+      "defaultHumanRevisionInstruction": "人間レビューの指摘に従って現在の artifact を修正してください。"
+    },
+    "health": {
+      "healthy": "健全",
+      "waitingReview": "レビュー待ち",
+      "blocked": "停止中",
+      "atRisk": "要注意",
+      "completed": "完了"
+    },
+    "reason": {
+      "reviewRejected": "レビューで却下され、人手対応が必要です。",
+      "multipleReviewsRejected": "複数のレビューで却下され、段階がエスカレーションされました。",
+      "reviewRequestedRevision": "レビューで修正依頼が出ており、先に修正が必要です。",
+      "multipleReviewsRequestedRevision": "複数のレビューで修正依頼が出ており、統合が必要です。",
+      "pendingReviews": "未完了のレビュー job が残っています。",
+      "failedTasks": "失敗した task が段階を止めています。",
+      "runningTasks": "この段階にはまだ実行中の task があります。",
+      "stageReadyToAdvance": "この段階は次に進めます。",
+      "stageNotReady": "この段階はまだ進行条件を満たしていません。"
+    },
+    "empty": {
+      "noUrgent": "高優先度の blocker はありません。", "noHealthy": "低優先度で巡回できる Production はありません。", "noStageYet": "Stage 未開始",
+      "productionNotFound": "パイプラインが見つかりません", "noControlRoomItems": "高優先度の blocker はありません。", "noEvents": "イベントはまだありません。",
+      "noAttemptHotspots": "attempt hotspot はまだありません。", "noEscalations": "現在 escalations はありません。", "noReviewJobs": "現在 review jobs はありません。",
+      "noAttempts": "attempt はまだありません。", "noArtifacts": "artifact はまだありません。", "noArtifactContent": "この artifact には読める本文がありません。",
+      "artifactNotFound": "Artifact が見つかりません", "unlinked": "未関連付け", "noBaseVersion": "基準バージョンなし", "noArtifactDiff": "比較できるテキスト差分はありません。",
+      "noArtifactDiffData": "利用可能な diff データがまだありません。", "noGraphDiff": "graph diff データはまだありません。", "stageNotFound": "Stage が見つかりません",
+      "taskNotFound": "Task が見つかりません", "attemptNotFound": "Attempt が見つかりません", "noHumanInbox": "現在、人手対応が必要な APS 項目はありません。"
     }
   }
 }

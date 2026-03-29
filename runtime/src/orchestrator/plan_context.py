@@ -11,6 +11,16 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _planner_visible_tool_results(tool_results: list[Any]) -> list[Any]:
+    visible: list[Any] = []
+    for result in tool_results or []:
+        metadata = getattr(result, "metadata", None)
+        if isinstance(metadata, dict) and metadata.get("dr_mode") is True:
+            continue
+        visible.append(result)
+    return visible
+
+
 @dataclass
 class PlanningContext:
     """All dependencies needed by the planner loop, resolved from state + context."""
@@ -22,7 +32,7 @@ class PlanningContext:
     event_emitter: Any | None
     runtime_event_emitter: Any | None
     memory_system: Any | None
-    available_skills: list[dict[str, Any]]
+    available_tool_schemas: list[dict[str, Any]]
     available_execution_capability_names: dict[str, str]
     messages: list[dict[str, Any]]
     effective_memory: str
@@ -94,7 +104,7 @@ async def build_planning_context(
     )
 
     # --- Resolve available skills ---
-    available_skills: list[dict[str, Any]] = []
+    available_tool_schemas: list[dict[str, Any]] = []
     if runtime_context and (skill_registry is None):
         metadata = getattr(runtime_context, "metadata", None)
         if isinstance(metadata, dict):
@@ -106,11 +116,11 @@ async def build_planning_context(
         from src.orchestrator.capability import CapabilityGraph
 
         capability_graph = CapabilityGraph(runtime_context)
-        available_skills = capability_graph.get_schemas_for_planner()
-        available_skills = _merge_dynamic_registry_schemas(available_skills, runtime_context)
+        available_tool_schemas = capability_graph.get_schemas_for_planner()
+        available_tool_schemas = _merge_dynamic_registry_schemas(available_tool_schemas, runtime_context)
         logger.info(
             "Capability graph built for planning",
-            extra={"session_id": state["session_id"], "capability_count": len(available_skills)},
+            extra={"session_id": state["session_id"], "capability_count": len(available_tool_schemas)},
         )
     elif skill_registry:
         tool_schemas: list[dict[str, Any]] = []
@@ -123,12 +133,12 @@ async def build_planning_context(
             except Exception:
                 logger.warning("plan_node: skill_registry.get_tool_schemas() failed", exc_info=True)
                 tool_schemas = []
-        available_skills = tool_schemas
-        if not available_skills and hasattr(skill_registry, "get_all_schemas"):
+        available_tool_schemas = tool_schemas
+        if not available_tool_schemas and hasattr(skill_registry, "get_all_schemas"):
             try:
                 raw_all = skill_registry.get_all_schemas()
                 if isinstance(raw_all, list):
-                    available_skills = [
+                    available_tool_schemas = [
                         item
                         for item in raw_all
                         if isinstance(item, dict)
@@ -136,7 +146,7 @@ async def build_planning_context(
                     ]
             except Exception:
                 logger.warning("plan_node: skill_registry.get_all_schemas() failed", exc_info=True)
-                available_skills = []
+                available_tool_schemas = []
         logger.warning(
             "Using skill_registry fallback (no RuntimeSessionContext)",
             extra={"session_id": state["session_id"]},
@@ -162,23 +172,23 @@ async def build_planning_context(
             memory_context = memory_context[:_PLANNER_MEMORY_MAX_CHARS]
 
     latest_user_text = str(messages[-1].get("content") or "") if messages else ""
-    before_rule_filter = len(available_skills)
-    available_skills = _filter_rule_authoring_by_intent(available_skills, latest_user_text)
-    if len(available_skills) != before_rule_filter:
+    before_rule_filter = len(available_tool_schemas)
+    available_tool_schemas = _filter_rule_authoring_by_intent(available_tool_schemas, latest_user_text)
+    if len(available_tool_schemas) != before_rule_filter:
         logger.info(
             "planner_capability_filtered_by_intent",
-            extra={"session_id": state["session_id"], "removed": before_rule_filter - len(available_skills), "reason": "rule_authoring_non_intent"},
+            extra={"session_id": state["session_id"], "removed": before_rule_filter - len(available_tool_schemas), "reason": "rule_authoring_non_intent"},
         )
 
     # --- Failure reflection ---
-    tool_results = state.get("tool_results", [])
+    tool_results = _planner_visible_tool_results(list(state.get("tool_results", []) or []))
     failed_results = [r for r in tool_results if not r.success]
     failure_reflection = ""
     if failed_results and state["iteration"] > 0:
         failure_reflection = _build_failure_reflection(tool_results=tool_results, current_skill_name=_current_round_skill_id(state))
         logger.info("Injected failure reflection for replan", extra={"session_id": state["session_id"], "error_count": len(failed_results)})
 
-    available_execution_capability_names = _get_planner_execution_capabilities(available_skills)
+    available_execution_capability_names = _get_planner_execution_capabilities(available_tool_schemas)
 
     # --- Agent config ---
     agent_system_prompt = ""
@@ -288,7 +298,7 @@ async def build_planning_context(
         event_emitter=event_emitter,
         runtime_event_emitter=runtime_event_emitter,
         memory_system=memory_system,
-        available_skills=available_skills,
+        available_tool_schemas=available_tool_schemas,
         available_execution_capability_names=available_execution_capability_names,
         messages=messages,
         effective_memory=effective_memory,

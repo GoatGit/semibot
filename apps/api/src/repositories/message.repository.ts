@@ -8,6 +8,8 @@ export type { MessageRole, ToolCall, LocalMessageRow as MessageRow } from '../li
 
 export interface CreateMessageData {
   sessionId: string
+  attemptId?: string
+  userMessageId?: string
   role: local.MessageRole
   content: string
   parentId?: string
@@ -39,6 +41,10 @@ export async function findByIdAndOrg(_id: string): Promise<local.LocalMessageRow
 
 export async function findBySessionId(sessionId: string): Promise<local.LocalMessageRow[]> {
   return local.localFindMessagesBySessionId(sessionId)
+}
+
+export async function findByAttemptId(attemptId: string): Promise<local.LocalMessageRow[]> {
+  return local.localFindMessagesByAttemptId(attemptId)
 }
 
 export async function countBySessionId(sessionId: string): Promise<number> {

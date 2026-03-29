@@ -32,6 +32,7 @@ import evolutionCapabilitiesRouter from './evolution-capabilities'
 import statsRouter from './stats'
 import studiosRouter from './studios'
 import capabilitiesRouter from './capabilities'
+import productionsRouter from './productions'
 import { isChannelsFeatureEnabled, isWebhooksFeatureEnabled } from '../../lib/feature-flags'
 import { readUpgradeState, startBackgroundUpgrade, validateUpgradeManifestUrl } from '../../lib/version-upgrade'
 import { resolveCurrentVersion, resolveVersionPayload } from '../../lib/version'
@@ -136,6 +137,7 @@ router.get('/docs', (_req: Request, res: Response) => {
         events: '/api/v1/events',
         rules: '/api/v1/rules',
         approvals: '/api/v1/approvals',
+        productions: '/api/v1/productions',
         control: '/api/v1/control',
         evolutionCapabilities: '/api/v1/evolution-capabilities',
         ...(channelsEnabled ? { channels: '/api/v1/channels' } : {}),
@@ -187,5 +189,6 @@ router.use('/context-policies', contextPoliciesRouter)
 router.use('/evolution-capabilities', evolutionCapabilitiesRouter)
 router.use('/stats', statsRouter)
 router.use('/studios', studiosRouter)
+router.use('/productions', productionsRouter)
 
 export default router

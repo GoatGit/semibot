@@ -24,6 +24,18 @@ from src.orchestrator.nodes_shared import (
     _serialize_tool_backfeed_content,
 )
 from src.orchestrator.state import AgentState, PlanStep, ToolCallResult
+from src.orchestrator.act_budget_guard import check_pre_tool_budget
+from src.orchestrator.act_runtime_pipeline import ActRuntimePipeline
+from src.orchestrator.act_loop_guard import (
+    build_loop_guard_failure_result,
+    evaluate_tool_call,
+    register_tool_result,
+)
+from src.orchestrator.act_tool_error_handler import attach_runtime_failure, runtime_failure_from_tool_result
+from src.orchestrator.runtime_middleware import (
+    ensure_step_runtime_state,
+    load_budget_state,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -225,6 +237,7 @@ def _build_act_tool_schemas(runtime_context: Any | None, skill_registry: Any | N
     tool_schemas: list[dict[str, Any]] = []
     if runtime_context is not None:
         from src.orchestrator.tool_retrieval import select_tool_shortlist
+        from src.orchestrator.tool_catalog import expand_catalog_entry_for_llm
 
         try:
             metadata = getattr(runtime_context, "metadata", None)
@@ -237,7 +250,14 @@ def _build_act_tool_schemas(runtime_context: Any | None, skill_registry: Any | N
                 metadata["_current_act_tool_shortlist_expanded"] = bool(
                     runtime_context.metadata.get("_current_act_tool_shortlist_expanded")
                 ) if isinstance(getattr(runtime_context, "metadata", None), dict) else False
-            tool_schemas = [entry.to_tool_schema() for entry in shortlist]
+            llm_entries: list[Any] = []
+            for entry in shortlist:
+                expanded = expand_catalog_entry_for_llm(entry)
+                if expanded != [entry]:
+                    llm_entries.extend(expanded)
+                else:
+                    llm_entries.append(entry)
+            tool_schemas = [entry.to_tool_schema() for entry in llm_entries]
             tool_schemas = _merge_dynamic_registry_schemas(tool_schemas, runtime_context)
         except Exception:
             logger.warning("_build_act_tool_schemas: CapabilityGraph failed, falling back to empty schemas", exc_info=True)
@@ -505,6 +525,7 @@ async def execute_single_act_tool_call(
     current_skill_id: str,
     runtime_context: Any | None,
     prior_results: list[ToolCallResult] | None,
+    pipeline: ActRuntimePipeline | None,
     step_results: list[ToolCallResult],
     latest_user_text: str,
     unified_executor: Any,
@@ -569,9 +590,9 @@ async def execute_single_act_tool_call(
         today=datetime.now(timezone.utc),
     )
     if validation_failure is not None:
-        return validation_failure
+        return attach_runtime_failure(validation_failure, runtime_failure_from_tool_result(validation_failure))
 
-    return await _execute_with_events(
+    result = await _execute_with_events(
         unified_executor,
         delegated_action,
         event_emitter,
@@ -582,6 +603,7 @@ async def execute_single_act_tool_call(
             latest_user_text=latest_user_text,
         ),
     )
+    return attach_runtime_failure(result, runtime_failure_from_tool_result(result))
 
 
 async def process_act_tool_call_chunks(
@@ -593,6 +615,7 @@ async def process_act_tool_call_chunks(
     current_skill_id: str,
     runtime_context: Any | None,
     prior_results: list[ToolCallResult] | None,
+    pipeline: ActRuntimePipeline | None,
     step_results: list[ToolCallResult],
     step_transcript: list[dict[str, Any]],
     act_loop_trace: list[dict[str, Any]],
@@ -627,7 +650,25 @@ async def process_act_tool_call_chunks(
         ],
     })
     _persist_act_loop_trace_to_state(state, action.id, act_loop_trace)
-
+    current_iteration = int(state.get("iteration", 0))
+    step_state = ensure_step_runtime_state(state, action.id, current_iteration)
+    loop_guard = step_state.setdefault("loop_guard", {})
+    budget_check = (
+        await pipeline.pre_tool_batch(requested_calls=len(tool_calls))
+        if pipeline is not None
+        else check_pre_tool_budget(
+            load_budget_state(
+                state,
+                step_id=action.id,
+                iteration=current_iteration,
+                max_tool_calls_per_step=max_tool_calls_per_step,
+                max_inner_turns=max_inner_turns,
+                max_wall_clock_seconds=0.0,
+                max_total_tokens=0,
+            ),
+            len(tool_calls),
+        )
+    )
     remaining_budget = max_tool_calls_per_step - tool_call_count
     if turn_count >= max_inner_turns:
         step_results.append(
@@ -644,7 +685,7 @@ async def process_act_tool_call_chunks(
             )
         )
         return {"action": "return"}
-    if remaining_budget <= 0:
+    if budget_check.kind == "hard_stop" or remaining_budget <= 0:
         step_results.append(
             ToolCallResult(
                 tool_name="llm_act",
@@ -655,8 +696,9 @@ async def process_act_tool_call_chunks(
                     "tool_call_count": tool_call_count,
                     "max_tool_calls_per_step": max_tool_calls_per_step,
                 },
-                error=f"Act inner loop exceeded {max_tool_calls_per_step} tool calls for one step",
+                error=budget_check.message if budget_check.kind == "hard_stop" else f"Act inner loop exceeded {max_tool_calls_per_step} tool calls for one step",
                 success=False,
+                metadata={"runtime_signal": budget_check.to_dict()} if budget_check.kind == "hard_stop" else {},
             )
         )
         return {"action": "return"}
@@ -665,6 +707,49 @@ async def process_act_tool_call_chunks(
 
     response_content = str(response.content or "").strip()
     assistant_content_sent = False
+    new_tool_call_count = tool_call_count
+    blocked_calls: list[tuple[dict[str, Any], ToolCallResult]] = []
+    allowed_tool_calls: list[dict[str, Any]] = []
+    for call in tool_calls:
+        function = call.get("function") or {}
+        tool_name = str(function.get("name") or "").strip()
+        params, _ = _parse_tool_call_arguments(function.get("arguments"))
+        _, loop_signal = evaluate_tool_call(loop_guard, tool_name, params)
+        if loop_signal.kind in {"warn", "block", "hard_stop"}:
+            if pipeline is not None:
+                await pipeline.emit_signal(loop_signal)
+        if loop_signal.kind == "hard_stop":
+            blocked_result = build_loop_guard_failure_result(
+                tool_name=tool_name,
+                params=params,
+                signal=loop_signal,
+            )
+            tool_failure = runtime_failure_from_tool_result(blocked_result)
+            if tool_failure is not None:
+                if pipeline is not None:
+                    await pipeline.emit_failure(tool_failure)
+            step_results.append(blocked_result)
+            return {"action": "return"}
+        if loop_signal.kind == "block":
+            blocked_calls.append((call, build_loop_guard_failure_result(tool_name=tool_name, params=params, signal=loop_signal)))
+            continue
+        allowed_tool_calls.append(call)
+    tool_calls = allowed_tool_calls
+    for blocked_call, blocked_result in blocked_calls:
+        tool_failure = runtime_failure_from_tool_result(blocked_result)
+        if tool_failure is not None:
+            if pipeline is not None:
+                await pipeline.emit_failure(tool_failure)
+        step_results.append(blocked_result)
+        step_transcript.append(
+            _build_tool_transcript_message(
+                tool_call_id=str(blocked_call.get("id") or ""),
+                result=blocked_result,
+            )
+        )
+    if not tool_calls:
+        _persist_step_transcript_to_state(state, action.id, step_transcript)
+        return {"action": "continue", "tool_call_count": new_tool_call_count}
     use_parallel = (
         len(tool_calls) > 1
         and all(_tool_call_is_readonly_parallel_safe(call) for call in tool_calls)
@@ -678,7 +763,6 @@ async def process_act_tool_call_chunks(
         else [[call] for call in tool_calls]
     )
 
-    new_tool_call_count = tool_call_count
     for chunk in tool_call_chunks:
         step_transcript.append(
             _build_assistant_transcript_message(
@@ -705,6 +789,7 @@ async def process_act_tool_call_chunks(
                             current_skill_id=current_skill_id,
                             runtime_context=runtime_context,
                             prior_results=prior_results,
+                            pipeline=pipeline,
                             step_results=step_results,
                             latest_user_text=latest_user_text,
                             unified_executor=unified_executor,
@@ -724,6 +809,7 @@ async def process_act_tool_call_chunks(
                     current_skill_id=current_skill_id,
                     runtime_context=runtime_context,
                     prior_results=prior_results,
+                    pipeline=pipeline,
                     step_results=step_results,
                     latest_user_text=latest_user_text,
                     unified_executor=unified_executor,
@@ -732,6 +818,17 @@ async def process_act_tool_call_chunks(
                 )
             ]
         for call, execution_result in zip(chunk, execution_results, strict=True):
+            function = call.get("function") or {}
+            tool_name = str(function.get("name") or "").strip()
+            params, _ = _parse_tool_call_arguments(function.get("arguments"))
+            tool_failure = runtime_failure_from_tool_result(execution_result)
+            if tool_failure is not None:
+                if pipeline is not None:
+                    await pipeline.emit_failure(tool_failure)
+            loop_signal = register_tool_result(loop_guard, tool_name, params, execution_result)
+            if loop_signal.kind in {"warn", "block", "hard_stop"}:
+                if pipeline is not None:
+                    await pipeline.emit_signal(loop_signal)
             step_results.append(execution_result)
             new_tool_call_count += 1
             step_transcript.append(

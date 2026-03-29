@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,9 +17,22 @@ _file_manager: FileManager | None = FileManager(GENERATED_FILES_DIR)
 
 # Directories inside a skill package that are readable via scope="skill"
 _SKILL_READABLE_DIRS = {"reference", "resources", "docs", "examples"}
+_DOC_CHUNK_PATH_RE = re.compile(r"(?:^|/)docs/([^/]+)/v(\d+)/chunks/([^/]+)\.txt$", re.IGNORECASE)
 
 
 class FileIOTool(BaseTool):
+    @staticmethod
+    def _chunk_missing_metadata(raw_path: str | None) -> dict[str, Any]:
+        path_value = str(raw_path or "").replace("\\", "/").strip().lstrip("./")
+        matched = _DOC_CHUNK_PATH_RE.search(path_value)
+        if not matched:
+            return {}
+        return {
+            "missing_chunk_ids": [matched.group(3)],
+            "doc_id": matched.group(1),
+            "doc_version": f"v{matched.group(2)}",
+        }
+
     def __init__(self) -> None:
         self._env_root_set = "SEMIBOT_FILE_IO_ROOT" in os.environ
         self.root = Path(os.getenv("SEMIBOT_FILE_IO_ROOT", str(Path.home()))).resolve()
@@ -237,7 +251,7 @@ class FileIOTool(BaseTool):
                 })
 
         if not target.exists() or not target.is_file():
-            return ToolResult.error_result(f"File not found: {path}")
+            return ToolResult.error_result(f"File not found: {path}", **self._chunk_missing_metadata(path))
 
         data = target.read_bytes()
         truncated = len(data) > self.max_read_bytes
@@ -290,7 +304,7 @@ class FileIOTool(BaseTool):
 
         if resolved_action == "read":
             if not target.exists() or not target.is_file():
-                return ToolResult.error_result(f"File not found: {path}")
+                return ToolResult.error_result(f"File not found: {path}", **self._chunk_missing_metadata(path))
             data = target.read_bytes()
             if len(data) > self.max_read_bytes:
                 data = data[: self.max_read_bytes]

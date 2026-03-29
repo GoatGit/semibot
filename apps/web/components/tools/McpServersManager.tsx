@@ -288,7 +288,9 @@ function parseJsonField<T>(value: unknown): T[] {
     try {
       const parsed = JSON.parse(value)
       if (Array.isArray(parsed)) return parsed as T[]
-    } catch {}
+    } catch {
+      // Ignore malformed JSON-ish fields from older MCP records and fall back to an empty list.
+    }
   }
   return []
 }

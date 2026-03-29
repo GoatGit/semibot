@@ -1,4 +1,8 @@
 {
+  "metadata": {
+    "title": "Semibot - 半个通用智能体",
+    "description": "一个本地优先、可安装、可协作、可进化的通用智能体产品。"
+  },
   "common": {
     "confirm": "确认",
     "cancel": "取消",
@@ -23,6 +27,7 @@
     "agents": "智能体",
     "sessions": "会话",
     "events": "事件",
+    "runtimeMonitor": "监控",
     "rules": "规则",
     "approvals": "审批",
     "usage": "用量统计",
@@ -36,7 +41,7 @@
     "webhooks": "Webhooks",
     "memory": "记忆",
     "evolution": "进化",
-    "studio": "智能体工作室",
+    "studio": "工作室",
     "language": "语言",
     "switchLanguage": "切换语言",
     "languageOptions": {
@@ -44,7 +49,169 @@
       "en-US": "English",
       "ja-JP": "日本語"
     },
-    "helpCenter": "帮助中心"
+    "helpCenter": "帮助中心",
+    "toggleTheme": "切换主题",
+    "themeDark": "夜间",
+    "themeLight": "日间",
+    "themeSystem": "跟随系统",
+    "upgradeNow": "立即更新",
+    "upgrading": "更新中",
+    "upgradeSubmitted": "升级任务已提交",
+    "upgradeFailed": "启动升级失败",
+    "upgradeErrorDetail": "升级错误详情",
+    "releaseNotes": "发布说明",
+    "upgradeTooltip": "后台安装并重启到最新版本",
+    "newVersionFound": "发现新版本 {version}，当前 {current}",
+    "currentVersion": "当前版本 {version}"
+  },
+  "runtimeMonitor": {
+    "title": "监控中心",
+    "subtitle": "把 runtime 事件提炼成异常、影响和建议动作，优先判断哪些会话卡住、空转、成本异常，哪些需要人工介入。",
+    "searchPlaceholder": "按 session_id 过滤 runtime 事件...",
+    "openEventsCenter": "打开事件中心",
+    "copyEvent": "复制事件数据",
+    "errors": {
+      "load": "加载监控中心失败"
+    },
+    "cards": {
+      "actionable": "待处理会话",
+      "actionableHint": "优先处理非健康会话。",
+      "stalled": "卡住 / 过期",
+      "stalledHint": "长时间没有心跳的会话。",
+      "looping": "空转 / 循环",
+      "loopingHint": "出现 loop 信号的会话。",
+      "expensive": "高成本异常",
+      "expensiveHint": "24h Token 总量 {value}",
+      "directReasoning": "Direct Reasoning",
+      "directReasoningHint": "{value} 个会话已升级到 Plan-Act"
+    },
+    "sections": {
+      "routeModeMix": "Route 模式分布",
+      "needsAttention": "需要处理",
+      "needsAttentionHint": "把会话按风险排序，直接看摘要和建议动作。",
+      "incidentGroups": "异常分组",
+      "incidentGroupsHint": "按问题类型聚合，而不是一条条刷事件。",
+      "recentIncidents": "最近异常",
+      "recentIncidentsHint": "只保留 failure、loop 和高成本 usage，原始事件流降级为调试材料。",
+      "healthySessions": "相对健康的会话",
+      "healthySessionsHint": "最近没有明显异常的会话，只做低频巡检。"
+    },
+    "labels": {
+      "runtimeSignal": "Runtime Signal",
+      "runtimeFailure": "Runtime Failure",
+      "heartbeat": "Heartbeat",
+      "tokenUsage": "Token Usage",
+      "routeDecision": "Route",
+      "directReasoning": "Direct Reasoning",
+      "drUpgrade": "DR 升级",
+      "actionableCount": "待处理 {count}",
+      "lastHeartbeatAt": "最后心跳",
+      "sessionId": "会话",
+      "toolName": "工具",
+      "toolCalls": "工具调用",
+      "idleFor": "静默时长",
+      "recommendedAction": "建议动作",
+      "failures": "失败次数",
+      "tokens": "Token",
+      "justNow": "刚刚"
+    },
+    "modes": {
+      "directAnswer": "Direct Answer",
+      "directReasoning": "Direct Reasoning",
+      "planAct": "Plan-Act",
+      "delegate": "Delegate"
+    },
+    "statuses": {
+      "stale": "已卡住",
+      "looping": "正在空转",
+      "upgraded": "已升级",
+      "failure": "最近失败",
+      "expensive": "成本偏高",
+      "healthy": "运行正常"
+    },
+    "actions": {
+      "inspectHeartbeat": "检查心跳与会话详情",
+      "inspectLoop": "查看 loop 信号并考虑终止",
+      "inspectUpgrade": "查看升级原因并决定是否继续深挖",
+      "inspectFailure": "查看最近失败并决定重试",
+      "inspectCost": "检查高成本步骤是否有产出",
+      "monitorOnly": "继续观察",
+      "viewRuntime": "查看 runtime",
+      "copySession": "复制会话ID",
+      "openSession": "进入会话"
+    },
+    "diagnostics": {
+      "staleSummary": "长时间没有新心跳，优先判断是否卡死或执行链已经中断。",
+      "loopSummary": "检测到 {count} 次 loop/重复信号，建议检查是否在重复调用同一工具。",
+      "upgradeSummary": "Direct Reasoning 已触发 {count} 次升级，说明任务复杂度超出轻链路预期。",
+      "failureSummary": "近期累计 {count} 次 failure，建议先看最近一次失败原因。",
+      "costSummary": "累计 Token 已达到 {count}，建议确认这部分消耗是否换来了有效产出。",
+      "healthySummary": "近期有心跳且无明显异常，保持低频巡检即可。"
+    },
+    "groups": {
+      "staleSessions": "卡住会话",
+      "staleSessionsHint": "没有心跳、疑似超时或执行链中断。",
+      "loopAlerts": "循环告警",
+      "loopAlertsHint": "连续重复 signal，通常意味着空转。",
+      "drUpgrades": "DR 升级",
+      "drUpgradesHint": "Direct Reasoning 未能收敛，已经升级到 Plan-Act。",
+      "retryableFailures": "可重试失败",
+      "retryableFailuresHint": "超时、限流、上下文溢出等可恢复问题。",
+      "timeoutFailures": "超时失败",
+      "timeoutFailuresHint": "需要判断是模型超时还是工具超时。",
+      "toolFailures": "工具失败",
+      "toolFailuresHint": "更可能是 provider、权限或参数问题。"
+    },
+    "empty": {
+      "title": "暂无 runtime 事件",
+      "description": "当前没有可展示的 runtime middleware 事件，尝试刷新或发起新的执行。"
+    },
+    "noStaleSessions": "当前没有明显健康会话可展示。",
+    "noSignals": "当前没有需要关注的 runtime 异常。",
+    "noFailures": "当前没有新的 runtime failure。",
+    "drawer": {
+      "title": "事件中心",
+      "subtitle": "以抽屉方式查看原来的通用业务事件中心数据，方便在 runtime 监控页内快速对照排查。",
+      "loading": "正在加载事件中心数据...",
+      "error": "加载事件中心失败。",
+      "summary": {
+        "count": "最近事件数: {count}"
+      },
+      "fields": {
+        "reason": "原因",
+        "type": "类型",
+        "time": "时间",
+        "session": "会话",
+        "attempt": "Attempt",
+        "tool": "工具",
+        "subject": "主题",
+        "source": "来源"
+      },
+      "rawHint": "原始 JSON 请使用时间线或热点卡片上的复制按钮获取。"
+    },
+    "sessionDrawer": {
+      "title": "会话 Runtime 详情",
+      "eventCount": "相关事件数: {count}",
+      "pathTitle": "链路转折",
+      "pathHint": "直接查看这条会话从 Route 到 Direct Reasoning，再到升级或收敛的关键节点。",
+      "incidentsTitle": "异常序列",
+      "incidentsHint": "按时间查看这条会话最近的 runtime 信号、失败和高成本步骤。",
+      "noIncidents": "当前没有可展示的异常序列。"
+    },
+    "boundary": {
+      "runtime": {
+        "title": "监控中心看什么",
+        "body": "只看执行内核的 signal、failure、heartbeat、token usage，用来定位 ACT/tool loop、预算与存活性问题。"
+      },
+      "events": {
+        "title": "事件中心看什么",
+        "body": "继续保留规则、审批、业务事件、工具执行轨迹和更通用的系统事件，不应全部塞进 runtime 页面。"
+      },
+      "recommendation": {
+        "title": "推荐边界",
+        "body": "不要直接合并整个事件中心。更合理的是让 Runtime Monitor 成为专门视图，并从这里一键跳到事件中心做深挖。"
+      }
+    }
   },
   "auth": {
     "login": "登录",
@@ -465,7 +632,7 @@
           "modeLabel": "消息触发模式",
           "modeMentionOnly": "仅 @ / 回复 / 命令触发",
           "modeAllMessages": "群聊全量消息模式",
-          "allowReplyToBot": "将“回复 Bot 消息”视为命中",
+          "allowReplyToBot": "将\"回复 Bot 消息\"视为命中",
           "executeOnUnaddressed": "未命中时仍执行（谨慎开启）",
           "commandPrefixesLabel": "字段名：commandPrefixes",
           "commandPrefixesPlaceholder": "commandPrefixes（可选，逗号分隔，如 /ask,/run,/approve,/reject）",
@@ -875,7 +1042,7 @@
     "untitled": "未命名会话"
   },
   "agents": {
-    "new": "新建代理",
+    "new": "新建智能体",
     "searchPlaceholder": "搜索 Agent...",
     "system": "系统",
     "noDescription": "暂无描述",
@@ -919,15 +1086,15 @@
       "deleted": "已删除"
     },
     "modal": {
-      "createTitle": "创建代理",
-      "editTitle": "编辑代理",
-      "namePlaceholder": "代理名称",
+      "createTitle": "创建智能体",
+      "editTitle": "编辑智能体",
+      "namePlaceholder": "智能体名称",
       "modelsLoadFailed": "模型列表加载失败，请检查后端接口",
       "noModels": "暂无可用模型，请检查 LLM Provider 配置",
       "selectModel": "请选择模型",
       "systemPromptPlaceholder": "系统提示",
       "aiGenerate": "AI 一键生成",
-      "aiGenerateTitle": "AI 生成代理草稿",
+      "aiGenerateTitle": "AI 生成智能体草稿",
       "aiGenerateDescription": "输入目标，自动生成名称、描述和系统提示词，生成后可手动修改。",
       "aiGoalLabel": "目标",
       "aiGoalPlaceholder": "例如：帮我做电商运营周报，每周汇总销售、投放和库存异常，并给出下周行动建议。",
@@ -937,8 +1104,8 @@
       "aiGenerated": "已生成并填入草稿"
     },
     "deleteModal": {
-      "title": "删除代理",
-      "description": "删除“{name}”后无法恢复。"
+      "title": "删除智能体",
+      "description": "删除 \"{name}\" 后无法恢复。"
     }
   },
   "agentsDetail": {
@@ -994,6 +1161,10 @@
     "smartAssistant": "通用智能体",
     "quickStart": "快速开始",
     "inputPlaceholder": "输入您的问题或任务描述...",
+    "addAttachment": "上传文件",
+    "removeAttachment": "移除附件",
+    "attachmentsHint": "可附加文档、表格或图片一起开始对话",
+    "attachmentsCount": "已添加 {count} 个文件",
     "selectedPrefix": "已选择:",
     "startChat": "开始对话",
     "suggestionsTitle": "试试这些问题",
@@ -1022,10 +1193,10 @@
       }
     },
     "suggestions": {
-      "item1": "帮我分析这份销售数据并生成报告",
-      "item2": "写一个 React 组件实现文件上传功能",
+      "item1": "帮我整理这份会议纪要，并提炼待办事项和负责人",
+      "item2": "根据这份周报内容，帮我起草一封发给领导的汇报邮件",
       "item3": "搜索最新的 AI 行业动态并总结",
-      "item4": "帮我优化这段 Python 代码的性能"
+      "item4": "帮我写一份项目延期说明，语气专业但不要太生硬"
     },
     "warning": {
       "noAvailableAgent": "未加载到可用 Agent，无法开始对话。",
@@ -1057,7 +1228,7 @@
     "scopeCount": "{count} 项待审批",
     "bulkDone": "已批量{action} {count} 条审批。",
     "scopeDone": "已按任务分组批量{action} {count} 条审批。",
-    "moreApprovalsHint": "另有 {count} 条待审批，建议使用“全部通过/全部拒绝”。",
+    "moreApprovalsHint": "另有 {count} 条待审批，建议使用\"全部通过/全部拒绝\"。",
     "approvalHint": "通过后会自动继续执行被阻塞的任务。",
     "sendFailed": "发送失败",
     "addAttachment": "添加附件",
@@ -1075,6 +1246,7 @@
       "loadApprovals": "加载审批列表失败",
       "bulkApproval": "批量审批失败",
       "loadSession": "加载会话失败",
+      "streamDisconnected": "实时更新已断开，点击重试重新连接",
       "messageWithReason": "抱歉，发生了错误: {message}"
     },
     "responseLabel": "Semibot 输出",
@@ -1093,6 +1265,109 @@
   },
   "dashboard": {
     "subtitle": "能干活、能提醒、能协作、能自己变强的大闸蟹。",
+    "hero": {
+      "eyebrow": "系统总览",
+      "title": "Semibot 首页",
+      "productSubtitle": "半个通用智能体",
+      "subtitle": "在一个首页里快速看到系统规模、运行状态和需要关注的数据。",
+      "primaryCta": "开始新会话",
+      "badges": {
+        "runtime": "Runtime",
+        "production": "Production",
+        "attention": "待处理"
+      },
+      "status": {
+        "online": "在线",
+        "degraded": "降级"
+      }
+    },
+    "workspace": {
+      "title": "工作台",
+      "heading": "先看推进，再看统计。",
+      "subtitle": "把需要处理的工作、运行中的链路和能力面拆成三个入口，减少在多个页面之间来回跳。",
+      "openControlRoom": "进入 Production",
+      "items": {
+        "work": {
+          "title": "需要处理",
+          "label": "审批、Review 与升级项",
+          "meta": "审批 {approvals} · Review {reviews} · 升级 {escalations}"
+        },
+        "runtime": {
+          "title": "运行中",
+          "label": "当前活跃执行链路",
+          "meta": "总会话 {total} · Bot 会话 {channels}"
+        },
+        "surface": {
+          "title": "能力面",
+          "label": "Production / Agent / Skill / MCP",
+          "meta": "Agent {agents} · 技能 {skills} · MCP {mcp}"
+        }
+      }
+    },
+    "launchpad": {
+      "title": "入口",
+      "heading": "把新功能放在首页正中央。",
+      "subtitle": "快速进入现在最常用的页面，而不是再从左侧导航里寻找。",
+      "items": {
+        "newChat": {
+          "title": "新建会话",
+          "desc": "立即创建一个 web 会话开始执行。"
+        },
+        "productions": {
+          "title": "Production",
+          "desc": "查看 APS 项目、Review 和升级项。"
+        },
+        "agents": {
+          "title": "智能体",
+          "desc": "管理 Agent 定义、角色模型与可用能力。"
+        },
+        "tools": {
+          "title": "工具",
+          "desc": "查看工具中心、MCP 与能力连接。"
+        },
+        "skills": {
+          "title": "技能",
+          "desc": "管理技能定义与安装状态。"
+        },
+        "runtime": {
+          "title": "监控",
+          "desc": "查看 runtime 运行态、异常与信号。"
+        }
+      }
+    },
+    "attention": {
+      "title": "待处理",
+      "heading": "这些队列会直接阻塞生产推进。",
+      "badgeHot": "待处理 {count}",
+      "badgeClear": "当前清空",
+      "items": {
+        "approvals": {
+          "title": "审批请求",
+          "desc": "高风险动作还在等待人工确认。"
+        },
+        "reviews": {
+          "title": "Production Reviews",
+          "desc": "Review inbox 里还有待处理的任务。"
+        },
+        "escalations": {
+          "title": "人工升级",
+          "desc": "自动链路已中断，需要人工介入恢复。"
+        }
+      }
+    },
+    "surface": {
+      "title": "能力面",
+      "heading": "首页也应该直接反映系统规模。",
+      "subtitle": "不用点进各页面，也能先判断 Agent、Production、技能和 MCP 的规模。",
+      "items": {
+        "agents": "Agent",
+        "sessions": "会话",
+        "productions": "Production",
+        "productionsHint": "查看 APS 项目、Review 和升级项。",
+        "skills": "技能",
+        "mcp": "MCP"
+      }
+    },
     "cards": {
       "agents": {
         "label": "Agent",
@@ -1101,6 +1376,14 @@
       "sessions": {
         "label": "会话",
         "hint": "进行中 {count}"
+      },
+      "tools": {
+        "label": "工具",
+        "hint": "可用工具能力"
+      },
+      "productions": {
+        "label": "Production",
+        "hint": "APS 项目总数"
       },
       "mcp": {
         "hint": "外部工具连接",
@@ -1115,20 +1398,9 @@
         "hint": "待审批 {count}"
       }
     },
-    "recentSessions": {
-      "title": "最近会话",
-      "viewAll": "查看全部",
-      "empty": "暂无会话，去创建第一个对话任务。",
-      "sources": {
-        "web": "Web",
-        "telegram": "Telegram",
-        "feishu": "Feishu",
-        "discord": "Discord",
-        "whatsapp": "WhatsApp",
-        "imessage": "iMessage",
-        "gateway": "Bot",
-        "channel": "Bot"
-      }
+    "actions": {
+      "website": "官网",
+      "github": "GitHub"
     },
     "quickLinks": {
       "title": "快捷入口",
@@ -1168,9 +1440,26 @@
         }
       }
     },
+    "recentSessions": {
+      "title": "最近活动",
+      "heading": "最近推进过的会话和通道对话。",
+      "viewAll": "查看全部",
+      "empty": "暂无会话，去创建第一个对话任务。",
+      "sources": {
+        "web": "Web",
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "discord": "Discord",
+        "whatsapp": "WhatsApp",
+        "imessage": "iMessage",
+        "gateway": "Bot",
+        "channel": "Bot"
+      }
+    },
     "recentEvents": {
-      "title": "最近事件",
-      "open": "进入事件中心",
+      "title": "运行信号",
+      "heading": "最近的系统事件与异常提示。",
+      "open": "进入监控",
       "empty": "暂无事件数据"
     },
     "error": {
@@ -1532,6 +1821,43 @@
       "stepSummary": "推进 {count} 个步骤",
       "failedSummary": "{count} 个失败",
       "summarySeparator": "，",
+      "route": {
+        "title": "路由",
+        "reason": "原因",
+        "goal": "目标",
+        "mode": {
+          "directAnswer": "直接回答",
+          "directReasoning": "直接推理",
+          "planAct": "Plan-Act",
+          "delegate": "委托",
+          "unknown": "未知"
+        }
+      },
+      "directReasoning": {
+        "title": "直接推理",
+        "toolCalls": "工具调用",
+        "upgradeReason": "升级原因",
+        "status": {
+          "completed": "已完成",
+          "partial": "部分完成",
+          "upgradeRequired": "待升级",
+          "failed": "失败"
+        }
+      },
+      "observeDr": {
+        "title": "DR 观察",
+        "reason": "原因",
+        "upgradeReason": "升级原因",
+        "outcome": {
+          "respondSuccess": "直接回复",
+          "respondPartial": "部分回复",
+          "upgradeToPlanAct": "升级到 Plan-Act",
+          "unknown": "未知"
+        }
+      },
+      "delegate": {
+        "title": "委托"
+      },
       "status": {
         "thinking": "深度思考中",
         "completed": "已完成思考",
@@ -1579,6 +1905,7 @@
       "dashboard": "查看系统总览、关键指标和最近活动。",
       "sessions": "创建与管理对话，查看会话上下文和执行结果。",
       "events": "检索系统事件，查看触发记录并支持事件回放。",
+      "runtimeMonitor": "专门查看 runtime middleware 的信号、失败、心跳与 token 用量。",
       "rules": "配置事件匹配规则、执行动作与风险策略。",
       "approvals": "集中处理高风险操作审批，保障自动执行可控。",
       "usage": "查看 LLM Token 消耗统计，按节点、模型、会话分组分析。",
@@ -1642,7 +1969,7 @@
         },
         "test": {
           "title": "执行连通性测试",
-          "description": "点击“测试”确认 Bot 出站链路可达，并观察状态是否为 ready。"
+          "description": "点击\"测试\"确认 Bot 出站链路可达，并观察状态是否为 ready。"
         },
         "platformWebhook": {
           "title": "配置第三方平台回调",
@@ -1757,6 +2084,290 @@
       "run": "启动运行失败",
       "cancel": "取消失败",
       "invalidJson": "输入格式错误，请输入有效的 JSON"
+    }
+  },
+  "aps": {
+    "common": {
+      "beta": "Beta"
+    },
+    "buttons": {
+      "humanInbox": "人工待办箱",
+      "reviewInbox": "审查收件箱",
+      "escalationInbox": "升级收件箱",
+      "newProduction": "新建管线",
+      "openApsBeta": "打开 APS",
+      "openLegacyStudio": "打开旧版工作室",
+      "viewControlRoom": "查看控制台",
+      "process": "处理",
+      "dispatchOne": "调度一步",
+      "quickReplan": "快速 Replan",
+      "graph": "流程图",
+      "run": "运行",
+      "backToProductions": "返回管线列表",
+      "backToProductionDetail": "返回管线详情",
+      "approve": "通过",
+      "requestRevision": "请求修订",
+      "reject": "拒绝",
+      "resumeRun": "恢复运行",
+      "viewProduction": "查看管线",
+      "openStage": "打开 Stage",
+      "openTask": "打开 Task",
+      "copyContent": "复制内容",
+      "copyMetadata": "复制元数据",
+      "saveSummary": "保存摘要",
+      "workspace": "工作台"
+    },
+    "errors": {
+      "loadControlRoom": "加载 APS 控制台失败",
+      "createProduction": "创建管线失败",
+      "loadProductionDetail": "加载管线详情失败",
+      "runProduction": "运行管线失败",
+      "dispatchTask": "调度下一任务失败",
+      "submitReview": "提交 review 失败",
+      "resolveEscalation": "处理 escalation 失败",
+      "replan": "快速 Replan 失败",
+      "loadArtifactContent": "加载 artifact 内容失败",
+      "loadReviewInbox": "加载审查收件箱失败",
+      "loadEscalationInbox": "加载升级收件箱失败",
+      "loadHumanInbox": "加载人工待办箱失败",
+      "loadArtifactWorkspace": "加载产物工作台失败",
+      "loadArtifactDiff": "加载产物差异失败",
+      "saveArtifactSummary": "保存 Artifact 摘要失败",
+      "loadProductionGraph": "加载 Production 流程图失败",
+      "loadGraphDiff": "加载流程图差异失败",
+      "loadStageDetail": "加载 Stage 详情失败",
+      "loadTaskDetail": "加载 Task 详情失败",
+      "loadAttemptDetail": "加载 Attempt 详情失败",
+      "copy": "复制失败"
+    },
+    "toast": {
+      "productionStarted": "管线已开始运行",
+      "reviewSubmitted": "Review 已提交: {decision}",
+      "escalationResolved": "Escalation 已处理，管线恢复运行",
+      "escalationRestored": "Escalation 已恢复",
+      "replanned": "管线已生成新的计划快照",
+      "artifactSummarySaved": "Artifact 摘要已保存",
+      "artifactContentCopied": "Artifact 内容已复制",
+      "artifactMetadataCopied": "Artifact 元数据已复制"
+    },
+    "controlRoom": {
+      "title": "工作室控制台",
+      "subtitle": "按管线维度聚合待处理 Review、人工介入和阻塞阶段，先看哪些管线需要处理。",
+      "parallelTitle": "APS 工作室",
+      "parallelBody": "工作室入口现在统一使用 APS 管线系统。",
+      "empty": "APS 控制台暂无数据。"
+    },
+    "create": {
+      "title": "新建管线",
+      "name": "名称",
+      "namePlaceholder": "输入管线名称",
+      "goal": "目标",
+      "goalPlaceholder": "例如：把这本小说改编成 12 集动漫，先产出世界观圣经、角色设定和前三集大纲。",
+      "defaultAgent": "默认执行 Agent",
+      "selectAgent": "请选择 Agent"
+    },
+    "metrics": {
+      "totalProductions": "管线总数",
+      "active": "运行中",
+      "awaitingHuman": "等待人工介入",
+      "pendingReviewEscalation": "待处理 Review / Escalation",
+      "blockedStages": "阻塞 Stage",
+      "runningTasks": "运行中 Task",
+      "openEscalations": "待处理升级",
+      "totalTokens": "累计 Tokens",
+      "pendingReviews": "待处理 Review",
+      "humanIntervention": "人工介入",
+      "revisionChains": "修订链路"
+    },
+    "sections": {
+      "productions": "管线",
+      "productionsHint": "先看所有管线的当前状态、阶段和处理入口，再下钻单个控制台。",
+      "priority": "优先处理",
+      "priorityHint": "按照风险级别排序，先看阻塞、awaiting human 和待处理 review。",
+      "portfolioHotspots": "跨项目热点",
+      "portfolioHotspotsHint": "从管线角度看全局阻塞，不再先点进单个详情页。",
+      "healthy": "相对健康"
+    },
+    "portfolioIssue": {
+      "awaitingHumanTitle": "等待人工介入",
+      "awaitingHumanDescription": "存在升级事项或人工决策阻塞，优先处理。",
+      "blockedStageTitle": "存在阻塞阶段",
+      "blockedStageDescription": "当前阶段因失败任务或拒绝审查而阻塞。",
+      "pendingReviewsTitle": "待处理审查",
+      "pendingReviewsDescription": "还有 review 任务尚未完成，会影响推进。",
+      "failedTasksTitle": "存在失败任务",
+      "failedTasksDescription": "需要检查失败原因或考虑 replan。",
+      "runningTitle": "正在推进",
+      "runningDescription": "当前存在运行中 task，可继续观察。",
+      "healthyTitle": "相对健康",
+      "healthyDescription": "当前没有明显阻塞，可低频巡检。"
+    },
+    "detail": {
+      "controlRoom": "控制台",
+      "controlRoomHint": "优先显示会阻塞 stage gate 或需要人工动作的事项。",
+      "latestSignals": "最近信号",
+      "latestSignalsHint": "最近几条 production event，帮助判断当前阶段是否在推进。",
+      "stageHealth": "阶段健康度",
+      "stageHealthHint": "按 stage 聚合 task/review 状态，便于快速判断哪一段生产链路有风险。",
+      "attemptHotspots": "执行热点",
+      "attemptHotspotsHint": "当前最耗 token 的 attempts，帮助识别成本异常与重试热点。",
+      "stagesAndTasks": "阶段与任务",
+      "stagesAndTasksHint": "按 stage 查看物化后的运行态 task。",
+      "escalations": "升级事项",
+      "escalationsHint": "reject / policy failure 会进入人工处理队列。",
+      "reviewJobs": "审查任务",
+      "reviewJobsHint": "为需要 review 的 artifact 手动提交 decision。",
+      "attempts": "执行尝试",
+      "attemptsHint": "最近执行实例。",
+      "artifactsHint": "当前已注册的 artifact versions，可直接预览内容。",
+      "artifactPreview": "产物预览",
+      "eventsHint": "最近生产事件。"
+    },
+    "reviewInbox": {
+      "subtitle": "集中处理所有待 review 的 APS 产物，不必逐个进入 Production 详情页。"
+    },
+    "escalationInbox": {
+      "subtitle": "集中处理 review reject 或策略失败带来的人工介入任务。"
+    },
+    "humanInbox": {
+      "subtitle": "统一收口所有需要人工判断的 review 与 escalation，不再分散到两个独立页面。"
+    },
+    "artifact": {
+      "contentTitle": "产物内容",
+      "contentHint": "当前版本的正文。MVP 先提供只读工作区，后续再补编辑。",
+      "previewMode": {
+        "json": "结构化预览",
+        "markdown": "文稿预览",
+        "text": "文本预览"
+      },
+      "lineageTitle": "版本脉络",
+      "diffTitle": "差异对比",
+      "diffHint": "默认对比上一版，也可以切换到 lineage 中的其他版本。",
+      "autoSelectPrevious": "自动选择上一版",
+      "summaryTitle": "摘要",
+      "summaryHint": "供控制台、收件箱和产物工作台使用的人工摘要。",
+      "summaryPlaceholder": "写一段简洁摘要，说明这个 artifact 当前版本的用途、变化和问题。"
+    },
+    "graph": {
+      "title": "管线流程图",
+      "subtitle": "当前版 plan、上一版 plan 和 superseded task 的最小调试视图。",
+      "autoSelectPreviousPlan": "自动选择上一版",
+      "planVersion": "plan v{version}",
+      "currentPlan": "当前计划",
+      "basePlan": "对比基线",
+      "addedTasks": "新增任务",
+      "removedTasks": "移除任务",
+      "superseded": "已替换任务",
+      "supersededBadge": "已替换",
+      "dependsOn": "依赖任务",
+      "planHistory": "计划历史",
+      "planHistoryHint": "按 version 查看 planner / replan 的快照。",
+      "currentBadge": "当前",
+      "replanDiff": "重规划差异",
+      "replanDiffHint": "先聚焦这版 plan 比基线版新增/移除的结构。",
+      "addedStages": "新增阶段",
+      "removedStages": "移除阶段"
+    },
+    "stage": {
+      "tasksTitle": "阶段任务",
+      "tasksHint": "该 Stage 下的任务列表与当前运行态。"
+    },
+    "attempt": {
+      "inputEnvelope": "输入信封",
+      "outputUsage": "输出 / 用量",
+      "typedResult": "结构化结果",
+      "repairEvents": "修复事件",
+      "repairEventsHint": "记录这次 attempt 因 contract 不满足而触发的修复回合。",
+      "noRepairEvents": "当前没有修复事件。"
+    },
+    "fields": {
+      "status": "状态",
+      "stage": "阶段",
+      "task": "任务",
+      "artifact": "产物",
+      "productionStatus": "管线状态",
+      "createdAt": "创建时间",
+      "goal": "目标",
+      "started": "开始时间",
+      "ended": "结束时间",
+      "failure": "失败原因",
+      "heartbeat": "心跳",
+      "artifactKey": "产物 Key",
+      "version": "版本",
+      "createdByTask": "来源任务",
+      "storage": "存储位置",
+      "base": "基线",
+      "added": "新增",
+      "removed": "移除",
+      "events": "事件"
+    },
+    "labels": {
+      "attentionCount": "{count} 个需关注",
+      "productionCount": "{count} 条管线",
+      "currentStage": "当前 Stage",
+      "reviewCount": "审查",
+      "escalationCount": "升级",
+      "runningCount": "运行中",
+      "tokens": "Tokens",
+      "tokensLower": "tokens",
+      "tasksDone": "任务",
+      "reviewPending": "待审查",
+      "rejected": "已拒绝",
+      "tasks": "个任务",
+      "sequence": "顺序",
+      "attemptNumber": "尝试 #{number}",
+      "ok": "正常",
+      "needsHumanIntervention": "需要人工介入",
+      "taskFailed": "任务失败",
+      "loadingArtifactContent": "正在加载 artifact 内容…",
+      "previousVersion": "上一版",
+      "pending": "待处理",
+      "review": "审查",
+      "escalation": "升级",
+      "defaultRevisionInstruction": "请根据最新审查意见修订当前产物。",
+      "defaultHumanRevisionInstruction": "请根据人工审查意见修订当前产物。"
+    },
+    "health": {
+      "healthy": "健康",
+      "waitingReview": "等待审查",
+      "blocked": "阻塞",
+      "atRisk": "有风险",
+      "completed": "已完成"
+    },
+    "reason": {
+      "reviewRejected": "审查已拒绝，需要人工介入。",
+      "multipleReviewsRejected": "多个审查同时拒绝，阶段已升级。",
+      "reviewRequestedRevision": "审查要求修订，等待修订链路推进。",
+      "multipleReviewsRequestedRevision": "多个审查同时要求修订，需要统一修订。",
+      "pendingReviews": "还有待完成的审查任务。",
+      "failedTasks": "存在失败任务，阶段无法继续推进。",
+      "runningTasks": "当前仍有任务在运行中。",
+      "stageReadyToAdvance": "阶段已满足推进条件。",
+      "stageNotReady": "阶段尚未满足推进条件。"
+    },
+    "empty": {
+      "noUrgent": "当前没有高优先级阻塞，生产线相对健康。",
+      "noHealthy": "当前没有可降级巡检的项目。",
+      "noStageYet": "尚未进入 Stage",
+      "productionNotFound": "管线不存在",
+      "noControlRoomItems": "当前没有高优先级阻塞项。",
+      "noEvents": "还没有事件。",
+      "noAttemptHotspots": "暂无执行热点。",
+      "noEscalations": "当前没有升级事项。",
+      "noReviewJobs": "当前没有审查任务。",
+      "noAttempts": "还没有执行尝试。",
+      "noArtifacts": "还没有产物。",
+      "noArtifactContent": "当前 artifact 没有可读文本内容。",
+      "artifactNotFound": "Artifact 不存在",
+      "unlinked": "未关联",
+      "noBaseVersion": "无基准版本",
+      "noArtifactDiff": "没有可对比的文本差异。",
+      "noArtifactDiffData": "还没有可用的差异数据。",
+      "noGraphDiff": "暂无流程图差异数据。",
+      "stageNotFound": "Stage 不存在",
+      "taskNotFound": "Task 不存在",
+      "attemptNotFound": "Attempt 不存在",
+      "noHumanInbox": "当前没有需要人工处理的 APS 待办。"
     }
   }
 }

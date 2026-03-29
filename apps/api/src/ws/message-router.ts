@@ -176,6 +176,52 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
           : undefined,
       })
 
+    case 'route.mode_selected':
+      return mkMessage('tool_result', {
+        toolName: 'route',
+        result: {
+          mode: event.mode,
+          reason: summarizeProcessText(event.reason, 240),
+          goal: summarizeProcessText(event.goal, 240),
+        },
+        success: true,
+      })
+
+    case 'dr.completed':
+    case 'dr.failed':
+      return mkMessage('tool_result', {
+        toolName: 'direct_reasoning',
+        result: {
+          status: event.status ?? (type === 'dr.failed' ? 'failed' : 'completed'),
+          answer: summarizeProcessText(event.answer, 240),
+          upgradeReason: summarizeProcessText(event.upgrade_reason, 240),
+          toolUsage: event.tool_usage,
+          resourceUsage: event.resource_usage,
+          diagnostics: event.diagnostics,
+          failure: event.failure,
+        },
+        success: type !== 'dr.failed',
+        error: type === 'dr.failed'
+          ? ((event.error as string | undefined) ?? 'direct_reasoning_failed')
+          : undefined,
+      })
+
+    case 'observe_dr.respond_success':
+    case 'observe_dr.respond_partial':
+    case 'observe_dr.upgrade_to_plan_act':
+      return mkMessage('tool_result', {
+        toolName: 'observe_dr',
+        result: {
+          outcome: type.replace('observe_dr.', ''),
+          reason: summarizeProcessText(event.reason, 240),
+          status: event.status,
+          intermediateContext: event.intermediate_context,
+          resourceUsage: event.resource_usage,
+          upgradeReason: summarizeProcessText(event.upgrade_reason, 240),
+        },
+        success: true,
+      })
+
     case 'failure_reflection':
       return mkMessage('tool_result', {
         toolName: 'failure_reflection',

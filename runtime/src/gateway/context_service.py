@@ -380,6 +380,14 @@ class GatewayContextService:
         ids: list[str] = []
         seen: set[str] = set()
 
+        top_level_ids = runtime_result.get("pending_approval_ids")
+        if isinstance(top_level_ids, list):
+            for item in top_level_ids:
+                approval_id = str(item or "").strip()
+                if approval_id and approval_id not in seen:
+                    seen.add(approval_id)
+                    ids.append(approval_id)
+
         runtime_events = runtime_result.get("runtime_events")
         if isinstance(runtime_events, list):
             for event in runtime_events:
@@ -461,6 +469,20 @@ class GatewayContextService:
         if content:
             return f"{final_response}{hint}"
         return f"操作需要人工审批。{hint}"
+
+    @classmethod
+    def _resolve_awaiting_approval_notice(
+        cls,
+        *,
+        runtime_result: dict[str, Any] | None = None,
+        approval_ids: list[str],
+        fallback_message: str,
+    ) -> str:
+        result = runtime_result if isinstance(runtime_result, dict) else {}
+        explicit = str(result.get("awaiting_approval_message") or "").strip()
+        if explicit:
+            return cls._append_approval_hints(explicit, approval_ids)
+        return cls._append_approval_hints(fallback_message, approval_ids)
 
     @staticmethod
     def _append_cli_import_hint(final_response: str, request_id: str) -> str:
@@ -664,18 +686,7 @@ class GatewayContextService:
                 },
             )
             if ack_ok:
-                await self.store.aappend_context_message(
-                    conversation_id=conversation["id"],
-                    role="assistant",
-                    content=ack_text,
-                    metadata={
-                        "provider": provider,
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "minimal_writeback": True,
-                        "status": "received",
-                    },
-                )
+                logger.info("gateway_notice_delivered", extra={"kind": "received", "provider": provider})
 
         async def _execute() -> None:
             await self.store.aupdate_task_run(run["id"], status="running")
@@ -712,18 +723,7 @@ class GatewayContextService:
                 )
                 if ok:
                     plan_preview_sent = True
-                    await self.store.aappend_context_message(
-                        conversation_id=conversation["id"],
-                        role="assistant",
-                        content=text_preview,
-                        metadata={
-                            "provider": provider,
-                            "task_run_id": run["id"],
-                            "runtime_session_id": runtime_session_id,
-                            "minimal_writeback": True,
-                            "status": "planning",
-                        },
-                    )
+                    logger.info("gateway_notice_delivered", extra={"kind": "planning", "provider": provider})
             try:
                 recent_tool_usage = await self.store.asummarize_recent_tool_usage(
                     session_id=runtime_session_id,
@@ -766,13 +766,17 @@ class GatewayContextService:
                         with suppress(asyncio.CancelledError):
                             await runner_task
 
-                        msg = self._append_approval_hints("操作需要人工审批后继续。", pending_approval_ids)
+                        msg = self._resolve_awaiting_approval_notice(
+                            approval_ids=pending_approval_ids,
+                            fallback_message="操作需要人工审批后继续。",
+                        )
                         await self.store.aupdate_task_run(
                             run["id"],
                             status="awaiting_approval",
                             result_summary=msg,
                             result_metadata={
                                 "status": "awaiting_approval",
+                                "notice_kind": "awaiting_approval",
                                 "approval_ids": pending_approval_ids,
                             },
                         )
@@ -780,19 +784,6 @@ class GatewayContextService:
                             conversation["id"],
                             runtime_session_id=runtime_session_id,
                             status="awaiting_approval",
-                        )
-                        await self.store.aappend_context_message(
-                            conversation_id=conversation["id"],
-                            role="assistant",
-                            content=msg,
-                            metadata={
-                                "provider": provider,
-                                "task_run_id": run["id"],
-                                "runtime_session_id": runtime_session_id,
-                                "minimal_writeback": True,
-                                "status": "awaiting_approval",
-                                "approval_ids": pending_approval_ids,
-                            },
                         )
                         if on_result:
                             await on_result(
@@ -803,6 +794,7 @@ class GatewayContextService:
                                     "task_run_id": run["id"],
                                     "runtime_session_id": runtime_session_id,
                                     "status": "awaiting_approval",
+                                    "notice_kind": "awaiting_approval",
                                     "approval_ids": pending_approval_ids,
                                 },
                             )
@@ -811,11 +803,10 @@ class GatewayContextService:
                 if runtime_result is None:
                     raise TimeoutError
                 final_response = str(runtime_result.get("final_response") or "").strip()
-                if not final_response:
-                    error = str(runtime_result.get("error") or "").strip()
-                    final_response = f"任务执行失败：{error}" if error else "任务已执行，但没有可返回结果。"
+                error = str(runtime_result.get("error") or "").strip()
                 generated_files = self._extract_generated_files(runtime_result)
                 approval_ids = self._extract_pending_approval_ids(runtime_result)
+                normalized_runtime_status = str(runtime_result.get("status") or "").strip().lower()
                 missing_capability = self._extract_missing_capability(runtime_result)
                 proposed_cli_import = self._extract_proposed_cli_import(runtime_result)
                 tool_usage_events = self._extract_tool_usage_events(runtime_result, task_run_id=run["id"])
@@ -830,7 +821,73 @@ class GatewayContextService:
                         success=bool(event["success"]),
                         metadata=event.get("metadata") if isinstance(event.get("metadata"), dict) else None,
                     )
-                final_response = self._append_approval_hints(final_response, approval_ids)
+                if approval_ids or normalized_runtime_status == "awaiting_approval":
+                    msg = self._resolve_awaiting_approval_notice(
+                        runtime_result=runtime_result,
+                        approval_ids=approval_ids,
+                        fallback_message=final_response or "操作需要人工审批后继续。",
+                    )
+                    await self.store.aupdate_task_run(
+                        run["id"],
+                        status="awaiting_approval",
+                        result_summary=msg,
+                        result_metadata={
+                            "status": "awaiting_approval",
+                            "notice_kind": "awaiting_approval",
+                            "approval_ids": approval_ids,
+                            "runtime_result": runtime_result,
+                        },
+                    )
+                    await self.store.aupdate_active_runtime_session_status(
+                        conversation["id"],
+                        runtime_session_id=runtime_session_id,
+                        status="awaiting_approval",
+                    )
+                    if on_result:
+                        await on_result(
+                            msg,
+                            {
+                                "chat_id": chat_id,
+                                "conversation_id": conversation["id"],
+                                "task_run_id": run["id"],
+                                "runtime_session_id": runtime_session_id,
+                                "status": "awaiting_approval",
+                                "notice_kind": "awaiting_approval",
+                                "approval_ids": approval_ids,
+                            },
+                        )
+                    return
+                if normalized_runtime_status in {"failed", "cancelled"}:
+                    msg = error or ("任务已取消。" if normalized_runtime_status == "cancelled" else "任务执行失败。")
+                    await self.store.aupdate_task_run(
+                        run["id"],
+                        status="failed" if normalized_runtime_status == "cancelled" else normalized_runtime_status,
+                        result_summary=msg,
+                        result_metadata={
+                            "status": normalized_runtime_status,
+                            "notice_kind": "error",
+                            "error": error or None,
+                            "runtime_result": runtime_result,
+                        },
+                    )
+                    await self.store.aupdate_active_runtime_session_status(
+                        conversation["id"],
+                        runtime_session_id=runtime_session_id,
+                        status="failed" if normalized_runtime_status == "cancelled" else normalized_runtime_status,
+                    )
+                    if on_result:
+                        await on_result(msg, {
+                            "chat_id": chat_id,
+                            "conversation_id": conversation["id"],
+                            "task_run_id": run["id"],
+                            "runtime_session_id": runtime_session_id,
+                            "status": normalized_runtime_status,
+                            "notice_kind": "error",
+                            "error": error or None,
+                        })
+                    return
+                if not final_response:
+                    final_response = "任务已执行，但没有可返回结果。"
                 cli_import_request = None
                 if proposed_cli_import:
                     try:
@@ -904,19 +961,6 @@ class GatewayContextService:
                     runtime_session_id=runtime_session_id,
                     status="failed",
                 )
-                await self.store.aappend_context_message(
-                    conversation_id=conversation["id"],
-                    role="assistant",
-                    content=msg,
-                    metadata={
-                        "provider": provider,
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "minimal_writeback": True,
-                        "status": "failed",
-                        "error": "timeout",
-                    },
-                )
                 if on_result:
                     await on_result(msg, {
                         "chat_id": chat_id,
@@ -938,18 +982,6 @@ class GatewayContextService:
                     conversation["id"],
                     runtime_session_id=runtime_session_id,
                     status="failed",
-                )
-                await self.store.aappend_context_message(
-                    conversation_id=conversation["id"],
-                    role="assistant",
-                    content=msg,
-                    metadata={
-                        "provider": provider,
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "minimal_writeback": True,
-                        "status": "failed",
-                    },
                 )
                 if on_result:
                     await on_result(msg, {

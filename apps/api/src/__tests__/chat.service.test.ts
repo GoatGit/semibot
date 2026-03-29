@@ -9,6 +9,8 @@ import {
   closeSSEConnection,
   sendSSEEvent,
   sendAgent2UIMessage,
+  sendSessionSSEEvent,
+  sendSessionAgent2UIMessage,
 } from '../services/chat.service'
 
 // Mock Response 对象
@@ -60,6 +62,17 @@ describe('Chat Service', () => {
       createSSEConnection(mockRes, sessionId, userId, uuidv4())
 
       expect(mockRes.on).toHaveBeenCalledWith('close', expect.any(Function))
+    })
+
+    it('should emit an initial heartbeat frame immediately after connection opens', () => {
+      const mockRes = createMockResponse() as Response
+      const sessionId = uuidv4()
+      const userId = uuidv4()
+
+      createSSEConnection(mockRes, sessionId, userId, uuidv4())
+
+      expect(mockRes.write).toHaveBeenCalledWith('event: heartbeat\n')
+      expect(mockRes.write).toHaveBeenCalledWith('data: null\n\n')
     })
   })
 
@@ -123,6 +136,28 @@ describe('Chat Service', () => {
     })
   })
 
+  describe('sendSessionSSEEvent', () => {
+    it('broadcasts one session event to all active connections of the same session', () => {
+      const sessionId = uuidv4()
+      const userA = uuidv4()
+      const userB = uuidv4()
+      const resA = createMockResponse() as Response
+      const resB = createMockResponse() as Response
+      const otherRes = createMockResponse() as Response
+
+      createSSEConnection(resA, sessionId, userA)
+      createSSEConnection(resB, sessionId, userB)
+      createSSEConnection(otherRes, uuidv4(), uuidv4())
+
+      const result = sendSessionSSEEvent(sessionId, 'message', { ok: true })
+
+      expect(result).toBe(true)
+      expect(resA.write).toHaveBeenCalledWith('event: message\n')
+      expect(resB.write).toHaveBeenCalledWith('event: message\n')
+      expect(otherRes.write).not.toHaveBeenCalledWith('event: message\n')
+    })
+  })
+
   describe('sendAgent2UIMessage', () => {
     it('should send message with correct format', () => {
       const mockRes = createMockResponse() as Response
@@ -176,6 +211,25 @@ describe('Chat Service', () => {
         const result = sendAgent2UIMessage(connection, type, { content: 'test' })
         expect(result).toBe(true)
       })
+    })
+  })
+
+  describe('sendSessionAgent2UIMessage', () => {
+    it('broadcasts Agent2UI message to all current connections in the same session', () => {
+      const sessionId = uuidv4()
+      const resA = createMockResponse() as Response
+      const resB = createMockResponse() as Response
+
+      createSSEConnection(resA, sessionId, uuidv4())
+      createSSEConnection(resB, sessionId, uuidv4())
+
+      const result = sendSessionAgent2UIMessage(sessionId, 'text', { content: 'resume-ok' })
+
+      expect(result).toBe(true)
+      expect(resA.write).toHaveBeenCalledWith('event: message\n')
+      expect(resB.write).toHaveBeenCalledWith('event: message\n')
+      expect(resA.write).toHaveBeenCalledWith(expect.stringContaining('"content":"resume-ok"'))
+      expect(resB.write).toHaveBeenCalledWith(expect.stringContaining('"content":"resume-ok"'))
     })
   })
 })

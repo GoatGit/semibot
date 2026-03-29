@@ -1122,6 +1122,17 @@ class GatewayManager:
         target_ids: list[str] = []
         requested_id = parsed.get("approval_id")
         if isinstance(requested_id, str) and requested_id:
+            requested = next((item for item in candidate_pool if item.approval_id == requested_id), None)
+            if requested is None:
+                return {
+                    "command": kind,
+                    "recognized": True,
+                    "resolved": False,
+                    "resolved_count": 0,
+                    "pending_count": len(candidate_pool),
+                    "scope": "subject" if scoped_pending else "global",
+                    "reason": "approval_not_in_scope_or_not_pending",
+                }
             target_ids = [requested_id]
         elif kind in {"approve_all", "reject_all"}:
             target_ids = [item.approval_id for item in candidate_pool]

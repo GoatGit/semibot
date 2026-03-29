@@ -4,7 +4,6 @@
  * 使用数据库持久化实现 Session/Message CRUD
  */
 
-import { randomUUID } from 'crypto'
 import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
@@ -17,10 +16,12 @@ import {
 } from '../constants/errorCodes'
 import { MAX_SESSION_MESSAGES } from '../constants/config'
 import { runtimeRequest } from '../lib/runtime-client'
+import { getLocalDb } from '../lib/db-local'
 import * as sessionRepository from '../repositories/session.repository'
 import * as messageRepository from '../repositories/message.repository'
+import * as runtimeAttemptRepository from '../repositories/runtime-attempt.repository'
+import * as runtimeAttemptCommitService from './runtime-attempt-commit.service'
 import { createLogger } from '../lib/logger'
-import { mapRuntimeEventToAgent2UI } from '../ws/message-router'
 
 const sessionLogger = createLogger('session')
 const SYSTEM_DEFAULT_AGENT_ID = '00000000-0000-0000-0000-000000000001'
@@ -37,6 +38,7 @@ export interface Session {
   agentId: string
   userId: string
   status: SessionStatus
+  currentAttemptId?: string
   title?: string
   metadata?: Record<string, unknown>
   startedAt: string
@@ -47,6 +49,8 @@ export interface Session {
 export interface Message {
   id: string
   sessionId: string
+  attemptId?: string
+  userMessageId?: string
   parentId?: string
   role: MessageRole
   content: string
@@ -56,6 +60,101 @@ export interface Message {
   latencyMs?: number
   metadata?: Record<string, unknown>
   createdAt: string
+}
+
+export type RuntimeAttemptStatus = runtimeAttemptRepository.RuntimeAttemptStatus
+export type RuntimeExecutionMode = runtimeAttemptRepository.RuntimeExecutionMode
+
+export interface RuntimeAttempt {
+  id: string
+  sessionId: string
+  userMessageId: string
+  agentId: string
+  attemptSeq: number
+  executionMode: RuntimeExecutionMode
+  status: RuntimeAttemptStatus
+  approvalSetRevision: number
+  approvalBlockCount: number
+  resumeCount: number
+  latestRevision: number
+  checkpointId?: string
+  artifactMessageId?: string
+  terminalReason?: string
+  leasedBy?: string
+  leaseExpiresAt?: string
+  heartbeatAt?: string
+  metadata?: Record<string, unknown>
+  startedAt: string
+  updatedAt: string
+  endedAt?: string
+}
+
+export interface RuntimeAttemptCheckpoint {
+  checkpointId: string
+  attemptId: string
+  sessionId: string
+  userMessageId: string
+  status: RuntimeAttemptStatus
+  revision: number
+  payload?: Record<string, unknown>
+  createdAt: string
+}
+
+export interface SessionNotice {
+  kind: 'awaiting_approval' | 'error' | 'warning'
+  code: string
+  message: string
+  approvalIds?: string[]
+}
+
+export interface SessionRunStateView {
+  sessionId: string
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled' | 'idle'
+  pendingApprovalIds: string[]
+  updatedAt: string
+  error?: string
+}
+
+export interface SessionProcessTraceView {
+  version: 1
+  messages: unknown[]
+}
+
+export interface SessionView {
+  session: Session
+  messages: Message[]
+  currentAttempt: RuntimeAttempt | null
+  attemptsSummary: RuntimeAttempt[]
+  runState: SessionRunStateView | null
+  notices: SessionNotice[]
+  processTrace: SessionProcessTraceView | null
+}
+
+export interface RuntimeAttemptView {
+  attempt: RuntimeAttempt
+  session: Session
+  messages: Message[]
+  latestCheckpoint: RuntimeAttemptCheckpoint | null
+  eventOutbox: Array<{
+    id: string
+    revision: number
+    eventType: string
+    status: string
+    createdAt: string
+    deliveredAt?: string
+  }>
+  checkpointOutbox: Array<{
+    id: string
+    checkpointId: string
+    revision: number
+    projectionTarget: string
+    status: string
+    createdAt: string
+    deliveredAt?: string
+  }>
+  runState: SessionRunStateView | null
+  notices: SessionNotice[]
+  processTrace: SessionProcessTraceView | null
 }
 
 export interface ToolCall {
@@ -74,6 +173,8 @@ export interface CreateSessionInput {
 }
 
 export interface AddMessageInput {
+  attemptId?: string
+  userMessageId?: string
   role: MessageRole
   content: string
   parentId?: string
@@ -101,6 +202,67 @@ export interface PaginatedResult<T> {
   }
 }
 
+export interface CreateRuntimeAttemptInput {
+  userMessageId: string
+  agentId: string
+  executionMode?: RuntimeExecutionMode
+  status?: RuntimeAttemptStatus
+  metadata?: Record<string, unknown>
+}
+
+export interface UpdateRuntimeAttemptInput {
+  executionMode?: RuntimeExecutionMode
+  status?: RuntimeAttemptStatus
+  approvalSetRevision?: number
+  approvalBlockCount?: number
+  resumeCount?: number
+  checkpointId?: string | null
+  artifactMessageId?: string | null
+  terminalReason?: string | null
+  leasedBy?: string | null
+  leaseExpiresAt?: string | null
+  heartbeatAt?: string | null
+  metadata?: Record<string, unknown> | null
+  endedAt?: string | null
+}
+
+export interface CommitAttemptStateInput {
+  attemptId: string
+  sessionId: string
+  userMessageId: string
+  revision?: number
+  status: Extract<RuntimeAttemptStatus, 'queued' | 'running' | 'awaiting_approval'>
+  approvalBlockCount?: number
+  approvalSetRevision?: number
+  metadata?: Record<string, unknown>
+  checkpointPayload?: Record<string, unknown>
+}
+
+export interface CommitAttemptTerminalInput {
+  attemptId: string
+  sessionId: string
+  userMessageId: string
+  revision?: number
+  status: Extract<RuntimeAttemptStatus, 'completed' | 'failed' | 'cancelled'>
+  terminalReason: string
+  artifactMessageId?: string
+  metadata?: Record<string, unknown>
+  checkpointPayload?: Record<string, unknown>
+}
+
+export interface ClaimRuntimeAttemptLeaseInput {
+  attemptId: string
+  leasedBy: string
+  leaseDurationMs: number
+  expectedStatuses?: RuntimeAttemptStatus[]
+}
+
+export interface HeartbeatRuntimeAttemptInput {
+  attemptId: string
+  leasedBy: string
+  leaseDurationMs: number
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 辅助函数
 // ═══════════════════════════════════════════════════════════════
@@ -114,6 +276,7 @@ function rowToSession(row: sessionRepository.SessionRow): Session {
     agentId: row.agent_id,
     userId: row.user_id,
     status: row.status,
+    currentAttemptId: row.current_attempt_id ?? undefined,
     title: row.title ?? undefined,
     metadata: row.metadata ?? undefined,
     startedAt: row.started_at,
@@ -129,6 +292,8 @@ function rowToMessage(row: messageRepository.MessageRow): Message {
   return {
     id: row.id,
     sessionId: row.session_id,
+    attemptId: row.attempt_id ?? undefined,
+    userMessageId: row.user_message_id ?? undefined,
     parentId: row.parent_id ?? undefined,
     role: row.role,
     content: row.content,
@@ -138,6 +303,32 @@ function rowToMessage(row: messageRepository.MessageRow): Message {
     latencyMs: row.latency_ms ?? undefined,
     metadata: row.metadata ?? undefined,
     createdAt: row.created_at,
+  }
+}
+
+function rowToRuntimeAttempt(row: runtimeAttemptRepository.RuntimeAttemptRow): RuntimeAttempt {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    userMessageId: row.user_message_id,
+    agentId: row.agent_id,
+    attemptSeq: row.attempt_seq,
+    executionMode: row.execution_mode,
+    status: row.status,
+    approvalSetRevision: row.approval_set_revision,
+    approvalBlockCount: row.approval_block_count,
+    resumeCount: row.resume_count,
+    latestRevision: row.latest_revision,
+    checkpointId: row.checkpoint_id ?? undefined,
+    artifactMessageId: row.artifact_message_id ?? undefined,
+    terminalReason: row.terminal_reason ?? undefined,
+    leasedBy: row.leased_by ?? undefined,
+    leaseExpiresAt: row.lease_expires_at ?? undefined,
+    heartbeatAt: row.heartbeat_at ?? undefined,
+    metadata: row.metadata ?? undefined,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    endedAt: row.ended_at ?? undefined,
   }
 }
 
@@ -155,8 +346,10 @@ type RuntimeSessionListResponse = {
 type RuntimeEventRecord = {
   event_id?: string
   event_type?: string
+  source?: string
   subject?: string
   payload?: Record<string, unknown>
+  risk_hint?: 'low' | 'medium' | 'high'
   timestamp?: string
 }
 
@@ -164,117 +357,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function normalizeRuntimeEventForHistory(input: RuntimeEventRecord): Record<string, unknown> | null {
-  const eventName = String(input.event_type || '').trim()
-  if (!eventName) return null
-
-  const data = isRecord(input.payload) ? input.payload : {}
-  const get = (key: string): unknown => data[key] ?? (input as Record<string, unknown>)[key]
-
-  switch (eventName) {
-    case 'thinking':
-      return {
-        type: 'thinking',
-        content: String(get('content') || ''),
-        stage: get('stage'),
-      }
-    case 'plan_created':
-    case 'plan_version':
-      return {
-        type: eventName,
-        steps: Array.isArray(get('steps')) ? get('steps') : [],
-      }
-    case 'plan.step.started':
-      return {
-        type: 'plan_step_start',
-        step_id: get('step_id') ?? get('stepId') ?? get('id'),
-        title: get('title') ?? get('step_title') ?? get('action'),
-        tool: get('tool') ?? get('tool_name'),
-        params: get('params'),
-      }
-    case 'plan.step.completed':
-      return {
-        type: 'plan_step_complete',
-        step_id: get('step_id') ?? get('stepId') ?? get('id'),
-        title: get('title') ?? get('step_title') ?? get('action'),
-        result: get('result'),
-        duration_ms: get('duration_ms') ?? get('duration'),
-      }
-    case 'plan.step.failed':
-      return {
-        type: 'plan_step_failed',
-        step_id: get('step_id') ?? get('stepId') ?? get('id'),
-        title: get('title') ?? get('step_title') ?? get('action'),
-        error: get('error'),
-      }
-    case 'tool.exec.started':
-      return {
-        type: 'tool_call_start',
-        tool_name: get('tool_name') ?? input.subject,
-        arguments: get('params') ?? get('arguments') ?? {},
-      }
-    case 'tool.exec.completed':
-    case 'tool.exec.failed':
-      return {
-        type: 'tool_call_complete',
-        tool_name: get('tool_name') ?? input.subject,
-        result: get('result'),
-        success: eventName === 'tool.exec.completed' ? get('success') ?? true : false,
-        error: get('error'),
-        duration: get('duration_ms') ?? get('duration'),
-      }
-    case 'skill_orchestration_trace':
-      return {
-        type: 'skill_orchestration_trace',
-        ...data,
-        observe_outcome: get('observe_outcome') ?? get('observeOutcome'),
-        observe_reason: get('observe_reason') ?? get('observeReason'),
-      }
-    case 'act_decision':
-      return {
-        type: 'act_decision',
-        step_id: get('step_id') ?? get('stepId') ?? get('id'),
-        title: get('title') ?? get('step_title') ?? get('action'),
-        planner_phase: get('planner_phase') ?? get('plannerPhase'),
-        planner_intent: get('planner_intent') ?? get('plannerIntent'),
-        planner_required_resources: get('planner_required_resources') ?? get('plannerRequiredResources') ?? [],
-        planner_expected_outputs: get('planner_expected_outputs') ?? get('plannerExpectedOutputs') ?? [],
-        planner_completion_criteria: get('planner_completion_criteria') ?? get('plannerCompletionCriteria') ?? [],
-        decision: get('decision'),
-        tool_name: get('tool_name') ?? get('selectedTool'),
-        arguments: get('arguments') ?? {},
-        artifact_result_text: get('artifact_result_text') ?? get('artifactResultText'),
-        artifact_type: get('artifact_type') ?? get('artifactType'),
-        artifact_medium: get('artifact_medium') ?? get('artifactMedium'),
-        artifact_format: get('artifact_format') ?? get('artifactFormat'),
-        artifact_name: get('artifact_name') ?? get('artifactName'),
-        artifact_purpose: get('artifact_purpose') ?? get('artifactPurpose'),
-        completion_text: get('completion_text') ?? get('completionText'),
-        selected_skill: get('selected_skill') ?? get('selectedSkill'),
-      }
-    case 'text_chunk':
-    case 'text':
-      return {
-        type: eventName,
-        content: String(get('content') || ''),
-      }
-    case 'file_created':
-      return {
-        type: 'file_created',
-        url: get('url'),
-        filename: get('filename'),
-        mime_type: get('mime_type') ?? get('mimeType'),
-        size: get('size'),
-      }
-    default:
-      return null
-  }
-}
-
 type RuntimeTerminalSnapshot = {
   status: SessionStatus
   endedAt?: string
   eventType?: string
+}
+
+function _runtimeEventIndicatesPendingApproval(event: RuntimeEventRecord): boolean {
+  const payload = isRecord(event.payload) ? event.payload : {}
+  const ids = payload.pending_approval_ids
+  if (Array.isArray(ids) && ids.some((item) => String(item || '').trim())) {
+    return true
+  }
+
+  const finalResponse = String(payload.final_response || '').trim()
+  if (!finalResponse) return false
+  return (
+    finalResponse.includes('操作需要人工审批后继续') ||
+    finalResponse.includes('待审批 ID:') ||
+    finalResponse.toLowerCase().includes('pending approval')
+  )
 }
 
 async function buildRuntimeSessionTerminalMap(limit = 500): Promise<Map<string, RuntimeTerminalSnapshot>> {
@@ -284,6 +386,7 @@ async function buildRuntimeSessionTerminalMap(limit = 500): Promise<Map<string, 
   for (const event of events) {
     const eventType = String(event.event_type || '').trim()
     if (!['task.completed', 'task.failed', 'task.cancelled'].includes(eventType)) continue
+    if (eventType === 'task.completed' && _runtimeEventIndicatesPendingApproval(event)) continue
     const payload = isRecord(event.payload) ? event.payload : {}
     const sessionId = String(payload.session_id || '').trim()
     if (!sessionId || terminalMap.has(sessionId)) continue
@@ -301,7 +404,7 @@ async function listRuntimeSessions(): Promise<Session[]> {
   const response = await runtimeRequest<RuntimeSessionListResponse>('/v1/sessions', {
     method: 'GET',
     query: { limit: 200 },
-    timeoutMs: 2000,
+    timeoutMs: 5000,
   })
   const items = Array.isArray(response.items) ? response.items : []
   const terminalMap = await buildRuntimeSessionTerminalMap(500).catch(() => new Map<string, RuntimeTerminalSnapshot>())
@@ -335,21 +438,25 @@ async function getRuntimeSessionOrThrow(sessionId: string): Promise<Session> {
   const sessions = await listRuntimeSessions()
   const session = sessions.find((item) => item.id === sessionId)
   if (!session) {
-    const messages = await getRuntimeSessionMessages(sessionId).catch(() => [] as Message[])
-    if (messages.length === 0) {
+    const checkpointSummary = await getLatestCheckpointSessionSummary(sessionId).catch(() => null)
+    if (!checkpointSummary) {
       throw createError(SESSION_NOT_FOUND)
     }
-
     const terminalMap = await buildRuntimeSessionTerminalMap(500).catch(() => new Map<string, RuntimeTerminalSnapshot>())
     const terminal = terminalMap.get(sessionId)
-    const createdAt = messages[0]?.createdAt || new Date().toISOString()
+    const createdAt = checkpointSummary.createdAt || new Date().toISOString()
+    const status: SessionStatus =
+      terminal?.status
+      || 'active'
     const synthesized: Session = {
       id: sessionId,
       agentId: SYSTEM_DEFAULT_AGENT_ID,
       userId: '22222222-2222-2222-2222-222222222222',
-      status: terminal?.status || 'active',
-      title: messages.find((item) => item.role === 'user')?.content?.slice(0, 100) || '未命名会话',
-      metadata: terminal?.eventType ? { runtime_terminal_event_type: terminal.eventType } : undefined,
+      status,
+      title: checkpointSummary.title || '未命名会话',
+      metadata: {
+        ...(terminal?.eventType ? { runtime_terminal_event_type: terminal.eventType } : {}),
+      },
       startedAt: createdAt,
       endedAt: terminal?.endedAt,
       createdAt,
@@ -360,65 +467,193 @@ async function getRuntimeSessionOrThrow(sessionId: string): Promise<Session> {
 }
 
 async function listRuntimeEvents(limit = 500, sessionId?: string): Promise<RuntimeEventRecord[]> {
-  const response = await runtimeRequest<{ items?: RuntimeEventRecord[] }>('/v1/events', {
-    method: 'GET',
-    query: { limit, ...(sessionId ? { session_id: sessionId } : {}) },
-    timeoutMs: 4000,
+  try {
+    const response = await runtimeRequest<{ items?: RuntimeEventRecord[] }>('/v1/events', {
+      method: 'GET',
+      query: { limit, ...(sessionId ? { session_id: sessionId } : {}) },
+      timeoutMs: 4000,
+    })
+    const items = Array.isArray(response.items) ? response.items : []
+    if (items.length > 0 || !sessionId) return items
+    sessionLogger.info('runtime returned no session events, falling back to local sqlite events', {
+      sessionId,
+      limit,
+    })
+    return listLocalRuntimeEvents(limit, sessionId)
+  } catch (error) {
+    sessionLogger.warn('runtime events unavailable, falling back to local sqlite events', {
+      sessionId,
+      limit,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return listLocalRuntimeEvents(limit, sessionId)
+  }
+}
+
+function listLocalRuntimeEvents(limit = 500, sessionId?: string): RuntimeEventRecord[] {
+  const db = getLocalDb()
+  const binds: Array<string | number> = []
+  let where = ''
+  if (sessionId) {
+    where = 'WHERE (subject = ? OR instr(payload, ?) > 0)'
+    binds.push(sessionId, sessionId)
+  }
+  const rows = db
+    .prepare(
+      `
+        SELECT id, event_type, source, subject, payload, risk_hint, created_at
+        FROM events
+        ${where}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `
+    )
+    .all(...binds, limit) as Array<Record<string, unknown>>
+
+  return rows.map((row) => {
+    let payload: Record<string, unknown> | undefined
+    if (typeof row.payload === 'string' && row.payload.trim()) {
+      try {
+        const parsed = JSON.parse(row.payload)
+        if (isRecord(parsed)) payload = parsed
+      } catch {
+        payload = undefined
+      }
+    }
+    return {
+      event_id: typeof row.id === 'string' ? row.id : undefined,
+      event_type: typeof row.event_type === 'string' ? row.event_type : undefined,
+      source: typeof row.source === 'string' ? row.source : undefined,
+      subject: typeof row.subject === 'string' ? row.subject : undefined,
+      payload,
+      risk_hint:
+        row.risk_hint === 'low' || row.risk_hint === 'medium' || row.risk_hint === 'high'
+          ? row.risk_hint
+          : undefined,
+      timestamp: typeof row.created_at === 'string' ? row.created_at : undefined,
+    }
   })
-  return Array.isArray(response.items) ? response.items : []
 }
 
-function isGeneratedFileEntry(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Record<string, unknown>
-  return typeof record.filename === 'string' && typeof record.path === 'string'
+function readPendingApprovalIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
 }
 
-function collectGeneratedFiles(value: unknown, collected: Record<string, unknown>[]): void {
-  if (Array.isArray(value)) {
-    for (const item of value) collectGeneratedFiles(item, collected)
-    return
-  }
-  if (!value || typeof value !== 'object') return
-  const record = value as Record<string, unknown>
-  if (isGeneratedFileEntry(record)) {
-    collected.push(record)
-  }
-  for (const nested of Object.values(record)) {
-    collectGeneratedFiles(nested, collected)
+async function filterLivePendingApprovalIds(approvalIds: string[]): Promise<string[]> {
+  if (approvalIds.length === 0) return []
+  try {
+    const payload = await runtimeRequest<{ items?: unknown[] }>('/v1/approvals', {
+      method: 'GET',
+      query: { status: 'pending', limit: 1000 },
+      timeoutMs: 2000,
+    })
+    const pendingIds = new Set(
+      (Array.isArray(payload.items) ? payload.items : [])
+        .map((item) => (isRecord(item) ? String(item.id || item.approval_id || '').trim() : ''))
+        .filter(Boolean),
+    )
+    return approvalIds.filter((item) => pendingIds.has(String(item || '').trim()))
+  } catch (error) {
+    sessionLogger.warn('读取 runtime pending approvals 失败，回退为保留原 pending 集合', {
+      approvalIds,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return approvalIds
   }
 }
 
-function fileMessageFromGeneratedFile(sessionId: string, file: Record<string, unknown>, createdAt: string): Message | null {
-  const filename = typeof file.filename === 'string' ? file.filename : null
-  const filePath = typeof file.path === 'string' ? file.path : null
-  if (!filename || !filePath) return null
-  if (file.user_visible === false) return null
-  if (typeof file.artifact_role === 'string' && file.artifact_role === 'data_json') return null
+async function buildRuntimeAttemptProjection(
+  attempt: RuntimeAttempt,
+  latestCheckpoint: RuntimeAttemptCheckpoint | null,
+): Promise<RuntimeSessionProjection> {
+  const checkpointPayload = isRecord(latestCheckpoint?.payload) ? latestCheckpoint.payload : {}
+  const metadata = isRecord(checkpointPayload.metadata) ? checkpointPayload.metadata : {}
+  const checkpointProcessTrace = isRecord(checkpointPayload.processTrace)
+    ? checkpointPayload.processTrace
+    : isRecord(checkpointPayload.execution_process)
+      ? checkpointPayload.execution_process
+      : null
+  const processMessages = Array.isArray((checkpointProcessTrace as { messages?: unknown[] } | null)?.messages)
+    ? ((checkpointProcessTrace as { messages?: unknown[] }).messages as unknown[])
+    : []
+  const pendingApprovalIds = attempt.status === 'awaiting_approval'
+    ? await filterLivePendingApprovalIds(
+      readPendingApprovalIds(checkpointPayload.pending_approval_ids),
+    )
+    : []
+  const waitingMessage =
+    typeof checkpointPayload.awaiting_approval_message === 'string'
+      ? checkpointPayload.awaiting_approval_message.trim()
+      : typeof metadata.awaiting_approval_message === 'string'
+        ? metadata.awaiting_approval_message.trim()
+        : ''
 
-  const fileId = typeof file.file_id === 'string' ? file.file_id : randomUUID()
+  const runState: SessionRunStateView = {
+    sessionId: attempt.sessionId,
+    status: attempt.status as SessionRunStateView['status'],
+    pendingApprovalIds,
+    updatedAt: latestCheckpoint?.createdAt ?? attempt.updatedAt,
+    ...(attempt.terminalReason ? { error: attempt.terminalReason } : {}),
+  }
+
+  const notices: SessionNotice[] = []
+  if (attempt.status === 'awaiting_approval' && pendingApprovalIds.length > 0) {
+    notices.push({
+      kind: 'awaiting_approval',
+      code: 'AWAITING_APPROVAL',
+      message: waitingMessage || '该请求包含待审批操作，等待审批后继续。',
+      approvalIds: pendingApprovalIds,
+    })
+  } else if (attempt.status === 'failed' && attempt.terminalReason) {
+    notices.push({
+      kind: 'error',
+      code: 'RUN_FAILED',
+      message: attempt.terminalReason,
+    })
+  }
+
   return {
-    id: `file-${fileId}`,
-    sessionId,
-    role: 'assistant',
-    content: '',
-    metadata: {
-      agent2ui: {
-        id: `file-${fileId}`,
-        type: 'file',
-        data: {
-          url: `/api/v1/files/${fileId}`,
-          filename,
-          mimeType: typeof file.mime_type === 'string' ? file.mime_type : 'application/octet-stream',
-          size: typeof file.size === 'number' ? file.size : undefined,
-        },
-      },
-    },
-    createdAt,
+    runState,
+    notices,
+    processTrace: processMessages.length > 0 ? { version: 1, messages: processMessages } : null,
   }
 }
 
-async function getCheckpointSessionMessages(sessionId: string): Promise<Message[]> {
+function getLatestRuntimeAttemptCheckpoint(attempt: RuntimeAttempt): RuntimeAttemptCheckpoint | null {
+  if (!attempt.checkpointId) return null
+  const found = getLocalDb()
+    .prepare('SELECT * FROM runtime_attempt_checkpoints WHERE checkpoint_id = ?')
+    .get(attempt.checkpointId) as Record<string, unknown> | undefined
+  if (!found) return null
+  return {
+    checkpointId: String(found.checkpoint_id || ''),
+    attemptId: String(found.attempt_id || ''),
+    sessionId: String(found.session_id || ''),
+    userMessageId: String(found.user_message_id || ''),
+    status: String(found.status || '') as RuntimeAttemptStatus,
+    revision: Number(found.revision ?? 0),
+    payload: typeof found.payload_json === 'string' && found.payload_json
+      ? JSON.parse(String(found.payload_json))
+      : undefined,
+    createdAt: String(found.created_at || ''),
+  }
+}
+
+type RuntimeSessionProjection = {
+  runState: SessionRunStateView | null
+  notices: SessionNotice[]
+  processTrace: SessionProcessTraceView | null
+}
+
+type CheckpointSessionSummary = {
+  title: string
+  createdAt: string
+}
+
+async function getLatestCheckpointSessionSummary(sessionId: string): Promise<CheckpointSessionSummary | null> {
   const checkpointDir = path.join(LOCAL_CHECKPOINT_ROOT, sessionId, 'checkpoints')
   let files: string[] = []
   try {
@@ -427,119 +662,29 @@ async function getCheckpointSessionMessages(sessionId: string): Promise<Message[
       .sort()
       .reverse()
   } catch {
-    return []
+    return null
   }
 
-  let latestLastUserMessage: { content: string; createdAt: string; checkpointId: string } | null = null
-  let bestMessages: Message[] = []
+  const latest = files[0]
+  if (!latest) return null
 
-  for (const name of files) {
-    try {
-      const raw = await fs.readFile(path.join(checkpointDir, name), 'utf-8')
-      const checkpoint = JSON.parse(raw) as Record<string, unknown>
-      const history = Array.isArray(checkpoint.history) ? checkpoint.history : []
-      const finalResponse =
-        typeof checkpoint.final_response === 'string' ? checkpoint.final_response.trim() : ''
-      const toolResults = Array.isArray(checkpoint.tool_results) ? checkpoint.tool_results : []
-
-      const createdAt = new Date(
-        typeof checkpoint.updated_at === 'number' ? checkpoint.updated_at * 1000 : Date.now()
-      ).toISOString()
-      const lastUserMessage =
-        typeof checkpoint.last_user_message === 'string' ? checkpoint.last_user_message.trim() : ''
-
-      if (!latestLastUserMessage && lastUserMessage) {
-        latestLastUserMessage = {
-          content: lastUserMessage,
-          createdAt,
-          checkpointId: name,
-        }
-      }
-
-      if (history.length === 0 && !finalResponse && toolResults.length === 0) continue
-
-      const messages: Message[] = []
-      history.forEach((item, index) => {
-        if (!item || typeof item !== 'object') return
-        const record = item as Record<string, unknown>
-        const role = record.role === 'user' || record.role === 'assistant' ? record.role : null
-        const content = typeof record.content === 'string' ? record.content : ''
-        if (!role || !content) return
-        messages.push({
-          id: `${name}-history-${index}`,
-          sessionId,
-          role,
-          content,
-          createdAt,
-        })
-      })
-
-      if (toolResults.length > 0) {
-        try {
-          const generatedFiles: Record<string, unknown>[] = []
-          collectGeneratedFiles(toolResults, generatedFiles)
-          const seenFileIds = new Set<string>()
-          for (const file of generatedFiles) {
-            const fileId = typeof file.file_id === 'string' ? file.file_id : `${file.filename}-${file.path}`
-            if (seenFileIds.has(fileId)) continue
-            seenFileIds.add(fileId)
-            const message = fileMessageFromGeneratedFile(sessionId, file, createdAt)
-            if (message) messages.push(message)
-          }
-        } catch (error) {
-          sessionLogger.warn('从 checkpoint 提取 generated_files 失败，已退回为仅恢复 history', {
-            sessionId,
-            checkpoint: name,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        }
-      }
-
-      if (messages.length > 0) {
-        bestMessages = messages
-        break
-      }
-    } catch {
-      continue
+  try {
+    const raw = await fs.readFile(path.join(checkpointDir, latest), 'utf-8')
+    const checkpoint = JSON.parse(raw) as Record<string, unknown>
+    const createdAt = new Date(
+      typeof checkpoint.updated_at === 'number' ? checkpoint.updated_at * 1000 : Date.now()
+    ).toISOString()
+    const title =
+      (typeof checkpoint.last_user_message === 'string' && checkpoint.last_user_message.trim()) ||
+      (typeof checkpoint.title === 'string' && checkpoint.title.trim()) ||
+      '未命名会话'
+    return {
+      title: title.slice(0, 100),
+      createdAt,
     }
+  } catch {
+    return null
   }
-
-  if (bestMessages.length > 0) {
-    if (
-      latestLastUserMessage &&
-      !bestMessages.some(
-        (message) =>
-          message.role === 'user' &&
-          message.content.trim() === latestLastUserMessage?.content
-      )
-    ) {
-      bestMessages = [
-        ...bestMessages,
-        {
-          id: `checkpoint-user-${latestLastUserMessage.checkpointId}`,
-          sessionId,
-          role: 'user',
-          content: latestLastUserMessage.content,
-          createdAt: latestLastUserMessage.createdAt,
-        },
-      ]
-    }
-    return bestMessages.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  }
-
-  if (latestLastUserMessage) {
-    return [
-      {
-        id: `checkpoint-user-${latestLastUserMessage.checkpointId}`,
-        sessionId,
-        role: 'user',
-        content: latestLastUserMessage.content,
-        createdAt: latestLastUserMessage.createdAt,
-      },
-    ]
-  }
-
-  return []
 }
 
 async function listCheckpointSessions(): Promise<Session[]> {
@@ -598,92 +743,6 @@ async function listCheckpointSessions(): Promise<Session[]> {
   return sessions.filter((item): item is Session => item !== null)
 }
 
-async function getRuntimeSessionMessagesFromEvents(sessionId: string): Promise<Message[]> {
-  // Pass session_id so runtime filters at SQL level — avoids pulling 500 events into Node.js
-  const events = await listRuntimeEvents(500, sessionId)
-  const items = events
-    .sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')))
-
-  const messages: Message[] = []
-  let currentProcessMessages: unknown[] = []
-  for (const event of items) {
-    const payload = event.payload && typeof event.payload === 'object' ? event.payload : {}
-    const eventType = String(event.event_type || '')
-    const createdAt = String(event.timestamp || new Date().toISOString())
-    if (eventType === 'chat.message.received') {
-      currentProcessMessages = []
-      const content = String((payload as Record<string, unknown>).message || '')
-      if (!content) continue
-      messages.push({
-        id: String(event.event_id || randomUUID()),
-        sessionId,
-        role: 'user',
-        content,
-        createdAt,
-      })
-      continue
-    }
-    const normalized = normalizeRuntimeEventForHistory(event)
-    const processMessage = normalized ? mapRuntimeEventToAgent2UI(normalized) : null
-    if (processMessage) {
-      currentProcessMessages.push(processMessage)
-      if (processMessage.type === 'file') {
-        messages.push({
-          id: String(event.event_id || randomUUID()),
-          sessionId,
-          role: 'assistant',
-          content: '',
-          metadata: {
-            agent2ui: processMessage,
-          },
-          createdAt,
-        })
-      }
-    }
-    if (eventType === 'task.completed' || eventType === 'task.failed') {
-      const content = String((payload as Record<string, unknown>).final_response || (payload as Record<string, unknown>).error || '')
-      if (!content) continue
-      messages.push({
-        id: String(event.event_id || randomUUID()),
-        sessionId,
-        role: 'assistant',
-        content,
-        metadata: {
-          status: (payload as Record<string, unknown>).status,
-          error: (payload as Record<string, unknown>).error,
-          execution_process: currentProcessMessages.length > 0
-            ? {
-                version: 1,
-                messages: currentProcessMessages,
-              }
-            : undefined,
-        },
-        createdAt,
-      })
-      currentProcessMessages = []
-    }
-  }
-  return messages
-}
-
-async function getRuntimeSessionMessages(sessionId: string): Promise<Message[]> {
-  const checkpointMessages = await getCheckpointSessionMessages(sessionId).catch(
-    () => [] as Message[]
-  )
-  if (checkpointMessages.length > 0) {
-    return checkpointMessages
-  }
-
-  const eventMessages = await Promise.race([
-    getRuntimeSessionMessagesFromEvents(sessionId).catch(() => [] as Message[]),
-    new Promise<Message[]>((resolve) => {
-      setTimeout(() => resolve([]), 2000)
-    }),
-  ])
-
-  return eventMessages
-}
-
 // ═══════════════════════════════════════════════════════════════
 // 服务方法
 // ═══════════════════════════════════════════════════════════════
@@ -712,7 +771,28 @@ export async function getSession(sessionId: string): Promise<Session> {
   if (!row) {
     return getRuntimeSessionOrThrow(sessionId)
   }
-  return rowToSession(row)
+  const session = rowToSession(row)
+  if (session.status !== 'active') {
+    return session
+  }
+
+  const terminalMap = await buildRuntimeSessionTerminalMap(500).catch(
+    () => new Map<string, RuntimeTerminalSnapshot>()
+  )
+  const terminal = terminalMap.get(sessionId)
+  if (!terminal) {
+    return session
+  }
+
+  return {
+    ...session,
+    status: terminal.status,
+    endedAt: terminal.endedAt ?? session.endedAt,
+    metadata: {
+      ...(session.metadata ?? {}),
+      ...(terminal.eventType ? { runtime_terminal_event_type: terminal.eventType } : {}),
+    },
+  }
 }
 
 /**
@@ -808,15 +888,50 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!deleted) throw createError(SESSION_NOT_FOUND)
 }
 
-/**
- * 获取会话消息列表
- */
 export async function getSessionMessages(
   sessionId: string
 ): Promise<Message[]> {
   const rows = await messageRepository.findBySessionId(sessionId)
-  if (rows.length > 0) return rows.map(rowToMessage)
-  return getRuntimeSessionMessages(sessionId)
+  return rows.map(rowToMessage)
+}
+
+export async function getSessionView(sessionId: string): Promise<SessionView> {
+  const session = await getSession(sessionId)
+  const rows = await messageRepository.findBySessionId(sessionId)
+  const [currentAttemptRow, attemptsSummaryRows] = await Promise.all([
+    runtimeAttemptRepository.findCurrentBySessionId(sessionId).catch(() => null),
+    runtimeAttemptRepository.listBySessionId(sessionId, 10).catch(() => []),
+  ])
+  const messages = rows.map(rowToMessage)
+  const currentAttempt = currentAttemptRow ? rowToRuntimeAttempt(currentAttemptRow) : null
+  const latestCheckpoint = currentAttempt ? getLatestRuntimeAttemptCheckpoint(currentAttempt) : null
+  const runtimeProjection = currentAttempt
+    ? await buildRuntimeAttemptProjection(currentAttempt, latestCheckpoint)
+    : { runState: null, notices: [], processTrace: null }
+  const projectedStatus =
+    session.status === 'active'
+      ? runtimeProjection.runState?.status === 'completed'
+        ? 'completed'
+        : runtimeProjection.runState?.status === 'failed' || runtimeProjection.runState?.status === 'cancelled'
+          ? 'failed'
+          : runtimeProjection.runState?.status === 'awaiting_approval' && runtimeProjection.runState.pendingApprovalIds.length === 0
+            ? 'completed'
+          : session.status
+      : session.status
+  const projectedSession =
+    projectedStatus !== session.status
+      ? { ...session, status: projectedStatus }
+      : session
+
+  return {
+    session: projectedSession,
+    messages,
+    currentAttempt,
+    attemptsSummary: attemptsSummaryRows.map(rowToRuntimeAttempt),
+    runState: runtimeProjection.runState,
+    notices: runtimeProjection.notices,
+    processTrace: runtimeProjection.processTrace,
+  }
 }
 
 /**
@@ -839,6 +954,8 @@ export async function addMessage(
 
   const row = await messageRepository.create({
     sessionId,
+    attemptId: input.attemptId,
+    userMessageId: input.userMessageId,
     role: input.role,
     content: input.content,
     parentId: input.parentId,
@@ -850,6 +967,126 @@ export async function addMessage(
   })
 
   return rowToMessage(row)
+}
+
+export async function createRuntimeAttempt(
+  sessionId: string,
+  input: CreateRuntimeAttemptInput
+): Promise<RuntimeAttempt> {
+  await getSession(sessionId)
+  const row = await runtimeAttemptRepository.create({
+    sessionId,
+    userMessageId: input.userMessageId,
+    agentId: input.agentId,
+    executionMode: input.executionMode,
+    status: input.status,
+    metadata: input.metadata,
+  })
+  await sessionRepository.updateFields(sessionId, { currentAttemptId: row.id })
+  return rowToRuntimeAttempt(row)
+}
+
+export async function getRuntimeAttempt(attemptId: string): Promise<RuntimeAttempt | null> {
+  const row = await runtimeAttemptRepository.findById(attemptId)
+  return row ? rowToRuntimeAttempt(row) : null
+}
+
+export async function getRuntimeAttemptView(attemptId: string): Promise<RuntimeAttemptView> {
+  const attempt = await getRuntimeAttempt(attemptId)
+  if (!attempt) {
+    throw createError(SESSION_NOT_FOUND)
+  }
+  const [session, messagesRows, eventOutboxRows, checkpointOutboxRows] = await Promise.all([
+    getSession(attempt.sessionId),
+    messageRepository.findByAttemptId(attemptId),
+    runtimeAttemptRepository.listEventOutboxByAttemptId(attemptId),
+    runtimeAttemptRepository.listCheckpointOutboxByAttemptId(attemptId),
+  ])
+  const messages = messagesRows.map(rowToMessage)
+  const latestCheckpoint = getLatestRuntimeAttemptCheckpoint(attempt)
+  const attemptProjection = await buildRuntimeAttemptProjection(attempt, latestCheckpoint)
+  return {
+    attempt,
+    session,
+    messages,
+    latestCheckpoint,
+    eventOutbox: eventOutboxRows.map((item) => ({
+      id: item.id,
+      revision: item.revision,
+      eventType: item.event_type,
+      status: item.status,
+      createdAt: item.created_at,
+      deliveredAt: item.delivered_at ?? undefined,
+    })),
+    checkpointOutbox: checkpointOutboxRows.map((item) => ({
+      id: item.id,
+      checkpointId: item.checkpoint_id,
+      revision: item.revision,
+      projectionTarget: item.projection_target,
+      status: item.status,
+      createdAt: item.created_at,
+      deliveredAt: item.delivered_at ?? undefined,
+    })),
+    runState: attemptProjection.runState,
+    notices: attemptProjection.notices,
+    processTrace: attemptProjection.processTrace,
+  }
+}
+
+export async function getCurrentRuntimeAttempt(sessionId: string): Promise<RuntimeAttempt | null> {
+  const row = await runtimeAttemptRepository.findCurrentBySessionId(sessionId)
+  return row ? rowToRuntimeAttempt(row) : null
+}
+
+export async function updateRuntimeAttempt(
+  attemptId: string,
+  input: UpdateRuntimeAttemptInput
+): Promise<RuntimeAttempt | null> {
+  const row = await runtimeAttemptRepository.update(attemptId, input)
+  return row ? rowToRuntimeAttempt(row) : null
+}
+
+export async function claimRuntimeAttemptLease(
+  input: ClaimRuntimeAttemptLeaseInput
+): Promise<RuntimeAttempt | null> {
+  const row = await runtimeAttemptRepository.claimLease(input)
+  return row ? rowToRuntimeAttempt(row) : null
+}
+
+export async function heartbeatRuntimeAttempt(
+  input: HeartbeatRuntimeAttemptInput
+): Promise<RuntimeAttempt | null> {
+  const row = await runtimeAttemptRepository.heartbeat(input)
+  return row ? rowToRuntimeAttempt(row) : null
+}
+
+export async function listStalledRuntimeAttempts(limit = 100): Promise<RuntimeAttempt[]> {
+  const rows = await runtimeAttemptRepository.listStalled(limit)
+  return rows.map(rowToRuntimeAttempt)
+}
+
+export async function appendRuntimeAttemptCheckpoint(
+  attemptId: string,
+  input: {
+    sessionId: string
+    userMessageId: string
+    status: RuntimeAttemptStatus
+    payload?: Record<string, unknown>
+  }
+): Promise<RuntimeAttemptCheckpoint> {
+  return runtimeAttemptCommitService.appendRuntimeAttemptCheckpointCommitted(attemptId, input)
+}
+
+export async function commitAttemptState(
+  input: CommitAttemptStateInput
+): Promise<RuntimeAttempt> {
+  return runtimeAttemptCommitService.commitAttemptState(input)
+}
+
+export async function commitAttemptTerminal(
+  input: CommitAttemptTerminalInput
+): Promise<RuntimeAttempt> {
+  return runtimeAttemptCommitService.commitAttemptTerminal(input)
 }
 
 /**

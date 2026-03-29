@@ -51,6 +51,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
             'cursor-pointer',
             'transition-all duration-fast ease-out',
             'hover:-translate-y-0.5 hover:shadow-lg',
+            'active:translate-y-0 active:scale-[0.98] active:shadow-md',
           ],
 
           className

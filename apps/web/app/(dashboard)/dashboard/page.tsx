@@ -4,22 +4,25 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import {
-  Bot,
   MessageSquare,
-  Puzzle,
+  Wrench,
   Sparkles,
   ArrowRight,
   RefreshCw,
   Activity,
   Clock3,
+  Workflow,
+  Globe,
+  Github,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
+import { AgentBotAvatar } from '@/components/ui/AgentBotAvatar'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { apiClient } from '@/lib/api'
-import { NEW_CHAT_PATH } from '@/constants/config'
 import type { Session } from '@/types'
 import { useLocale } from '@/components/providers/LocaleProvider'
 
@@ -63,7 +66,8 @@ interface DashboardStats {
   agentsTotal: number
   sessionsTotal: number
   sessionsActive: number
-  mcpTotal: number | null
+  toolsTotal: number | null
+  productionsTotal: number | null
   skillsTotal: number | null
   eventsTotal: number | null
   approvalsPending: number | null
@@ -110,7 +114,8 @@ export default function DashboardPage() {
     agentsTotal: 0,
     sessionsTotal: 0,
     sessionsActive: 0,
-    mcpTotal: null,
+    toolsTotal: null,
+    productionsTotal: null,
     skillsTotal: null,
     eventsTotal: null,
     approvalsPending: null,
@@ -126,10 +131,11 @@ export default function DashboardPage() {
       setIsLoading(true)
       setError(null)
 
-      const [agentsRes, sessionsRes, mcpRes, skillsRes, eventsRes, approvalsRes, gatewayConversationsRes] = await Promise.allSettled([
+      const [agentsRes, sessionsRes, toolsRes, productionsRes, skillsRes, eventsRes, approvalsRes, gatewayConversationsRes] = await Promise.allSettled([
         apiClient.get<ListResponse<unknown>>('/agents', { params: { page: 1, limit: 100 } }),
         apiClient.get<ListResponse<Session>>('/sessions', { params: { page: 1, limit: 10 } }),
-        apiClient.get<ListResponse<unknown>>('/mcp', { params: { page: 1, limit: 1 } }),
+        apiClient.get<ListResponse<unknown>>('/tools', { params: { page: 1, limit: 1 } }),
+        apiClient.get<ListResponse<unknown>>('/productions', { params: { page: 1, limit: 1 } }),
         apiClient.get<ListResponse<unknown>>('/skill-definitions', { params: { page: 1, limit: 1 } }),
         apiClient.get<{ items?: unknown[] }>('/events', { params: { limit: 5 } }),
         apiClient.get<{ items?: Array<{ status?: string }> }>('/approvals', { params: { status: 'pending', limit: 50 } }),
@@ -138,7 +144,8 @@ export default function DashboardPage() {
 
       const agents = agentsRes.status === 'fulfilled' ? agentsRes.value : null
       const sessions = sessionsRes.status === 'fulfilled' ? sessionsRes.value : null
-      const mcp = mcpRes.status === 'fulfilled' ? mcpRes.value : null
+      const tools = toolsRes.status === 'fulfilled' ? toolsRes.value : null
+      const productions = productionsRes.status === 'fulfilled' ? productionsRes.value : null
       const skills = skillsRes.status === 'fulfilled' ? skillsRes.value : null
       const events =
         eventsRes.status === 'fulfilled' && Array.isArray(eventsRes.value.items)
@@ -224,7 +231,8 @@ export default function DashboardPage() {
         agentsTotal: agents?.meta?.total ?? agents?.data?.length ?? 0,
         sessionsTotal: sessions?.meta?.total ?? recentSessions.length,
         sessionsActive,
-        mcpTotal: mcp ? (mcp.meta?.total ?? mcp.data?.length ?? 0) : null,
+        toolsTotal: tools ? (tools.meta?.total ?? tools.data?.length ?? 0) : null,
+        productionsTotal: productions ? (productions.meta?.total ?? productions.data?.length ?? 0) : null,
         skillsTotal: skills ? (skills.meta?.total ?? skills.data?.length ?? 0) : null,
         recentSessions,
         recentConversations,
@@ -258,7 +266,16 @@ export default function DashboardPage() {
         id: 'agents',
         label: t('dashboard.cards.agents.label'),
         value: stats.agentsTotal,
-        icon: <Bot size={18} />,
+        icon: (
+          <AgentBotAvatar
+            agentId="dashboard-agents"
+            agentName="Agents"
+            size={24}
+            iconScale={0.92}
+            monochrome
+            className="text-current"
+          />
+        ),
         hint: t('dashboard.cards.agents.hint'),
       },
       {
@@ -269,11 +286,18 @@ export default function DashboardPage() {
         hint: t('dashboard.cards.sessions.hint', { count: stats.sessionsActive }),
       },
       {
-        id: 'mcp',
-        label: t('dashboard.cards.mcp.label'),
-        value: stats.mcpTotal,
-        icon: <Puzzle size={18} />,
-        hint: t('dashboard.cards.mcp.hint'),
+        id: 'tools',
+        label: t('dashboard.cards.tools.label'),
+        value: stats.toolsTotal,
+        icon: <Wrench size={18} />,
+        hint: t('dashboard.cards.tools.hint'),
+      },
+      {
+        id: 'productions',
+        label: t('dashboard.cards.productions.label'),
+        value: stats.productionsTotal,
+        icon: <Workflow size={18} />,
+        hint: t('dashboard.cards.productions.hint'),
       },
       {
         id: 'skills',
@@ -318,6 +342,30 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <a
+                    href="https://semibot.ai"
+                    target="_blank"
+                    rel="noreferrer"
+                    className={clsx(
+                      'inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border-default px-4 text-base font-medium text-text-primary transition-all duration-fast ease-out',
+                      'hover:bg-interactive-hover hover:border-border-strong active:bg-interactive-active'
+                    )}
+                  >
+                    <Globe size={16} />
+                    {t('dashboard.actions.website')}
+                  </a>
+                  <a
+                    href="https://github.com/GoatGit/semibot"
+                    target="_blank"
+                    rel="noreferrer"
+                    className={clsx(
+                      'inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border-default px-4 text-base font-medium text-text-primary transition-all duration-fast ease-out',
+                      'hover:bg-interactive-hover hover:border-border-strong active:bg-interactive-active'
+                    )}
+                  >
+                    <Github size={16} />
+                    {t('dashboard.actions.github')}
+                  </a>
                   <Button
                     variant="secondary"
                     leftIcon={<RefreshCw size={16} />}
@@ -339,7 +387,7 @@ export default function DashboardPage() {
           <InlineErrorAlert message={error} />
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {cards.map((card) => (
             <Card key={card.id} className="border-border-default">
               <CardContent className="p-4">
@@ -356,141 +404,78 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <Card className="lg:col-span-2 border-border-default">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.recentSessions.title')}</h2>
-                <Link href="/channel-conversations" className="text-sm text-primary-400 hover:text-primary-300">
-                  {t('dashboard.recentSessions.viewAll')}
-                </Link>
-              </div>
-              <div className="mt-4 space-y-2">
-                {isLoading ? (
-                  [1, 2, 3].map((row) => (
-                    <div
-                      key={row}
-                      className="h-14 animate-pulse rounded-lg border border-border-subtle bg-bg-elevated/60"
-                    />
-                  ))
-                ) : stats.recentConversations.length > 0 ? (
-                  stats.recentConversations.map((item) => (
-                    item.href ? (
-                      <Link
-                        key={item.id}
-                        href={item.href}
-                        className={clsx(
-                          'group flex items-center justify-between rounded-lg border px-3 py-3',
-                          'border-border-subtle bg-bg-surface hover:border-border-strong'
-                        )}
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-text-primary">
-                            {item.title}
-                          </p>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
-                            <Clock3 size={12} />
-                            {formatRelativeTime(item.createdAt, locale)}
-                            <Badge variant="outline">{t(`dashboard.recentSessions.sources.${item.source}`)}</Badge>
-                          </div>
-                        </div>
-                        <ArrowRight
-                          size={14}
-                          className="text-text-tertiary transition-transform group-hover:translate-x-0.5"
-                        />
-                      </Link>
-                    ) : (
-                      <div
-                        key={item.id}
-                        className={clsx(
-                          'flex items-center justify-between rounded-lg border px-3 py-3',
-                          'border-border-subtle bg-bg-surface'
-                        )}
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-text-primary">
-                            {item.title}
-                          </p>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
-                            <Clock3 size={12} />
-                            {formatRelativeTime(item.createdAt, locale)}
-                            <Badge variant="outline">{t(`dashboard.recentSessions.sources.${item.source}`)}</Badge>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  ))
-                ) : (
-                  <p className="rounded-lg border border-border-subtle bg-bg-surface px-4 py-6 text-sm text-text-secondary">
-                    {t('dashboard.recentSessions.empty')}
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border-default">
-            <CardContent className="p-5">
-              <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.quickLinks.title')}</h2>
-              <div className="mt-4 space-y-2">
-                <QuickLink href={NEW_CHAT_PATH} title={t('dashboard.quickLinks.items.newChat.title')} desc={t('dashboard.quickLinks.items.newChat.desc')} />
-                <QuickLink href="/agents" title={t('dashboard.quickLinks.items.agents.title')} desc={t('dashboard.quickLinks.items.agents.desc')} />
-                <QuickLink href="/events" title={t('dashboard.quickLinks.items.events.title')} desc={t('dashboard.quickLinks.items.events.desc')} />
-                <QuickLink href="/rules" title={t('dashboard.quickLinks.items.rules.title')} desc={t('dashboard.quickLinks.items.rules.desc')} />
-                <QuickLink href="/approvals" title={t('dashboard.quickLinks.items.approvals.title')} desc={t('dashboard.quickLinks.items.approvals.desc')} />
-                <QuickLink href="/tools" title={t('dashboard.quickLinks.items.tools.title')} desc={t('dashboard.quickLinks.items.tools.desc')} />
-                <QuickLink href="/config" title={t('dashboard.quickLinks.items.config.title')} desc={t('dashboard.quickLinks.items.config.desc')} />
-                <QuickLink href="/tools?tab=mcp" title={t('dashboard.quickLinks.items.mcp.title')} desc={t('dashboard.quickLinks.items.mcp.desc')} />
-              </div>
-              <div className="mt-5 rounded-lg border border-border-subtle bg-bg-elevated/70 p-3 text-xs text-text-secondary">
-                <div className="flex items-center gap-2">
-                  <Activity size={14} className="text-success-500" />
-                  {t('dashboard.quickLinks.note')}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
         <Card className="border-border-default">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.recentEvents.title')}</h2>
-              <Link href="/events" className="text-sm text-primary-400 hover:text-primary-300">
-                {t('dashboard.recentEvents.open')}
+              <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.recentSessions.title')}</h2>
+              <Link href="/channel-conversations" className="text-sm text-primary-400 hover:text-primary-300">
+                {t('dashboard.recentSessions.viewAll')}
               </Link>
             </div>
             <div className="mt-4 space-y-2">
-              {stats.recentEvents.length > 0 ? (
-                stats.recentEvents.map((event) => (
+              {isLoading ? (
+                [1, 2, 3].map((row) => (
                   <div
-                    key={event.id}
-                    className="rounded-lg border border-border-subtle bg-bg-surface px-3 py-2"
+                    key={row}
+                    className="flex items-center gap-3 rounded-lg border border-border-subtle px-3 py-3"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm text-text-primary truncate">{event.eventType}</p>
-                      <Badge
-                        variant={
-                          event.riskHint === 'high'
-                            ? 'error'
-                            : event.riskHint === 'medium'
-                              ? 'warning'
-                              : event.riskHint === 'low'
-                                ? 'success'
-                                : 'outline'
-                        }
-                      >
-                        {event.riskHint || t('events.unknown')}
-                      </Badge>
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <Skeleton height={14} className="w-2/3" />
+                      <Skeleton height={10} className="w-1/3" />
                     </div>
-                    <p className="mt-1 text-xs text-text-tertiary">
-                      {formatRelativeTime(event.createdAt, locale)}
-                    </p>
+                    <Skeleton width={14} height={14} rounded="sm" />
                   </div>
+                ))
+              ) : stats.recentConversations.length > 0 ? (
+                stats.recentConversations.map((item) => (
+                  item.href ? (
+                    <Link
+                      key={item.id}
+                      href={item.href}
+                      className={clsx(
+                        'group flex items-center justify-between rounded-lg border px-3 py-3',
+                        'border-border-subtle bg-bg-surface hover:border-border-strong'
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-text-primary">
+                          {item.title}
+                        </p>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
+                          <Clock3 size={12} />
+                          {formatRelativeTime(item.createdAt, locale)}
+                          <Badge variant="outline">{t(`dashboard.recentSessions.sources.${item.source}`)}</Badge>
+                        </div>
+                      </div>
+                      <ArrowRight
+                        size={14}
+                        className="text-text-tertiary transition-transform group-hover:translate-x-0.5"
+                      />
+                    </Link>
+                  ) : (
+                    <div
+                      key={item.id}
+                      className={clsx(
+                        'flex items-center justify-between rounded-lg border px-3 py-3',
+                        'border-border-subtle bg-bg-surface'
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-text-primary">
+                          {item.title}
+                        </p>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
+                          <Clock3 size={12} />
+                          {formatRelativeTime(item.createdAt, locale)}
+                          <Badge variant="outline">{t(`dashboard.recentSessions.sources.${item.source}`)}</Badge>
+                        </div>
+                      </div>
+                    </div>
+                  )
                 ))
               ) : (
                 <p className="rounded-lg border border-border-subtle bg-bg-surface px-4 py-6 text-sm text-text-secondary">
-                  {t('dashboard.recentEvents.empty')}
+                  {t('dashboard.recentSessions.empty')}
                 </p>
               )}
             </div>
@@ -498,27 +483,5 @@ export default function DashboardPage() {
         </Card>
       </div>
     </div>
-  )
-}
-
-function QuickLink({ href, title, desc }: { href: string; title: string; desc: string }) {
-  return (
-    <Link
-      href={href}
-      title={desc}
-      className={clsx(
-        'group block rounded-lg border border-border-subtle px-3 py-3',
-        'bg-bg-surface hover:border-border-strong'
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-text-primary">{title}</span>
-        <ArrowRight
-          size={14}
-          className="text-text-tertiary transition-transform group-hover:translate-x-0.5"
-        />
-      </div>
-      <p className="mt-1 text-xs text-text-secondary">{desc}</p>
-    </Link>
   )
 }

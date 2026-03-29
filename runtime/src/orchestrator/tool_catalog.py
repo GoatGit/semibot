@@ -18,6 +18,68 @@ def _slug_token(value: str) -> str:
     return text or "tool"
 
 
+def _group_actions_from_metadata(metadata: dict[str, object] | None) -> list[dict[str, object]]:
+    if not isinstance(metadata, dict):
+        return []
+    raw_actions = metadata.get("actions")
+    if not isinstance(raw_actions, list):
+        return []
+    actions: list[dict[str, object]] = []
+    for item in raw_actions:
+        if not isinstance(item, dict):
+            continue
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue
+        parameters = item.get("parameters") if isinstance(item.get("parameters"), dict) else {}
+        actions.append(
+            {
+                "command": command,
+                "description": str(item.get("description") or "").strip(),
+                "parameters": dict(parameters),
+            }
+        )
+    return actions
+
+
+def expand_catalog_entry_for_llm(entry: ToolCatalogEntry) -> list[ToolCatalogEntry]:
+    metadata = dict(entry.metadata or {})
+    if entry.source_type != "cli" or str(metadata.get("shape") or "").strip().lower() != "group":
+        return [entry]
+
+    actions = _group_actions_from_metadata(metadata)
+    if not actions:
+        return [entry]
+
+    expanded: list[ToolCatalogEntry] = []
+    for action in actions:
+        action_name = str(action.get("command") or "").strip()
+        if not action_name:
+            continue
+        projection_name = f"{entry.tool_name}_{_slug_token(action_name)}"
+        action_description = str(action.get("description") or "").strip()
+        expanded.append(
+            ToolCatalogEntry(
+                tool_id=f"{entry.tool_id}#{action_name}",
+                tool_name=projection_name,
+                actual_tool_name=entry.actual_tool_name,
+                display_name=f"{entry.display_name} / {action_name}",
+                description=action_description or entry.description,
+                source_type=entry.source_type,
+                provider_id=entry.provider_id,
+                parameters=dict(action.get("parameters") or {}),
+                metadata={
+                    **metadata,
+                    "projection_type": "group_action",
+                    "projection_action": action_name,
+                    "projection_parent_tool_name": entry.tool_name,
+                    "projection_parent_tool_id": entry.tool_id,
+                },
+            )
+        )
+    return expanded or [entry]
+
+
 def _build_builtin_entries(runtime_context: RuntimeSessionContext) -> list[ToolCatalogEntry]:
     entries: list[ToolCatalogEntry] = []
     for tool in runtime_context.available_tools:
@@ -164,4 +226,12 @@ def build_registry_tool_catalog(registry: "SkillRegistry") -> list[ToolCatalogEn
 
 def build_catalog_cards(runtime_context: RuntimeSessionContext) -> list[dict[str, object]]:
     """Return lightweight cards for planner-side discovery."""
-    return [entry.to_catalog_card() for entry in runtime_context.get_tool_catalog()]
+    get_tool_catalog = getattr(runtime_context, "get_tool_catalog", None)
+    if callable(get_tool_catalog):
+        return [entry.to_catalog_card() for entry in get_tool_catalog()]
+    available_tools = getattr(runtime_context, "available_tools", None)
+    available_mcp_servers = getattr(runtime_context, "available_mcp_servers", None)
+    if isinstance(available_tools, list) or isinstance(available_mcp_servers, list):
+        entries = build_runtime_tool_catalog(runtime_context)
+        return [entry.to_catalog_card() for entry in entries]
+    return []

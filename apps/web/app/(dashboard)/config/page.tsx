@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Select, type SelectGroup, type SelectOption } from '@/components/ui/Select'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { apiClient } from '@/lib/api'
 import { useLocale } from '@/components/providers/LocaleProvider'
 import { toast } from '@/stores/toastStore'
@@ -1772,31 +1773,29 @@ export default function ConfigPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-bg-base">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold text-text-primary">{t('config.header.title')}</h1>
-            <p className="mt-1 text-sm text-text-secondary">
-              {t('config.header.subtitle')}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              onClick={loadData}
-              leftIcon={<Loader2 size={16} className={refreshingAll || isAnySectionLoading ? 'animate-spin' : ''} />}
-            >
-              {t('common.refresh')}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={restartRuntime}
-              disabled={restartingRuntime}
-              leftIcon={<RefreshCw size={16} className={restartingRuntime ? 'animate-spin' : ''} />}
-            >
-              {restartingRuntime ? tSafe('config.runtime.restart.running', '重启中…') : tSafe('config.runtime.restart.label', '重启runtime')}
-            </Button>
-          </div>
-        </div>
+        <PageHeader
+          title={t('config.header.title')}
+          subtitle={t('config.header.subtitle')}
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                onClick={loadData}
+                leftIcon={<Loader2 size={16} className={refreshingAll || isAnySectionLoading ? 'animate-spin' : ''} />}
+              >
+                {t('common.refresh')}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={restartRuntime}
+                disabled={restartingRuntime}
+                leftIcon={<RefreshCw size={16} className={restartingRuntime ? 'animate-spin' : ''} />}
+              >
+                {restartingRuntime ? tSafe('config.runtime.restart.running', '重启中…') : tSafe('config.runtime.restart.label', '重启runtime')}
+              </Button>
+            </>
+          }
+        />
 
         {error && (
           <InlineErrorAlert message={error} />

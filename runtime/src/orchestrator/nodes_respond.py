@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import json
 import re as _re
 
 from src.orchestrator.nodes_shared import (
@@ -124,12 +125,41 @@ def _looks_like_premature_final_response(text: str) -> bool:
     return len(content) < 220 and not has_evidence
 
 
+def _looks_like_raw_delivery_payload(text: str) -> bool:
+    content = str(text or "").strip()
+    if not content:
+        return False
+    if not content.startswith("{"):
+        return False
+    try:
+        parsed = json.loads(content)
+    except Exception:
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    keys = {str(key).strip().lower() for key in parsed.keys()}
+    raw_web_fetch_keys = {
+        "url",
+        "status_code",
+        "content_type",
+        "title",
+        "text",
+    }
+    if len(keys & raw_web_fetch_keys) >= 3:
+        return True
+    if "text" in keys and "url" in keys and len(content) > 400:
+        return True
+    return False
+
+
 async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
     logger.info("Generating response", extra={"session_id": state["session_id"]})
 
     event_emitter = context.get("event_emitter")
     llm_provider = context.get("llm_provider")
     plan = state.get("plan")
+    dr_result = state.get("dr_result") or {}
+    observe_dr_outcome = state.get("observe_dr_outcome") or {}
 
     # Resolve act-role model config early so it can be used throughout the node
     _runtime_context = state.get("context")
@@ -235,7 +265,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
     inline_delivery_items: list[dict[str, str]] = []
     if isinstance(preferred_text_delivery_artifact, dict):
         text_value = str(preferred_text_delivery_artifact.get("artifact_result_text") or "").strip()
-        if text_value:
+        if text_value and not _looks_like_raw_delivery_payload(text_value):
             chunks = [line.strip("- ").strip() for line in text_value.splitlines() if line.strip()]
             for idx, line in enumerate(chunks[:6], start=1):
                 inline_delivery_items.append({"title": f"Item {idx}", "summary": line})
@@ -267,7 +297,10 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                 }
             )
     if isinstance(primary_artifact, dict):
-        if str(primary_artifact.get("artifact_medium") or "").strip().lower() == "text":
+        primary_artifact_text = str(primary_artifact.get("artifact_result_text") or "").strip()
+        if _looks_like_raw_delivery_payload(primary_artifact_text):
+            generated_file_response = None
+        elif str(primary_artifact.get("artifact_medium") or "").strip().lower() == "text":
             if str(primary_artifact.get("artifact_type") or "").strip().lower() == "research_report":
                 generated_file_response = "已生成主研究报告文本。HTML/PDF 如有需要，应基于该主报告派生。"
             else:
@@ -303,15 +336,25 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             for item in (state.get("metadata") or {}).get("pending_approval_ids", [])
             if str(item).strip()
         ]
+    response_content: str | None = None
     if pending_approval_ids:
-        response_content = (
+        awaiting_approval_message = (
             "操作需要人工审批后继续。\n\n"
             f"待审批 ID: {', '.join(pending_approval_ids)}\n"
             "请在审批面板中通过或拒绝后继续。"
         )
-        if event_emitter:
-            await event_emitter.emit_text_chunk(response_content)
-        return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
+        return {
+            "messages": [],
+            "metadata": {
+                **(state.get("metadata") or {}),
+                "pending_approval_ids": pending_approval_ids,
+                "awaiting_approval_message": awaiting_approval_message,
+            },
+        }
+    dr_outcome_name = str(observe_dr_outcome.get("outcome") or "").strip().lower()
+    dr_answer = str(dr_result.get("answer") or "").strip()
+    if dr_outcome_name in {"respond_success", "respond_partial"} and dr_answer:
+        response_content = dr_answer
     if plan and getattr(plan, "plan_type", "plan") == "terminate" and (
         str(getattr(plan, "user_reply", "") or "").strip()
         or str(getattr(plan, "summary_for_act", "") or "").strip()
@@ -363,9 +406,10 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         if event_emitter:
             await event_emitter.emit_text_chunk(response_content)
         return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
+    raw_delivery_payload_suppressed = False
     if delivery_payloads:
         response_content = _render_delivery_payloads(delivery_payloads)
-        if response_content:
+        if response_content and not _looks_like_raw_delivery_payload(response_content):
             await _emit_delivery_file_messages(
                 event_emitter=event_emitter,
                 tool_results=tool_results,
@@ -374,6 +418,8 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             if event_emitter:
                 await event_emitter.emit_text_chunk(response_content)
             return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
+        if response_content and _looks_like_raw_delivery_payload(response_content):
+            raw_delivery_payload_suppressed = True
     if generated_file_response:
         if event_emitter:
             await event_emitter.emit_text_chunk(generated_file_response)
@@ -480,8 +526,9 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         if event_emitter:
             await event_emitter.emit_text_chunk(response_content)
         return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
-    response_content = "任务已完成。"
-    if llm_provider:
+    if response_content is None:
+        response_content = "任务已完成。"
+    if response_content == "任务已完成。" and llm_provider:
         try:
             agent_system_prompt = ""
             agent_model = _act_model
@@ -560,7 +607,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             response_content = fallback_response or "执行未完成：最终响应中出现了未执行的工具调用文本，当前结果无效，请重试。"
         else:
             response_content = "执行未完成：模型输出了未执行的工具调用文本，当前结果无效，请重试。"
-    if has_success_results and _looks_like_premature_final_response(response_content):
+    if has_success_results and (_looks_like_premature_final_response(response_content) or raw_delivery_payload_suppressed):
         if inline_delivery_items:
             fallback_response = _build_inline_delivery_fallback(
                 title=delivery_title,

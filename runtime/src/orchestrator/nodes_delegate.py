@@ -36,7 +36,7 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
     if not plan:
         return {
             "error": "Delegation not configured or no target specified",
-            "current_step": "observe",
+            "current_step": "respond",
         }
 
     if not delegator or not plan.sub_agent_id:
@@ -58,7 +58,7 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
         return {
             "error": error_text,
             "tool_results": [failed_result],
-            "current_step": "observe",
+            "current_step": "respond",
         }
 
     try:
@@ -119,7 +119,7 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
 
         return {
             "tool_results": [tool_result],
-            "current_step": "observe",
+            "current_step": "respond",
         }
 
     except Exception as e:
@@ -144,5 +144,5 @@ async def delegate_node(state: AgentState, context: dict[str, Any]) -> dict[str,
                     success=False,
                 )
             ],
-            "current_step": "observe",
+            "current_step": "respond",
         }

@@ -8,6 +8,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 _LOCAL_BLOCKLIST = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+_FAKE_IP_NETWORKS = (
+    ipaddress.ip_network("198.18.0.0/15"),
+)
 
 
 def to_bool(value: Any, default: bool = False) -> bool:
@@ -62,17 +65,30 @@ def _parse_ip_literal(host: str) -> ipaddress._BaseAddress | None:
     return None
 
 
+def _blocked_ip_reason(address: ipaddress._BaseAddress) -> str | None:
+    if address.is_loopback:
+        return "loopback"
+    if address.is_private:
+        return "private"
+    if address.is_link_local:
+        return "link-local"
+    if address.is_reserved:
+        return "reserved/test-network"
+    if address.is_unspecified:
+        return "unspecified"
+    if address.is_multicast:
+        return "multicast"
+    return None
+
+
+def _is_fake_ip_address(address: ipaddress._BaseAddress) -> bool:
+    if not isinstance(address, ipaddress.IPv4Address):
+        return False
+    return any(address in network for network in _FAKE_IP_NETWORKS)
+
+
 def _is_blocked_ip(address: ipaddress._BaseAddress) -> bool:
-    return any(
-        (
-            address.is_loopback,
-            address.is_private,
-            address.is_link_local,
-            address.is_reserved,
-            address.is_unspecified,
-            address.is_multicast,
-        )
-    )
+    return _blocked_ip_reason(address) is not None
 
 
 def _resolve_host_ips(host: str) -> list[ipaddress._BaseAddress]:
@@ -92,38 +108,91 @@ def _resolve_host_ips(host: str) -> list[ipaddress._BaseAddress]:
     return addresses
 
 
+def inspect_remote_url(
+    raw_url: str,
+    *,
+    allow_localhost: bool,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+) -> tuple[str, dict[str, Any] | None]:
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"}:
+        return "blocked", {"reason": "Only http/https URLs are allowed."}
+
+    host = _normalize_host(parsed.hostname or "")
+    if not host:
+        return "blocked", {"reason": "Invalid URL host."}
+
+    if not allow_localhost and host in _LOCAL_BLOCKLIST:
+        return "blocked", {"reason": "Access to localhost/loopback is blocked.", "host": host}
+
+    allowed = [rule for rule in (allowed_domains or []) if str(rule or "").strip()]
+    blocked = [rule for rule in (blocked_domains or []) if str(rule or "").strip()]
+    if allowed and not any(host_matches_rule(host, rule) for rule in allowed):
+        return "blocked", {"reason": f"Host '{host}' is not in allowedDomains.", "host": host}
+    if blocked and any(host_matches_rule(host, rule) for rule in blocked):
+        return "blocked", {"reason": f"Host '{host}' is blocked.", "host": host}
+
+    literal_ip = _parse_ip_literal(host)
+    if not allow_localhost and literal_ip is not None:
+        blocked_reason = _blocked_ip_reason(literal_ip)
+        if blocked_reason is not None:
+            if _is_fake_ip_address(literal_ip):
+                return "approval_required", {
+                    "host": host,
+                    "resolved_ip": str(literal_ip),
+                    "blocked_reason": blocked_reason,
+                    "guard": "fake_ip_dns",
+                }
+            return "blocked", {
+                "reason": f"Access to blocked address is denied: {literal_ip} ({blocked_reason}).",
+                "host": host,
+                "resolved_ip": str(literal_ip),
+                "blocked_reason": blocked_reason,
+            }
+
+    if not allow_localhost:
+        for resolved_ip in _resolve_host_ips(host):
+            blocked_reason = _blocked_ip_reason(resolved_ip)
+            if blocked_reason is None:
+                continue
+            if _is_fake_ip_address(resolved_ip):
+                return "approval_required", {
+                    "host": host,
+                    "resolved_ip": str(resolved_ip),
+                    "blocked_reason": blocked_reason,
+                    "guard": "fake_ip_dns",
+                }
+            return "blocked", {
+                "reason": f"Resolved host points to a blocked address: {resolved_ip} ({blocked_reason}).",
+                "host": host,
+                "resolved_ip": str(resolved_ip),
+                "blocked_reason": blocked_reason,
+            }
+
+    return "ok", {"host": host}
+
+
 def validate_remote_url(
     raw_url: str,
     *,
     allow_localhost: bool,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
+    allow_fake_ip_override: bool = False,
 ) -> tuple[bool, str | None]:
-    parsed = urlparse(raw_url)
-    if parsed.scheme not in {"http", "https"}:
-        return False, "Only http/https URLs are allowed."
-
-    host = _normalize_host(parsed.hostname or "")
-    if not host:
-        return False, "Invalid URL host."
-
-    if not allow_localhost and host in _LOCAL_BLOCKLIST:
-        return False, "Access to localhost/loopback is blocked."
-
-    allowed = [rule for rule in (allowed_domains or []) if str(rule or "").strip()]
-    blocked = [rule for rule in (blocked_domains or []) if str(rule or "").strip()]
-    if allowed and not any(host_matches_rule(host, rule) for rule in allowed):
-        return False, f"Host '{host}' is not in allowedDomains."
-    if blocked and any(host_matches_rule(host, rule) for rule in blocked):
-        return False, f"Host '{host}' is blocked."
-
-    literal_ip = _parse_ip_literal(host)
-    if not allow_localhost and literal_ip is not None and _is_blocked_ip(literal_ip):
-        return False, "Access to private, loopback, or link-local addresses is blocked."
-
-    if not allow_localhost:
-        for resolved_ip in _resolve_host_ips(host):
-            if _is_blocked_ip(resolved_ip):
-                return False, "Resolved host points to a private, loopback, or link-local address."
-
-    return True, None
+    status, detail = inspect_remote_url(
+        raw_url,
+        allow_localhost=allow_localhost,
+        allowed_domains=allowed_domains,
+        blocked_domains=blocked_domains,
+    )
+    if status == "ok":
+        return True, None
+    if status == "approval_required" and allow_fake_ip_override:
+        return True, None
+    return False, str((detail or {}).get("reason") or (
+        "Resolved host points to a fake-ip DNS address and requires approval override."
+        if status == "approval_required"
+        else "Invalid URL"
+    ))

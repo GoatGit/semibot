@@ -6,6 +6,7 @@ It handles routing, metadata enrichment, and approval hooks.
 """
 
 import json
+import os
 from typing import Any, Callable, Awaitable
 from dataclasses import dataclass, field
 
@@ -13,6 +14,8 @@ from src.orchestrator.state import PlanStep, ToolCallResult
 from src.orchestrator.context import RuntimeSessionContext
 from src.orchestrator.capability import CapabilityGraph
 from src.events.runtime_emitter import RuntimeEventEmitter, emit_runtime_event
+from src.server.config_store import RuntimeConfigStore
+from src.skills._http_utils import inspect_remote_url
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -122,6 +125,39 @@ def _normalize_action_params(tool_name: str, params: dict[str, Any]) -> dict[str
     return normalized
 
 
+def _parse_domain_rules(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip().lower() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip().lower() for item in value if str(item).strip()]
+    return []
+
+
+def _http_tool_guard(tool_name: str, params: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    normalized_name = str(tool_name or "").strip().lower()
+    if normalized_name not in {"web_fetch", "http_client", "semi_browser"}:
+        return None
+    url = str(params.get("url") or "").strip()
+    if not url:
+        return None
+
+    allow_localhost = _to_bool(config.get("allowLocalhost"), default=False)
+    allowed_domains = _parse_domain_rules(config.get("allowedDomains"))
+    blocked_domains = _parse_domain_rules(config.get("blockedDomains"))
+    status, detail = inspect_remote_url(
+        url,
+        allow_localhost=allow_localhost,
+        allowed_domains=allowed_domains,
+        blocked_domains=blocked_domains,
+    )
+    if status != "approval_required":
+        return None
+    payload = dict(detail or {})
+    payload["url"] = url
+    payload["tool_name"] = normalized_name
+    return payload
+
+
 @dataclass
 class ExecutionMetadata:
     """Metadata for action execution."""
@@ -173,6 +209,9 @@ class UnifiedActionExecutor:
         self.approval_hook = approval_hook
         self.audit_logger = audit_logger
         self.event_emitter = event_emitter or runtime_context.metadata.get("event_emitter")
+        self._config_store: RuntimeConfigStore | None = None
+        self._tool_row_cache: dict[str, dict[str, Any] | None] = {}
+        self._tool_config_cache: dict[str, dict[str, Any]] = {}
 
         # Build capability graph
         self.capability_graph = CapabilityGraph(runtime_context)
@@ -180,6 +219,34 @@ class UnifiedActionExecutor:
 
         # High-risk tools from runtime policy
         self.high_risk_tools = set(runtime_context.runtime_policy.high_risk_tools)
+
+    def _get_config_store(self) -> RuntimeConfigStore:
+        if self._config_store is None:
+            self._config_store = RuntimeConfigStore(db_path=os.getenv("SEMIBOT_EVENTS_DB_PATH"))
+        return self._config_store
+
+    def _load_tool_row(self, tool_name: str) -> dict[str, Any] | None:
+        cache_key = str(tool_name or "").strip()
+        if cache_key in self._tool_row_cache:
+            return self._tool_row_cache[cache_key]
+        try:
+            store = self._get_config_store()
+            item = store.get_tool_by_name(cache_key)
+            row = item if isinstance(item, dict) else None
+        except Exception:
+            row = None
+        self._tool_row_cache[cache_key] = row
+        return row
+
+    def _load_builtin_tool_config(self, tool_name: str) -> dict[str, Any]:
+        cache_key = str(tool_name or "").strip()
+        if cache_key in self._tool_config_cache:
+            return self._tool_config_cache[cache_key]
+        row = self._load_tool_row(cache_key)
+        config = row.get("config") if isinstance(row, dict) else {}
+        value = config if isinstance(config, dict) else {}
+        self._tool_config_cache[cache_key] = value
+        return value
 
     async def execute(
         self,
@@ -246,6 +313,29 @@ class UnifiedActionExecutor:
                 "params": params,
             },
         )
+
+        tool_row = self._load_tool_row(tool_name)
+        if tool_row is not None and not bool(tool_row.get("is_active", True)):
+            await emit_runtime_event(
+                self.event_emitter,
+                event_type="tool.exec.failed",
+                source="runtime.unified_executor",
+                subject=tool_name,
+                payload={
+                    "session_id": self.runtime_context.session_id,
+                    "action_id": action.id,
+                    "tool_name": tool_name,
+                    "error": "tool_disabled",
+                },
+                risk_hint="low",
+            )
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error=f"Tool '{tool_name}' is disabled in runtime config",
+                success=False,
+                metadata={"error_code": "TOOL_DISABLED"},
+            )
 
         # Validate action against capability graph
         if not self.capability_graph.validate_action(tool_name):
@@ -482,6 +572,10 @@ class UnifiedActionExecutor:
                     },
                 )
 
+        if metadata.additional.get("fake_ip_override_required"):
+            params = dict(params)
+            params["_approved_fake_ip_override"] = True
+
         # Route to appropriate executor
         try:
             result = await self._route_execution(capability, tool_name, params, metadata)
@@ -591,6 +685,8 @@ class UnifiedActionExecutor:
         )
 
         normalized_params = params if isinstance(params, dict) else {}
+        builtin_config = self._load_builtin_tool_config(tool_name)
+        fake_ip_guard = _http_tool_guard(tool_name, normalized_params, builtin_config)
         if tool_name == "file_io":
             action = str(
                 normalized_params.get("action")
@@ -607,6 +703,10 @@ class UnifiedActionExecutor:
                     self.runtime_context.runtime_policy.require_approval_for_high_risk
                 )
                 risk_level = "high"
+        elif fake_ip_guard is not None:
+            is_high_risk = True
+            requires_approval = True
+            risk_level = "high"
 
         metadata = ExecutionMetadata(
             capability_type=capability.capability_type,
@@ -621,8 +721,19 @@ class UnifiedActionExecutor:
                 "risk_level": risk_level or ("high" if is_high_risk else "low"),
                 "approval_scope": metadata_map.get("approval_scope"),
                 "approval_dedupe_keys": metadata_map.get("approval_dedupe_keys"),
+                "projection_type": metadata_map.get("projection_type"),
+                "projection_action": metadata_map.get("projection_action"),
+                "projection_parent_tool_name": metadata_map.get("projection_parent_tool_name"),
+                "projection_parent_tool_id": metadata_map.get("projection_parent_tool_id"),
+                "fake_ip_override_required": fake_ip_guard is not None,
+                "fake_ip_host": fake_ip_guard.get("host") if fake_ip_guard else None,
+                "fake_ip_resolved_ip": fake_ip_guard.get("resolved_ip") if fake_ip_guard else None,
+                "fake_ip_guard": fake_ip_guard.get("guard") if fake_ip_guard else None,
             },
         )
+
+        if fake_ip_guard is not None:
+            metadata.additional["approval_scope"] = metadata.additional.get("approval_scope") or "session"
 
         # Add MCP-specific metadata
         if capability.capability_type == "mcp":
@@ -650,9 +761,13 @@ class UnifiedActionExecutor:
                 actual_tool_name=str(metadata.additional.get("actual_tool_name") or tool_name),
             )
         elif capability.capability_type == "tool":
+            effective_params = dict(params)
+            projection_action = str(metadata.additional.get("projection_action") or "").strip()
+            if projection_action:
+                effective_params.setdefault("command", projection_action)
             result = await self._execute_tool(
                 tool_name,
-                params,
+                effective_params,
                 actual_tool_name=str(metadata.additional.get("actual_tool_name") or tool_name),
             )
         elif capability.capability_type == "mcp":

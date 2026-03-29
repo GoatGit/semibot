@@ -2,114 +2,48 @@
 
 import asyncio
 import inspect
-import json
 import os
 import time
-from contextlib import suppress
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 import re as _re
 
 from src.orchestrator.nodes_plan import (
     _is_abstract_reasoning_step,
     _latest_user_text_from_messages,
-    _merge_dynamic_registry_schemas,
 )
-from src.orchestrator.nodes_respond import (
-    _build_inline_delivery_fallback,
-    _infer_delivery_language,
-)
-from src.orchestrator.nodes_shared import (
-    _build_assistant_transcript_message,
-    _current_round_skill_id,
-    _iter_generated_files_from_result,
-    _parse_tool_call_arguments,
-    _serialize_tool_backfeed_content,
-)
-from src.orchestrator.nodes_stateflow import (
-    _artifact_matches_input_ref,
-    _build_act_artifact_context,
-    _resolve_input_binding_from_artifact,
-)
+from src.orchestrator.nodes_shared import _current_round_skill_id
 from src.orchestrator.state import AgentState, ExecutionPlan, PlanStep, ToolCallResult, resolve_time_context
 from src.llm.provider_compat import resolve_act_execution_strategy
 from src.utils.logging import get_logger
 
 # --- Re-exports from act sub-modules (preserves backward-compatible import paths) ---
-from src.orchestrator.act_context import (  # noqa: F401
-    _assistant_tool_call_ids,
-    _build_step_memory,
-    _chunk_act_transcript,
-    _compact_act_artifact_context,
-    _compact_act_transcript,
-    _filter_historical_tool_results_for_artifact_context,
-    _format_loaded_resource_summary,
-    _get_step_transcripts,
-    _infer_text_artifact_type,
-    _match_generated_artifact_reference,
-    _normalize_workspace_rel_path,
-    _parallel_step_group_is_safe,
-    _paths_look_semantically_equivalent,
-    _persist_act_loop_trace_to_state,
-    _persist_step_transcript_to_state,
-    _resolved_step_output_contract,
-    _semantic_file_tokens,
-    _set_step_transcript,
-    _truncate_act_prompt_text,
-    _truncate_act_message_content,
-)
-from src.orchestrator.act_terminal import (  # noqa: F401
+from src.orchestrator.act_context import _get_step_transcripts, _parallel_step_group_is_safe, _persist_act_loop_trace_to_state
+from src.orchestrator.act_terminal import (
     _act_response_format,
-    _build_act_decision_event_payload,
-    _build_llm_act_terminal_result,
-    _build_text_artifact_payload,
-    _parse_structured_json_object,
-    _sanitize_loose_json_string_literals,
-    _step_requires_interactive_browser,
-    _structured_json_diagnostics,
     _terminal_result_allows_step_advance,
-    _terminal_result_is_fake_partial_progress,
     finalize_act_terminal_result,
     validate_act_terminal_response,
 )
-from src.orchestrator.act_tool_executor import (  # noqa: F401
-    _bind_file_io_skill_scope,
+from src.orchestrator.act_tool_executor import (
     _build_act_tool_schemas,
-    _build_tool_transcript_message,
-    _code_executor_embeds_bound_text_for_summary_only,
-    _code_executor_is_terminal_json_wrapper,
-    _ensure_step_result_handoff_contract,
     _execute_with_events,
-    _extract_generated_file_candidates,
-    _filter_finance_search_results,
-    _find_latest_generated_report_path,
-    _has_same_step_search_provider_failures,
-    _inject_context_data,  # noqa: F401 - re-exported for backward-compatible imports/tests
-    _inject_file_io_session_artifacts,
-    _inject_skill_script_artifacts,
-    _is_finance_research_intent,
-    _is_latest_research_intent,
     _postprocess_execution_result,
     _prepare_artifact_aware_action,
-    _search_query_contains_stale_year,
-    _serialize_tool_result_payload,
-    _summarize_generic_result_for_handoff,
-    _tool_call_is_readonly_parallel_safe,
-    _validate_llm_act_tool_call,
-    execute_single_act_tool_call,
     process_act_tool_call_chunks,
-    _ENABLE_FRESHNESS_VALIDATION as _ENABLE_FRESHNESS_VALIDATION,
-    _READONLY_PARALLEL_TOOL_NAMES as _READONLY_PARALLEL_TOOL_NAMES,
-    _READONLY_PARALLEL_HTTP_METHODS as _READONLY_PARALLEL_HTTP_METHODS,
-    _MAX_PARALLEL_READONLY_TOOL_CALLS as _MAX_PARALLEL_READONLY_TOOL_CALLS,
 )
 from src.orchestrator.act_llm_caller import (  # noqa: F401
     build_act_system_messages,
     build_step_static_context,
-    build_per_turn_user_message,
     handle_act_llm_error,
     handle_act_output_truncation,
+)
+from src.orchestrator.act_budget_guard import resolve_step_budget_limits
+from src.orchestrator.act_context_assembly import assemble_act_turn_messages
+from src.orchestrator.act_runtime_pipeline import ActRuntimePipeline
+from src.orchestrator.runtime_middleware import (
+    RuntimeFailure,
+    RuntimeSignal,
+    load_budget_state,
 )
 
 logger = get_logger(__name__)
@@ -117,6 +51,22 @@ logger = get_logger(__name__)
 # ACT inner loop limits — configurable via env vars.
 _MAX_INNER_TURNS = int(os.getenv("SEMIBOT_ACT_MAX_INNER_TURNS") or "30")
 _MAX_TOOL_CALLS_PER_STEP = int(os.getenv("SEMIBOT_ACT_MAX_TOOL_CALLS_PER_STEP") or "50")
+_ACT_LLM_HARD_TIMEOUT_SECONDS = float(os.getenv("SEMIBOT_ACT_LLM_HARD_TIMEOUT_SECONDS") or "120")
+_ENABLE_FRESHNESS_VALIDATION = str(os.getenv("SEMIBOT_ENABLE_FRESHNESS_VALIDATION", "false")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+def _act_llm_timeout_seconds(llm_provider: Any) -> float:
+    configured = getattr(getattr(llm_provider, "config", None), "timeout", None)
+    try:
+        timeout = float(configured) if configured is not None else _ACT_LLM_HARD_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        timeout = _ACT_LLM_HARD_TIMEOUT_SECONDS
+    return max(1.0, min(timeout, _ACT_LLM_HARD_TIMEOUT_SECONDS))
 
 
 def _extract_cli_flag_assignments(args: list[str]) -> list[tuple[str, str]]:
@@ -202,12 +152,26 @@ async def _execute_llm_act_step(
     max_output_truncation_retries = 2
 
     _current_iteration = int(state.get("iteration", 0))
-    dep_step_ids: set[str] = {
-        ref.source_step_id
-        for ref in (action.input_refs or [])
-        if ref.source_step_id
-    }
-
+    budget_limits = resolve_step_budget_limits(
+        max_tool_calls_per_step=max_tool_calls_per_step,
+        max_inner_turns=max_inner_turns,
+    )
+    step_budget = load_budget_state(
+        state,
+        step_id=action.id,
+        iteration=_current_iteration,
+        max_tool_calls_per_step=budget_limits["max_tool_calls_per_step"],
+        max_inner_turns=budget_limits["max_inner_turns"],
+        max_wall_clock_seconds=budget_limits["max_wall_clock_seconds"],
+        max_total_tokens=budget_limits["max_total_tokens"],
+    )
+    pipeline = ActRuntimePipeline(
+        state=state,
+        action=action,
+        iteration=_current_iteration,
+        event_emitter=event_emitter,
+        budget=step_budget,
+    )
     def _iter_matches(meta_iteration: Any) -> bool:
         if meta_iteration is None:
             return True
@@ -217,53 +181,54 @@ async def _execute_llm_act_step(
             return True
 
     while True:
-        # --- Artifact context ---
-        historical_rows = _filter_historical_tool_results_for_artifact_context(
-            state.get("tool_results", [])
+        pipeline.snapshot_counters(
+            tool_call_count=tool_call_count,
+            terminal_retry_count=terminal_retry_count,
+            rate_limit_retry_count=rate_limit_retry_count,
+            context_overflow_retry_count=context_overflow_retry_count,
+            timeout_retry_count=timeout_retry_count,
+            output_truncation_retry_count=output_truncation_retry_count,
         )
-        historical_rows = [
-            r for r in historical_rows
-            if not isinstance(r.metadata, dict)
-            or _iter_matches(r.metadata.get("iteration"))
-        ]
-        if dep_step_ids:
-            historical_rows = [
-                r for r in historical_rows
-                if isinstance(r.metadata, dict)
-                and (
-                    r.metadata.get("act_step_id") in dep_step_ids
-                    or r.metadata.get("source_step_id") in dep_step_ids
+        await pipeline.on_tick(act_phase=act_phase, turn_count=turn_count)
+        pre_llm_signal = await pipeline.pre_llm_call()
+        if pre_llm_signal.kind == "hard_stop":
+            step_results.append(
+                ToolCallResult(
+                    tool_name="llm_act",
+                    params={"title": action.title},
+                    error=pre_llm_signal.message,
+                    success=False,
+                    metadata={"runtime_signal": pre_llm_signal.to_dict()},
+                )
+            )
+            return step_results
+
+        try:
+            act_messages, artifact_context, step_memory, short_term_budget_text, compression_signal = await assemble_act_turn_messages(
+                state=state,
+                action=action,
+                runtime_context=runtime_context,
+                memory_system=memory_system,
+                step_system_messages=_step_system_messages,
+                step_transcript=step_transcript,
+                step_results=step_results,
+                prior_results=prior_results,
+                act_phase=act_phase,
+                terminal_retry_count=terminal_retry_count,
+                current_iteration=_current_iteration,
+                latest_user_text=latest_user_text,
+            )
+            await pipeline.on_context_signal(compression_signal)
+        except Exception as exc:
+            logger.warning("act_context_assembly_failed", extra={"error": str(exc)}, exc_info=True)
+            return [
+                ToolCallResult(
+                    tool_name="llm_act",
+                    params={"title": action.title},
+                    error=f"ACT context assembly failed: {str(exc)[:300]}",
+                    success=False,
                 )
             ]
-        recent_rows = list(historical_rows)
-        if prior_results:
-            recent_rows.extend(prior_results)
-        recent_rows.extend(step_results)
-        artifact_context = _compact_act_artifact_context(_build_act_artifact_context(recent_rows, runtime_context))
-        step_memory = _build_step_memory(step_results, runtime_context)
-
-        # --- Build messages ---
-        act_messages = list(_step_system_messages)
-        act_messages.extend(_compact_act_transcript(step_transcript))
-
-        short_term_budget_text = ""
-        if memory_system and hasattr(memory_system, "format_short_term_budget_prompt"):
-            try:
-                short_term_budget_text = str(
-                    await memory_system.format_short_term_budget_prompt(state["session_id"])
-                )
-            except Exception as exc:
-                logger.warning("act_short_term_budget_unavailable", extra={"error": str(exc)})
-
-        act_user_content = build_per_turn_user_message(
-            act_phase=act_phase,
-            terminal_retry_count=terminal_retry_count,
-            short_term_budget_text=short_term_budget_text,
-            step_memory=step_memory,
-            artifact_context=artifact_context,
-            current_step_output_contract=_resolved_step_output_contract(action),
-        )
-        act_messages.append({"role": "user", "content": _truncate_act_prompt_text(act_user_content)})
 
         # --- Tool/model config ---
         if runtime_context is not None:
@@ -308,12 +273,15 @@ async def _execute_llm_act_step(
         # --- LLM call ---
         try:
             _act_llm_call_started = time.perf_counter()
-            response = await llm_provider.chat(
-                messages=act_messages,
-                tools=phase_tools,
-                temperature=act_temperature,
-                response_format=phase_response_format,
-                model=agent_model,
+            response = await asyncio.wait_for(
+                llm_provider.chat(
+                    messages=act_messages,
+                    tools=phase_tools,
+                    temperature=act_temperature,
+                    response_format=phase_response_format,
+                    model=agent_model,
+                ),
+                timeout=_act_llm_timeout_seconds(llm_provider),
             )
             _act_llm_call_duration_ms = int((time.perf_counter() - _act_llm_call_started) * 1000)
         except Exception as llm_error:
@@ -333,6 +301,28 @@ async def _execute_llm_act_step(
                 timeout_retry_count=timeout_retry_count,
                 max_timeout_retries=max_timeout_retries,
             )
+            runtime_failure = signal.get("runtime_failure")
+            failure_obj: RuntimeFailure | None = None
+            if isinstance(runtime_failure, dict):
+                failure_obj = RuntimeFailure(
+                    family=str(runtime_failure.get("family") or "llm"),  # type: ignore[arg-type]
+                    kind=str(runtime_failure.get("kind") or "provider_error"),
+                    retryable=bool(runtime_failure.get("retryable")),
+                    source=str(runtime_failure.get("source") or "llm_provider"),
+                    message=str(runtime_failure.get("message") or "LLM call failed"),
+                    meta=dict(runtime_failure.get("meta") or {}),
+                )
+            runtime_signal = signal.get("runtime_signal")
+            signal_obj: RuntimeSignal | None = None
+            if isinstance(runtime_signal, dict):
+                signal_obj = RuntimeSignal(
+                    kind=str(runtime_signal.get("kind") or "emit_only"),  # type: ignore[arg-type]
+                    source=str(runtime_signal.get("source") or "budget_guard"),
+                    reason=str(runtime_signal.get("reason") or "llm_retry"),
+                    message=str(runtime_signal.get("message") or ""),
+                    data=dict(runtime_signal.get("data") or {}),
+                )
+            await pipeline.on_llm_error(failure_obj, signal_obj)
             if signal["action"] == "return":
                 return step_results
             rate_limit_retry_count = signal["rate_limit_retry_count"]
@@ -348,6 +338,11 @@ async def _execute_llm_act_step(
         # --- Usage emit ---
         raw_usage = getattr(response, "usage", {})
         _act_usage = dict(raw_usage) if isinstance(raw_usage, dict) else {}
+        budget_signal = await pipeline.post_llm_usage(
+            usage=_act_usage,
+            duration_ms=_act_llm_call_duration_ms,
+            model=agent_model,
+        )
         if event_emitter and _act_usage:
             await event_emitter.emit(
                 "llm.usage",
@@ -364,6 +359,17 @@ async def _execute_llm_act_step(
                     "iteration": state.get("iteration", 0),
                 },
             )
+        if budget_signal.kind == "hard_stop":
+            step_results.append(
+                ToolCallResult(
+                    tool_name="llm_act",
+                    params={"title": action.title},
+                    error=budget_signal.message,
+                    success=False,
+                    metadata={"runtime_signal": budget_signal.to_dict()},
+                )
+            )
+            return step_results
 
         # --- Output truncation ---
         trunc_signal = handle_act_output_truncation(
@@ -396,6 +402,7 @@ async def _execute_llm_act_step(
                 current_skill_id=current_skill_id,
                 runtime_context=runtime_context,
                 prior_results=prior_results,
+                pipeline=pipeline,
                 step_results=step_results,
                 step_transcript=step_transcript,
                 act_loop_trace=act_loop_trace,
@@ -697,6 +704,7 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
                 return_exceptions=True,
             )
             group_failed = False
+            keep_parallel_group_pending = False
             for offset, result_batch in enumerate(parallel_results):
                 if isinstance(result_batch, Exception):
                     group_failed = True
@@ -718,16 +726,19 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
                         terminal_decision = str(
                             terminal.metadata.get("act_decision") or ""
                         ).strip().lower()
-                    if not (terminal and getattr(terminal, "success", False)) or terminal_decision != "advance_step":
+                    if terminal and getattr(terminal, "success", False) and terminal_decision == "continue_current_step":
+                        keep_parallel_group_pending = True
+                    elif not (terminal and getattr(terminal, "success", False)) or terminal_decision != "advance_step":
                         group_failed = True
-            if group_failed:
-                remaining_actions = pending_actions[end_idx:]
+            if group_failed or keep_parallel_group_pending:
+                remaining_actions = pending_actions[idx:] if keep_parallel_group_pending else pending_actions[end_idx:]
                 logger.info(
                     "parallel_group_execution_stopped_after_failure",
                     extra={
                         "session_id": state["session_id"],
                         "remaining_actions": len(remaining_actions),
                         "group_size": len(group),
+                        "keep_parallel_group_pending": keep_parallel_group_pending,
                     },
                 )
                 break

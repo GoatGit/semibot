@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { apiClient } from '@/lib/api'
-import { STORAGE_KEYS } from '@/constants/config'
 import { useLocale } from '@/components/providers/LocaleProvider'
+import { useTheme } from '@/components/providers/ThemeProvider'
 
 type SettingsSection = 'profile' | 'password' | 'preferences'
 type Theme = 'dark' | 'light' | 'system'
@@ -291,6 +291,7 @@ function PasswordSection() {
 
 function PreferencesSection() {
   const { locale, setLocale: applyLocale, t } = useLocale()
+  const { setTheme: syncTheme } = useTheme()
   const [theme, setTheme] = useState<Theme>('dark')
   const [language, setLanguage] = useState<Language>('zh-CN')
   const [saved, setSaved] = useState(false)
@@ -332,13 +333,7 @@ function PreferencesSection() {
       if (response.success && response.data) {
         setTheme(response.data.theme)
         setLanguage(response.data.language)
-        // 同步主题到 DOM 和 localStorage
-        const savedTheme = response.data.theme
-        const resolved = savedTheme === 'system'
-          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-          : savedTheme
-        document.documentElement.dataset.theme = resolved
-        localStorage.setItem(STORAGE_KEYS.THEME, savedTheme)
+        syncTheme(response.data.theme)
         if (response.data.language !== locale) {
           applyLocale(response.data.language)
         }

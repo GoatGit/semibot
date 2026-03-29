@@ -8,6 +8,7 @@ import { authenticate, requirePermission, type AuthRequest } from '../../middlew
 import { asyncHandler, validate } from '../../middleware/errorHandler'
 import { combinedRateLimit } from '../../middleware/rateLimit'
 import * as sessionService from '../../services/session.service'
+import { resolveDocumentChunk } from '../../services/document-context.service'
 
 type Session = Awaited<ReturnType<typeof sessionService.getSession>>
 
@@ -53,6 +54,12 @@ const addMessageSchema = z.object({
     .optional(),
   toolCallId: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
+})
+
+const documentChunkQuerySchema = z.object({
+  docId: z.string().min(1).optional(),
+  version: z.coerce.number().int().min(1).optional(),
+  chunkId: z.string().regex(/^c\d{3,}$/i),
 })
 
 // ═══════════════════════════════════════════════════════════════
@@ -173,6 +180,41 @@ router.delete(
  * GET /sessions/:id/messages - 获取会话消息列表
  */
 router.get(
+  '/attempts/:attemptId',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('sessions:read'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const attemptId = req.params.attemptId
+    const view = await sessionService.getRuntimeAttemptView(attemptId)
+    res.json({
+      success: true,
+      data: view,
+    })
+  })
+)
+
+router.get(
+  '/:id/view',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('sessions:read'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const sessionId = req.params.id
+
+    const view = await sessionService.getSessionView(sessionId)
+
+    res.json({
+      success: true,
+      data: view,
+    })
+  })
+)
+
+/**
+ * GET /sessions/:id/messages - 获取会话消息列表
+ */
+router.get(
   '/:id/messages',
   authenticate,
   combinedRateLimit,
@@ -207,6 +249,58 @@ router.post(
     res.status(201).json({
       success: true,
       data: message,
+    })
+  })
+)
+
+router.get(
+  '/:id/document-chunk',
+  authenticate,
+  combinedRateLimit,
+  requirePermission('sessions:read'),
+  validate(documentChunkQuerySchema, 'query'),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const sessionId = req.params.id
+    const { docId, version, chunkId } = req.query as unknown as z.infer<typeof documentChunkQuerySchema>
+
+    const resolution = await resolveDocumentChunk({
+      sessionId,
+      ...(docId ? { docId } : {}),
+      ...(version ? { version } : {}),
+      chunkId: chunkId.toLowerCase(),
+    })
+
+    if (resolution.kind === 'ambiguous') {
+      res.status(409).json({
+        success: false,
+        error: {
+          code: 'DOCUMENT_CHUNK_AMBIGUOUS',
+          message: 'document chunk is ambiguous',
+          details: {
+            references: resolution.references,
+          },
+        },
+      })
+      return
+    }
+
+    if (resolution.kind === 'not_found') {
+      res.status(404).json({
+        success: false,
+        error: {
+          code: 'DOCUMENT_CHUNK_NOT_FOUND',
+          message: 'document chunk not found',
+          details: {
+            references: resolution.references,
+          },
+        },
+      })
+      return
+    }
+
+    res.json({
+      success: true,
+      data: resolution.chunk,
     })
   })
 )

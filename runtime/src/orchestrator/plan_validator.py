@@ -328,6 +328,9 @@ def validate_plan_candidate(
         return contract_error + " Regenerate the plan with valid delivery and handoff contract fields."
 
     # 3. Selected skill without read_skill
+    # Only enforce this when the skill is actually in the skill index (i.e., read_skill
+    # was available). If there's no skill index, the LLM may reference a skill name
+    # generically without needing to call read_skill first.
     if isinstance(candidate_plan, ExecutionPlan):
         selected_skill = str(candidate_plan.selected_skill or "").strip()
         if (
@@ -335,12 +338,11 @@ def validate_plan_candidate(
             and _lookup_enabled_skill_item(runtime_context, selected_skill)
             and str(loaded_skill_id or "").strip() != selected_skill
         ):
-            return (
-                f"Invalid plan: you selected skill '{selected_skill}' without first calling "
-                f"read_skill('{selected_skill}'). If you select a skill from the skill index, "
-                "you must load its SKILL.md first and then regenerate a semantic multi-step plan "
-                "based on that SKILL.md. Do not return a wrapper plan like 'read skill' + 'execute skill'."
-            )
+            # Clear the invalid selected_skill instead of rejecting the entire plan.
+            # This avoids unnecessary retry loops when the LLM picks a skill name
+            # without calling read_skill first (common for simple tasks).
+            candidate_plan.selected_skill = None
+            candidate_plan.skill_context_for_act = None
 
     # 4. Missing skill_context_for_act
     if isinstance(candidate_plan, ExecutionPlan):

@@ -3,18 +3,30 @@ import type { Response } from 'express'
 
 const {
   mockSessionService,
+  mockRuntimeAttemptCommitService,
   mockAgentService,
   mockMcpService,
 } = vi.hoisted(() => ({
   mockSessionService: {
     getSession: vi.fn(),
     addMessage: vi.fn(),
+    createRuntimeAttempt: vi.fn(),
+    updateRuntimeAttempt: vi.fn(),
+    claimRuntimeAttemptLease: vi.fn(),
+    heartbeatRuntimeAttempt: vi.fn(),
+    listStalledRuntimeAttempts: vi.fn(),
     getSessionMessages: vi.fn(),
     createSession: vi.fn(),
     updateSessionStatus: vi.fn(),
   },
+  mockRuntimeAttemptCommitService: {
+    appendRuntimeAttemptCheckpointCommitted: vi.fn(),
+    commitAttemptState: vi.fn(),
+    commitAttemptTerminal: vi.fn(),
+  },
   mockAgentService: {
     getAgent: vi.fn(),
+    resolveRuntimeAgentConfig: vi.fn(),
   },
   mockMcpService: {
     getMcpServersForRuntime: vi.fn(),
@@ -22,6 +34,7 @@ const {
 }))
 
 vi.mock('../services/session.service', () => mockSessionService)
+vi.mock('../services/runtime-attempt-commit.service', () => mockRuntimeAttemptCommitService)
 vi.mock('../services/agent.service', () => mockAgentService)
 vi.mock('../services/mcp.service', () => mockMcpService)
 vi.mock('../services/context-policy.service', () => ({
@@ -79,6 +92,20 @@ describe('chat direct runtime skill index', () => {
     mockSessionService.addMessage
       .mockResolvedValueOnce({ id: 'msg-user-1' })
       .mockResolvedValueOnce({ id: 'msg-assistant-1' })
+    mockSessionService.createRuntimeAttempt.mockResolvedValue({
+      id: 'att-1',
+      sessionId: 'sess-1',
+      userMessageId: 'msg-user-1',
+      agentId: 'agent-system',
+      status: 'running',
+    })
+    mockSessionService.updateRuntimeAttempt.mockResolvedValue({ id: 'att-1', status: 'completed' })
+    mockSessionService.claimRuntimeAttemptLease.mockResolvedValue({ id: 'att-1', status: 'running' })
+    mockSessionService.heartbeatRuntimeAttempt.mockResolvedValue({ id: 'att-1', status: 'running' })
+    mockSessionService.listStalledRuntimeAttempts.mockResolvedValue([])
+    mockRuntimeAttemptCommitService.appendRuntimeAttemptCheckpointCommitted.mockResolvedValue({ checkpointId: 'chk-1' })
+    mockRuntimeAttemptCommitService.commitAttemptState.mockResolvedValue({ id: 'att-1', status: 'awaiting_approval' })
+    mockRuntimeAttemptCommitService.commitAttemptTerminal.mockResolvedValue({ id: 'att-1', status: 'completed' })
     mockSessionService.updateSessionStatus.mockResolvedValue({
       id: 'sess-1',
       agentId: 'agent-system',
@@ -93,6 +120,15 @@ describe('chat direct runtime skill index', () => {
       config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096 },
       skills: [],
       isSystem: true,
+    })
+    mockAgentService.resolveRuntimeAgentConfig.mockResolvedValue({
+      model: 'gpt-4o',
+      modelProviderKey: 'openai',
+      temperature: 0.7,
+      maxTokens: 4096,
+      fallbackModel: undefined,
+      fallbackProviderKey: undefined,
+      modelRoles: undefined,
     })
 
     mockMcpService.getMcpServersForRuntime.mockResolvedValue([])
@@ -134,15 +170,199 @@ describe('chat direct runtime skill index', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { handleChat } = await import('../services/chat.service')
-    await handleChat('org-1', 'user-1', 'sess-1', { message: '使用deep-research技能研究腾讯股票' }, createMockRes())
+    await handleChat('user-1', 'sess-1', { message: '使用deep-research技能研究腾讯股票' }, createMockRes())
 
     const runtimeCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/v1/chat/sessions/'))
     expect(runtimeCall).toBeTruthy()
     const body = JSON.parse(String(runtimeCall?.[1]?.body || '{}')) as {
       skill_index?: Array<{ id?: string }>
+      attempt_id?: string
+      user_message_id?: string
     }
     const ids = Array.isArray(body.skill_index) ? body.skill_index.map((row) => String(row.id || '')) : []
     expect(ids).toContain('deep-research')
+    expect(body.attempt_id).toBe('att-1')
+    expect(body.user_message_id).toBe('msg-user-1')
+    expect(mockSessionService.claimRuntimeAttemptLease).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: 'att-1',
+      expectedStatuses: ['queued', 'running'],
+    }))
+    expect(mockSessionService.heartbeatRuntimeAttempt).toHaveBeenCalled()
+  })
+
+  it('injects chunk expansion block from prior session document context', async () => {
+    mockSessionService.getSessionMessages.mockResolvedValue([
+      {
+        role: 'user',
+        content: '先读文档',
+        metadata: {
+          document_context: {
+            docs: [
+              {
+                docId: 'doc-001',
+                version: 1,
+                title: 'sample.txt',
+                chunkCount: 1,
+                summaryChars: 12,
+                workspaceRootRelativePath: 'docs/doc-001/v1',
+              },
+            ],
+          },
+        },
+      },
+    ])
+
+    const workspaceRoot = '/tmp/semibot-chat-expansion-home'
+    process.env.SEMIBOT_HOME = workspaceRoot
+    const fs = await import('fs-extra')
+    await fs.ensureDir(`${workspaceRoot}/workspaces/sess-1/docs/doc-001/v1/chunks`)
+    await fs.writeFile(
+      `${workspaceRoot}/workspaces/sess-1/docs/doc-001/v1/chunks/c0001.txt`,
+      '这是 chunk 原文。',
+      'utf-8'
+    )
+
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        return new Response(
+          JSON.stringify({
+            status: 'completed',
+            final_response: 'ok',
+            error: null,
+            runtime_events: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: '请展开 [chunk:c0001] 原文' }, createMockRes())
+
+    const runtimeCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/v1/chat/sessions/'))
+    expect(runtimeCall).toBeTruthy()
+    const body = JSON.parse(String(runtimeCall?.[1]?.body || '{}')) as { message?: string }
+    expect(String(body.message || '')).toContain('[DOCUMENT_CHUNK_EXPANSION_BEGIN]')
+    expect(String(body.message || '')).toContain('chunk_id: c0001')
+    expect(String(body.message || '')).toContain('这是 chunk 原文。')
+  })
+
+  it('does not treat awaiting_approval as runtime failure', async () => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        return new Response(
+          JSON.stringify({
+            status: 'awaiting_approval',
+            final_response: '操作已提交审批，请确认。',
+            error: null,
+            revision: 7,
+            pending_approval_ids: ['appr_123'],
+            runtime_events: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: '请执行高风险操作' }, createMockRes())
+
+    expect(mockSessionService.addMessage).toHaveBeenCalledTimes(1)
+    expect(mockRuntimeAttemptCommitService.commitAttemptState).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-1',
+      status: 'awaiting_approval',
+      revision: 7,
+    }))
+  })
+
+  it('treats non-normalized awaiting_approval status as non-failure', async () => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        return new Response(
+          JSON.stringify({
+            status: ' Awaiting_Approval ',
+            final_response: '等待审批中',
+            error: null,
+            revision: 8,
+            pending_approval_ids: [],
+            runtime_events: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: '高风险操作' }, createMockRes())
+
+    expect(mockSessionService.addMessage).toHaveBeenCalledTimes(1)
+    expect(mockRuntimeAttemptCommitService.commitAttemptState).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-1',
+      status: 'awaiting_approval',
+      revision: 8,
+    }))
+  })
+
+  it('does not persist failed runtime terminal text as assistant artifact', async () => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        return new Response(
+          JSON.stringify({
+            status: 'failed',
+            terminal_reason: 'graph_timeout',
+            revision: 9,
+            final_response: '',
+            error: 'search quota exceeded',
+            pending_approval_ids: [],
+            runtime_events: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: '搜索最新新闻' }, createMockRes())
+
+    expect(mockSessionService.addMessage).toHaveBeenCalledTimes(1)
+    expect(mockRuntimeAttemptCommitService.commitAttemptTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-1',
+      status: 'failed',
+      terminalReason: 'graph_timeout',
+      revision: 9,
+    }))
   })
 
   it('relays direct runtime stream events to SSE and stores execution process metadata', async () => {
@@ -159,10 +379,10 @@ describe('chat direct runtime skill index', () => {
       'data: {"event":"act_decision","data":{"step_id":"1","title":"Phase 1: SCOPE","planner_tool":"search","decision":"tool_call","tool_name":"code_executor","arguments":{"language":"python"}}}\n\n',
       'data: {"event":"tool.exec.started","data":{"tool_name":"search","params":{"query":"腾讯股票"}}}\n\n',
       'data: {"event":"tool.exec.completed","data":{"tool_name":"search","result":{"items":[1]},"success":true}}\n\n',
-      'data: {"event":"done","status":"completed","final_response":"研究完成","session_id":"sess-1","agent_id":"agent-system"}\n\n',
+      'data: {"event":"done","status":"completed","final_response":"研究完成","session_id":"sess-1","agent_id":"agent-system","revision":10}\n\n',
     ].join('')
 
-    const fetchMock = vi.fn(async (input: string) => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
       if (input.endsWith('/v1/skills')) {
         return new Response(JSON.stringify({ metadata: [] }), {
           status: 200,
@@ -180,11 +400,10 @@ describe('chat direct runtime skill index', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { handleChat } = await import('../services/chat.service')
-    await handleChat('org-1', 'user-1', 'sess-1', { message: '研究腾讯股票' }, mockRes)
+    await handleChat('user-1', 'sess-1', { message: '研究腾讯股票' }, mockRes)
 
     const writes = (mockRes.write as unknown as ReturnType<typeof vi.fn>).mock.calls.map((args) => String(args[0]))
     expect(writes.some((line) => line.includes('event: message'))).toBe(true)
-    expect(writes.some((line) => line.includes('"stage":"planning"'))).toBe(true)
     expect(writes.some((line) => line.includes('"type":"thinking"'))).toBe(true)
     expect(writes.some((line) => line.includes('"toolName":"planner_llm"'))).toBe(true)
     expect(writes.some((line) => line.includes('"toolName":"act_decision"'))).toBe(true)
@@ -192,7 +411,7 @@ describe('chat direct runtime skill index', () => {
     expect(writes.some((line) => line.includes('"type":"tool_result"'))).toBe(true)
     expect(writes.some((line) => line.includes('"content":"研究完成"'))).toBe(true)
 
-    expect(mockSessionService.addMessage).toHaveBeenLastCalledWith('org-1', 'sess-1', expect.objectContaining({
+    expect(mockSessionService.addMessage).toHaveBeenLastCalledWith('sess-1', expect.objectContaining({
       role: 'assistant',
       content: '研究完成',
       metadata: expect.objectContaining({
@@ -214,7 +433,12 @@ describe('chat direct runtime skill index', () => {
         }),
       }),
     }))
-    expect(mockSessionService.updateSessionStatus).toHaveBeenCalledWith('org-1', 'sess-1', 'completed')
+    expect(mockRuntimeAttemptCommitService.commitAttemptTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-1',
+      status: 'completed',
+      terminalReason: 'completed_normally',
+      revision: 10,
+    }))
   })
 
   it('relays failure_reflection as process tool_result', async () => {
@@ -229,7 +453,7 @@ describe('chat direct runtime skill index', () => {
       'data: {"event":"done","status":"completed","final_response":"已结束","session_id":"sess-1","agent_id":"agent-system"}\n\n',
     ].join('')
 
-    const fetchMock = vi.fn(async (input: string) => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
       if (input.endsWith('/v1/skills')) {
         return new Response(JSON.stringify({ metadata: [] }), {
           status: 200,
@@ -247,7 +471,7 @@ describe('chat direct runtime skill index', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { handleChat } = await import('../services/chat.service')
-    await handleChat('org-1', 'user-1', 'sess-1', { message: '研究腾讯股票' }, mockRes)
+    await handleChat('user-1', 'sess-1', { message: '研究腾讯股票' }, mockRes)
 
     const writes = (mockRes.write as unknown as ReturnType<typeof vi.fn>).mock.calls.map((args) => String(args[0]))
     expect(writes.some((line) => line.includes('"toolName":"failure_reflection"'))).toBe(true)
@@ -283,7 +507,7 @@ describe('chat direct runtime skill index', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { handleChat } = await import('../services/chat.service')
-    await handleChat('org-1', 'user-1', 'sess-1', { message: '打开新闻网站' }, mockRes)
+    await handleChat('user-1', 'sess-1', { message: '打开新闻网站' }, mockRes)
 
     const writes = (mockRes.write as unknown as ReturnType<typeof vi.fn>).mock.calls.map((args) => String(args[0]))
     expect(writes.some((line) => line.includes('"toolName":"approval"'))).toBe(true)
@@ -320,14 +544,73 @@ describe('chat direct runtime skill index', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { handleChat } = await import('../services/chat.service')
-    await handleChat('org-1', 'user-1', 'sess-1', { message: '打开新闻网站' }, mockRes)
+    await handleChat('user-1', 'sess-1', { message: '打开新闻网站' }, mockRes)
 
     expect(mockSessionService.addMessage).toHaveBeenLastCalledWith(
-      'org-1',
       'sess-1',
       expect.objectContaining({
         role: 'assistant',
         content: expect.stringContaining('appr_pending_1'),
+      })
+    )
+  })
+
+  it('approving a pending approval resumes the same chat run via the approvals API path', async () => {
+    const mockRes = createMockRes()
+    mockSessionService.addMessage
+      .mockResolvedValueOnce({ id: 'msg-user-1' })
+      .mockResolvedValueOnce({ id: 'msg-assistant-pending' })
+      .mockResolvedValueOnce({ id: 'msg-assistant-resumed' })
+
+    const pendingFrames = [
+      'data: {"event":"start","session_id":"sess-1","agent_id":"agent-system"}\n\n',
+      'data: {"event":"tool.exec.pending_approval","approval_id":"appr_pending_1","data":{"tool_name":"web_fetch","approval_id":"appr_pending_1","status":"pending","message":"需要人工审批"}}\n\n',
+      'data: {"event":"done","status":"completed","final_response":"操作需要人工审批后继续。","session_id":"sess-1","agent_id":"agent-system"}\n\n',
+    ].join('')
+    const resumedFrames = [
+      'data: {"event":"start","session_id":"sess-1","agent_id":"agent-system"}\n\n',
+      'data: {"event":"done","status":"completed","final_response":"审批后已继续执行。","session_id":"sess-1","agent_id":"agent-system"}\n\n',
+    ].join('')
+
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.endsWith('/v1/approvals/appr_pending_1/approve')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { resume?: boolean }
+        expect(body.resume).toBe(false)
+        return new Response(JSON.stringify({ approval_id: 'appr_pending_1', status: 'approved' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        const callIndex = fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/v1/chat/sessions/')).length
+        const body = callIndex === 1 ? pendingFrames : resumedFrames
+        return new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat, resolveApprovalAndMaybeResume } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: '打开新闻网站' }, mockRes)
+
+    const resolved = await resolveApprovalAndMaybeResume('appr_pending_1', 'approve')
+
+    expect(resolved.resumed).toBe(true)
+    expect(resolved.sessionId).toBe('sess-1')
+    expect(mockSessionService.addMessage).toHaveBeenLastCalledWith(
+      'sess-1',
+      expect.objectContaining({
+        role: 'assistant',
+        content: '审批后已继续执行。',
       })
     )
   })

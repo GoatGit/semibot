@@ -14,6 +14,7 @@ from src.orchestrator.context import (
 )
 from src.orchestrator.state import PlanStep, ToolCallResult
 from src.orchestrator.capability import CapabilityGraph
+from src.server.config_store import RuntimeConfigStore
 from src.skills.base import ToolResult
 
 
@@ -162,6 +163,61 @@ async def test_execute_tool(executor, mock_skill_registry):
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_rejects_disabled_builtin(runtime_context, mock_skill_registry, tmp_path, monkeypatch):
+    db_path = tmp_path / "semibot.db"
+    monkeypatch.setenv("SEMIBOT_EVENTS_DB_PATH", str(db_path))
+    store = RuntimeConfigStore(db_path=str(db_path))
+    store.upsert_tool_by_name("test_tool", {"is_active": False, "config": {}, "type": "builtin", "is_builtin": True})
+
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+    )
+    action = PlanStep(
+        id="step_1",
+        title="Test disabled tool",
+        tool="test_tool",
+        params={"input": "test"},
+    )
+
+    result = await executor.execute(action)
+
+    assert result.success is False
+    assert result.metadata["error_code"] == "TOOL_DISABLED"
+    mock_skill_registry.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_caches_tool_row_lookup_per_executor(runtime_context, mock_skill_registry, monkeypatch):
+    lookup_calls: list[str] = []
+
+    class FakeStore:
+        def __init__(self, db_path=None):
+            self.db_path = db_path
+
+        def get_tool_by_name(self, tool_name):
+            lookup_calls.append(tool_name)
+            return {"name": tool_name, "is_active": True, "config": {}}
+
+    monkeypatch.setattr("src.orchestrator.unified_executor.RuntimeConfigStore", FakeStore)
+
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+    )
+    action = PlanStep(
+        id="step_1",
+        title="Test tool caching",
+        tool="test_tool",
+        params={"input": "test"},
+    )
+
+    await executor.execute(action)
+
+    assert lookup_calls.count("test_tool") == 1
+
+
+@pytest.mark.asyncio
 async def test_execute_mcp_tool(executor, mock_mcp_client):
     """Test executing an MCP tool."""
     action = PlanStep(
@@ -267,6 +323,57 @@ async def test_execute_disambiguated_builtin_tool_uses_actual_tool_name(mock_ski
     assert result.success is True
     mock_skill_registry.execute.assert_called_once()
     assert mock_skill_registry.execute.call_args.args[0] == "search"
+
+
+@pytest.mark.asyncio
+async def test_execute_projected_group_tool_maps_back_to_parent_tool(mock_skill_registry):
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_789",
+        session_id="session_abc",
+        agent_config=AgentConfig(id="agent_789", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(
+                name="opencli_xiaohongshu",
+                description="Usage: opencli xiaohongshu [options] [command]",
+                metadata={
+                    "source_type": "cli",
+                    "provider_id": "opencli",
+                    "shape": "group",
+                    "actions": [
+                        {
+                            "command": "search",
+                            "description": "Search Xiaohongshu notes",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"query": {"type": "string", "minLength": 1}},
+                                "required": ["query"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+    )
+
+    result = await executor.execute(
+        PlanStep(id="step_1", title="Search locally", tool="opencli_xiaohongshu_search", params={"query": "AI新闻"})
+    )
+
+    assert result.success is True
+    mock_skill_registry.execute.assert_called_once_with(
+        "opencli_xiaohongshu",
+        {
+            "query": "AI新闻",
+            "command": "search",
+            "_runtime_context": runtime_context,
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -450,6 +557,121 @@ async def test_approval_hook_pending_does_not_become_denied(runtime_context, moc
     assert "tool.exec.failed" not in emitted_types
 
     mock_skill_registry.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fake_ip_guard_requests_approval_and_passes_override_on_approve(
+    runtime_context,
+    mock_skill_registry,
+    monkeypatch,
+):
+    approval_hook = AsyncMock(return_value=True)
+    event_emitter = AsyncMock()
+
+    runtime_context.available_tools.append(
+        ToolDefinition(
+            name="web_fetch",
+            description="Web fetch tool",
+        )
+    )
+
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+        approval_hook=approval_hook,
+        event_emitter=event_emitter,
+    )
+
+    monkeypatch.setattr(
+        "src.orchestrator.unified_executor.inspect_remote_url",
+        lambda raw_url, **kwargs: (
+            "approval_required",
+            {
+                "host": "example.com",
+                "resolved_ip": "198.18.0.10",
+                "blocked_reason": "reserved/test-network",
+                "guard": "fake_ip_dns",
+            },
+        ),
+    )
+
+    action = PlanStep(
+        id="step_fake_ip",
+        title="Fetch fake-ip URL",
+        tool="web_fetch",
+        params={"url": "https://example.com/article"},
+    )
+
+    result = await executor.execute(action)
+
+    assert result.success is True
+    approval_hook.assert_called_once()
+    mock_skill_registry.execute.assert_called_once()
+    called_tool_name = mock_skill_registry.execute.call_args.args[0]
+    called_params = mock_skill_registry.execute.call_args.args[1]
+    assert called_tool_name == "web_fetch"
+    assert called_params["_approved_fake_ip_override"] is True
+
+
+@pytest.mark.asyncio
+async def test_fake_ip_guard_keeps_session_scope_without_forcing_url_dedupe(
+    runtime_context,
+    mock_skill_registry,
+    monkeypatch,
+):
+    captured: dict[str, object] = {}
+
+    async def approval_hook(tool_name, params, metadata):
+        captured["tool_name"] = tool_name
+        captured["params"] = params
+        captured["metadata"] = metadata
+        return {"approved": False, "status": "pending", "approval_id": "appr_pending"}
+
+    event_emitter = AsyncMock()
+
+    runtime_context.available_tools.append(
+        ToolDefinition(
+            name="web_fetch",
+            description="Web fetch tool",
+            metadata={"approval_scope": "session", "approval_dedupe_keys": []},
+        )
+    )
+
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+        approval_hook=approval_hook,
+        event_emitter=event_emitter,
+    )
+
+    monkeypatch.setattr(
+        "src.orchestrator.unified_executor.inspect_remote_url",
+        lambda raw_url, **kwargs: (
+            "approval_required",
+            {
+                "host": "example.com",
+                "resolved_ip": "198.18.0.10",
+                "blocked_reason": "reserved/test-network",
+                "guard": "fake_ip_dns",
+            },
+        ),
+    )
+
+    action = PlanStep(
+        id="step_fake_ip_pending",
+        title="Fetch fake-ip URL",
+        tool="web_fetch",
+        params={"url": "https://example.com/article"},
+    )
+
+    result = await executor.execute(action)
+
+    assert result.success is False
+    assert result.metadata["approval_status"] == "pending"
+    metadata = captured.get("metadata")
+    additional = getattr(metadata, "additional", {}) if metadata is not None else {}
+    assert additional.get("approval_scope") == "session"
+    assert additional.get("approval_dedupe_keys") in (None, [])
 
 
 @pytest.mark.asyncio

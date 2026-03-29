@@ -94,7 +94,10 @@ class EventStore:
                   id TEXT PRIMARY KEY,
                   rule_id TEXT NOT NULL,
                   event_id TEXT NOT NULL,
+                  attempt_id TEXT,
+                  user_message_id TEXT,
                   risk_level TEXT NOT NULL,
+                  blocking INTEGER NOT NULL DEFAULT 1,
                   context TEXT NOT NULL DEFAULT '{}',
                   status TEXT NOT NULL,
                   created_at TEXT NOT NULL,
@@ -112,6 +115,14 @@ class EventStore:
             if "context" not in approval_columns:
                 conn.execute(
                     "ALTER TABLE approval_requests ADD COLUMN context TEXT NOT NULL DEFAULT '{}'"
+                )
+            if "attempt_id" not in approval_columns:
+                conn.execute("ALTER TABLE approval_requests ADD COLUMN attempt_id TEXT")
+            if "user_message_id" not in approval_columns:
+                conn.execute("ALTER TABLE approval_requests ADD COLUMN user_message_id TEXT")
+            if "blocking" not in approval_columns:
+                conn.execute(
+                    "ALTER TABLE approval_requests ADD COLUMN blocking INTEGER NOT NULL DEFAULT 1"
                 )
 
     def append_event(self, event: Event) -> None:
@@ -513,14 +524,19 @@ class EventStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO approval_requests (id, rule_id, event_id, risk_level, context, status, created_at, resolved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO approval_requests (
+                  id, rule_id, event_id, attempt_id, user_message_id, risk_level, blocking, context, status, created_at, resolved_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval.approval_id,
                     approval.rule_id,
                     approval.event_id,
+                    approval.attempt_id,
+                    approval.user_message_id,
                     approval.risk_level,
+                    1 if approval.blocking else 0,
                     json.dumps(approval.context or {}, ensure_ascii=False),
                     approval.status,
                     _to_iso(approval.created_at),
@@ -544,7 +560,7 @@ class EventStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
+                SELECT id, rule_id, event_id, attempt_id, user_message_id, risk_level, blocking, context, status, created_at, resolved_at
                 FROM approval_requests WHERE id = ?
                 """,
                 (approval_id,),
@@ -555,7 +571,10 @@ class EventStore:
                 approval_id=row["id"],
                 rule_id=row["rule_id"],
                 event_id=row["event_id"],
+                attempt_id=row["attempt_id"],
+                user_message_id=row["user_message_id"],
                 risk_level=row["risk_level"],
+                blocking=bool(row["blocking"]),
                 context=_parse_json_object(row["context"]),
                 status=row["status"],
                 created_at=_from_iso(row["created_at"]) or datetime.now(timezone.utc),
@@ -575,7 +594,7 @@ class EventStore:
             if status:
                 rows = conn.execute(
                     """
-                    SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
+                    SELECT id, rule_id, event_id, attempt_id, user_message_id, risk_level, blocking, context, status, created_at, resolved_at
                     FROM approval_requests
                     WHERE status = ?
                     ORDER BY created_at ASC
@@ -586,7 +605,7 @@ class EventStore:
             else:
                 rows = conn.execute(
                     """
-                    SELECT id, rule_id, event_id, risk_level, context, status, created_at, resolved_at
+                    SELECT id, rule_id, event_id, attempt_id, user_message_id, risk_level, blocking, context, status, created_at, resolved_at
                     FROM approval_requests
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -600,7 +619,10 @@ class EventStore:
                         approval_id=row["id"],
                         rule_id=row["rule_id"],
                         event_id=row["event_id"],
+                        attempt_id=row["attempt_id"],
+                        user_message_id=row["user_message_id"],
                         risk_level=row["risk_level"],
+                        blocking=bool(row["blocking"]),
                         context=_parse_json_object(row["context"]),
                         status=row["status"],
                         created_at=_from_iso(row["created_at"]) or datetime.now(timezone.utc),

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
-import hashlib
 import json
 import os
 import re
 import time
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -20,8 +19,37 @@ from src.events.event_router import EventRouter
 from src.events.event_store import EventStore
 from src.events.models import Event
 from src.events.runtime_action_executor import RuntimeActionExecutor
-from src.llm.base import LLMConfig, LLMProvider
+from src.events.runtime_event_persistence import persist_runtime_event_to_store
+from src.execution.runtime_approval import (
+    build_approval_policy,
+    short_text,
+)
+from src.execution.runtime_components import (
+    build_runtime_policy,
+    build_runtime_skill_definitions,
+    build_runtime_tool_definitions,
+)
+from src.execution.runtime_execution_core import (
+    build_graph_context,
+    build_initial_execution_state,
+    build_unified_action_executor,
+    emit_chat_message_received,
+    emit_terminal_runtime_event,
+    invoke_graph_once,
+)
+from src.execution.runtime_llm import (
+    as_non_empty_str,
+    infer_openai_compatible_provider_base,
+    instantiate_llm_provider,
+    pick_openai_compatible_provider_key,
+    provider_base,
+    provider_cfg_base_url,
+)
+from src.execution.runtime_response import guard_rule_authoring_success_claim
+from src.execution.runtime_result import normalize_execution_result
+from src.execution.runtime_terminal import derive_terminal_execution_result
 from src.llm.anthropic_provider import AnthropicProvider
+from src.llm.base import LLMProvider
 from src.llm.kimi_provider import KimiProvider
 from src.llm.openai_provider import OpenAIProvider
 from src.llm.provider_factory import (
@@ -29,23 +57,17 @@ from src.llm.provider_factory import (
     PROVIDER_BASE_URL_ENV_MAP,
     PROVIDER_KEY_ENV_MAP,
     SUPPORTED_PROVIDER_BASES,
-    infer_provider_base_from_model,
-    resolve_provider_protocol,
 )
 from src.memory.service import RuntimeMemoryService
 from src.orchestrator.context import (
     AgentConfig,
-    RuntimePolicy,
     RuntimeSessionContext,
-    SkillDefinition,
-    ToolDefinition,
 )
 from src.orchestrator.graph import create_agent_graph
-from src.orchestrator.state import create_initial_state
 from src.orchestrator.unified_executor import UnifiedActionExecutor
 from src.security.api_key_cipher import decrypt_api_keys
-from src.session.workspace import session_working_dir as _shared_session_working_dir
 from src.server.config_store import RuntimeConfigStore
+from src.session.workspace import session_working_dir as _shared_session_working_dir
 from src.skills.bootstrap import create_default_registry
 from src.skills.registry import SkillRegistry
 from src.utils.logging import get_logger
@@ -61,60 +83,41 @@ _CONTROL_PLANE_BOOTSTRAP_RETRY_COOLDOWN_SECONDS = 15.0
 _LOCAL_ENV_BOOTSTRAP_DONE = False
 
 _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_APPROVAL_SCOPE_ALLOWED = {"call", "action", "target", "session", "session_action", "tool"}
-_APPROVAL_ACTION_KEYS = ("action", "operation", "method", "mode", "type")
-_APPROVAL_TARGET_KEYS = (
-    "url",
-    "path",
-    "target",
-    "selector",
-    "query",
-    "command",
-    "resource",
-    "file",
-    "filename",
-    "name",
-)
-_APPROVAL_SUMMARY_IGNORED_PARAMS = {
-    "content",
-    "text",
-    "code",
-    "html",
-    "script",
-    "prompt",
-    "messages",
-    "input",
-    "body",
-}
 _OPENAI_COMPATIBLE_PROVIDER_BASES = SUPPORTED_PROVIDER_BASES
 _MODEL_PROVIDER_HINTS = MODEL_PROVIDER_HINTS
 _PROVIDER_KEY_ENV_MAP = PROVIDER_KEY_ENV_MAP
 _PROVIDER_BASE_URL_ENV_MAP = PROVIDER_BASE_URL_ENV_MAP
 
 
+def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[Any]:
+    return build_runtime_tool_definitions(registry, db_path)
+
+
+def _build_skill_definitions(
+    registry: SkillRegistry,
+    skill_index: list[dict[str, Any]] | None = None,
+) -> list[Any]:
+    return build_runtime_skill_definitions(registry, skill_index)
+
+
+def _short_text(value: Any, *, max_len: int = 120) -> str:
+    return short_text(value, max_len=max_len)
+
+
 def _as_non_empty_str(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    trimmed = value.strip()
-    return trimmed or None
+    return as_non_empty_str(value)
 
 
 def _provider_base(provider_key: str) -> str:
-    return str(provider_key or "").strip().lower().split(":", 1)[0]
+    return provider_base(provider_key)
 
 
 def _provider_cfg_base_url(raw_cfg: Any) -> str | None:
-    if not isinstance(raw_cfg, dict):
-        return None
-    base_url = raw_cfg.get("base_url") or raw_cfg.get("baseUrl")
-    if not isinstance(base_url, str):
-        return None
-    trimmed = base_url.strip()
-    return trimmed or None
+    return provider_cfg_base_url(raw_cfg)
 
 
 def _infer_openai_compatible_provider_base(model: str) -> str | None:
-    return infer_provider_base_from_model(model)
+    return infer_openai_compatible_provider_base(model)
 
 
 def _pick_openai_compatible_provider_key(
@@ -123,98 +126,12 @@ def _pick_openai_compatible_provider_key(
     *,
     strict_preferred_base: bool = False,
 ) -> str | None:
-    candidates = [
-        key
-        for key, value in api_keys.items()
-        if value and _provider_base(key) in _OPENAI_COMPATIBLE_PROVIDER_BASES
-    ]
-    if not candidates:
-        return None
-
-    preferred_base = _infer_openai_compatible_provider_base(model)
-    if preferred_base:
-        if preferred_base in api_keys and api_keys.get(preferred_base):
-            return preferred_base
-        scoped = sorted(key for key in candidates if key.startswith(f"{preferred_base}:"))
-        if scoped:
-            return scoped[0]
-        if strict_preferred_base:
-            return None
-
-    for base in _OPENAI_COMPATIBLE_PROVIDER_BASES:
-        if base in api_keys and api_keys.get(base):
-            return base
-        scoped = sorted(key for key in candidates if key.startswith(f"{base}:"))
-        if scoped:
-            return scoped[0]
-
-    return sorted(candidates)[0]
-
-
-def _to_bool(value: Any, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "y", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "n", "off", ""}:
-            return False
-    return bool(value)
-
-
-def _short_text(value: Any, *, max_len: int = 120) -> str:
-    text = str(value or "").strip()
-    if len(text) <= max_len:
-        return text
-    return f"{text[: max_len - 1]}…"
-
-
-def _extract_first_string(params: dict[str, Any], keys: tuple[str, ...]) -> str:
-    for key in keys:
-        value = params.get(key)
-        if value is None:
-            continue
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        if isinstance(value, (int, float, bool)):
-            return str(value)
-    return ""
-
-
-def _normalize_dedupe_keys(raw: Any) -> list[str]:
-    if not isinstance(raw, list):
-        return []
-    normalized: list[str] = []
-    for item in raw:
-        if not isinstance(item, str):
-            continue
-        key = item.strip()
-        if key:
-            normalized.append(key)
-    return normalized
-
-
-def _summarize_params(params: dict[str, Any], *, max_items: int = 3) -> dict[str, str]:
-    summary: dict[str, str] = {}
-    for key in sorted(params.keys()):
-        if key in _APPROVAL_SUMMARY_IGNORED_PARAMS:
-            continue
-        value = params.get(key)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                continue
-            summary[key] = _short_text(stripped, max_len=60)
-        elif isinstance(value, (int, float, bool)):
-            summary[key] = str(value)
-        if len(summary) >= max_items:
-            break
-    return summary
+    return pick_openai_compatible_provider_key(
+        model,
+        api_keys,
+        set(_OPENAI_COMPATIBLE_PROVIDER_BASES),
+        strict_preferred_base=strict_preferred_base,
+    )
 
 
 def _build_approval_policy(
@@ -224,57 +141,13 @@ def _build_approval_policy(
     session_id: str,
     metadata_additional: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    metadata_additional = metadata_additional or {}
-    action = _extract_first_string(params, _APPROVAL_ACTION_KEYS).lower()
-    target = _short_text(_extract_first_string(params, _APPROVAL_TARGET_KEYS), max_len=120)
-    params_preview = _summarize_params(params)
-
-    scope_raw = str(metadata_additional.get("approval_scope") or "").strip().lower()
-    approval_scope = scope_raw if scope_raw in _APPROVAL_SCOPE_ALLOWED else "session"
-    dedupe_keys = _normalize_dedupe_keys(metadata_additional.get("approval_dedupe_keys"))
-
-    context: dict[str, Any] = {
-        "tool_name": tool_name,
-        "action": action or None,
-        "target": target or None,
-        "risk_level": risk_level,
-        "session_id": session_id,
-        "params_preview": params_preview,
-    }
-    context["summary"] = (
-        f"工具 `{tool_name}`"
-        f"{f' 执行动作 `{action}`' if action else ''}"
-        f"{f'，目标 `{target}`' if target else ''}"
+    return build_approval_policy(
+        tool_name,
+        params,
+        risk_level,
+        session_id,
+        metadata_additional,
     )
-
-    if dedupe_keys:
-        grouped_values: list[str] = []
-        for key in dedupe_keys:
-            value = params.get(key)
-            if value is None:
-                continue
-            grouped_values.append(f"{key}={_short_text(value, max_len=80)}")
-        grouped = "|".join(grouped_values) if grouped_values else "none"
-        return f"{tool_name}|risk:{risk_level}|custom:{grouped}", context
-
-    if approval_scope == "tool":
-        return f"{tool_name}|risk:{risk_level}", context
-    if approval_scope == "session":
-        return f"{tool_name}|risk:{risk_level}|session:{session_id}", context
-    if approval_scope == "action":
-        return f"{tool_name}|risk:{risk_level}|action:{action or 'none'}", context
-    if approval_scope == "target":
-        return f"{tool_name}|risk:{risk_level}|action:{action or 'none'}|target:{target or 'none'}", context
-    if approval_scope == "call":
-        try:
-            serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        except Exception:
-            serialized = str(params)
-        call_hash = hashlib.sha256(serialized.encode()).hexdigest()[:16]
-        return f"{tool_name}|risk:{risk_level}|call:{call_hash}", context
-
-    # Default: one approval per (tool + session + action), generic and low-noise.
-    return f"{tool_name}|risk:{risk_level}|session:{session_id}|action:{action or 'none'}", context
 
 
 def _runtime_root() -> Path:
@@ -365,6 +238,36 @@ def _load_llm_config() -> dict[str, Any]:
         return {}
 
 
+def _load_env_provider_instances() -> dict[str, dict[str, Any]]:
+    raw = _as_non_empty_str(os.getenv("LLM_PROVIDER_INSTANCES"))
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(payload, list):
+        return {}
+
+    providers: dict[str, dict[str, Any]] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        provider_type = _as_non_empty_str(row.get("type"))
+        instance_id = _as_non_empty_str(row.get("id"))
+        if not provider_type or not instance_id:
+            continue
+        entry: dict[str, Any] = {}
+        api_key = _as_non_empty_str(row.get("api_key") or row.get("apiKey"))
+        base_url = _as_non_empty_str(row.get("base_url") or row.get("baseUrl"))
+        if api_key:
+            entry["api_key"] = api_key
+        if base_url:
+            entry["base_url"] = base_url
+        providers[f"{provider_type}:{instance_id}"] = entry
+    return providers
+
+
 def _control_plane_bootstrap_lock() -> asyncio.Lock:
     global _CONTROL_PLANE_BOOTSTRAP_LOCK
     if _CONTROL_PLANE_BOOTSTRAP_LOCK is None:
@@ -375,6 +278,14 @@ def _control_plane_bootstrap_lock() -> asyncio.Lock:
 async def _maybe_bootstrap_llm_from_control_plane() -> None:
     global _CONTROL_PLANE_BOOTSTRAP_LAST_ATTEMPT
 
+    has_env_compat = bool(
+        _as_non_empty_str(os.getenv("OPENAI_API_KEY"))
+        or _as_non_empty_str(os.getenv("CUSTOM_LLM_API_KEY"))
+        or _as_non_empty_str(os.getenv("CUSTOM_LLM_MODEL_NAME"))
+        or _as_non_empty_str(os.getenv("OPENAI_API_BASE_URL"))
+        or _as_non_empty_str(os.getenv("CUSTOM_LLM_API_BASE_URL"))
+    )
+
     # Check if DB already has LLM config
     llm_config = _load_llm_config()
     has_local_config = bool(
@@ -382,7 +293,7 @@ async def _maybe_bootstrap_llm_from_control_plane() -> None:
         or _as_non_empty_str(llm_config.get("default_provider_key"))
         or (isinstance(llm_config.get("providers"), dict) and llm_config["providers"])
     )
-    if has_local_config:
+    if has_local_config and has_env_compat:
         return
 
     vm_user_id = _as_non_empty_str(os.getenv("VM_USER_ID"))
@@ -398,7 +309,14 @@ async def _maybe_bootstrap_llm_from_control_plane() -> None:
             or _as_non_empty_str(llm_config.get("default_provider_key"))
             or (isinstance(llm_config.get("providers"), dict) and llm_config["providers"])
         )
-        if has_local_config:
+        has_env_compat = bool(
+            _as_non_empty_str(os.getenv("OPENAI_API_KEY"))
+            or _as_non_empty_str(os.getenv("CUSTOM_LLM_API_KEY"))
+            or _as_non_empty_str(os.getenv("CUSTOM_LLM_MODEL_NAME"))
+            or _as_non_empty_str(os.getenv("OPENAI_API_BASE_URL"))
+            or _as_non_empty_str(os.getenv("CUSTOM_LLM_API_BASE_URL"))
+        )
+        if has_local_config and has_env_compat:
             return
         now = time.monotonic()
         if (
@@ -465,6 +383,17 @@ async def _maybe_bootstrap_llm_from_control_plane() -> None:
                 if val:
                     payload[field] = val
 
+        default_model = _as_non_empty_str(payload.get("default_model"))
+        openai_provider_cfg = providers.get("openai") if isinstance(providers.get("openai"), dict) else {}
+        openai_api_key = _as_non_empty_str(openai_provider_cfg.get("api_key"))
+        openai_base_url = _provider_cfg_base_url(openai_provider_cfg)
+        if openai_api_key:
+            os.environ["OPENAI_API_KEY"] = openai_api_key
+        if default_model:
+            os.environ["CUSTOM_LLM_MODEL_NAME"] = default_model
+        if openai_base_url:
+            os.environ["OPENAI_API_BASE_URL"] = openai_base_url
+
         if providers or payload.get("default_model"):
             db_path = (
                 _as_non_empty_str(os.getenv("SEMIBOT_EVENTS_DB_PATH"))
@@ -493,22 +422,32 @@ def _create_llm_provider(
     fallback_provider_key: str | None = None,
 ) -> LLMProvider | None:
     llm_config = _load_llm_config()
+    env_default_model = _as_non_empty_str(os.getenv("DEFAULT_LLM_MODEL"))
+    env_default_provider_key = _as_non_empty_str(os.getenv("DEFAULT_LLM_PROVIDER_KEY"))
+    env_fallback_model = _as_non_empty_str(os.getenv("FALLBACK_LLM_MODEL"))
+    env_fallback_provider_key = _as_non_empty_str(os.getenv("FALLBACK_LLM_PROVIDER_KEY"))
+    env_custom_model = _as_non_empty_str(os.getenv("CUSTOM_LLM_MODEL_NAME"))
 
     default_model = (
         _as_non_empty_str(llm_config.get("default_model"))
         or _as_non_empty_str(llm_config.get("model"))
+        or env_default_model
+        or env_custom_model
     )
     configured_fallback_model = (
         _as_non_empty_str(fallback_model)
         or _as_non_empty_str(llm_config.get("fallback_model"))
+        or env_fallback_model
     )
     default_provider_key = (
         _as_non_empty_str(model_provider_key)
         or _as_non_empty_str(llm_config.get("default_provider_key"))
+        or env_default_provider_key
     )
     configured_fallback_provider_key = (
         _as_non_empty_str(fallback_provider_key)
         or _as_non_empty_str(llm_config.get("fallback_provider_key"))
+        or env_fallback_provider_key
     )
     resolved_model = (
         model
@@ -532,16 +471,40 @@ def _create_llm_provider(
             if base_url:
                 instance_base_urls[key] = base_url
 
+    for provider_key, raw_cfg in _load_env_provider_instances().items():
+        api_key = _as_non_empty_str(raw_cfg.get("api_key"))
+        if api_key:
+            api_keys[provider_key] = api_key
+        base_url = _provider_cfg_base_url(raw_cfg)
+        if base_url:
+            instance_base_urls[provider_key] = base_url
+
     if not api_keys:
-        openai_cfg_key = _as_non_empty_str(llm_config.get("openai_api_key"))
+        openai_cfg_key = (
+            _as_non_empty_str(llm_config.get("openai_api_key"))
+            or _as_non_empty_str(os.getenv("OPENAI_API_KEY"))
+        )
         if openai_cfg_key:
             api_keys["openai"] = openai_cfg_key
-        custom_cfg_key = _as_non_empty_str(llm_config.get("custom_api_key"))
+        custom_cfg_key = (
+            _as_non_empty_str(llm_config.get("custom_api_key"))
+            or _as_non_empty_str(os.getenv("CUSTOM_LLM_API_KEY"))
+        )
         if custom_cfg_key:
             api_keys["custom"] = custom_cfg_key
-        generic_key = _as_non_empty_str(llm_config.get("api_key"))
+        generic_key = (
+            _as_non_empty_str(llm_config.get("api_key"))
+            or _as_non_empty_str(os.getenv("API_KEY"))
+        )
         if generic_key:
             api_keys["custom"] = generic_key
+
+    if not default_provider_key and default_model:
+        default_provider_key = _infer_openai_compatible_provider_base(default_model)
+    if not configured_fallback_provider_key and configured_fallback_model:
+        configured_fallback_provider_key = _infer_openai_compatible_provider_base(
+            configured_fallback_model
+        )
 
     selected_provider_key = None
     if default_model and str(resolved_model).strip() == str(default_model).strip():
@@ -597,16 +560,19 @@ def _create_llm_provider(
             base_url = (
                 _as_non_empty_str(llm_config.get("openai_api_base_url"))
                 or _as_non_empty_str(llm_config.get("openai_base_url"))
+                or _as_non_empty_str(os.getenv("OPENAI_API_BASE_URL"))
             )
         elif provider_base == "custom":
             base_url = (
                 _as_non_empty_str(llm_config.get("custom_api_base_url"))
                 or _as_non_empty_str(llm_config.get("custom_base_url"))
+                or _as_non_empty_str(os.getenv("CUSTOM_LLM_API_BASE_URL"))
             )
         else:
             base_url = (
                 _as_non_empty_str(llm_config.get(f"{provider_base}_api_base_url"))
                 or _as_non_empty_str(llm_config.get(f"{provider_base}_base_url"))
+                or _as_non_empty_str(os.getenv(f"{provider_base.upper()}_API_BASE_URL"))
             )
     if not base_url:
         base_url = (
@@ -622,234 +588,20 @@ def _create_llm_provider(
         extra={"model": resolved_model, "provider_key": selected_provider_key, "provider_base": provider_base},
     )
 
-    protocol = resolve_provider_protocol(provider_base, base_url)
-    provider_cls = (
-        KimiProvider
-        if protocol == "kimi"
-        else AnthropicProvider
-        if protocol == "anthropic"
-        else OpenAIProvider
+    return instantiate_llm_provider(
+        model=resolved_model,
+        api_key=api_key,
+        provider_key=selected_provider_key,
+        base_url=base_url,
+        timeout=120,
+        openai_provider_cls=OpenAIProvider,
+        kimi_provider_cls=KimiProvider,
+        anthropic_provider_cls=AnthropicProvider,
     )
-    return provider_cls(
-        LLMConfig(
-            model=resolved_model,
-            api_key=api_key,
-            base_url=base_url,
-            provider_base=provider_base,
-            timeout=120,
-        )
-    )
-
-
-def _load_tool_configs(db_path: str) -> dict[str, dict[str, Any]]:
-    try:
-        store = RuntimeConfigStore(db_path=db_path)
-        rows = store.list_tools(include_builtin=True, page=1, limit=500).get("data", [])
-    except Exception:
-        return {}
-    configs: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name") or "").strip()
-        if not name:
-            continue
-        cfg = row.get("config")
-        configs[name] = cfg if isinstance(cfg, dict) else {}
-    return configs
-
-
-def _build_tool_definitions(registry: SkillRegistry, db_path: str) -> list[ToolDefinition]:
-    tool_configs = _load_tool_configs(db_path)
-    tools: list[ToolDefinition] = []
-    for tool_name in registry.list_tools():
-        tool = registry.get_tool(tool_name)
-        if not tool:
-            continue
-        cfg = tool_configs.get(tool.name, {})
-        raw_risk_level = cfg.get("riskLevel")
-        if isinstance(raw_risk_level, str) and raw_risk_level.strip():
-            risk_level = raw_risk_level.strip().lower()
-        elif tool.name in {
-            "code_executor",
-            "file_io",
-            "semi_browser",
-            "http_client",
-            "skill_installer",
-        }:
-            risk_level = "high"
-        else:
-            risk_level = "low"
-        requires_approval = _to_bool(
-            cfg.get("requiresApproval"),
-            default=tool.name in {
-                "code_executor",
-                "file_io",
-                "semi_browser",
-                "http_client",
-                "skill_installer",
-            },
-        )
-        raw_approval_scope = str(cfg.get("approvalScope") or "").strip().lower()
-        approval_scope = (
-            raw_approval_scope
-            if raw_approval_scope in _APPROVAL_SCOPE_ALLOWED
-            else "session"
-        )
-        approval_dedupe_keys = _normalize_dedupe_keys(cfg.get("approvalDedupeKeys"))
-        tools.append(
-            ToolDefinition(
-                name=tool.name,
-                description=tool.description,
-                parameters=tool.parameters,
-                metadata={
-                    "source": "builtin",
-                    "requires_approval": requires_approval,
-                    "risk_level": risk_level,
-                    "approval_scope": approval_scope,
-                    "approval_dedupe_keys": approval_dedupe_keys,
-                },
-            )
-        )
-    return tools
-
-
-def _build_skill_definitions(
-    registry: SkillRegistry,
-    skill_index: list[dict[str, Any]] | None = None,
-) -> list[SkillDefinition]:
-    skills: list[SkillDefinition] = []
-    seen: set[str] = set()
-    for skill_name in registry.list_skills():
-        skill = registry.get_skill(skill_name)
-        if not skill:
-            continue
-        skills.append(
-            SkillDefinition(
-                id=skill_name,
-                name=skill_name,
-                description=skill.description,
-                source="local",
-                schema={},
-                metadata={},
-            )
-        )
-        seen.add(skill_name)
-
-    if not isinstance(skill_index, list):
-        return skills
-
-    for item in skill_index:
-        if not isinstance(item, dict):
-            continue
-        skill_id = str(item.get("id") or item.get("name") or "").strip()
-        if not skill_id or skill_id in seen:
-            continue
-        package = item.get("package")
-        package_files: list[str] = []
-        if isinstance(package, dict):
-            files = package.get("files")
-            if isinstance(files, list):
-                package_files = [
-                    str(f.get("path") or "")
-                    for f in files
-                    if isinstance(f, dict) and str(f.get("path") or "").strip()
-                ]
-        inventory = item.get("file_inventory") if isinstance(item.get("file_inventory"), dict) else {}
-        inventory_scripts = inventory.get("script_files")
-        normalized_inventory_scripts = {
-            str(path).strip()
-            for path in (inventory_scripts if isinstance(inventory_scripts, list) else [])
-            if str(path).strip()
-        }
-        skills.append(
-            SkillDefinition(
-                id=skill_id,
-                name=skill_id,
-                description=str(item.get("description") or "").strip() or None,
-                version=str(item.get("version") or "").strip() or None,
-                source=str(item.get("source") or "local"),
-                schema={},
-                metadata={
-                    "has_skill_md": "SKILL.md" in package_files,
-                    "package_files": package_files[:50],
-                    "script_files": sorted(normalized_inventory_scripts)[:50],
-                },
-            )
-        )
-        seen.add(skill_id)
-    return skills
-
-
-def _extract_final_response(result: dict[str, Any]) -> str:
-    messages = result.get("messages")
-    if not isinstance(messages, list) or not messages:
-        return ""
-    last = messages[-1]
-    if isinstance(last, dict):
-        return str(last.get("content") or "")
-    return str(getattr(last, "content", ""))
-
-
-def _serialize_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = result.get("tool_results")
-    if not isinstance(rows, list):
-        return []
-    serialized: list[dict[str, Any]] = []
-    for item in rows:
-        if hasattr(item, "model_dump"):
-            serialized.append(dict(item.model_dump()))
-            continue
-        if isinstance(item, dict):
-            serialized.append(dict(item))
-            continue
-        tool_name = getattr(item, "tool_name", None)
-        params = getattr(item, "params", None)
-        serialized.append(
-            {
-                "tool_name": str(tool_name or ""),
-                "params": dict(params) if isinstance(params, dict) else {},
-                "result": getattr(item, "result", None),
-                "error": getattr(item, "error", None),
-                "duration_ms": int(getattr(item, "duration_ms", 0) or 0),
-                "success": bool(getattr(item, "success", False)),
-                "metadata": getattr(item, "metadata", {}) or {},
-            }
-        )
-    return serialized
 
 
 def _guard_rule_authoring_success_claim(final_response: str, tool_results: list[dict[str, Any]]) -> str:
-    failed_rows = [
-        row
-        for row in tool_results
-        if str(row.get("tool_name") or "").strip() in {"rule_authoring", "control_plane"}
-        and not bool(row.get("success"))
-    ]
-    if not failed_rows:
-        return final_response
-
-    first_error = str(failed_rows[0].get("error") or "").strip() or "unknown_error"
-    safe = final_response or ""
-    for phrase in (
-        "已创建",
-        "创建成功",
-        "设置成功",
-        "已设置",
-        "设置完成",
-        "任务已设置完成",
-    ):
-        safe = safe.replace(phrase, "尝试创建但未成功")
-
-    notice = (
-        f"注意：控制面变更未成功落地（control_plane 执行失败：{first_error}）。"
-        "请修正参数后重试。"
-    )
-    if not safe.strip():
-        return notice
-    if notice in safe:
-        return safe
-    return f"{notice}\n\n{safe}"
+    return guard_rule_authoring_success_claim(final_response, tool_results)
 
 
 
@@ -894,7 +646,7 @@ async def run_task_once(
         router=EventRouter(RuntimeActionExecutor(runtime_event_sink=_runtime_event_sink)),
         rules_path=rules_path,
     )
-    tool_definitions = _build_tool_definitions(skill_registry, db_path)
+    tool_definitions = build_runtime_tool_definitions(skill_registry, db_path)
 
     async def _capture_bus_event(event: Event) -> None:
         payload = {
@@ -919,97 +671,6 @@ async def run_task_once(
         fallback_provider_key=fallback_provider_key,
     )
 
-    high_risk_tools = [
-        tool.name
-        for tool in tool_definitions
-        if bool(tool.metadata.get("requires_approval"))
-        or str(tool.metadata.get("risk_level", "")).lower() in {"high", "critical"}
-    ]
-
-    async def _approval_hook(
-        tool_name: str,
-        params: dict[str, Any],
-        metadata: Any,
-    ) -> dict[str, Any]:
-        risk_level = str((metadata.additional or {}).get("risk_level") or "high")
-        metadata_additional = metadata.additional if isinstance(metadata.additional, dict) else {}
-        scope_session_id = _short_text(
-            params.get("session_id") or resolved_approval_scope_id,
-            max_len=80,
-        ) or resolved_approval_scope_id
-        scope_key, approval_context = _build_approval_policy(
-            tool_name,
-            params,
-            risk_level,
-            scope_session_id,
-            metadata_additional,
-        )
-        approval_context["runtime_session_id"] = resolved_session_id
-        approval_context["approval_scope_id"] = resolved_approval_scope_id
-
-        event_signature = hashlib.sha256(scope_key.encode()).hexdigest()[:16]
-        event_id = f"{scope_session_id}:{event_signature}"
-
-        approved_history = event_engine.store.list_approvals(status="approved", limit=1000)
-        for approved in approved_history:
-            if approved.event_id == event_id:
-                return {
-                    "approved": True,
-                    "status": "approved",
-                    "approval_id": approved.approval_id,
-                    "reason": "approval already granted",
-                    "tool_name": tool_name,
-                    "params": params,
-                }
-
-        rejected_history = event_engine.store.list_approvals(status="rejected", limit=1000)
-        for rejected in rejected_history:
-            if rejected.event_id == event_id:
-                return {
-                    "approved": False,
-                    "status": "rejected",
-                    "approval_id": rejected.approval_id,
-                    "reason": (
-                        f"`{tool_name}` 已被人工拒绝。审批ID: {rejected.approval_id}。"
-                        f" 如需再次执行，请重新发起新的操作。"
-                    ),
-                    "tool_name": tool_name,
-                    "params": params,
-                }
-
-        pending_history = event_engine.store.list_approvals(status="pending", limit=1000)
-        for pending in pending_history:
-            if pending.event_id == event_id:
-                return {
-                    "approved": False,
-                    "status": "pending",
-                    "approval_id": pending.approval_id,
-                    "reason": (
-                        f"需要人工审批后才会执行 `{tool_name}`。审批ID: {pending.approval_id}。"
-                        f" 可执行 `/approve {pending.approval_id}` 或 `/reject {pending.approval_id}`。"
-                    ),
-                    "tool_name": tool_name,
-                    "params": params,
-                }
-
-        approval = await event_engine.approval_manager.request(
-            rule_id=f"tool.{tool_name}",
-            event_id=event_id,
-            risk_level=risk_level,
-            context=approval_context,
-        )
-        return {
-            "approved": False,
-            "status": "pending",
-            "approval_id": approval.approval_id,
-            "reason": (
-                f"需要人工审批后才会执行 `{tool_name}`。审批ID: {approval.approval_id}。"
-                f" 可执行 `/approve {approval.approval_id}` 或 `/reject {approval.approval_id}`。"
-            ),
-            "tool_name": tool_name,
-            "params": params,
-        }
-
     resolved_skill_index: list[dict[str, Any]] = []
     if isinstance(skill_index, list):
         resolved_skill_index = [row for row in skill_index if isinstance(row, dict)]
@@ -1031,23 +692,24 @@ async def run_task_once(
             "recent_tool_usage": dict(recent_tool_usage or {}),
             "session_working_dir": str(_session_working_dir(resolved_session_id)),
         },
-        available_skills=_build_skill_definitions(skill_registry, resolved_skill_index),
+        available_skills=build_runtime_skill_definitions(skill_registry, resolved_skill_index),
         available_tools=tool_definitions,
         available_mcp_servers=[],
         available_sub_agents=[],
-        runtime_policy=RuntimePolicy(
+        runtime_policy=build_runtime_policy(
+            tool_definitions,
             enable_delegation=False,
-            require_approval_for_high_risk=True,
-            high_risk_tools=high_risk_tools,
         ),
     )
 
-    unified_executor = UnifiedActionExecutor(
+    unified_executor = build_unified_action_executor(
         runtime_context=runtime_context,
         skill_registry=skill_registry,
+        event_engine=event_engine,
+        default_session_id=resolved_session_id,
+        approval_scope_id=resolved_approval_scope_id,
         mcp_client=None,
-        approval_hook=_approval_hook,
-        event_emitter=event_engine,
+        executor_cls=UnifiedActionExecutor,
     )
 
     runtime_event_emitter = EventEmitter()
@@ -1065,90 +727,60 @@ async def run_task_once(
     async def _drain_runtime_events() -> None:
         async for event in runtime_event_emitter:
             await _runtime_event_sink(event)
-            # Persist llm.usage events to EventStore for token usage stats
-            event_type = event.get("event") or ""
-            if event_type == "llm.usage":
-                data = event.get("data") or {}
-                try:
-                    event_engine.store.append_event(Event(
-                        event_id=uuid4().hex,
-                        event_type="llm.usage",
-                        source="orchestrator",
-                        subject=data.get("session_id"),
-                        payload=data,
-                    ))
-                except Exception:
-                    logger.debug("llm_usage_event_persist_failed", exc_info=True)
+            persist_runtime_event_to_store(event_engine, event)
 
     drain_task = asyncio.create_task(_drain_runtime_events())
 
-    graph_context: dict[str, Any] = {
-        "skill_registry": skill_registry,
-        "unified_executor": unified_executor,
-        "event_emitter": runtime_event_emitter,
-        "memory_system": memory_service,
-    }
-    if llm_provider:
-        graph_context["llm_provider"] = llm_provider
+    graph_context = build_graph_context(
+        skill_registry=skill_registry,
+        unified_executor=unified_executor,
+        emitter=runtime_event_emitter,
+        memory_system=memory_service,
+        llm_provider=llm_provider,
+    )
 
     graph: Any = create_agent_graph(context=graph_context, runtime_context=runtime_context)
-    initial_state = create_initial_state(
+    initial_state = build_initial_execution_state(
         session_id=resolved_session_id,
         agent_id=agent_id,
         user_message=task,
-        context=runtime_context,
+        runtime_context=runtime_context,
         metadata={"entrypoint": "cli.run"},
     )
 
-    await event_engine.emit(
-        Event(
-            event_id=f"evt_{uuid4().hex}",
-            event_type="chat.message.received",
-            source="cli.run",
-            subject=resolved_session_id,
-            payload={
-                "session_id": resolved_session_id,
-                "agent_id": agent_id,
-                "message": task,
-            },
-            risk_hint="low",
-            timestamp=datetime.now(UTC),
-        )
+    await emit_chat_message_received(
+        event_engine,
+        source="cli.run",
+        session_id=resolved_session_id,
+        agent_id=agent_id,
+        message=task,
     )
 
     try:
-        result = await graph.ainvoke(initial_state)
-        tool_results = _serialize_tool_results(result)
-        error = str(result.get("error") or "").strip() or None
-        status = "failed" if error else "completed"
-        final_response = _extract_final_response(result)
-        final_response = _guard_rule_authoring_success_claim(final_response, tool_results)
+        result = await invoke_graph_once(graph, initial_state)
+        normalized_result = normalize_execution_result(result, runtime_events=runtime_events)
+        normalized_result.final_response = guard_rule_authoring_success_claim(
+            normalized_result.final_response,
+            normalized_result.tool_results,
+        )
+        terminal_result = derive_terminal_execution_result(normalized_result)
 
-        await event_engine.emit(
-            Event(
-                event_id=f"evt_{uuid4().hex}",
-                event_type="task.completed" if status == "completed" else "task.failed",
-                source="cli.run",
-                subject=resolved_session_id,
-                payload={
-                    "session_id": resolved_session_id,
-                    "agent_id": agent_id,
-                    "status": status,
-                    "final_response": final_response,
-                    "error": error,
-                },
-                risk_hint="low" if status == "completed" else "medium",
-                timestamp=datetime.now(UTC),
-            )
+        await emit_terminal_runtime_event(
+            event_engine,
+            source="cli.run",
+            session_id=resolved_session_id,
+            agent_id=agent_id,
+            terminal_result=terminal_result,
         )
 
         return {
-            "status": status,
+            "status": terminal_result.status,
             "session_id": resolved_session_id,
             "agent_id": agent_id,
-            "final_response": final_response,
-            "error": error,
-            "tool_results": tool_results,
+            "final_response": terminal_result.final_response,
+            "awaiting_approval_message": terminal_result.awaiting_approval_message,
+            "error": terminal_result.error,
+            "tool_results": normalized_result.tool_results,
             "runtime_events": runtime_events,
             "llm_configured": llm_provider is not None,
         }

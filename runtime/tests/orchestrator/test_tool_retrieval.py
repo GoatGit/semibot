@@ -107,6 +107,56 @@ def test_build_act_tool_schemas_records_shortlist_ids_in_runtime_metadata():
     assert "builtin:search" in shortlist_ids
 
 
+def test_build_act_tool_schemas_projects_grouped_cli_tool_into_leaf_tools():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_1",
+        agent_id="agent_1",
+        session_id="session_1",
+        agent_config=AgentConfig(id="agent_1", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(
+                name="opencli_xiaohongshu",
+                description="Usage: opencli xiaohongshu [options] [command]",
+                metadata={
+                    "source_type": "cli",
+                    "provider_id": "opencli",
+                    "shape": "group",
+                    "actions": [
+                        {
+                            "command": "search",
+                            "description": "Search Xiaohongshu notes",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"query": {"type": "string", "minLength": 1}},
+                                "required": ["query"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        {
+                            "command": "user",
+                            "description": "Read Xiaohongshu user profile",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"id": {"type": "string", "minLength": 1}},
+                                "required": ["id"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    ],
+                },
+            )
+        ],
+        metadata={"_current_act_tool_query": "search xiaohongshu ai news"},
+    )
+
+    schemas = _build_act_tool_schemas(runtime_context, skill_registry=None)
+    names = {schema["function"]["name"] for schema in schemas}
+
+    assert "opencli_xiaohongshu_search" in names
+    assert "opencli_xiaohongshu_user" in names
+    assert "opencli_xiaohongshu" not in names
+
+
 def test_select_tool_shortlist_prefers_recently_successful_tool_usage():
     runtime_context = RuntimeSessionContext(
         user_id="user_1",

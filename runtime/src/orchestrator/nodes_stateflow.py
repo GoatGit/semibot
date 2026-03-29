@@ -318,7 +318,14 @@ def _build_execution_state_for_planner(
         }
 
     plan = state.get("plan")
-    tool_results = list(state.get("tool_results") or [])
+    tool_results = [
+        result
+        for result in list(state.get("tool_results") or [])
+        if not (
+            isinstance(getattr(result, "metadata", None), dict)
+            and getattr(result, "metadata", {}).get("dr_mode") is True
+        )
+    ]
     completed_steps: list[str] = []
     in_progress_steps: list[str] = []
     failed_steps: list[str] = []

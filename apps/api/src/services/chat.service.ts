@@ -13,12 +13,19 @@ import fs from 'fs-extra'
 import path from 'path'
 import { createError } from '../middleware/errorHandler'
 import * as sessionService from './session.service'
+import * as runtimeAttemptCommitService from './runtime-attempt-commit.service'
 import * as agentService from './agent.service'
 import * as mcpService from './mcp.service'
 import * as contextPolicyService from './context-policy.service'
 import * as evolutionCapabilityService from './evolution-capability.service'
 import * as skillDefinitionRepo from '../repositories/skill-definition.repository'
 import * as skillPackageRepo from '../repositories/skill-package.repository'
+import {
+  buildChunkExpansionBlock,
+  normalizeChunkCitationSyntax,
+  prepareDocumentContextForChat,
+  type DocumentContextReference,
+} from './document-context.service'
 import {
   VALIDATION_MESSAGE_TOO_LONG,
   SSE_CONNECTION_LIMIT,
@@ -72,6 +79,19 @@ export interface SSEConnection {
 const sseConnections = new Map<string, SSEConnection>()
 const VM_READY_WAIT_MS = Math.max(0, Number(process.env.CHAT_VM_READY_WAIT_MS ?? 5000))
 const VM_READY_POLL_MS = Math.max(200, Number(process.env.CHAT_VM_READY_POLL_MS ?? 1000))
+const DIRECT_RUNTIME_REQUEST_TIMEOUT_MS = Math.max(
+  5000,
+  Number(process.env.DIRECT_RUNTIME_REQUEST_TIMEOUT_MS ?? 30000)
+)
+const DIRECT_RUNTIME_STREAM_IDLE_TIMEOUT_MS = Math.max(
+  5000,
+  Number(process.env.DIRECT_RUNTIME_STREAM_IDLE_TIMEOUT_MS ?? 45000)
+)
+const RUNTIME_ATTEMPT_LEASE_MS = Math.max(
+  10_000,
+  Number(process.env.RUNTIME_ATTEMPT_LEASE_MS ?? 60_000)
+)
+const RUNTIME_ATTEMPT_WORKER_ID = `chat-http:${process.pid}`
 
 function isAuthDisabledForChat(): boolean {
   const enableAuth = process.env.SEMIBOT_ENABLE_AUTH
@@ -102,9 +122,21 @@ interface ApprovalCommandResult {
   approvalId?: string
 }
 
+export interface ApprovalResolutionResult {
+  approvalId: string
+  status: string
+  resumed: boolean
+  sessionId?: string
+  attemptId?: string
+  userMessageId?: string
+  assistantMessageId?: string
+}
+
 interface PendingApprovalResumeContext {
   userId: string
   sessionId: string
+  attemptId: string
+  userMessageId: string
   input: ChatInput
   agent: Agent
   createdAt: number
@@ -143,6 +175,26 @@ type RuntimeSkillMetadata = {
 type SkillIndexEntry = Record<string, unknown>
 
 const RUNTIME_SKILL_METADATA_TIMEOUT_MS = Math.max(1500, Number(process.env.RUNTIME_SKILL_METADATA_TIMEOUT_MS ?? 4000))
+
+async function readStreamChunkWithTimeout<T>(
+  reader: ReadableStreamDefaultReader<T>,
+  timeoutMs: number
+): Promise<{ value?: T; done: boolean }> {
+  return await new Promise<{ value?: T; done: boolean }>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`runtime stream idle timeout after ${timeoutMs}ms`))
+    }, timeoutMs)
+    reader.read()
+      .then((result) => {
+        clearTimeout(timeout)
+        resolve(result)
+      })
+      .catch((error) => {
+        clearTimeout(timeout)
+        reject(error)
+      })
+  })
+}
 const runtimeSkillMetadataCache = new Map<string, { expiresAt: number; rows: RuntimeSkillMetadata[] }>()
 const RUNTIME_SKILL_METADATA_CACHE_TTL_MS = Math.max(5000, Number(process.env.RUNTIME_SKILL_METADATA_CACHE_TTL_MS ?? 30000))
 
@@ -219,6 +271,77 @@ async function executeApprovalCommand(command: ApprovalCommand): Promise<Approva
   })
   return {
     text: `待审批列表（${items.length}）：\n${lines.join('\n')}\n可执行：/approve <id> 或 /reject <id>`,
+  }
+}
+
+export async function resolveApprovalAndMaybeResume(
+  approvalId: string,
+  decision: 'approve' | 'reject'
+): Promise<ApprovalResolutionResult> {
+  cleanupPendingApprovalResumes()
+  const pending = decision === 'approve' ? pendingApprovalResumes.get(approvalId) : undefined
+  const shouldResumeLocally = decision === 'approve' && Boolean(pending)
+  const result = await runtimeRequest<{ approval_id: string; status: string }>(
+    `/v1/approvals/${encodeURIComponent(approvalId)}/${decision}`,
+    {
+      method: 'POST',
+      body: shouldResumeLocally ? { resume: false } : {},
+      timeoutMs: shouldResumeLocally ? 5000 : 120000,
+    }
+  )
+
+  if (decision === 'reject') {
+    removePendingApprovalResume(result.approval_id)
+    return {
+      approvalId: result.approval_id,
+      status: result.status,
+      resumed: false,
+      attemptId: (result as { attempt_id?: string }).attempt_id,
+      userMessageId: (result as { user_message_id?: string }).user_message_id,
+    }
+  }
+
+  if (!shouldResumeLocally) {
+    removePendingApprovalResume(result.approval_id)
+    return {
+      approvalId: result.approval_id,
+      status: result.status,
+      resumed: false,
+      attemptId: (result as { attempt_id?: string }).attempt_id,
+      userMessageId: (result as { user_message_id?: string }).user_message_id,
+    }
+  }
+
+  const resumedContext = consumePendingApprovalResume(result.approval_id)
+  if (!resumedContext) {
+    return {
+      approvalId: result.approval_id,
+      status: result.status,
+      resumed: false,
+      attemptId: (result as { attempt_id?: string }).attempt_id,
+      userMessageId: (result as { user_message_id?: string }).user_message_id,
+    }
+  }
+
+  const resumeResult = await dispatchRuntimeChatResult({
+    userId: resumedContext.userId,
+    sessionId: resumedContext.sessionId,
+    input: resumedContext.input,
+    agent: resumedContext.agent,
+    persistUserMessage: false,
+    existingAttemptId: resumedContext.attemptId,
+    existingUserMessageId: resumedContext.userMessageId,
+    runtimeErrorMode: 'assistant_message',
+  })
+
+  return {
+    approvalId: result.approval_id,
+    status: result.status,
+    resumed: true,
+    sessionId: resumedContext.sessionId,
+    attemptId: resumedContext.attemptId,
+    userMessageId: resumedContext.userMessageId,
+    assistantMessageId: resumeResult.assistantMessageId,
   }
 }
 
@@ -536,6 +659,11 @@ export function createSSEConnection(
     () => closeSSEConnection(connection.id)
   )
 
+  // Emit an immediate heartbeat so freshly resumed streams receive a first frame
+  // without waiting for the regular heartbeat interval. This makes refresh/reconnect
+  // flows much less brittle across browsers and local proxy setups.
+  sendSSEEvent(connection, 'heartbeat', null)
+
   return connection
 }
 
@@ -577,6 +705,34 @@ export function sendSSEEvent(
   }
 }
 
+export function sendSessionSSEEvent(
+  sessionId: string,
+  event: string,
+  data: unknown
+): boolean {
+  const eventId = pushMessage(sessionId, event, data)
+  let sent = false
+
+  for (const connection of sseConnections.values()) {
+    if (!connection.isActive || connection.sessionId !== sessionId) continue
+    try {
+      connection.res.write(`id: ${eventId}\n`)
+      connection.res.write(`event: ${event}\n`)
+      connection.res.write(`data: ${JSON.stringify(data)}\n\n`)
+      sent = true
+    } catch (error) {
+      chatLogger.error('Session SSE 广播失败', error as Error, {
+        connectionId: connection.id,
+        sessionId,
+        event,
+      })
+      closeSSEConnection(connection.id)
+    }
+  }
+
+  return sent
+}
+
 export function sendAgent2UIMessage(
   connection: SSEConnection,
   type: Agent2UIType,
@@ -592,6 +748,23 @@ export function sendAgent2UIMessage(
   }
 
   return sendSSEEvent(connection, 'message', message)
+}
+
+export function sendSessionAgent2UIMessage(
+  sessionId: string,
+  type: Agent2UIType,
+  data: Agent2UIData,
+  metadata?: Record<string, unknown>
+): boolean {
+  const message: Agent2UIMessage = {
+    id: uuidv4(),
+    type,
+    data,
+    timestamp: new Date().toISOString(),
+    metadata,
+  }
+
+  return sendSessionSSEEvent(sessionId, 'message', message)
 }
 
 export async function handleChat(
@@ -615,33 +788,27 @@ export async function handleChat(
     })
 
     try {
-      const commandResult = await executeApprovalCommand(approvalCommand)
+      const commandResult = approvalCommand.kind === 'list'
+        ? await executeApprovalCommand(approvalCommand)
+        : null
+      const approvalResolution = approvalCommand.kind === 'approve' || approvalCommand.kind === 'reject'
+        ? await resolveApprovalAndMaybeResume(approvalCommand.approvalId, approvalCommand.kind)
+        : null
+      const responseText = commandResult?.text
+        || (
+          approvalResolution
+            ? `审批已${approvalCommand.kind === 'approve' ? '通过' : '拒绝'}：${approvalResolution.approvalId}（${approvalResolution.status}）`
+            : ''
+        )
       const assistant = await sessionService.addMessage(sessionId, {
         role: 'assistant',
-        content: commandResult.text,
+        content: responseText,
       })
-      sendAgent2UIMessage(connection, 'text', { content: commandResult.text })
+      sendAgent2UIMessage(connection, 'text', { content: responseText })
 
       let doneMessageId = assistant.id
-      if (approvalCommand.kind === 'approve' && commandResult.approvalId) {
-        const pending = consumePendingApprovalResume(commandResult.approvalId, sessionId)
-        if (pending) {
-          const resumeResult = await dispatchRuntimeChatResult({
-            userId: pending.userId,
-            sessionId: pending.sessionId,
-            input: pending.input,
-            agent: pending.agent,
-            connection,
-            persistUserMessage: false,
-            runtimeErrorMode: 'assistant_message',
-          })
-          if (resumeResult.assistantMessageId) {
-            doneMessageId = resumeResult.assistantMessageId
-          }
-        }
-      }
-      if (approvalCommand.kind === 'reject' && commandResult.approvalId) {
-        removePendingApprovalResume(commandResult.approvalId)
+      if (approvalCommand.kind === 'approve' && approvalResolution?.sessionId === sessionId && approvalResolution.assistantMessageId) {
+        doneMessageId = approvalResolution.assistantMessageId
       }
 
       sendSSEEvent(connection, 'done', { sessionId, messageId: doneMessageId })
@@ -666,6 +833,19 @@ export async function handleChat(
   await handleChatViaExecutionPlane(userId, sessionId, input, res, agent, session)
 }
 
+export async function subscribeChatStream(
+  userId: string,
+  sessionId: string,
+  res: Response
+): Promise<void> {
+  const session = await sessionService.getSession(sessionId)
+  if (session.userId !== userId) {
+    throw createError('AUTH_FORBIDDEN', '无权访问该会话')
+  }
+
+  createSSEConnection(res, sessionId, userId)
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -678,6 +858,7 @@ async function handleChatViaExecutionPlane(
   agent: Agent,
   _session: Session
 ): Promise<void> {
+  const enhanced = await buildEnhancedMessage(sessionId, input)
   const wsServer = getWSServer()
   const wsReady = wsServer.isUserReady(userId)
   let vmState = await ensureUserVM(userId, SINGLE_USER_ORG_ID, { wsReady })
@@ -709,6 +890,14 @@ async function handleChatViaExecutionPlane(
       size: att.size,
       isImage: att.isImage,
     }))
+  }
+  if (enhanced.documentReferences.length > 0) {
+    messageMetadata.document_context = {
+      docs: enhanced.documentReferences,
+      expanded_chunk_ids: enhanced.expandedChunkIds,
+      missing_chunk_ids: enhanced.missingChunkIds,
+      ambiguous_chunk_ids: enhanced.ambiguousChunkIds,
+    }
   }
 
   await sessionService.addMessage(sessionId, {
@@ -766,38 +955,13 @@ async function handleChatViaExecutionPlane(
     sub_agents: [],
   })
 
-  // 构造增强消息：将文件内容拼接到发送给 Runtime 的 message 中
-  let enhancedMessage = input.message
-  const imageAttachments: Array<{ filename: string; base64: string; mimeType: string }> = []
-
-  if (input.attachments && input.attachments.length > 0) {
-    const textParts: string[] = []
-    for (const att of input.attachments) {
-      if (att.isImage && att.base64) {
-        imageAttachments.push({
-          filename: att.filename,
-          base64: att.base64,
-          mimeType: att.mimeType,
-        })
-        textParts.push(`[图片: ${att.filename} (${formatBytes(att.size)})]`)
-      } else if (att.textContent) {
-        textParts.push(`--- 📎 文件: ${att.filename} (${formatBytes(att.size)}) ---\n${att.textContent}`)
-      } else {
-        textParts.push(`[附件: ${att.filename} (${formatBytes(att.size)}) - 无法提取内容]`)
-      }
-    }
-    if (textParts.length > 0) {
-      enhancedMessage = `${input.message}\n\n${textParts.join('\n---\n')}`
-    }
-  }
-
   wsServer.sendUserMessage(userId, sessionId, {
-    message: enhancedMessage,
+    message: enhanced.text,
     history,
     metadata: {
       user_id: userId,
       connection_id: connection.id,
-      ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
+      ...(enhanced.imageAttachments.length > 0 ? { attachments: enhanced.imageAttachments } : {}),
     },
   })
 
@@ -870,23 +1034,125 @@ async function getRuntimeSkillMetadata(baseUrls: string[]): Promise<RuntimeSkill
   return []
 }
 
-function buildEnhancedMessage(input: ChatInput): { text: string } {
-  if (!input.attachments || input.attachments.length === 0) {
-    return { text: input.message }
-  }
+type EnhancedMessageResult = {
+  text: string
+  imageAttachments: Array<{ filename: string; base64: string; mimeType: string }>
+  documentReferences: DocumentContextReference[]
+  expandedChunkIds: string[]
+  missingChunkIds: string[]
+  ambiguousChunkIds: string[]
+}
 
-  const textParts: string[] = []
-  for (const att of input.attachments) {
-    if (att.isImage && att.base64) {
-      textParts.push(`[图片: ${att.filename} (${formatBytes(att.size)})]`)
-    } else if (att.textContent) {
-      textParts.push(`--- 📎 文件: ${att.filename} (${formatBytes(att.size)}) ---\n${att.textContent}`)
-    } else {
-      textParts.push(`[附件: ${att.filename} (${formatBytes(att.size)}) - 无法提取内容]`)
+function extractDocumentReferencesFromMetadata(value: unknown): DocumentContextReference[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const rawDocs = (value as { docs?: unknown[] }).docs
+  const docs: unknown[] = Array.isArray(rawDocs) ? rawDocs : []
+  return docs
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => ({
+      docId: String(item.docId || '').trim(),
+      version: Number(item.version || 0),
+      title: String(item.title || '').trim(),
+      chunkCount: Number(item.chunkCount || 0),
+      summaryChars: Number(item.summaryChars || 0),
+      workspaceRootRelativePath: String(item.workspaceRootRelativePath || '').trim(),
+    }))
+    .filter((item) => item.docId && item.version > 0 && item.workspaceRootRelativePath)
+}
+
+async function loadSessionDocumentReferences(sessionId: string): Promise<DocumentContextReference[]> {
+  const messages = await sessionService.getSessionMessages(sessionId)
+  const references = new Map<string, DocumentContextReference>()
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const metadata = messages[index]?.metadata
+    const docs = extractDocumentReferencesFromMetadata(
+      metadata && typeof metadata === 'object'
+        ? (metadata as Record<string, unknown>).document_context
+        : undefined
+    )
+    for (const doc of docs) {
+      const key = `${doc.docId}:v${doc.version}`
+      if (!references.has(key)) references.set(key, doc)
     }
   }
+  return Array.from(references.values())
+}
+
+async function buildEnhancedMessage(sessionId: string, input: ChatInput): Promise<EnhancedMessageResult> {
+  if (!input.attachments || input.attachments.length === 0) {
+    const priorReferences = await loadSessionDocumentReferences(sessionId)
+    const expansion = await buildChunkExpansionBlock({
+      sessionId,
+      references: priorReferences,
+      sourceText: input.message,
+    })
+    const text = expansion.expansionBlock
+      ? `${expansion.expansionBlock}\n\n${input.message}`
+      : input.message
+    return {
+      text,
+      imageAttachments: [],
+      documentReferences: priorReferences,
+      expandedChunkIds: expansion.resolvedChunkIds,
+      missingChunkIds: expansion.missingChunkIds,
+      ambiguousChunkIds: expansion.ambiguousChunkIds,
+    }
+  }
+
+  const imageAttachments: Array<{ filename: string; base64: string; mimeType: string }> = []
+  const attachmentHints: string[] = []
+  for (const att of input.attachments) {
+    if (att.isImage && att.base64) {
+      imageAttachments.push({
+        filename: att.filename,
+        base64: att.base64,
+        mimeType: att.mimeType,
+      })
+      attachmentHints.push(`[图片: ${att.filename} (${formatBytes(att.size)})]`)
+      continue
+    }
+    if (!att.textContent) {
+      attachmentHints.push(`[附件: ${att.filename} (${formatBytes(att.size)}) - 无法提取内容]`)
+    }
+  }
+
+  const context = await prepareDocumentContextForChat({
+    sessionId,
+    attachments: input.attachments,
+  })
+
+  const messageParts: string[] = [input.message]
+  if (attachmentHints.length > 0) {
+    messageParts.push(`附件说明:\n${attachmentHints.join('\n')}`)
+  }
+  const userMessageBody = messageParts.filter(Boolean).join('\n\n')
+
+  if (!context.contextBlock) {
+    return {
+      text: userMessageBody,
+      imageAttachments,
+      documentReferences: context.references,
+      expandedChunkIds: [],
+      missingChunkIds: [],
+      ambiguousChunkIds: [],
+    }
+  }
+
+  const expansion = await buildChunkExpansionBlock({
+    sessionId,
+    references: context.references,
+    sourceText: input.message,
+  })
+  const blockParts = [context.contextBlock]
+  if (expansion.expansionBlock) blockParts.push(expansion.expansionBlock)
+
   return {
-    text: `${input.message}\n\n${textParts.join('\n---\n')}`,
+    text: `${blockParts.join('\n\n')}\n\n${userMessageBody}`,
+    imageAttachments,
+    documentReferences: context.references,
+    expandedChunkIds: expansion.resolvedChunkIds,
+    missingChunkIds: expansion.missingChunkIds,
+    ambiguousChunkIds: expansion.ambiguousChunkIds,
   }
 }
 
@@ -895,14 +1161,30 @@ interface RuntimeDispatchOptions {
   sessionId: string
   input: ChatInput
   agent: Agent
-  connection: SSEConnection
   persistUserMessage: boolean
+  existingAttemptId?: string
+  existingUserMessageId?: string
   runtimeErrorMode?: 'sse_error' | 'assistant_message'
 }
 
 interface RuntimeDispatchResult {
   ok: boolean
   assistantMessageId?: string
+  status?: string
+}
+
+function buildAssistantDocumentMetadata(
+  references: DocumentContextReference[],
+  extras?: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const metadata: Record<string, unknown> = { ...(extras || {}) }
+  if (references.length > 0) {
+    metadata.document_context = {
+      docs: references,
+    }
+    metadata.source_docs = references
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1047,6 +1329,55 @@ function normalizeDirectRuntimeEvent(input: unknown): Record<string, unknown> | 
         error: get('error'),
         response_excerpt: get('response_excerpt') ?? get('responseExcerpt'),
       }
+    case 'route.mode_selected':
+      return {
+        type: 'route.mode_selected',
+        mode: get('mode'),
+        reason: get('reason'),
+        goal: get('goal'),
+      }
+    case 'dr.completed':
+    case 'dr.failed':
+      return {
+        type: eventName,
+        status: get('status'),
+        answer: get('answer'),
+        upgrade_reason: get('upgrade_reason') ?? get('upgradeReason'),
+        tool_usage: get('tool_usage') ?? get('toolUsage'),
+        resource_usage: get('resource_usage') ?? get('resourceUsage'),
+        diagnostics: get('diagnostics'),
+        failure: get('failure'),
+        error: get('error'),
+      }
+    case 'observe_dr.respond_success':
+    case 'observe_dr.respond_partial':
+    case 'observe_dr.upgrade_to_plan_act':
+      return {
+        type: eventName,
+        outcome: get('outcome'),
+        reason: get('reason'),
+        status: get('status'),
+        intermediate_context: get('intermediate_context') ?? get('intermediateContext'),
+        resource_usage: get('resource_usage') ?? get('resourceUsage'),
+        upgrade_reason: get('upgrade_reason') ?? get('upgradeReason'),
+      }
+    case 'skill_call_start':
+      return {
+        type: 'skill_call_start',
+        skill_id: get('skill_id') ?? get('skillId'),
+        skill_name: get('skill_name') ?? get('skillName') ?? input.subject,
+        arguments: get('arguments') ?? {},
+      }
+    case 'skill_call_complete':
+      return {
+        type: 'skill_call_complete',
+        skill_id: get('skill_id') ?? get('skillId'),
+        skill_name: get('skill_name') ?? get('skillName') ?? input.subject,
+        result: get('result'),
+        success: get('success') ?? true,
+        error: get('error'),
+        duration: get('duration_ms') ?? get('duration'),
+      }
     case 'failure_reflection':
       return {
         type: 'failure_reflection',
@@ -1078,6 +1409,8 @@ function shouldBufferProcessMessage(type: string): boolean {
     type === 'plan_step' ||
     type === 'tool_call' ||
     type === 'tool_result' ||
+    type === 'skill_call' ||
+    type === 'skill_result' ||
     type === 'mcp_call' ||
     type === 'mcp_result'
   )
@@ -1085,32 +1418,40 @@ function shouldBufferProcessMessage(type: string): boolean {
 
 async function addAssistantTextMessage(
   sessionId: string,
-  connection: SSEConnection,
   content: string,
   metadata?: Record<string, unknown>,
+  attemptId?: string,
+  userMessageId?: string,
   relayFinalText = true
 ): Promise<string> {
   const assistant = await sessionService.addMessage(sessionId, {
+    attemptId,
+    userMessageId,
     role: 'assistant',
     content,
     metadata,
   })
   if (relayFinalText) {
-    sendAgent2UIMessage(connection, 'text', { content })
+    sendSessionAgent2UIMessage(sessionId, 'text', { content })
   }
   return assistant.id
 }
 
 async function relayRuntimeStreamToSSE(
-  connection: SSEConnection,
   response: globalThis.Response,
   sessionId: string,
-  agentId?: string
+  agentId?: string,
+  attemptId?: string,
+  userMessageId?: string,
+  onHeartbeat?: () => Promise<void>
 ): Promise<{
   status: string
+  terminalReason: string
+  revision?: number
   finalResponse: string
   error: string
   runtimeEvents: Array<Record<string, unknown>>
+  pendingApprovalIds: string[]
   processMessages: Agent2UIMessage[]
   streamedFinalText: boolean
 }> {
@@ -1137,6 +1478,8 @@ async function relayRuntimeStreamToSSE(
       }
       if (agentMessage.type === 'file') {
         await sessionService.addMessage(sessionId, {
+          attemptId,
+          userMessageId,
           role: 'assistant',
           content: '',
           metadata: {
@@ -1147,7 +1490,7 @@ async function relayRuntimeStreamToSSE(
       if (agentMessage.type === 'text' && String((agentMessage.data as { content?: string }).content || '').trim()) {
         streamedFinalText = true
       }
-      sendSSEEvent(connection, 'message', agentMessage)
+      sendSessionSSEEvent(sessionId, 'message', agentMessage)
     }
 
     chatLogger.info('Direct runtime relay completed (json)', {
@@ -1162,9 +1505,16 @@ async function relayRuntimeStreamToSSE(
 
     return {
       status: String(payload.status || ''),
+      terminalReason: String(payload.terminal_reason || ''),
+      revision: typeof payload.revision === 'number' && Number.isFinite(payload.revision)
+        ? Math.trunc(payload.revision)
+        : undefined,
       finalResponse: String(payload.final_response || ''),
       error: payload.error ? String(payload.error) : '',
       runtimeEvents,
+      pendingApprovalIds: Array.isArray(payload.pending_approval_ids)
+        ? payload.pending_approval_ids.map((item) => String(item || '')).filter(Boolean)
+        : [],
       processMessages,
       streamedFinalText,
     }
@@ -1177,14 +1527,20 @@ async function relayRuntimeStreamToSSE(
   const runtimeEvents: Array<Record<string, unknown>> = []
   const processMessages: Agent2UIMessage[] = []
   let doneStatus = ''
+  let doneTerminalReason = ''
+  let doneRevision: number | undefined
   let doneFinalResponse = ''
   let doneError = ''
+  let donePendingApprovalIds: string[] = []
   let streamedFinalText = false
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
   const handlePayload = async (payload: Record<string, unknown>) => {
+    if (onHeartbeat) {
+      await onHeartbeat().catch(() => undefined)
+    }
     runtimeFrameCount += 1
     if (firstFrameAt === null) {
       firstFrameAt = Date.now()
@@ -1200,8 +1556,15 @@ async function relayRuntimeStreamToSSE(
     if (eventName === 'start') return
     if (eventName === 'done') {
       doneStatus = String(payload.status || '')
+      doneTerminalReason = String(payload.terminal_reason || '')
+      doneRevision = typeof payload.revision === 'number' && Number.isFinite(payload.revision)
+        ? Math.trunc(payload.revision)
+        : undefined
       doneFinalResponse = String(payload.final_response || '')
       doneError = payload.error ? String(payload.error) : ''
+      donePendingApprovalIds = Array.isArray(payload.pending_approval_ids)
+        ? payload.pending_approval_ids.map((item) => String(item || '')).filter(Boolean)
+        : []
       return
     }
 
@@ -1219,6 +1582,8 @@ async function relayRuntimeStreamToSSE(
 
     if (agentMessage.type === 'file') {
       await sessionService.addMessage(sessionId, {
+        attemptId,
+        userMessageId,
         role: 'assistant',
         content: '',
         metadata: {
@@ -1231,11 +1596,11 @@ async function relayRuntimeStreamToSSE(
       streamedFinalText = true
     }
 
-    sendSSEEvent(connection, 'message', agentMessage)
+    sendSessionSSEEvent(sessionId, 'message', agentMessage)
   }
 
   for (;;) {
-    const { value, done } = await reader.read()
+    const { value, done } = await readStreamChunkWithTimeout(reader, DIRECT_RUNTIME_STREAM_IDLE_TIMEOUT_MS)
     buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
 
     let boundary = buffer.indexOf('\n\n')
@@ -1292,9 +1657,12 @@ async function relayRuntimeStreamToSSE(
 
   return {
     status: doneStatus,
+    terminalReason: doneTerminalReason,
+    revision: doneRevision,
     finalResponse: doneFinalResponse,
     error: doneError,
     runtimeEvents,
+    pendingApprovalIds: donePendingApprovalIds,
     processMessages,
     streamedFinalText,
   }
@@ -1306,10 +1674,15 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
     sessionId,
     input,
     agent,
-    connection,
     persistUserMessage,
+    existingAttemptId,
+    existingUserMessageId,
     runtimeErrorMode = 'sse_error',
   } = options
+
+  const enhanced = await buildEnhancedMessage(sessionId, input)
+  let userMessageId = existingUserMessageId
+  let attemptId = existingAttemptId
 
   if (persistUserMessage) {
     const messageMetadata: Record<string, unknown> = {}
@@ -1322,22 +1695,91 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
         isImage: att.isImage,
       }))
     }
+    if (enhanced.documentReferences.length > 0) {
+      messageMetadata.document_context = {
+        docs: enhanced.documentReferences,
+        expanded_chunk_ids: enhanced.expandedChunkIds,
+        missing_chunk_ids: enhanced.missingChunkIds,
+        ambiguous_chunk_ids: enhanced.ambiguousChunkIds,
+      }
+    }
 
-    await sessionService.addMessage(sessionId, {
+    const userMessage = await sessionService.addMessage(sessionId, {
       role: 'user',
       content: input.message,
       parentId: input.parentMessageId,
       ...(Object.keys(messageMetadata).length > 0 ? { metadata: messageMetadata } : {}),
     })
+    userMessageId = userMessage.id
+    const attempt = await sessionService.createRuntimeAttempt(sessionId, {
+      userMessageId,
+      agentId: agent.id,
+      executionMode: 'unknown',
+      status: 'running',
+      metadata: { source: 'chat.service' },
+    })
+    attemptId = attempt.id
+  } else if (attemptId) {
+    await sessionService.updateRuntimeAttempt(attemptId, {
+      status: 'running',
+      endedAt: null,
+    })
   }
 
-  const enhanced = buildEnhancedMessage(input)
+  async function heartbeatAttempt(): Promise<void> {
+    if (!attemptId) return
+    await sessionService.heartbeatRuntimeAttempt({
+      attemptId,
+      leasedBy: RUNTIME_ATTEMPT_WORKER_ID,
+      leaseDurationMs: RUNTIME_ATTEMPT_LEASE_MS,
+    })
+  }
+
+  if (attemptId) {
+    const claimed = await sessionService.claimRuntimeAttemptLease({
+      attemptId,
+      leasedBy: RUNTIME_ATTEMPT_WORKER_ID,
+      leaseDurationMs: RUNTIME_ATTEMPT_LEASE_MS,
+      expectedStatuses: ['queued', 'running'],
+    })
+    if (!claimed) {
+      const message = `Runtime attempt lease claim failed: ${attemptId}`
+      if (runtimeErrorMode === 'assistant_message') {
+        const assistantMessageId = await addAssistantTextMessage(
+          sessionId,
+          `审批已通过，但自动继续执行失败：${message}`,
+          undefined,
+          attemptId,
+          userMessageId,
+        )
+        await runtimeAttemptCommitService.commitAttemptTerminal({
+          attemptId,
+          sessionId,
+          userMessageId: userMessageId || attemptId,
+          status: 'failed',
+          terminalReason: 'resume_exhausted',
+          checkpointPayload: { status: 'failed', error: message },
+        })
+        return { ok: true, assistantMessageId, status: 'failed' }
+      }
+      sendSessionSSEEvent(sessionId, 'error', {
+        code: 'RUNTIME_ATTEMPT_LEASE_FAILED',
+        message,
+      })
+      await runtimeAttemptCommitService.commitAttemptTerminal({
+        attemptId,
+        sessionId,
+        userMessageId: userMessageId || attemptId,
+        status: 'failed',
+        terminalReason: 'graph_exception',
+        checkpointPayload: { status: 'failed', error: message },
+      })
+      return { ok: false, status: 'failed' }
+    }
+  }
+
   const runtimeBaseUrls = getRuntimeBaseUrls()
   const dispatchStartedAt = Date.now()
-  sendAgent2UIMessage(connection, 'thinking', {
-    content: '正在准备执行上下文...',
-    stage: 'planning',
-  })
   const skillIndexStartedAt = Date.now()
   const { skillIndex, runtimeSkillMetadata } = await buildAgentSkillIndex(agent, runtimeBaseUrls)
   const runtimeAgentConfig = await agentService.resolveRuntimeAgentConfig(agent.config)
@@ -1365,19 +1807,26 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
   let runtimeResponse: globalThis.Response | null = null
 
   for (const baseUrl of runtimeBaseUrls) {
+    let timeout: NodeJS.Timeout | null = null
     try {
       const runtimeRequestStartedAt = Date.now()
+      const controller = new AbortController()
+      timeout = setTimeout(() => controller.abort(), DIRECT_RUNTIME_REQUEST_TIMEOUT_MS)
       chatLogger.info('Direct runtime request started', {
         sessionId,
         agentId: agent.id,
         baseUrl,
+        timeoutMs: DIRECT_RUNTIME_REQUEST_TIMEOUT_MS,
       })
       const response = await fetch(`${baseUrl}/api/v1/chat/sessions/${sessionId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           message: enhanced.text,
           agent_id: agent.id,
+          attempt_id: attemptId,
+          user_message_id: userMessageId,
           model: runtimeAgentConfig.model,
           model_provider_key: runtimeAgentConfig.modelProviderKey,
           fallback_model: runtimeAgentConfig.fallbackModel,
@@ -1388,6 +1837,8 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
           stream: true,
         }),
       })
+      clearTimeout(timeout)
+      timeout = null
 
       if (!response.ok) {
         const body = await response.text().catch(() => '')
@@ -1411,14 +1862,22 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
         durationMs: Date.now() - runtimeRequestStartedAt,
       })
       runtimeResponse = response
+      await heartbeatAttempt()
       break
     } catch (error) {
-      runtimeErrors.push(`${baseUrl}: ${(error as Error).message}`)
+      if (timeout) {
+        clearTimeout(timeout)
+        timeout = null
+      }
+      const errorMessage = error instanceof Error && error.name === 'AbortError'
+        ? `request timeout after ${DIRECT_RUNTIME_REQUEST_TIMEOUT_MS}ms`
+        : (error as Error).message
+      runtimeErrors.push(`${baseUrl}: ${errorMessage}`)
       chatLogger.warn('Direct runtime request threw', {
         sessionId,
         agentId: agent.id,
         baseUrl,
-        error: (error as Error).message,
+        error: errorMessage,
       })
     }
   }
@@ -1428,25 +1887,55 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
     if (runtimeErrorMode === 'assistant_message') {
       const assistantMessageId = await addAssistantTextMessage(
         sessionId,
-        connection,
-        `审批已通过，但自动继续执行失败：${runtimeError}`
+        `审批已通过，但自动继续执行失败：${runtimeError}`,
+        undefined,
+        attemptId,
+        userMessageId,
       )
-      return { ok: true, assistantMessageId }
+      if (attemptId) {
+        await runtimeAttemptCommitService.commitAttemptTerminal({
+          attemptId,
+          sessionId,
+          userMessageId: userMessageId || attemptId,
+          status: 'failed',
+          terminalReason: 'resume_exhausted',
+          checkpointPayload: {
+            status: 'failed',
+            error: runtimeError,
+          },
+        })
+      }
+      return { ok: true, assistantMessageId, status: 'failed' }
     }
-    sendSSEEvent(connection, 'error', {
+    sendSessionSSEEvent(sessionId, 'error', {
       code: 'RUNTIME_UNAVAILABLE',
       message: runtimeError,
     })
-    return { ok: false }
+    if (attemptId) {
+      await runtimeAttemptCommitService.commitAttemptTerminal({
+        attemptId,
+        sessionId,
+        userMessageId: userMessageId || attemptId,
+        status: 'failed',
+        terminalReason: 'graph_exception',
+        checkpointPayload: {
+          status: 'failed',
+          error: runtimeError,
+        },
+      })
+    }
+    return { ok: false, status: 'failed' }
   }
 
   let streamOutcome: Awaited<ReturnType<typeof relayRuntimeStreamToSSE>>
   try {
     streamOutcome = await relayRuntimeStreamToSSE(
-      connection,
       runtimeResponse,
       sessionId,
-      agent.id
+      agent.id,
+      attemptId,
+      userMessageId,
+      heartbeatAttempt
     )
   } catch (error) {
     const message = (error as Error).message || 'runtime stream failed'
@@ -1457,76 +1946,202 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
     if (runtimeErrorMode === 'assistant_message') {
       const assistantMessageId = await addAssistantTextMessage(
         sessionId,
-        connection,
-        `审批已通过，但自动继续执行失败：${message}`
+        `审批已通过，但自动继续执行失败：${message}`,
+        undefined,
+        attemptId,
+        userMessageId,
       )
-      return { ok: true, assistantMessageId }
+      if (attemptId) {
+        await runtimeAttemptCommitService.commitAttemptTerminal({
+          attemptId,
+          sessionId,
+          userMessageId: userMessageId || attemptId,
+          status: 'failed',
+          terminalReason: 'resume_exhausted',
+          checkpointPayload: {
+            status: 'failed',
+            error: message,
+          },
+        })
+      }
+      return { ok: true, assistantMessageId, status: 'failed' }
     }
-    sendSSEEvent(connection, 'error', {
+    sendSessionSSEEvent(sessionId, 'error', {
       code: 'RUNTIME_STREAM_ERROR',
       message,
     })
-    return { ok: false }
+    if (attemptId) {
+      await runtimeAttemptCommitService.commitAttemptTerminal({
+        attemptId,
+        sessionId,
+        userMessageId: userMessageId || attemptId,
+        status: 'failed',
+        terminalReason: 'graph_exception',
+        checkpointPayload: {
+          status: 'failed',
+          error: message,
+        },
+      })
+    }
+    return { ok: false, status: 'failed' }
   }
   const status = streamOutcome.status
+  const normalizedStatus = String(status || '').trim().toLowerCase()
+  const runtimeTerminalReason = String(streamOutcome.terminalReason || '').trim()
+  const runtimeRevision = typeof streamOutcome.revision === 'number' ? streamOutcome.revision : undefined
   const rawFinalResponse = streamOutcome.finalResponse
   const error = streamOutcome.error
   const runtimeEvents = streamOutcome.runtimeEvents
-  const approvalIds = extractApprovalIds(runtimeEvents)
-  const finalResponse = appendApprovalHints(rawFinalResponse, runtimeEvents)
+  const approvalIds = Array.from(
+    new Set([
+      ...extractApprovalIds(runtimeEvents),
+      ...(Array.isArray(streamOutcome.pendingApprovalIds) ? streamOutcome.pendingApprovalIds : []),
+    ])
+  )
+  const finalResponse = normalizeChunkCitationSyntax(appendApprovalHints(rawFinalResponse, runtimeEvents))
+  const isAwaitingApproval = normalizedStatus === 'awaiting_approval'
+  const isCompleted = normalizedStatus === 'completed'
 
   if (approvalIds.length > 0) {
     rememberPendingApprovalResumes(approvalIds, {
       userId,
       sessionId,
+      attemptId: attemptId || '',
+      userMessageId: userMessageId || '',
       input,
       agent,
     })
   }
 
-  if ((status !== 'completed' || error) && approvalIds.length === 0) {
+  if (((normalizedStatus !== 'completed' && !isAwaitingApproval) || (Boolean(error) && !isAwaitingApproval)) && approvalIds.length === 0) {
     if (runtimeErrorMode === 'assistant_message') {
       const assistantMessageId = await addAssistantTextMessage(
         sessionId,
-        connection,
-        `审批已通过，但自动继续执行失败：${error || `Runtime 执行失败（status=${status || 'unknown'}）`}`
+        `审批已通过，但自动继续执行失败：${error || `Runtime 执行失败（status=${status || 'unknown'}）`}`,
+        undefined,
+        attemptId,
+        userMessageId,
       )
-      return { ok: true, assistantMessageId }
+      if (attemptId) {
+        await runtimeAttemptCommitService.commitAttemptTerminal({
+          attemptId,
+          sessionId,
+          userMessageId: userMessageId || attemptId,
+          status: 'failed',
+          terminalReason: runtimeTerminalReason || 'resume_exhausted',
+          revision: runtimeRevision,
+          checkpointPayload: {
+            status: normalizedStatus || 'failed',
+            error: error || `Runtime 执行失败（status=${status || 'unknown'}）`,
+          },
+        })
+      }
+      return { ok: true, assistantMessageId, status: normalizedStatus || 'failed' }
     }
-    sendSSEEvent(connection, 'error', {
+    sendSessionSSEEvent(sessionId, 'error', {
       code: 'RUNTIME_EXECUTION_ERROR',
       message: error || `Runtime 执行失败（status=${status || 'unknown'}）`,
     })
-    return { ok: false }
+    if (attemptId) {
+      await runtimeAttemptCommitService.commitAttemptTerminal({
+        attemptId,
+        sessionId,
+        userMessageId: userMessageId || attemptId,
+        status: 'failed',
+        terminalReason: runtimeTerminalReason || 'graph_exception',
+        revision: runtimeRevision,
+        checkpointPayload: {
+          status: normalizedStatus || 'failed',
+          error: error || `Runtime 执行失败（status=${status || 'unknown'}）`,
+        },
+      })
+    }
+    return { ok: false, status: normalizedStatus || 'failed' }
   }
 
-  const content =
-    finalResponse.trim() ||
-    (approvalIds.length > 0
-      ? `该请求包含高风险操作，等待审批：${approvalIds.join(', ')}。`
-      : '任务已执行完成。')
+  const content = isAwaitingApproval
+    ? ''
+    : (
+        finalResponse.trim() ||
+        (approvalIds.length > 0
+          ? `该请求包含高风险操作，等待审批：${approvalIds.join(', ')}。`
+          : '任务已执行完成。')
+      )
 
-  if (!streamOutcome.streamedFinalText && content.trim()) {
-    sendAgent2UIMessage(connection, 'text', { content })
+  if (isCompleted && !streamOutcome.streamedFinalText && content.trim()) {
+    sendSessionAgent2UIMessage(sessionId, 'text', { content })
   }
-  const assistantMessageId = await addAssistantTextMessage(
-    sessionId,
-    connection,
-    content,
-    streamOutcome.processMessages.length > 0
-      ? {
-          execution_process: {
-            version: 1,
-            messages: streamOutcome.processMessages,
-          },
-        }
-      : undefined,
-    false
-  )
-  if (status === 'failed') {
-    await sessionService.updateSessionStatus(sessionId, status)
+  let assistantMessageId: string | undefined
+  if (isCompleted) {
+    assistantMessageId = await addAssistantTextMessage(
+      sessionId,
+      content,
+      buildAssistantDocumentMetadata(
+        enhanced.documentReferences,
+        streamOutcome.processMessages.length > 0
+          ? {
+              execution_process: {
+                version: 1,
+                messages: streamOutcome.processMessages,
+              },
+            }
+          : undefined
+      ),
+      attemptId,
+      userMessageId,
+      false
+    )
+    if (attemptId) {
+      await runtimeAttemptCommitService.commitAttemptTerminal({
+        attemptId,
+        sessionId,
+        userMessageId: userMessageId || attemptId,
+        status: 'completed',
+        terminalReason: runtimeTerminalReason || 'completed_normally',
+        revision: runtimeRevision,
+        artifactMessageId: assistantMessageId,
+        checkpointPayload: {
+          status: 'completed',
+          pending_approval_ids: approvalIds,
+          final_response: finalResponse,
+          error: error || '',
+        },
+      })
+    }
   }
-  return { ok: true, assistantMessageId }
+  if (normalizedStatus === 'awaiting_approval' && attemptId) {
+    await runtimeAttemptCommitService.commitAttemptState({
+      attemptId,
+      sessionId,
+      userMessageId: userMessageId || attemptId,
+      status: 'awaiting_approval',
+      approvalBlockCount: approvalIds.length,
+      approvalSetRevision: approvalIds.length > 0 ? 1 : 0,
+      revision: runtimeRevision,
+      checkpointPayload: {
+        status: 'awaiting_approval',
+        pending_approval_ids: approvalIds,
+        final_response: '',
+        error: error || '',
+      },
+    })
+  } else if ((normalizedStatus === 'failed' || normalizedStatus === 'cancelled') && attemptId) {
+    await runtimeAttemptCommitService.commitAttemptTerminal({
+      attemptId,
+      sessionId,
+      userMessageId: userMessageId || attemptId,
+      status: normalizedStatus === 'cancelled' ? 'cancelled' : 'failed',
+      terminalReason: runtimeTerminalReason || (normalizedStatus === 'cancelled' ? 'cancelled' : 'graph_exception'),
+      revision: runtimeRevision,
+      checkpointPayload: {
+        status: normalizedStatus === 'cancelled' ? 'cancelled' : 'failed',
+        pending_approval_ids: approvalIds,
+        final_response: '',
+        error: error || '',
+      },
+    })
+  }
+  return { ok: true, assistantMessageId, status: normalizedStatus || undefined }
 }
 
 async function handleChatViaRuntimeHttp(
@@ -1543,14 +2158,14 @@ async function handleChatViaRuntimeHttp(
       sessionId,
       input,
       agent,
-      connection,
       persistUserMessage: true,
       runtimeErrorMode: 'sse_error',
     })
-    if (result.ok && result.assistantMessageId) {
-      sendSSEEvent(connection, 'done', {
+    if (result.ok) {
+      sendSessionSSEEvent(sessionId, 'done', {
         sessionId,
         messageId: result.assistantMessageId,
+        status: result.status,
       })
     }
   } catch (error) {
@@ -1558,7 +2173,7 @@ async function handleChatViaRuntimeHttp(
       sessionId,
       agentId: agent.id,
     })
-    sendSSEEvent(connection, 'error', {
+    sendSessionSSEEvent(sessionId, 'error', {
       code: 'CHAT_RUNTIME_ERROR',
       message: (error as Error).message || 'direct runtime chat failed',
     })

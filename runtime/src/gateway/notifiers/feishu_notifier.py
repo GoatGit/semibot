@@ -231,6 +231,7 @@ class FeishuNotifier:
         payload = event.payload if isinstance(event.payload, dict) else {}
         summary = str(
             payload.get("summary")
+            or payload.get("awaiting_approval_message")
             or payload.get("final_response")
             or payload.get("result")
             or payload.get("message")

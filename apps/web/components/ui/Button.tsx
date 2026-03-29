@@ -58,7 +58,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
           // Variant styles
           variant === 'primary' && [
-            'bg-primary-500 text-neutral-950',
+            'bg-primary-500 text-neutral-0',
             'hover:bg-primary-400',
             'active:bg-primary-600 active:scale-[0.98]',
             'disabled:bg-neutral-700 disabled:text-neutral-500',

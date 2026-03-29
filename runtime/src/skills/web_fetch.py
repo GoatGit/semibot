@@ -165,6 +165,7 @@ class WebFetchTool(BaseTool):
             allow_localhost=self.allow_localhost,
             allowed_domains=self.allowed_domains,
             blocked_domains=self.blocked_domains,
+            allow_fake_ip_override=False,
         )
 
     def _extract_main_html(self, html_text: str, mode: str) -> str:
@@ -189,13 +190,20 @@ class WebFetchTool(BaseTool):
         max_chars: int | None = None,
         include_links: bool = True,
         include_html: bool = False,
+        _approved_fake_ip_override: bool = False,
         **_: Any,
     ) -> ToolResult:
         self._load_runtime_config()
         request_url = str(url or "").strip()
         if not request_url:
             return ToolResult.error_result("url is required")
-        valid, error = self._validate_url(request_url)
+        valid, error = _validate_remote_url(
+            request_url,
+            allow_localhost=self.allow_localhost,
+            allowed_domains=self.allowed_domains,
+            blocked_domains=self.blocked_domains,
+            allow_fake_ip_override=bool(_approved_fake_ip_override),
+        )
         if not valid:
             return ToolResult.error_result(error or "Invalid URL")
 

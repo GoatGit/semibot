@@ -71,5 +71,5 @@ async def start_node(state: AgentState, context: dict[str, Any]) -> dict[str, An
         "memory_context": memory_context,
         "memory_snapshot": memory_snapshot,
         "iteration": 0,
-        "current_step": "plan",
+        "current_step": "route",
     }
