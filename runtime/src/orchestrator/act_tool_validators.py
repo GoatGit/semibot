@@ -474,11 +474,14 @@ def _check_semi_browser_not_justified(ctx: ToolValidationContext) -> str | None:
     if has_search_failure and has_web_fetch_failure:
         return None
     if not _step_requires_interactive_browser(ctx.action, ctx.latest_user_text):
-        return (
-            "semi_browser is not justified for this step. "
-            "Prefer search and web_fetch for research/retrieval steps unless the step explicitly requires interactive page actions. "
-            "If both search and web_fetch have already failed in the current step, semi_browser may be used as a controlled fallback."
+        logger.info(
+            "semi_browser_not_justified_advisory",
+            extra={
+                "step_id": str(ctx.action.id or ""),
+                "tool_name": ctx.tool_name,
+            },
         )
+        return None
     return None
 
 
@@ -510,10 +513,15 @@ def _check_search_stale_year(ctx: ToolValidationContext) -> str | None:
         and _is_latest_research_intent(ctx.latest_user_text)
         and any(_search_query_contains_stale_year(q, today=ctx.today) for q in query_candidates)
     ):
-        return (
-            "Search query contains an older explicit year for a latest/current request. "
-            f"Today is {ctx.today.strftime('%Y-%m-%d')}. Rewrite the query to target the current timeframe instead of older years."
+        logger.info(
+            "search_stale_year_advisory",
+            extra={
+                "step_id": str(ctx.action.id or ""),
+                "queries": query_candidates[:5],
+                "today": ctx.today.strftime("%Y-%m-%d"),
+            },
         )
+        return None
     return None
 
 
@@ -521,11 +529,14 @@ def _check_search_repeated_failures(ctx: ToolValidationContext) -> str | None:
     from src.orchestrator.act_tool_executor import _has_same_step_search_provider_failures
 
     if _has_same_step_search_provider_failures(ctx.current_step_results):
-        return (
-            "search already failed multiple times in the current step. "
-            "Do not keep retrying search in this step. Reuse the current step's existing fetched results, "
-            "switch to web_fetch on known relevant URLs, or finish with the results you have."
+        logger.info(
+            "search_repeated_failures_advisory",
+            extra={
+                "step_id": str(ctx.action.id or ""),
+                "tool_name": ctx.tool_name,
+            },
         )
+        return None
     return None
 
 

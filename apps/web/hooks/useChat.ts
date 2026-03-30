@@ -266,7 +266,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     url: string,
     fetchOptions: RequestInit,
     options?: { preserveStreamingState?: boolean }
-  ): Promise<{ terminalState: StreamTerminalState }> => {
+  ): Promise<{ terminalState: StreamTerminalState; eventCount: number }> => {
     const preserveStreamingState = options?.preserveStreamingState === true
     const currentRequestId = requestIdRef.current
     const headers = new Headers(fetchOptions.headers || {})
@@ -295,6 +295,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     let currentEvent = ''
     let currentId = ''
     let dataLines: string[] = []
+    let eventCount = 0
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -329,6 +330,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
               if (currentRequestId !== requestIdRef.current) {
                 break
               }
+              eventCount += 1
 
               switch (currentEvent) {
                 case 'message':
@@ -362,7 +364,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
     if (terminalState === 'none' && currentRequestId === requestIdRef.current) {
       if (isUnmountingRef.current) {
-        return { terminalState }
+        return { terminalState, eventCount }
       }
       if (!preserveStreamingState) {
         handleError({
@@ -372,7 +374,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       }
     }
 
-    return { terminalState }
+    return { terminalState, eventCount }
   }, [handleDone, handleError, handleMessage, persistLastEventId, readLastEventId])
 
   /**
@@ -518,6 +520,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
       // 自动重连循环：SSE 流断开后静默重试，直到收到终端事件或组件卸载
       const MAX_RECONNECTS = 30
+      let emptyClosureCount = 0
       for (let reconnect = 0; reconnect < MAX_RECONNECTS; reconnect += 1) {
         if (controller.signal.aborted) break
         if (isUnmountingRef.current || currentRequestId !== requestIdRef.current) return
@@ -541,6 +544,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             streamResult.terminalState === 'awaiting_approval'
           ) {
             break
+          }
+          if (streamResult.eventCount === 0) {
+            emptyClosureCount += 1
+            if (emptyClosureCount >= 2) {
+              break
+            }
+          } else {
+            emptyClosureCount = 0
           }
           // 流正常结束（无终端事件），可能是服务端断开——等待后重连
         } catch (error) {

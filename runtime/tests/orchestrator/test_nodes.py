@@ -53,7 +53,6 @@ from src.orchestrator.nodes_plan import (
 )
 from src.orchestrator.nodes_reflect import reflect_node
 from src.orchestrator.nodes_respond import (
-    _looks_like_premature_final_response,
     respond_node,
 )
 from src.orchestrator.nodes_shared import _current_round_skill_id, _serialize_tool_backfeed_content
@@ -545,19 +544,6 @@ options:
     assert contracts["--report"] == (".md", ".markdown")
 
 
-def test_looks_like_premature_final_response_detects_process_leak():
-    content = """
-我来为您对泡泡玛特进行深度研究分析。首先让我读取研究技能文档，然后执行全面的市场分析。
-分析请求：主题是泡泡玛特股票研究。
-确定行动计划：
-步骤1：读取 deep-research 的 SKILL.md。
-执行-读取技能：
-（内部操作：读取 deep-research 的 SKILL.md）
-结果假设：该技能需要详细查询和综合分析。
-"""
-    assert _looks_like_premature_final_response(content) is True
-
-
 def test_is_context_overflow_error_avoids_generic_token_misclassification():
     assert _is_context_overflow_error(RuntimeError("maximum context length exceeded")) is True
     assert _is_context_overflow_error(RuntimeError("too many tokens in prompt")) is True
@@ -689,16 +675,13 @@ def test_build_failure_reflection_mentions_non_capability_path_and_artifact_hand
         current_skill_name="deep-research",
     )
 
-    assert "Observed Failures" in reflection
-    assert "What This Does NOT Mean" in reflection
-    assert "Do Not Repeat" in reflection
-    assert "Capability Gap Hypothesis" in reflection
-    assert "Requirements For The Next Plan" in reflection
-    assert "This does not prove a missing capability" in reflection
-    assert "Do not read a session artifact by bare filename" in reflection
-    assert "Re-read and follow the current skill's SKILL.md before replanning." not in reflection
-    assert "current round skill context 'deep-research'" in reflection
-    assert "Preserve the current round's skill methodology" in reflection
+    assert "[SYSTEM] REPLAN_REQUIRED" in reflection
+    assert "reason: blocking_failures" in reflection
+    assert "Failed Tools" in reflection
+    assert "- file_io: File not found: report.md" in reflection
+    assert "Planner Requirements" in reflection
+    assert "Keep planning inside current skill scope: deep-research." in reflection
+    assert "Do not mark task complete until final delivery contract is satisfied." in reflection
 
 
 def test_bind_file_io_skill_scope_uses_current_skill_name():
@@ -5473,7 +5456,7 @@ async def test_execute_llm_act_step_reuses_same_step_file_read_result(mock_conte
     assert len(seen_prompts) >= 2
     assert "Already loaded files in this step:" in seen_prompts[1]
     assert "- evidence.json (read_success=true, truncated=False" in seen_prompts[1]
-    assert "Do not read the same file again unless that file was modified in this step." in seen_prompts[1]
+    assert "Prefer reusing already loaded file content unless a file was modified in this step." in seen_prompts[1]
 
 
 @pytest.mark.asyncio
@@ -6365,7 +6348,7 @@ async def test_observe_node_replans_on_all_failures(mock_context, base_state):
     assert result["current_step"] == "plan"
     assert result["observe_outcome"] == "replan_current_round"
     assert result["messages"]
-    assert "FAILURE REFLECTION" in str(result["messages"][0]["content"])
+    assert "REPLAN_REQUIRED" in str(result["messages"][0]["content"])
 
 
 @pytest.mark.asyncio
@@ -6642,7 +6625,7 @@ async def test_observe_node_persists_replan_failure_details_with_step_trace(mock
 
 
 @pytest.mark.asyncio
-async def test_respond_node_uses_observed_failure_summary_for_all_failed_results(mock_context, base_state):
+async def test_respond_node_uses_llm_first_response_for_all_failed_results(mock_context, base_state):
     base_state["tool_results"] = [
         ToolCallResult(
             tool_name="skill_script_runner",
@@ -6655,15 +6638,91 @@ async def test_respond_node_uses_observed_failure_summary_for_all_failed_results
     base_state["current_step"] = "respond"
     base_state["error"] = None
     mock_context["llm_provider"] = AsyncMock()
-    mock_context["llm_provider"].generate_response.return_value = "hallucinated explanation"
+    mock_context["llm_provider"].generate_response.return_value = "执行失败，请修复脚本路径后重试。"
 
     result = await respond_node(base_state, mock_context)
 
     assert "messages" in result
     content = result["messages"][0]["content"]
-    assert "未能完成" in content
-    assert "script target not found: scripts/missing.py" in content
-    assert "run_phases.py" not in content
+    assert content == "执行失败，请修复脚本路径后重试。"
+    assert "script target not found" not in content
+    mock_context["llm_provider"].generate_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_respond_node_uses_llm_first_response_for_quota_and_guard_failures(mock_context, base_state):
+    base_state["tool_results"] = [
+        ToolCallResult(
+            tool_name="search",
+            params={"queries": ["latest AI industry developments 2024"]},
+            result=None,
+            success=False,
+            error=(
+                'latest AI industry developments 2024: Tavily API error 432: '
+                '{"detail":{"error":"This request exceeds your plan\'s set usage limit. '
+                'Please upgrade your plan or contact support@tavily.com"}}; '
+                'AI technology breakthroughs: Tavily API error 432: '
+                '{"detail":{"error":"This request exceeds your plan\'s set usage limit. '
+                'Please upgrade your plan or contact support@tavily.com"}}'
+            ),
+        ),
+        ToolCallResult(
+            tool_name="semi_browser",
+            params={"query": "AI industry trends"},
+            result=None,
+            success=False,
+            error=(
+                "semi_browser is not justified for this step. Prefer search and web_fetch "
+                "for research/retrieval steps unless the step explicitly requires interactive page actions."
+            ),
+        ),
+    ]
+    base_state["current_step"] = "respond"
+    base_state["error"] = None
+    mock_context["llm_provider"] = AsyncMock()
+    mock_context["llm_provider"].generate_response.return_value = "检索服务暂时不可用，请稍后重试。"
+
+    result = await respond_node(base_state, mock_context)
+
+    content = str(result["messages"][0]["content"])
+    assert content == "检索服务暂时不可用，请稍后重试。"
+    assert "is not justified for this step" not in content
+    assert "Please upgrade your plan or contact support@tavily.com" not in content
+    mock_context["llm_provider"].generate_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_respond_node_prefers_successful_web_fetch_over_failed_search_summary(mock_context, base_state):
+    base_state["tool_results"] = [
+        ToolCallResult(
+            tool_name="search",
+            params={"queries": ["latest AI industry developments"]},
+            result=None,
+            success=False,
+            error='Tavily API error 432: {"detail":{"error":"This request exceeds your plan\'s set usage limit."}}',
+        ),
+        ToolCallResult(
+            tool_name="web_fetch",
+            params={"url": "https://example.com/ai-news"},
+            result={
+                "url": "https://example.com/ai-news",
+                "title": "AI News Roundup",
+                "text": "OpenAI released a new feature. Anthropic launched an enterprise update.",
+            },
+            success=True,
+        ),
+    ]
+    base_state["current_step"] = "respond"
+    base_state["error"] = None
+    mock_context["llm_provider"] = AsyncMock()
+    mock_context["llm_provider"].chat = AsyncMock(side_effect=Exception("render failed"))
+
+    result = await respond_node(base_state, mock_context)
+
+    content = str(result["messages"][0]["content"])
+    assert "未能完成" not in content
+    assert "AI News Roundup" in content
+    assert "https://example.com/ai-news" in content
     mock_context["llm_provider"].generate_response.assert_not_awaited()
 
 
@@ -6996,7 +7055,7 @@ async def test_respond_node_prefers_structured_act_result_summary(mock_context, 
     result = await respond_node(base_state, mock_context)
 
     content = str(result["messages"][0]["content"])
-    assert "任务已完成。" in content
+    assert "# test query" in content
     assert "已完成拼多多股票研究报告的综合分析" in content
     assert "已产出：" not in content
     assert "pdd_report.md" not in content
@@ -7037,7 +7096,7 @@ async def test_respond_node_uses_inline_delivery_for_structured_act_result(mock_
     result = await respond_node(base_state, mock_context)
 
     content = str(result["messages"][0]["content"])
-    assert "任务已完成" in content
+    assert "AI 行业动态中文摘要" in content
     assert "产品发布与融资动态" in content
     mock_context["llm_provider"].generate_response.assert_not_awaited()
 
@@ -7122,6 +7181,62 @@ async def test_respond_node_avoids_raw_web_fetch_json_and_falls_back_to_inline_s
 
 
 @pytest.mark.asyncio
+async def test_respond_node_avoids_concatenated_raw_json_from_dr_answer(mock_context, base_state):
+    base_state["messages"] = [{"role": "user", "content": "搜索最新的 AI 行业动态并总结"}]
+    base_state["observe_dr_outcome"] = {"outcome": "respond_success", "reason": "dr completed"}
+    first_payload = json.dumps(
+        {
+            "url": "https://example.com/ai-1",
+            "status_code": 200,
+            "content_type": "text/html",
+            "title": "",
+            "text": "first raw fetched page body",
+        },
+        ensure_ascii=False,
+    )
+    second_payload = json.dumps(
+        {
+            "url": "https://example.com/ai-2",
+            "status_code": 200,
+            "content_type": "text/html",
+            "title": "",
+            "text": "second raw fetched page body",
+        },
+        ensure_ascii=False,
+    )
+    base_state["dr_result"] = {
+        "status": "completed",
+        "answer": f"{first_payload}\n\n{second_payload}",
+    }
+    base_state["tool_results"] = [
+        ToolCallResult(
+            tool_name="search",
+            params={"query": "AI industry news"},
+            result={
+                "items": [
+                    {
+                        "title": "OpenAI focuses on enterprise features",
+                        "url": "https://example.com/openai",
+                        "snippet": "OpenAI 发布新的企业产品能力。",
+                    }
+                ]
+            },
+            success=True,
+        )
+    ]
+    base_state["current_step"] = "respond"
+    mock_context["llm_provider"] = AsyncMock()
+    mock_context["llm_provider"].chat = AsyncMock(side_effect=Exception("render failed"))
+
+    result = await respond_node(base_state, mock_context)
+
+    content = str(result["messages"][0]["content"])
+    assert '"status_code"' not in content
+    assert "https://example.com/openai" in content
+    assert "OpenAI 发布新的企业产品能力" in content
+
+
+@pytest.mark.asyncio
 async def test_respond_node_handles_failed_act_result_with_error(mock_context, base_state):
     """When act produces a failed result, respond generates an error-aware response."""
     base_state["tool_results"] = [
@@ -7148,7 +7263,7 @@ async def test_respond_node_handles_failed_act_result_with_error(mock_context, b
     result = await respond_node(base_state, mock_context)
 
     content = str(result["messages"][0]["content"])
-    assert "缺少必需来源证据" in content or "缺少来源链接" in content or "未能完成" in content
+    assert "未能完成" in content
 
 
 @pytest.mark.asyncio
@@ -7250,7 +7365,7 @@ async def test_respond_node_without_artifact_payload_uses_status_summary(mock_co
     result = await respond_node(base_state, mock_context)
 
     content = str(result["messages"][0]["content"])
-    assert "任务已完成" in content
+    assert "# accessibility status" in content
     assert "网页可访问" in content
     mock_context["llm_provider"].generate_response.assert_not_awaited()
 
@@ -7361,7 +7476,7 @@ async def test_respond_node_prefers_execution_state_summary(mock_context, base_s
         "known_constraints": [],
         "remaining_budget_or_limits": [],
     }
-    mock_context["llm_provider"] = AsyncMock()
+    mock_context["llm_provider"] = None
 
     result = await respond_node(base_state, mock_context)
 
@@ -7371,7 +7486,6 @@ async def test_respond_node_prefers_execution_state_summary(mock_context, base_s
     assert "已产出：" not in content
     assert "report.md" not in content
     assert "缺少最新电话会纪要" in content
-    mock_context["llm_provider"].generate_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -7430,17 +7544,13 @@ async def test_respond_node_uses_inline_delivery_for_execution_state(mock_contex
         "known_constraints": [],
         "remaining_budget_or_limits": [],
     }
-    mock_context["llm_provider"] = AsyncMock()
-    mock_context["llm_provider"].chat = AsyncMock(
-        return_value=SimpleNamespace(content="# AI 行业动态中文摘要\n\n1. 已完成 AI 新闻检索\n2. 已整理关键趋势与政策要点")
-    )
+    mock_context["llm_provider"] = None
 
     result = await respond_node(base_state, mock_context)
 
     content = str(result["messages"][0]["content"])
     assert "已完成当前任务流程" in content
     assert "已完成 AI 新闻检索" in content
-    mock_context["llm_provider"].generate_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio

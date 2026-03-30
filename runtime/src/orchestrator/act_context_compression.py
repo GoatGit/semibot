@@ -28,8 +28,8 @@ def apply_context_compression(
             {
                 "role": "system",
                 "content": (
-                    "Context compression is active for this ACT turn. Prioritize the current step contract, "
-                    "latest tool evidence, latest artifact context, and explicit must-fix constraints."
+                    "Context compression is active for this ACT turn. "
+                    "Prioritize the current step contract and the most recent evidence."
                 )[: budget.max_history_per_message_chars],
             }
         )
@@ -41,8 +41,8 @@ def apply_context_compression(
                 {
                     "role": "system",
                     "content": (
-                        f"Runtime reminder: {message or reason}. "
-                        "Do not repeat the same blocked or warned strategy."
+                        f"Runtime signal: {message or reason}. "
+                        "Adjust the next action accordingly."
                     )[: budget.max_history_per_message_chars],
                 }
             )

@@ -169,4 +169,60 @@ describe('chat session view projection', () => {
       content: '真实最终结果',
     })
   })
+
+  it('drops stale local raw-json assistant bubble when attempt is terminal and server has no assistant artifact', () => {
+    const serverMessages = buildDisplayMessagesFromSessionView({
+      session: {
+        id: 'sess-4',
+        agentId: 'agent-1',
+        userId: 'user-1',
+        status: 'failed',
+        title: 'Failed',
+        metadata: {},
+        createdAt: '2026-03-29T12:00:00.000Z',
+        startedAt: '2026-03-29T12:00:00.000Z',
+        endedAt: '2026-03-29T12:02:00.000Z',
+      },
+      messages: [
+        {
+          id: 'msg-user-1',
+          sessionId: 'sess-4',
+          role: 'user',
+          content: '搜索最新 AI 行业动态并总结',
+          metadata: {},
+          createdAt: '2026-03-29T12:00:00.000Z',
+        },
+      ],
+      runState: {
+        sessionId: 'sess-4',
+        status: 'failed',
+        pendingApprovalIds: [],
+        updatedAt: '2026-03-29T12:02:00.000Z',
+      },
+      notices: [],
+      processTrace: null,
+    } satisfies SessionView)
+
+    const merged = mergeDisplayMessagesFromSessionView(
+      serverMessages,
+      [
+        {
+          id: 'assistant-123',
+          role: 'assistant',
+          content:
+            '{"url":"https://techcrunch.com/category/artificial-intelligence/","status_code":200,"content_type":"text/html","title":"","text":"AI news body"}',
+          timestamp: new Date('2026-03-29T12:01:30.000Z'),
+          isStreaming: false,
+          status: 'sent',
+        },
+      ],
+      { currentAttemptStatus: 'failed' }
+    )
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'msg-user-1',
+      role: 'user',
+    })
+  })
 })

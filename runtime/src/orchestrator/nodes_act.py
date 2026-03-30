@@ -512,7 +512,6 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
             "current_step": "observe",
         }
     runtime_context = state.get("context")
-    rewritten_count = 0
     if pending_actions:
         executable_names: set[str] = {
             "search",
@@ -565,35 +564,18 @@ async def act_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]
                     return True
             return False
 
-        fallback_tool: str | None = None
-        for name in ("search", "web_fetch", "semi_browser", "code_executor", "file_io"):
-            if _is_action_executable(name):
-                fallback_tool = name
-                break
-        if fallback_tool:
-            rewritten_actions: list[PlanStep] = []
-            for action in pending_actions:
-                tool_name = str(action.tool or "").strip()
-                if _is_abstract_reasoning_step(action) or _is_action_executable(tool_name):
-                    rewritten_actions.append(action)
-                    continue
-                query_seed = str(action.params.get("query") or action.title or tool_name or "latest updates").strip()
-                action.tool = fallback_tool
-                if fallback_tool == "search":
-                    action.params = {"queries": [query_seed]}
-                rewritten_count += 1
-                logger.warning(
-                    "pending_action_rewritten_unexecutable_tool",
-                    extra={
-                        "session_id": state["session_id"],
-                        "from": tool_name or "<empty>",
-                        "to": fallback_tool,
-                    },
-                )
-                rewritten_actions.append(action)
-            pending_actions = rewritten_actions
-    if rewritten_count and event_emitter:
-        await event_emitter.emit("pending_actions_sanitized", {"rewritten": rewritten_count})
+        for action in pending_actions:
+            tool_name = str(action.tool or "").strip()
+            if _is_abstract_reasoning_step(action) or _is_action_executable(tool_name):
+                continue
+            logger.warning(
+                "pending_action_unexecutable_tool",
+                extra={
+                    "session_id": state["session_id"],
+                    "tool_name": tool_name or "<empty>",
+                    "step_id": str(action.id or ""),
+                },
+            )
 
     logger.info(
         "Using UnifiedActionExecutor",

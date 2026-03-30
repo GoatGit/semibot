@@ -12,7 +12,6 @@ from src.orchestrator.nodes_shared import (
     _artifact_has_real_text,
     _collect_visible_artifacts,
     _final_delivery_contract_fulfilled,
-    _tool_result_error_text,
 )
 from src.orchestrator.respond_delivery import (
     _build_inline_delivery_fallback,
@@ -34,40 +33,6 @@ from src.orchestrator.state import (
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-_PREMATURE_RESPONSE_PATTERNS = (
-    "我将",
-    "我会",
-    "稍等",
-    "请稍等",
-    "正在为您",
-    "马上为您",
-    "i will",
-    "i'll",
-    "let me",
-    "give you detailed",
-)
-
-_PROCESS_LEAK_PATTERNS = (
-    "分析请求",
-    "确定行动计划",
-    "执行 - 读取技能",
-    "执行-读取技能",
-    "执行 - 进行研究",
-    "执行-进行研究",
-    "结果假设",
-    "最终审查约束条件",
-    "提示词构建",
-    "模拟工具输出",
-    "开始撰写",
-    "我将按照要求进行格式化",
-    "我将基于",
-    "让我读取",
-    "步骤1：读取",
-    "步骤2：使用",
-    "内部操作：读取",
-)
-
 
 def _infer_response_language(text: str) -> str:
     sample = str(text or "").strip()
@@ -102,54 +67,93 @@ def _build_sparse_success_fallback(query: str) -> str:
     )
 
 
-def _looks_like_premature_final_response(text: str) -> bool:
-    content = (text or "").strip()
-    if not content:
-        return True
-    lower = content.lower()
-    process_hits = sum(1 for token in _PROCESS_LEAK_PATTERNS if token in content or token.lower() in lower)
-    if process_hits >= 2:
-        return True
-    has_promise_phrase = any(token in content for token in _PREMATURE_RESPONSE_PATTERNS) or any(
-        token in lower for token in _PREMATURE_RESPONSE_PATTERNS
-    )
-    if not has_promise_phrase:
-        return False
-    has_evidence = (
-        "http" in lower
-        or "参考来源" in content
-        or "risk" in lower
-        or "风险提示" in content
-        or bool(_re.search(r"\d{2,}", content))
-    )
-    return len(content) < 220 and not has_evidence
-
-
 def _looks_like_raw_delivery_payload(text: str) -> bool:
     content = str(text or "").strip()
     if not content:
         return False
-    if not content.startswith("{"):
+
+    def _dict_like_raw(parsed: Any) -> bool:
+        if not isinstance(parsed, dict):
+            return False
+        keys = {str(key).strip().lower() for key in parsed.keys()}
+        raw_web_fetch_keys = {
+            "url",
+            "status_code",
+            "content_type",
+            "title",
+            "text",
+        }
+        if len(keys & raw_web_fetch_keys) >= 3:
+            return True
+        if "text" in keys and "url" in keys and len(content) > 400:
+            return True
         return False
-    try:
-        parsed = json.loads(content)
-    except Exception:
-        return False
-    if not isinstance(parsed, dict):
-        return False
-    keys = {str(key).strip().lower() for key in parsed.keys()}
-    raw_web_fetch_keys = {
-        "url",
-        "status_code",
-        "content_type",
-        "title",
-        "text",
-    }
-    if len(keys & raw_web_fetch_keys) >= 3:
+
+    if content.startswith(("{", "[")):
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, list) and parsed:
+                return all(_dict_like_raw(item) for item in parsed if isinstance(item, dict))
+            return _dict_like_raw(parsed)
+        except Exception:
+            pass
+
+    parts = [item.strip() for item in _re.split(r"\}\s*\n+\s*\{", content) if item.strip()]
+    if len(parts) > 1:
+        parsed_parts: list[Any] = []
+        for idx, part in enumerate(parts):
+            block = part
+            if idx > 0 and not block.startswith("{"):
+                block = "{" + block
+            if idx < len(parts) - 1 and not block.endswith("}"):
+                block = block + "}"
+            try:
+                parsed_parts.append(json.loads(block))
+            except Exception:
+                parsed_parts = []
+                break
+        if parsed_parts and all(_dict_like_raw(item) for item in parsed_parts):
+            return True
+
+    lowered = content.lower()
+    if '"url"' in lowered and '"status_code"' in lowered and '"content_type"' in lowered and '"text"' in lowered:
         return True
-    if "text" in keys and "url" in keys and len(content) > 400:
-        return True
+
     return False
+
+
+def _extract_web_fetch_results(tool_results: list[ToolCallResult]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in tool_results:
+        if not bool(getattr(item, "success", False)):
+            continue
+        tool_name = str(getattr(item, "tool_name", "") or "").strip().lower()
+        if tool_name != "web_fetch":
+            continue
+        payload = getattr(item, "result", None)
+        if not isinstance(payload, dict):
+            continue
+        url = str(payload.get("url") or "").strip()
+        title = str(payload.get("title") or "").strip()
+        text = str(payload.get("text") or payload.get("content") or "").strip()
+        if text:
+            text = " ".join(text.split())[:320]
+        if not url and not text:
+            continue
+        normalized_url = url.lower()
+        if normalized_url and normalized_url in seen_urls:
+            continue
+        if normalized_url:
+            seen_urls.add(normalized_url)
+        rows.append(
+            {
+                "title": title or (url[:80] if url else "Web page"),
+                "url": url,
+                "summary": text,
+            }
+        )
+    return rows
 
 
 async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
@@ -296,6 +300,15 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                     "summary": str(item.get("snippet") or item.get("content") or "").strip(),
                 }
             )
+    if not inline_delivery_items:
+        for idx, item in enumerate(_extract_web_fetch_results(tool_results)[:6], start=1):
+            inline_delivery_items.append(
+                {
+                    "title": str(item.get("title") or f"Web page {idx}").strip(),
+                    "url": str(item.get("url") or "").strip(),
+                    "summary": str(item.get("summary") or "").strip(),
+                }
+            )
     if isinstance(primary_artifact, dict):
         primary_artifact_text = str(primary_artifact.get("artifact_result_text") or "").strip()
         if _looks_like_raw_delivery_payload(primary_artifact_text):
@@ -336,6 +349,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             for item in (state.get("metadata") or {}).get("pending_approval_ids", [])
             if str(item).strip()
         ]
+    delivery_contract_warning: str | None = None
     response_content: str | None = None
     if pending_approval_ids:
         awaiting_approval_message = (
@@ -355,6 +369,8 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
     dr_answer = str(dr_result.get("answer") or "").strip()
     if dr_outcome_name in {"respond_success", "respond_partial"} and dr_answer:
         response_content = dr_answer
+    if response_content and _looks_like_raw_delivery_payload(response_content):
+        response_content = None
     if plan and getattr(plan, "plan_type", "plan") == "terminate" and (
         str(getattr(plan, "user_reply", "") or "").strip()
         or str(getattr(plan, "summary_for_act", "") or "").strip()
@@ -396,17 +412,13 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             await event_emitter.emit_text_chunk(response_content)
         return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
     if not delivery_fulfilled and state.get("observe_outcome") == "task_completed":
-        response_content = (
+        delivery_contract_warning = (
             "执行已完成，但尚未生成可交付的 artifact_result_* 内容。"
             if response_language == "zh"
             else "Execution completed, but no deliverable artifact_result_* payload was produced."
         )
         if delivery_reason:
-            response_content = f"{response_content}\n{delivery_reason}"
-        if event_emitter:
-            await event_emitter.emit_text_chunk(response_content)
-        return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
-    raw_delivery_payload_suppressed = False
+            delivery_contract_warning = f"{delivery_contract_warning}\n{delivery_reason}"
     if delivery_payloads:
         response_content = _render_delivery_payloads(delivery_payloads)
         if response_content and not _looks_like_raw_delivery_payload(response_content):
@@ -418,13 +430,11 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
             if event_emitter:
                 await event_emitter.emit_text_chunk(response_content)
             return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
-        if response_content and _looks_like_raw_delivery_payload(response_content):
-            raw_delivery_payload_suppressed = True
     if generated_file_response:
         if event_emitter:
             await event_emitter.emit_text_chunk(generated_file_response)
         return {"messages": [Message(role="assistant", content=generated_file_response, name=None, tool_call_id=None)]}
-    if latest_structured_act_result is not None:
+    if latest_structured_act_result is not None and llm_provider is None:
         act_metadata = latest_structured_act_result.metadata or {}
         observe_outcome = str(state.get("metadata", {}).get("observe_outcome") or "").strip().lower()
         act_decision = str(act_metadata.get("act_decision") or "").strip().lower()
@@ -468,23 +478,6 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         if event_emitter:
             await event_emitter.emit_text_chunk(error_message["content"])
         return {"messages": [error_message]}
-    if has_failed_results:
-        query = _latest_non_system_user_text_from_messages(state.get("messages", []))
-        title = query.strip() or "当前请求"
-        failed_rows = [row for row in tool_results if not row.success]
-        lines = [f"未能完成“{title}”。", "本次失败基于实际执行结果，已观测到的问题如下："]
-        if not failed_rows:
-            lines.append("- 未记录到可用的失败详情。")
-        else:
-            for row in failed_rows[:6]:
-                tool_name = str(row.tool_name or "unknown")
-                error_text = _tool_result_error_text(row) or "unknown error"
-                lines.append(f"- {tool_name}: {error_text}")
-        lines.append("请根据以上实际错误重试；当前回复不对失败原因做额外推断。")
-        response_content = "\n".join(lines)
-        if event_emitter:
-            await event_emitter.emit_text_chunk(response_content)
-        return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
     if has_success_results and inline_delivery_items:
         response_content = (
             await _render_inline_delivery_markdown(
@@ -509,7 +502,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
     observations = [str(item or "").strip() for item in (execution_state.get("observations") or []) if str(item or "").strip()]
     artifacts_produced = [str(item or "").strip() for item in (execution_state.get("artifacts_produced") or []) if str(item or "").strip()]
     unresolved_questions = [str(item or "").strip() for item in (execution_state.get("unresolved_questions") or []) if str(item or "").strip()]
-    if completed_steps or observations or artifacts_produced:
+    if (completed_steps or observations or artifacts_produced) and llm_provider is None:
         lines = ["已完成当前任务流程。"]
         if completed_steps:
             lines.append(f"已完成步骤：{', '.join(completed_steps[:8])}")
@@ -526,9 +519,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         if event_emitter:
             await event_emitter.emit_text_chunk(response_content)
         return {"messages": [Message(role="assistant", content=response_content, name=None, tool_call_id=None)]}
-    if response_content is None:
-        response_content = "任务已完成。"
-    if response_content == "任务已完成。" and llm_provider:
+    if not str(response_content or "").strip() and llm_provider:
         try:
             agent_system_prompt = ""
             agent_model = _act_model
@@ -569,7 +560,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                     chunks.append(chunk)
                 response_content = "".join(chunks)
             else:
-                response_content = await llm_provider.generate_response(
+                llm_text = await llm_provider.generate_response(
                     messages=state["messages"],
                     results=state["tool_results"],
                     reflection=state.get("reflection"),
@@ -578,6 +569,7 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
                     memory_context=memory_ctx,
                     temperature=respond_temperature,
                 )
+                response_content = llm_text if isinstance(llm_text, str) else None
         except Exception as e:
             logger.error(f"Response generation failed: {e}")
             response_content = "I completed the task but encountered an issue generating the response. Please try again."
@@ -595,33 +587,17 @@ async def respond_node(state: AgentState, context: dict[str, Any]) -> dict[str, 
         for marker in unexecuted_tool_call_markers
     ):
         logger.warning("unexecuted_tool_call_response_blocked", extra={"session_id": state["session_id"]})
-        if has_success_results:
-            if inline_delivery_items:
-                fallback_response = _build_inline_delivery_fallback(
-                    title=delivery_title,
-                    source_items=inline_delivery_items,
-                    language=response_language,
-                )
-            else:
-                fallback_response = _build_sparse_success_fallback(delivery_title)
-            response_content = fallback_response or "执行未完成：最终响应中出现了未执行的工具调用文本，当前结果无效，请重试。"
-        else:
-            response_content = "执行未完成：模型输出了未执行的工具调用文本，当前结果无效，请重试。"
-    if has_success_results and (_looks_like_premature_final_response(response_content) or raw_delivery_payload_suppressed):
-        if inline_delivery_items:
-            fallback_response = _build_inline_delivery_fallback(
-                title=delivery_title,
-                source_items=inline_delivery_items,
-                language=response_language,
-            )
-        else:
-            fallback_response = _build_sparse_success_fallback(delivery_title)
-        if fallback_response and fallback_response != response_content:
-            logger.warning("premature_response_rewritten_with_fallback", extra={"session_id": state["session_id"]})
-            response_content = fallback_response
     if not str(response_content or "").strip():
         query = _latest_non_system_user_text_from_messages(state.get("messages", []))
-        response_content = _build_sparse_success_fallback(query) if has_success_results else "任务已完成。"
+        if not llm_provider and delivery_contract_warning:
+            response_content = delivery_contract_warning
+        else:
+            if has_success_results:
+                response_content = _build_sparse_success_fallback(query)
+            elif has_failed_results:
+                response_content = "本轮未能完成任务，请根据错误信息重试。"
+            else:
+                response_content = "任务已完成。"
     if event_emitter:
         await event_emitter.emit_text_chunk(response_content)
     response_message = Message(role="assistant", content=response_content, name=None, tool_call_id=None)

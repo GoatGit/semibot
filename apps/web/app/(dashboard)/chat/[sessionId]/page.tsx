@@ -909,6 +909,11 @@ export default function ChatSessionPage() {
   const primaryNotice = attemptNotices[0] ?? null
   const shouldShowApprovalNotice = isCurrentAttemptAwaitingApproval
   const isAwaitingApprovalActive = isCurrentAttemptAwaitingApproval
+  const hasActiveStreamingMessage = useMemo(
+    () => displayMessages.some((msg) => msg.role === 'assistant' && msg.isStreaming),
+    [displayMessages]
+  )
+  const isStopActionActive = isSending && hasActiveStreamingMessage && !isAwaitingApprovalActive
   const attemptDiagnostics = useMemo(() => {
     if (!currentAttemptView) return null
     const eventPending = currentAttemptView.eventOutbox.filter((item) => item.status !== 'delivered').length
@@ -970,11 +975,19 @@ export default function ChatSessionPage() {
             ? attemptResponse.data.processTrace.messages
             : []
           const checkpointMessages = extractCheckpointProcessMessages(attemptResponse.data.latestCheckpoint?.payload)
-          setSessionProcessMessages(
-            attemptProcessMessages.length > 0
+          setSessionProcessMessages((prev) => {
+            const nextMessages = attemptProcessMessages.length > 0
               ? attemptProcessMessages
-              : checkpointMessages,
-          )
+              : checkpointMessages
+            if (nextMessages.length > 0) {
+              return nextMessages
+            }
+            const attemptStatus = String(attemptResponse.data?.attempt.status || '').trim().toLowerCase()
+            if (prev.length > 0 && ['running', 'awaiting_approval', 'completed', 'failed', 'cancelled'].includes(attemptStatus)) {
+              return prev
+            }
+            return []
+          })
         } else {
           setCurrentAttemptView(null)
           setSessionProcessMessages([])
@@ -999,7 +1012,11 @@ export default function ChatSessionPage() {
 
     const historyMessages: DisplayMessage[] = buildDisplayMessagesFromSessionView(view)
 
-    setDisplayMessages((prev) => mergeDisplayMessagesFromSessionView(historyMessages, prev))
+    setDisplayMessages((prev) =>
+      mergeDisplayMessagesFromSessionView(historyMessages, prev, {
+        currentAttemptStatus: String(view.currentAttempt?.status || '').trim().toLowerCase(),
+      })
+    )
   }, [sessionId, setStoreSession, t])
 
   // 加载会话数据
@@ -1157,6 +1174,13 @@ export default function ChatSessionPage() {
     resumeAttemptedRef.current = true
     void resumeSession()
   }, [currentAttemptStatus, isLoadingSession, pendingInitialMessage, resumeSession, sessionMeta?.status])
+
+  useEffect(() => {
+    if (!isSending) return
+    if (!currentAttemptStatus) return
+    if (currentAttemptStatus === 'running' || currentAttemptStatus === 'awaiting_approval') return
+    stopGeneration()
+  }, [currentAttemptStatus, isSending, stopGeneration])
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -1781,11 +1805,17 @@ export default function ChatSessionPage() {
 
               <Button
                 size="sm"
-                onClick={isSending ? handleStop : handleSendMessage}
-                disabled={isAwaitingApprovalActive || (!isSending && !inputValue.trim() && !hasFiles)}
-                leftIcon={isSending ? <StopCircle size={16} /> : isAwaitingApprovalActive ? <ShieldAlert size={16} /> : <Send size={16} />}
+                onClick={isStopActionActive ? handleStop : handleSendMessage}
+                disabled={isAwaitingApprovalActive || (!isStopActionActive && !inputValue.trim() && !hasFiles)}
+                leftIcon={
+                  isAwaitingApprovalActive
+                    ? <ShieldAlert size={16} />
+                    : isStopActionActive
+                      ? <StopCircle size={16} />
+                      : <Send size={16} />
+                }
               >
-                {isSending ? t('chatSession.stop') : isAwaitingApprovalActive ? t('chatSession.pendingApprovals') : t('chatSession.send')}
+                {isAwaitingApprovalActive ? t('chatSession.pendingApprovals') : isStopActionActive ? t('chatSession.stop') : t('chatSession.send')}
               </Button>
             </div>
           </div>

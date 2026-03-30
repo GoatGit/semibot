@@ -260,4 +260,34 @@ describe('useChat refresh recovery', () => {
     expect(onError).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('stops reconnecting after consecutive empty stream closures', async () => {
+    const onComplete = vi.fn()
+    const onError = vi.fn()
+
+    const fetchMock = vi.mocked(global.fetch)
+    fetchMock
+      .mockResolvedValueOnce(createStreamingResponse([]) as unknown as Response)
+      .mockResolvedValueOnce(createStreamingResponse([]) as unknown as Response)
+
+    const { result } = renderHook(() =>
+      useChat({
+        sessionId: 'sess-empty',
+        onComplete,
+        onError,
+      })
+    )
+
+    await act(async () => {
+      await result.current.resumeSession()
+    })
+
+    await waitFor(() => {
+      expect(result.current.isSending).toBe(false)
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(onComplete).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
 })

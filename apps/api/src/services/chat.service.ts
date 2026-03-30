@@ -413,6 +413,49 @@ function appendApprovalHints(
   return `操作需要人工审批。${hint}`
 }
 
+function looksLikeRawRuntimeFinalResponse(content: string): boolean {
+  const text = String(content || '').trim()
+  if (!text) return false
+  const looksLikeRawObject = (value: unknown): boolean => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+    const keys = new Set(Object.keys(value as Record<string, unknown>).map((item) => String(item || '').trim().toLowerCase()))
+    const webFetchKeys = ['url', 'status_code', 'content_type', 'title', 'text']
+    const hitCount = webFetchKeys.filter((key) => keys.has(key)).length
+    return hitCount >= 3
+  }
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text)
+      if (Array.isArray(parsed)) {
+        return parsed.length > 0 && parsed.every((item) => looksLikeRawObject(item))
+      }
+      return looksLikeRawObject(parsed)
+    } catch {
+      // fall through to block-based detection
+    }
+  }
+  const parts = text.split(/\}\s*\n+\s*\{/).map((item) => item.trim()).filter(Boolean)
+  if (parts.length > 1) {
+    const parsedParts: unknown[] = []
+    for (let i = 0; i < parts.length; i += 1) {
+      let block = parts[i]
+      if (i > 0 && !block.startsWith('{')) block = `{${block}`
+      if (i < parts.length - 1 && !block.endsWith('}')) block = `${block}}`
+      try {
+        parsedParts.push(JSON.parse(block))
+      } catch {
+        parsedParts.length = 0
+        break
+      }
+    }
+    if (parsedParts.length > 0 && parsedParts.every((item) => looksLikeRawObject(item))) {
+      return true
+    }
+  }
+  const lower = text.toLowerCase()
+  return lower.includes('"url"') && lower.includes('"status_code"') && lower.includes('"content_type"') && lower.includes('"text"')
+}
+
 function normalizeSkillKey(raw: string): string {
   const value = raw.trim()
   if (value.startsWith('runtime:')) {
@@ -1998,7 +2041,10 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
       ...(Array.isArray(streamOutcome.pendingApprovalIds) ? streamOutcome.pendingApprovalIds : []),
     ])
   )
-  const finalResponse = normalizeChunkCitationSyntax(appendApprovalHints(rawFinalResponse, runtimeEvents))
+  const normalizedFinalResponse = normalizeChunkCitationSyntax(appendApprovalHints(rawFinalResponse, runtimeEvents))
+  const finalResponse = looksLikeRawRuntimeFinalResponse(normalizedFinalResponse)
+    ? ''
+    : normalizedFinalResponse
   const isAwaitingApproval = normalizedStatus === 'awaiting_approval'
   const isCompleted = normalizedStatus === 'completed'
 
@@ -2104,6 +2150,12 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
           status: 'completed',
           pending_approval_ids: approvalIds,
           final_response: finalResponse,
+          execution_process: streamOutcome.processMessages.length > 0
+            ? {
+                version: 1,
+                messages: streamOutcome.processMessages,
+              }
+            : undefined,
           error: error || '',
         },
       })
@@ -2122,6 +2174,15 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
         status: 'awaiting_approval',
         pending_approval_ids: approvalIds,
         final_response: '',
+        awaiting_approval_message: approvalIds.length > 0
+          ? `该请求包含高风险操作，等待审批：${approvalIds.join(', ')}。`
+          : '',
+        execution_process: streamOutcome.processMessages.length > 0
+          ? {
+              version: 1,
+              messages: streamOutcome.processMessages,
+            }
+          : undefined,
         error: error || '',
       },
     })
@@ -2137,6 +2198,12 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
         status: normalizedStatus === 'cancelled' ? 'cancelled' : 'failed',
         pending_approval_ids: approvalIds,
         final_response: '',
+        execution_process: streamOutcome.processMessages.length > 0
+          ? {
+              version: 1,
+              messages: streamOutcome.processMessages,
+            }
+          : undefined,
         error: error || '',
       },
     })

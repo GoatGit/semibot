@@ -30,16 +30,12 @@ def _build_failure_reflection(
     tool_results: list[ToolCallResult | dict[str, Any]],
     current_skill_name: str = "",
 ) -> str:
-    observed_failures: list[str] = []
-    non_capability_lines: list[str] = []
-    do_not_repeat: list[str] = []
-    capability_gap = "not established in this round"
+    failed_lines: list[str] = []
     successful_generated_files: list[str] = []
     has_pending_approval = False
 
     for result in tool_results:
         success = bool(result.get("success")) if isinstance(result, dict) else bool(result.success)
-        tool_name = str(result.get("tool_name") or "unknown") if isinstance(result, dict) else str(result.tool_name or "unknown")
         if success:
             for generated in _iter_generated_files_from_result(result):
                 source_path = str(generated.get("source_path") or generated.get("path") or "").strip()
@@ -47,111 +43,37 @@ def _build_failure_reflection(
                     successful_generated_files.append(source_path)
             continue
 
+        tool_name = str(result.get("tool_name") or "unknown") if isinstance(result, dict) else str(result.tool_name or "unknown")
         error_text = _tool_result_error_text(result) or "unknown error"
-        payload = result if isinstance(result, dict) else {
-            "result": getattr(result, "result", None),
-            "metadata": getattr(result, "metadata", None),
-        }
-        tool_result = payload.get("result") if isinstance(payload, dict) else None
-        metadata = payload.get("metadata") if isinstance(payload, dict) else None
-        if isinstance(metadata, dict) and isinstance(metadata.get("missing_capability"), dict):
-            missing = metadata.get("missing_capability") or {}
-            missing_intent = str(missing.get("intent") or "").strip()
-            missing_reason = str(missing.get("reason") or "").strip()
-            capability_gap = "established in this round"
-            if missing_intent or missing_reason:
-                observed_failures.append(
-                    f"- missing_capability: {missing_intent or 'unknown'}; {missing_reason or 'no reason provided'}"
-                )
-            continue
-        excerpt = ""
-        candidates: list[str] = []
-        if isinstance(tool_result, dict):
-            for key in ("stderr", "stdout", "preview", "message"):
-                value = tool_result.get(key)
-                if isinstance(value, str) and value.strip():
-                    candidates.append(value.strip())
-        if isinstance(metadata, dict):
-            for key in ("stderr", "stdout", "preview"):
-                value = metadata.get(key)
-                if isinstance(value, str) and value.strip():
-                    candidates.append(value.strip())
-        for raw in candidates:
-            compact = " ".join(raw.split())
-            if compact:
-                excerpt = compact[:280]
-                break
-        if excerpt and excerpt.lower() not in error_text.lower():
-            observed_failures.append(f"- {tool_name}: {error_text}; details: {excerpt}")
-        else:
-            observed_failures.append(f"- {tool_name}: {error_text}")
-
+        failed_lines.append(f"- {tool_name}: {error_text}")
         lowered = error_text.lower()
         if "approval_pending" in lowered or "status: pending" in lowered or "need manual approval" in lowered:
             has_pending_approval = True
-            do_not_repeat.append("- Do not treat pending approval as approval_denied or as a missing capability.")
-        if "file not found" in lowered:
-            non_capability_lines.append("- This does not prove a missing capability; it indicates artifact path handoff failed.")
-            do_not_repeat.append("- Do not read a session artifact by bare filename if a generated file path is available.")
-        if any(token in lowered for token in ("pdf", ".pdf")) and any(token in lowered for token in ("markdown", ".md", "report")):
-            non_capability_lines.append("- This does not prove a missing capability; it indicates the wrong artifact type was passed to a script.")
-            do_not_repeat.append("- Do not pass PDF/JSON artifacts to a script that expects a markdown/text report.")
-        if "script target not found" in lowered or "must reference a script file under scripts/" in lowered:
-            non_capability_lines.append("- This does not prove a missing capability; it indicates the plan invented an invalid script command.")
-            do_not_repeat.append("- Do not invent new skill script paths or shell commands that are not grounded in the current skill.")
-        if any(token in lowered for token in ("not configured", "no available tool", "unsupported capability", "missing capability")):
-            capability_gap = "possible but unproven in this round"
 
+    reflection_lines = [
+        "[SYSTEM] REPLAN_REQUIRED",
+        "reason: blocking_failures",
+        f"failed_count: {len(failed_lines)}",
+    ]
+    if failed_lines:
+        reflection_lines.extend(["", "Failed Tools", *failed_lines[:6]])
     if successful_generated_files:
-        non_capability_lines.append("- At least one artifact was generated successfully in this round.")
-        markdown_artifacts = [path for path in successful_generated_files if path.lower().endswith((".md", ".markdown", ".txt"))]
-        if markdown_artifacts:
-            non_capability_lines.append("- A markdown/text artifact is already available and should be treated as the primary report source.")
-
-    if not observed_failures:
-        observed_failures.append("- No explicit tool failure was recorded in this round.")
-
-    if not non_capability_lines:
-        non_capability_lines.append("- The observed failures do not yet establish a missing capability.")
-
-    if not do_not_repeat:
-        do_not_repeat.append("- Do not repeat the exact same failing plan pattern without a concrete change in artifact usage, parameters, or tool choice.")
-
-    do_not_repeat.append("- Do not switch to meta-skills only because the current round failed.")
+        reflection_lines.extend(
+            [
+                "",
+                "Reusable Artifacts",
+                *[f"- {path}" for path in successful_generated_files[:6]],
+            ]
+        )
 
     requirements: list[str] = []
     if current_skill_name:
-        requirements.append(
-            f"- Stay within the current round skill context '{current_skill_name}' unless a true capability gap is strongly evidenced."
-        )
-        requirements.append(
-            "- Preserve the current round's skill methodology and carry forward only the round-relevant execution constraints."
-        )
-    requirements.append("- Prefer markdown/text as the primary report artifact; treat HTML/PDF as derived artifacts.")
-    if successful_generated_files:
-        requirements.append("- Reuse existing successful artifacts if they are valid inputs for the next step.")
+        requirements.append(f"- Keep planning inside current skill scope: {current_skill_name}.")
+    requirements.append("- Replan only remaining work; keep successful outputs reusable.")
+    requirements.append("- Do not mark task complete until final delivery contract is satisfied.")
     if has_pending_approval:
-        requirements.append("- If an approval is pending, do not reinterpret it as a tool failure or capability gap.")
-    requirements.append("- Only consider meta-skills if repeated failures indicate a true missing capability rather than wrong parameters, wrong paths, wrong artifact types, or pending approvals.")
-
-    reflection_lines = [
-        "[SYSTEM] FAILURE REFLECTION",
-        "",
-        "Observed Failures",
-        *observed_failures,
-        "",
-        "What This Does NOT Mean",
-        *non_capability_lines,
-        "",
-        "Do Not Repeat",
-        *do_not_repeat,
-        "",
-        "Capability Gap Hypothesis",
-        f"- {capability_gap}",
-        "",
-        "Requirements For The Next Plan",
-        *requirements,
-    ]
+        requirements.append("- Respect pending approvals; do not reinterpret them as terminal failures.")
+    reflection_lines.extend(["", "Planner Requirements", *requirements])
     return "\n".join(reflection_lines)
 
 

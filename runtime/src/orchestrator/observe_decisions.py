@@ -184,9 +184,10 @@ def _decide_task_complete(ctx: ObserveContext) -> ObserveOutcome | None:
         context_msg = Message(
             role="user",
             content=(
-                "[SYSTEM] REPLAN — execution reported terminal completion, but no user-deliverable artifact_result_* payload was produced.\n"
-                f"Reason: {delivery_reason}\n"
-                "Regenerate only the remaining work needed to produce a non-empty artifact_result_* payload for the final user delivery."
+                "[SYSTEM] REPLAN_REQUIRED\n"
+                "reason: delivery_contract_not_fulfilled\n"
+                f"detail: {delivery_reason}\n"
+                "Regenerate only the remaining work required for final delivery."
             ),
             name=None,
             tool_call_id=None,
@@ -236,8 +237,8 @@ def _decide_execution_stall(ctx: ObserveContext) -> ObserveOutcome | None:
     stall_msg = Message(
         role="user",
         content=(
-            "[SYSTEM] STOP — execution is not converging.\n"
-            "The current round has repeated the same failing pattern without meaningful progress.\n"
+            "[SYSTEM] STOP_REQUIRED\n"
+            "reason: repeated_non_converging_failures\n"
             "Do not continue replanning in this round."
         ),
         name=None,
@@ -268,18 +269,13 @@ def _decide_all_failed_replan(ctx: ObserveContext) -> ObserveOutcome | None:
 def _decide_partial_failure_replan(ctx: ObserveContext) -> ObserveOutcome | None:
     if not ctx.has_errors or ctx.current_iteration >= MAX_REPLAN_ATTEMPTS:
         return None
-    error_summaries = []
-    for r in ctx.blocking_failures:
-        tool_name = str(r.get("tool_name") or "unknown") if isinstance(r, dict) else str(r.tool_name or "unknown")
-        error_text = _tool_result_error_text(r) or "unknown error"
-        error_summaries.append(f"- {tool_name}: {error_text}")
     context_msg = Message(
         role="user",
         content=(
-            "[SYSTEM] REPLAN — some executed steps failed, so the current round is not complete.\n"
-            "Regenerate the plan for the remaining work within the current round.\n\n"
-            "Failed steps:\n"
-            + ("\n".join(error_summaries) if error_summaries else "- unknown error")
+            "[SYSTEM] REPLAN_REQUIRED\n"
+            "reason: blocking_failures\n"
+            f"failure_count: {len(ctx.blocking_failures)}\n"
+            "Regenerate only the remaining work for this round."
         ),
         name=None,
         tool_call_id=None,
@@ -317,13 +313,10 @@ def _decide_missing_bindings_replan(ctx: ObserveContext) -> ObserveOutcome | Non
     context_msg = Message(
         role="user",
         content=(
-            "[SYSTEM] REPLAN — the next step is missing required bound inputs.\n"
-            "Do not guess file paths or implicit artifacts. Regenerate the remaining work so required step inputs are explicitly produced.\n\n"
-            "Missing bindings:\n"
-            + "\n".join(
-                f"- {str(item.get('input_name') or 'input')}: source_step_id={str(item.get('source_step_id') or 'n/a')}, preferred_medium={str(item.get('preferred_medium') or 'artifact_result_text')}"
-                for item in missing_bindings[:8]
-            )
+            "[SYSTEM] REPLAN_REQUIRED\n"
+            "reason: missing_required_bindings\n"
+            f"missing_binding_count: {len(missing_bindings)}\n"
+            "Regenerate only the remaining work so required inputs are explicitly produced."
         ),
         name=None,
         tool_call_id=None,

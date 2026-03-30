@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re as _re
 import time
 from typing import Any
 
@@ -31,6 +32,62 @@ _DR_WRAPPER_KEYS = {
     "failure",
     "tool_usage",
 }
+
+
+def _raw_delivery_payload_dict_like(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    keys = {str(key).strip().lower() for key in value.keys()}
+    raw_web_fetch_keys = {"url", "status_code", "content_type", "title", "text"}
+    if len(keys & raw_web_fetch_keys) >= 3:
+        return True
+    if "text" in keys and "url" in keys:
+        text_value = str(value.get("text") or "").strip()
+        return len(text_value) > 200
+    return False
+
+
+def _looks_like_raw_delivery_payload(value: Any) -> bool:
+    if _raw_delivery_payload_dict_like(value):
+        return True
+    if isinstance(value, list) and value and all(_raw_delivery_payload_dict_like(item) for item in value):
+        return True
+    if not isinstance(value, str):
+        return False
+    content = value.strip()
+    if not content or not content.startswith(("{", "[")):
+        return False
+    try:
+        parsed = json.loads(content)
+    except Exception:
+        # Handle common case where multiple raw JSON objects are concatenated
+        # by newlines: "{...}\n\n{...}".
+        parts = [item.strip() for item in _re.split(r"\}\s*\n+\s*\{", content) if item.strip()]
+        if len(parts) > 1:
+            parsed_parts: list[Any] = []
+            for idx, part in enumerate(parts):
+                block = part
+                if idx > 0 and not block.startswith("{"):
+                    block = "{" + block
+                if idx < len(parts) - 1 and not block.endswith("}"):
+                    block = block + "}"
+                try:
+                    parsed_parts.append(json.loads(block))
+                except Exception:
+                    parsed_parts = []
+                    break
+            if parsed_parts and all(_raw_delivery_payload_dict_like(item) for item in parsed_parts):
+                return True
+        lowered = content.lower()
+        return (
+            '"url"' in lowered
+            and '"status_code"' in lowered
+            and '"content_type"' in lowered
+            and '"text"' in lowered
+        )
+    return _looks_like_raw_delivery_payload(parsed)
+
+
 def _filter_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     relevant = []
     for item in messages[-8:]:
@@ -54,21 +111,8 @@ def _dr_tool_phase_prompt(goal: str, dr_policy: dict[str, Any] | None) -> str:
         "Do not plan a multi-step workflow. Do not explain internal process to the user.\n"
         f"Hard limits: max_tool_calls={max_tool_calls}, max_react_iterations={max_iterations}.\n"
         "If tools are needed, call them directly. If not, answer from current context.\n"
+        "Never present raw tool payloads, scraped JSON, HTML extracts, or unformatted fetch results as the final answer.\n"
         "When you have enough evidence, stop requesting tools and provide a concise assistant message.\n"
-        f"Task goal: {goal}\n"
-    )
-
-
-def _dr_terminal_prompt(goal: str) -> str:
-    return (
-        "You are finishing Direct Reasoning Mode.\n"
-        "Return exactly one JSON object with keys:\n"
-        "status, answer, upgrade_reason, evidence, diagnostics, intermediate_context, resource_usage.\n"
-        "Allowed status values: completed, partial, upgrade_required, failed.\n"
-        "Use completed when you can provide a user-ready answer now.\n"
-        "Use partial when you can provide a helpful partial answer.\n"
-        "Use upgrade_required when the task actually needs Plan-Act Mode.\n"
-        "Do not output markdown fences.\n"
         f"Task goal: {goal}\n"
     )
 
@@ -182,8 +226,8 @@ def _render_dr_structured_payload_markdown(payload: dict[str, Any]) -> str:
     }
     lines.extend(_render_dr_structured_value(remaining, depth=0))
     rendered = "\n".join(line for line in lines if line is not None).strip()
-    # Final guardrail: if rendering somehow becomes empty, fall back to pretty JSON
-    return rendered or json.dumps(payload, ensure_ascii=False, indent=2)
+    # Never fall back to raw JSON in user-facing DR answers.
+    return rendered
 
 
 def _is_dr_wrapper_payload(raw: dict[str, Any]) -> bool:
@@ -211,16 +255,17 @@ def _normalize_dr_result(
     tool_results: list[ToolCallResult],
     fallback_answer: str | None = None,
 ) -> DirectReasoningResult:
+    safe_fallback_answer = None if _looks_like_raw_delivery_payload(fallback_answer) else fallback_answer
     if not isinstance(raw, dict):
         return {
-            "status": "completed" if fallback_answer else "failed",
-            "answer": fallback_answer,
+            "status": "completed" if safe_fallback_answer else "failed",
+            "answer": safe_fallback_answer,
             "artifacts": [],
             "tool_usage": {"tool_calls": tool_call_count, "tokens": total_tokens, "wall_clock_ms": elapsed_ms},
             "evidence": _tool_result_snapshot(tool_results),
             "upgrade_reason": None,
             "failure": None
-            if fallback_answer
+            if safe_fallback_answer
             else {
                 "code": "dr_parse_failed",
                 "message": "DR response was not valid JSON",
@@ -236,9 +281,24 @@ def _normalize_dr_result(
         }
 
     if not _is_dr_wrapper_payload(raw):
-        rendered_answer = _render_dr_structured_payload_markdown(raw)
+        rendered_answer = None
+        diagnostics = {"budget_exceeded": False, "loop_signal": False, "context_insufficient": False}
+        if not _looks_like_raw_delivery_payload(raw):
+            rendered_answer = _render_dr_structured_payload_markdown(raw)
+        else:
+            diagnostics["raw_payload_suppressed"] = True
+        status_value = "completed" if rendered_answer else "upgrade_required"
+        upgrade_reason = None
+        failure_value = None
+        if rendered_answer is None:
+            upgrade_reason = "direct reasoning produced raw payload instead of a user-facing answer"
+            failure_value = {
+                "code": "dr_raw_payload",
+                "message": "DR output was raw tool payload and was suppressed",
+                "retryable": False,
+            }
         return {
-            "status": "completed",
+            "status": status_value,
             "answer": rendered_answer,
             "artifacts": [],
             "tool_usage": {
@@ -247,9 +307,9 @@ def _normalize_dr_result(
                 "wall_clock_ms": elapsed_ms,
             },
             "evidence": _tool_result_snapshot(tool_results),
-            "upgrade_reason": None,
-            "failure": None,
-            "diagnostics": {"budget_exceeded": False, "loop_signal": False, "context_insufficient": False},
+            "upgrade_reason": upgrade_reason,
+            "failure": failure_value,
+            "diagnostics": diagnostics,
             "intermediate_context": {
                 "structured_payload": raw,
                 "tool_results": _tool_result_snapshot(tool_results),
@@ -267,13 +327,37 @@ def _normalize_dr_result(
 
     answer_value = raw.get("answer")
     rendered_answer: str | None = None
+    diagnostics = _ensure_dict(raw.get("diagnostics"))
     if isinstance(answer_value, dict):
-        rendered_answer = _render_dr_structured_payload_markdown(answer_value)
+        if _looks_like_raw_delivery_payload(answer_value):
+            diagnostics["raw_payload_suppressed"] = True
+        else:
+            rendered_answer = _render_dr_structured_payload_markdown(answer_value)
     elif isinstance(answer_value, list):
-        rendered_answer = "\n".join(_render_dr_structured_value(answer_value, depth=0)).strip() or None
+        if _looks_like_raw_delivery_payload(answer_value):
+            diagnostics["raw_payload_suppressed"] = True
+        else:
+            rendered_answer = "\n".join(_render_dr_structured_value(answer_value, depth=0)).strip() or None
     else:
-        rendered_answer = str(answer_value or fallback_answer or "").strip() or None
+        candidate_answer = str(answer_value or safe_fallback_answer or "").strip() or None
+        if _looks_like_raw_delivery_payload(candidate_answer):
+            diagnostics["raw_payload_suppressed"] = True
+        else:
+            rendered_answer = candidate_answer
 
+    if rendered_answer is None and status in {"completed", "partial"}:
+        if diagnostics.get("raw_payload_suppressed"):
+            status = "upgrade_required"
+            if not str(raw.get("upgrade_reason") or "").strip():
+                raw["upgrade_reason"] = "direct reasoning produced raw payload instead of a user-facing answer"
+            if not isinstance(raw.get("failure"), dict):
+                raw["failure"] = {
+                    "code": "dr_raw_payload",
+                    "message": "DR output was raw tool payload and was suppressed",
+                    "retryable": False,
+                }
+        elif status == "completed":
+            status = "partial"
     return {
         "status": status,  # type: ignore[return-value]
         "answer": rendered_answer,
@@ -286,7 +370,7 @@ def _normalize_dr_result(
         "evidence": _ensure_list(raw.get("evidence"), _tool_result_snapshot(tool_results)),
         "upgrade_reason": str(raw.get("upgrade_reason") or "").strip() or None,
         "failure": raw.get("failure") if isinstance(raw.get("failure"), dict) else None,
-        "diagnostics": _ensure_dict(raw.get("diagnostics")),
+        "diagnostics": diagnostics,
         "intermediate_context": (
             raw.get("intermediate_context")
             if isinstance(raw.get("intermediate_context"), dict)
@@ -356,7 +440,7 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
             subject=session_id or None,
             payload={"session_id": session_id, "org_id": org_id or None, "failure": dr_result.get("failure")},
         )
-        return {"dr_result": dr_result, "tool_results": step_results, "current_step": "dr"}
+        return {"dr_result": dr_result, "tool_results": [], "current_step": "dr"}
 
     started_at = time.perf_counter()
     model = None
@@ -466,32 +550,32 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
                 continue
 
             parsed_tool_phase = _parse_dr_json(last_tool_phase_response_content) if last_tool_phase_response_content else None
-            if parsed_tool_phase is not None and parsed_tool_phase.get("status") in {
-                "completed",
-                "partial",
-                "upgrade_required",
-                "failed",
-            }:
+            if parsed_tool_phase is not None:
                 terminal_raw = parsed_tool_phase
                 break
             if last_tool_phase_response_content:
-                messages.append({"role": "assistant", "content": last_tool_phase_response_content})
+                terminal_raw = {"status": "completed", "answer": last_tool_phase_response_content}
+            else:
+                terminal_raw = {
+                    "status": "failed",
+                    "answer": None,
+                    "upgrade_reason": "direct reasoning returned empty response",
+                    "failure": {
+                        "code": "dr_empty_response",
+                        "message": "DR returned no content and no tool call",
+                        "retryable": False,
+                    },
+                }
             break
 
         if terminal_raw is None:
-            terminal_messages = list(messages) + [{"role": "system", "content": _dr_terminal_prompt(goal)}]
-            terminal_response = await asyncio.wait_for(
-                llm_provider.chat(
-                    messages=terminal_messages,
-                    temperature=temperature,
-                    model=model,
-                    response_format={"type": "json_object"},
-                ),
-                timeout=max(1.0, max_timeout_ms / 1000.0),
-            )
-            usage = dict(getattr(terminal_response, "usage", {}) or {})
-            total_tokens += _token_total(usage)
-            terminal_raw = _parse_dr_json(str(getattr(terminal_response, "content", "") or "").strip())
+            terminal_raw = {
+                "status": "upgrade_required",
+                "answer": None,
+                "upgrade_reason": "direct reasoning reached iteration budget",
+                "evidence": _tool_result_snapshot(step_results),
+                "diagnostics": {"budget_exceeded": True},
+            }
 
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         dr_result = _normalize_dr_result(

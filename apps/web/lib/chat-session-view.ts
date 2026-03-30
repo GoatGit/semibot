@@ -24,6 +24,22 @@ export interface ChatSessionDisplayMessage {
   }
 }
 
+function looksLikeRawRuntimePayload(content: string): boolean {
+  const text = String(content || '').trim()
+  if (!text || !text.startsWith('{')) return false
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>
+    const keys = new Set(Object.keys(parsed || {}).map((key) => key.trim().toLowerCase()))
+    const rawKeys = ['url', 'status_code', 'content_type', 'title', 'text']
+    const overlap = rawKeys.filter((key) => keys.has(key)).length
+    if (overlap >= 3) return true
+    if (keys.has('url') && keys.has('text') && text.length > 200) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
 function stripInjectedDocumentBlocks(content: string): string {
   return String(content || '').replace(/\n\n---\n\n参考文档：[\s\S]*$/, '')
 }
@@ -167,10 +183,19 @@ export function buildDisplayMessagesFromSessionView(view: SessionView): ChatSess
 
 export function mergeDisplayMessagesFromSessionView(
   serverMessages: ChatSessionDisplayMessage[],
-  cachedMessages: ChatSessionDisplayMessage[]
+  cachedMessages: ChatSessionDisplayMessage[],
+  options?: {
+    currentAttemptStatus?: string | null
+  }
 ): ChatSessionDisplayMessage[] {
   if (serverMessages.length === 0) return cachedMessages
   if (cachedMessages.length === 0) return serverMessages
+
+  const normalizedAttemptStatus = String(options?.currentAttemptStatus || '').trim().toLowerCase()
+  const hasServerAssistantArtifact = serverMessages.some((message) => message.role === 'assistant')
+  const shouldDropRawEphemeralAssistant =
+    !hasServerAssistantArtifact &&
+    ['completed', 'failed', 'cancelled'].includes(normalizedAttemptStatus)
 
   const merged = new Map<string, ChatSessionDisplayMessage>()
 
@@ -180,6 +205,14 @@ export function mergeDisplayMessagesFromSessionView(
 
   for (const message of cachedMessages) {
     if (isEphemeralAssistantPlaceholder(message)) {
+      continue
+    }
+    if (
+      shouldDropRawEphemeralAssistant &&
+      isEphemeralLocalMessage(message) &&
+      message.role === 'assistant' &&
+      looksLikeRawRuntimePayload(message.content)
+    ) {
       continue
     }
 

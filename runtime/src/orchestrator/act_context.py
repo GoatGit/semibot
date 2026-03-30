@@ -213,7 +213,7 @@ def _format_loaded_resource_summary(step_memory: dict[str, Any]) -> str:
             if preview:
                 details.append(f"preview={preview[:120]}")
             lines.append(f"- {path} ({', '.join(details)})")
-        lines.append("Do not read the same file again unless that file was modified in this step.")
+        lines.append("Prefer reusing already loaded file content unless a file was modified in this step.")
     else:
         lines.append("Already loaded files in this step:\n- none")
 

@@ -438,6 +438,121 @@ describe('chat direct runtime skill index', () => {
       status: 'completed',
       terminalReason: 'completed_normally',
       revision: 10,
+      checkpointPayload: expect.objectContaining({
+        execution_process: expect.objectContaining({
+          version: 1,
+          messages: expect.any(Array),
+        }),
+      }),
+    }))
+  })
+
+  it('does not persist raw web_fetch json as final assistant content', async () => {
+    const mockRes = createMockRes()
+    mockSessionService.addMessage
+      .mockResolvedValueOnce({ id: 'msg-user-1' })
+      .mockResolvedValueOnce({ id: 'msg-assistant-1' })
+
+    const rawPayload = JSON.stringify({
+      url: 'https://example.com/ai',
+      status_code: 200,
+      content_type: 'text/html',
+      title: '',
+      text: 'raw fetched page body',
+    })
+
+    const sseFrames = [
+      'data: {"event":"start","session_id":"sess-1","agent_id":"agent-system"}\n\n',
+      'data: {"event":"thinking","data":{"content":"正在整理"}}\n\n',
+      `data: {"event":"done","status":"completed","final_response":${JSON.stringify(rawPayload)},"session_id":"sess-1","agent_id":"agent-system","revision":11}\n\n`,
+    ].join('')
+
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        return new Response(sseFrames, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: '搜索最新的 AI 行业动态并总结' }, mockRes)
+
+    expect(mockSessionService.addMessage).toHaveBeenLastCalledWith('sess-1', expect.objectContaining({
+      role: 'assistant',
+      content: '任务已执行完成。',
+    }))
+    expect(mockRuntimeAttemptCommitService.commitAttemptTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      checkpointPayload: expect.objectContaining({
+        final_response: '',
+      }),
+    }))
+  })
+
+  it('does not persist concatenated raw web_fetch json blocks as final assistant content', async () => {
+    const mockRes = createMockRes()
+    mockSessionService.addMessage
+      .mockResolvedValueOnce({ id: 'msg-user-1' })
+      .mockResolvedValueOnce({ id: 'msg-assistant-1' })
+
+    const firstPayload = JSON.stringify({
+      url: 'https://example.com/ai-1',
+      status_code: 200,
+      content_type: 'text/html',
+      title: '',
+      text: 'first raw fetched page body',
+    })
+    const secondPayload = JSON.stringify({
+      url: 'https://example.com/ai-2',
+      status_code: 200,
+      content_type: 'text/html',
+      title: '',
+      text: 'second raw fetched page body',
+    })
+    const rawPayload = `${firstPayload}\n\n${secondPayload}`
+
+    const sseFrames = [
+      'data: {"event":"start","session_id":"sess-1","agent_id":"agent-system"}\n\n',
+      `data: {"event":"done","status":"completed","final_response":${JSON.stringify(rawPayload)},"session_id":"sess-1","agent_id":"agent-system","revision":12}\n\n`,
+    ].join('')
+
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        return new Response(sseFrames, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: '搜索最新的 AI 行业动态并总结' }, mockRes)
+
+    expect(mockSessionService.addMessage).toHaveBeenLastCalledWith('sess-1', expect.objectContaining({
+      role: 'assistant',
+      content: '任务已执行完成。',
+    }))
+    expect(mockRuntimeAttemptCommitService.commitAttemptTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      checkpointPayload: expect.objectContaining({
+        final_response: '',
+      }),
     }))
   })
 

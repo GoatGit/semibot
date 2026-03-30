@@ -1,5 +1,7 @@
 """Tests for Route, Direct Reasoning, and Observe DR nodes."""
 
+import json
+
 from src.events.runtime_emitter import emit_runtime_event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.orchestrator import nodes_route as route_mod
-from src.orchestrator.nodes_dr import dr_node
+from src.orchestrator.nodes_dr import _dr_tool_phase_prompt, dr_node
 from src.orchestrator.nodes_observe_dr import observe_dr_node
 from src.orchestrator.nodes_route import route_node
 from src.orchestrator.state import ToolCallResult
@@ -139,6 +141,12 @@ def test_route_prompt_blocks_direct_answer_for_current_data_requests(sample_agen
     assert "A single final deliverable does NOT automatically imply plan_act." in prompt
     assert "If no suitable sub-agent exists, do NOT choose delegate; fall back to direct_reasoning or plan_act." in prompt
     assert "requires_tools = true if the task depends on external data, files, retrieval, browsing, or system tools." in prompt
+
+
+def test_dr_prompts_forbid_raw_tool_payload_output():
+    tool_prompt = _dr_tool_phase_prompt("搜索最新 AI 行业动态并总结", {"max_tool_calls": 3, "max_react_iterations": 2})
+
+    assert "Never present raw tool payloads" in tool_prompt
 
 
 @pytest.mark.asyncio
@@ -283,6 +291,107 @@ async def test_dr_node_tolerates_invalid_wrapper_field_types(sample_agent_state)
     assert result["dr_result"]["status"] == "completed"
     assert result["dr_result"]["answer"] == "ok"
     assert result["dr_result"]["diagnostics"] == {}
+
+
+@pytest.mark.asyncio
+async def test_dr_node_suppresses_raw_wrapper_answer_payload(sample_agent_state):
+    raw_payload = json.dumps(
+        {
+            "url": "https://techcrunch.com/category/artificial-intelligence/",
+            "status_code": 200,
+            "content_type": "text/html; charset=UTF-8",
+            "title": "",
+            "text": "AI news coverage and long extracted article body",
+        },
+        ensure_ascii=False,
+    )
+    mock_response = SimpleNamespace(
+        content=json.dumps({"status": "completed", "answer": raw_payload}, ensure_ascii=False),
+        usage={"prompt_tokens": 30, "completion_tokens": 20, "total_tokens": 50},
+    )
+    llm_provider = SimpleNamespace(chat=AsyncMock(return_value=mock_response))
+    state = {
+        **sample_agent_state,
+        "routing_decision": {
+            "mode": "direct_reasoning",
+            "goal": "搜索并总结最新 AI 行业动态",
+            "reason": "single turn",
+            "delegate_to": None,
+            "dr_policy": {
+                "single_shot": True,
+                "allow_tools": True,
+                "allow_skills": True,
+                "max_tool_calls": 3,
+                "max_wall_clock_ms": 1000,
+                "max_prompt_tokens": 24000,
+                "max_react_iterations": 2,
+                "allow_parallel_tools": False,
+            },
+        },
+    }
+
+    result = await dr_node(state, {"llm_provider": llm_provider, "runtime_event_emitter": None})
+
+    assert result["dr_result"]["status"] == "upgrade_required"
+    assert result["dr_result"]["answer"] is None
+    assert result["dr_result"]["diagnostics"]["raw_payload_suppressed"] is True
+    assert "raw payload" in str(result["dr_result"]["upgrade_reason"] or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_dr_node_suppresses_concatenated_raw_wrapper_answer_payload(sample_agent_state):
+    first_payload = json.dumps(
+        {
+            "url": "https://example.com/ai-1",
+            "status_code": 200,
+            "content_type": "text/html; charset=UTF-8",
+            "title": "",
+            "text": "first raw content",
+        },
+        ensure_ascii=False,
+    )
+    second_payload = json.dumps(
+        {
+            "url": "https://example.com/ai-2",
+            "status_code": 200,
+            "content_type": "text/html; charset=UTF-8",
+            "title": "",
+            "text": "second raw content",
+        },
+        ensure_ascii=False,
+    )
+    concatenated = f"{first_payload}\n\n{second_payload}"
+    mock_response = SimpleNamespace(
+        content=json.dumps({"status": "completed", "answer": concatenated}, ensure_ascii=False),
+        usage={"prompt_tokens": 30, "completion_tokens": 20, "total_tokens": 50},
+    )
+    llm_provider = SimpleNamespace(chat=AsyncMock(return_value=mock_response))
+    state = {
+        **sample_agent_state,
+        "routing_decision": {
+            "mode": "direct_reasoning",
+            "goal": "搜索并总结最新 AI 行业动态",
+            "reason": "single turn",
+            "delegate_to": None,
+            "dr_policy": {
+                "single_shot": True,
+                "allow_tools": True,
+                "allow_skills": True,
+                "max_tool_calls": 3,
+                "max_wall_clock_ms": 1000,
+                "max_prompt_tokens": 24000,
+                "max_react_iterations": 2,
+                "allow_parallel_tools": False,
+            },
+        },
+    }
+
+    result = await dr_node(state, {"llm_provider": llm_provider, "runtime_event_emitter": None})
+
+    assert result["dr_result"]["status"] == "upgrade_required"
+    assert result["dr_result"]["answer"] is None
+    assert result["dr_result"]["diagnostics"]["raw_payload_suppressed"] is True
+    assert "raw payload" in str(result["dr_result"]["upgrade_reason"] or "").lower()
 
 
 @pytest.mark.asyncio
@@ -461,6 +570,83 @@ async def test_dr_node_executes_bounded_tool_call_then_finishes(sample_agent_sta
     assert result["dr_result"]["answer"] == "已基于工具结果完成总结"
     assert result["dr_result"]["tool_usage"]["tool_calls"] == 1
     assert result["dr_result"]["resource_usage"]["tokens"] == 50
+
+
+@pytest.mark.asyncio
+async def test_dr_node_does_not_force_terminal_synthesis_after_tool_phase_wrapper(sample_agent_state):
+    llm_provider = SimpleNamespace(
+        chat=AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    content="",
+                    usage={"total_tokens": 10},
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "function": {
+                                "name": "test_tool",
+                                "arguments": '{"query":"latest ai"}',
+                            },
+                        }
+                    ],
+                    reasoning_content=None,
+                ),
+                # Tool phase LLM returns completed JSON with raw payload answer.
+                SimpleNamespace(
+                    content='{"status":"completed","answer":"{\\"url\\":\\"https://example.com\\",\\"status_code\\":200,\\"content_type\\":\\"text/html\\",\\"title\\":\\"\\",\\"text\\":\\"raw\\"}"}',
+                    usage={"total_tokens": 15},
+                    tool_calls=[],
+                    reasoning_content=None,
+                ),
+            ]
+        )
+    )
+    action_executor = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=ToolCallResult(
+                tool_name="test_tool",
+                params={"query": "latest ai"},
+                success=True,
+                result={"summary": "tool evidence"},
+                error=None,
+                metadata={},
+            )
+        )
+    )
+    state = {
+        **sample_agent_state,
+        "routing_decision": {
+            "mode": "direct_reasoning",
+            "goal": "搜索并总结最新 AI 行业动态",
+            "reason": "single turn",
+            "delegate_to": None,
+            "dr_policy": {
+                "single_shot": True,
+                "allow_tools": True,
+                "allow_skills": True,
+                "max_tool_calls": 3,
+                "max_wall_clock_ms": 1000,
+                "max_prompt_tokens": 24000,
+                "max_react_iterations": 3,
+                "allow_parallel_tools": False,
+            },
+        },
+    }
+
+    result = await dr_node(
+        state,
+        {
+            "llm_provider": llm_provider,
+            "action_executor": action_executor,
+            "runtime_event_emitter": None,
+            "event_emitter": None,
+        },
+    )
+
+    assert llm_provider.chat.await_count == 2
+    assert result["dr_result"]["status"] == "upgrade_required"
+    assert result["dr_result"]["answer"] is None
+    assert result["dr_result"]["diagnostics"]["raw_payload_suppressed"] is True
 
 
 @pytest.mark.asyncio

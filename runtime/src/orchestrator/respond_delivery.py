@@ -209,39 +209,9 @@ def _render_delivery_payloads(payloads: dict[str, list[str]]) -> str:
         ]
         if text_values:
             return "\n\n".join(text_values)
-    # Never render artifact_result_path to user — it contains local filesystem
-    # paths (e.g. /var/folders/...) that should not be exposed.
-    user_facing_keys = {k for k in payloads if k != "artifact_result_path"}
-    if not user_facing_keys:
-        return ""
-    ordered_keys = sorted(
-        user_facing_keys,
-        key=lambda key: (
-            0 if key == "artifact_result_text" else 2,
-            key,
-        ),
-    )
-    if ordered_keys == ["artifact_result_text"] and len(payloads["artifact_result_text"]) == 1:
-        return payloads["artifact_result_text"][0]
-
-    sections: list[str] = []
-    for key in ordered_keys:
-        values = payloads.get(key) or []
-        if not values:
-            continue
-        if len(values) == 1 and "\n" not in values[0]:
-            sections.append(f"{key}: {values[0]}")
-            continue
-        lines = [f"{key}:"]
-        for value in values:
-            if "\n" in value:
-                lines.append("```")
-                lines.append(value)
-                lines.append("```")
-            else:
-                lines.append(f"- {value}")
-        sections.append("\n".join(lines))
-    return "\n\n".join(section for section in sections if section).strip()
+    # Do not render non-text artifact_result_* fields directly to users.
+    # These payloads are often machine-oriented (paths, raw JSON, structured blobs).
+    return ""
 
 
 async def _emit_delivery_file_messages(
@@ -345,5 +315,8 @@ async def _render_inline_delivery_markdown(
         response = await llm_provider.chat(messages=messages, temperature=temperature, model=model or None)
     except Exception:
         return None
-    content = str(getattr(response, "content", "") or "").strip()
+    raw_content = getattr(response, "content", None)
+    if not isinstance(raw_content, str):
+        return None
+    content = raw_content.strip()
     return content or None
