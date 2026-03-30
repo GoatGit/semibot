@@ -1,21 +1,40 @@
-# Semibot - 半分の汎用エージェント
+# Semibot
 
 [中文](./README.zh-CN.md) | [English](./README.en.md) | [日本語](./README.ja.md)
 
-仕事をこなし、知らせ、協調し、自分で強くなっていくカニ。
+[Website](https://semibot.ai) | [Help Center](https://semibot.ai/help) | [Install Guide](https://semibot.ai/help/install) | [CLI Reference](https://semibot.ai/help/cli)
 
-Semibot は、ローカルファーストで、インストール可能で、協調的かつ自己進化する汎用エージェント製品で、以下を含みます。
+Semibot は、ローカルファーストでインストール可能な AI アシスタント兼エージェントワークスペースです。調査、文章作成、ファイル処理、ローカル実行、ブラウザ操作をこなし、同じアシスタントを Telegram や Feishu などの Bot 入口にも広げられます。
 
-- `apps/web`: Next.js Web UI
-- `apps/api`: Node.js API
-- `runtime`: Python runtime、CLI、内蔵 supervisor
-- `packages/*`: 共通設定と型
+## 製品スクリーンショット
 
-このリポジトリには、release インストーラパッケージとローカルファースト実行環境を構築するための Semibot Core コードベースが含まれます。
+![Semibot ダッシュボード](./docs/assets/readme/dashboard-ja.png)
 
-## プロダクトの起動導線
+## まず試せる流れ
 
-推奨インストールと起動手順:
+- ひとつのテーマを調べ、要点をまとめ、結果をローカル workspace に残す
+- 返信や計画を下書きしたあと、そのままファイル、コマンド、ブラウザ操作へ進む
+- まず Web UI で同じアシスタントを動かし、その後 Telegram や Feishu に広げる
+- チーム利用や本番寄りのワークフローで、高リスク操作に承認チェックを入れる
+
+## Why Semibot
+
+- ホスト型ブラックボックスではなく、ローカルファーストな実行環境
+- 単なるチャット画面やデモスクリプトではなく、インストール可能な製品
+- Web UI、CLI、API、runtime がひとつのスタックにまとまっている
+- 高リスク操作には承認ゲートを入れられる
+- Web とメッセージングの複数入口で同じアシスタントを使える
+
+## What It Can Do
+
+- 情報を調べて要点をまとめる
+- 返信、計画、長めの文章を下書きする
+- ファイル、フォルダ、反復的なデータ作業を処理する
+- ローカルコマンドやブラウザ作業を実行する
+- リマインド、フォローアップ、長めのタスクフローを回す
+- 同じアシスタントを Telegram、Feishu などのチャネルに広げる
+
+## Quick Start
 
 ```bash
 curl -fsSL https://releases.semibot.ai/install.sh | bash
@@ -23,13 +42,52 @@ semibot init
 semibot ui
 ```
 
-デフォルトの更新エンドポイント:
+推奨プラットフォーム: macOS と Linux。Windows は WSL を使う前提です。
+
+始め方は 3 ステップです:
+
+1. Semibot をローカルにインストールする
+2. `semibot init` でローカル環境を初期化する
+3. `semibot ui` でローカル入口を開き、そのままセットアップを進める
+
+デフォルトの release エンドポイント:
 
 - インストールスクリプト: `https://releases.semibot.ai/install.sh`
 - 更新マニフェスト: `https://releases.semibot.ai/stable/latest.json`
 - Release ベース URL: `https://releases.semibot.ai/stable`
 
-## ローカル開発
+## Docs
+
+- Website: `https://semibot.ai`
+- Help center: `https://semibot.ai/help`
+- Install guide: `https://semibot.ai/help/install`
+- CLI reference: `https://semibot.ai/help/cli`
+- Bot setup guide: `https://semibot.ai/help/bot-setup`
+
+## Architecture
+
+- `apps/web`: Next.js web UI
+- `apps/api`: Node.js API
+- `runtime`: Python runtime、CLI、内蔵 supervisor
+- `packages/*`: 共通設定と型
+
+このリポジトリには、インストール可能な製品とローカルファースト runtime を構築するための Semibot Core コードベースが含まれます。
+
+## Product Highlights
+
+- 単純な作業は素早く処理し、複雑な作業はより構造化された流れで扱える
+- ローカル実行とブラウザ実行が実際の作業環境に近い
+- うまくいったワークフローは毎回ゼロから作り直さず再利用できる
+- ひとつのチャット入口から複数の作業スレッドへ分岐できる
+- 深い推論には強いモデルを使い、実行や整理には軽いモデルを回して速度とコストを両立しやすい
+
+## Entry Points
+
+- `Web UI`: ひとつのローカル画面でチャット、タスク、承認、状態確認を扱える
+- `CLI`: すばやい実行、スクリプト連携、端末中心のワークフローに向いている
+- `Channels`: 必要に応じて同じアシスタントを Telegram、Feishu、Discord、WhatsApp、iMessage に広げられる
+
+## Local Development
 
 前提条件:
 
@@ -40,19 +98,18 @@ semibot ui
 依存関係のインストール:
 
 ```bash
-cd /Users/yanghuaiyuan/AI/semibot-internal
 pnpm install
 python3 -m venv runtime/.venv
 runtime/.venv/bin/pip install -r runtime/requirements.txt
 ```
 
-開発モード:
+開発スタック全体を起動:
 
 ```bash
 pnpm dev
 ```
 
-個別起動:
+個別に起動:
 
 ```bash
 pnpm --dir apps/api dev
@@ -60,7 +117,7 @@ pnpm --dir apps/web dev
 cd runtime && .venv/bin/python -m src.main serve start
 ```
 
-プロダクトコマンド:
+便利な runtime コマンド:
 
 ```bash
 cd runtime
@@ -70,12 +127,45 @@ python -m src.main status
 python -m src.main ui --no-open
 ```
 
-## Release ビルド
+## Core Scenarios
 
-標準ビルド:
+- 単発の会話ではなく、実務で AI を使いたい個人
+- 共有アシスタントと重要手順の人間確認が必要なチーム
+- ツール、ファイル、コマンド、回答後の実行まで必要なワークフロー
+- Web UI、CLI、Telegram、Feishu など複数入口で同じアシスタントを使いたい環境
+
+## Roadmap Direction
+
+- すぐ試せるタスク demo の強化
+- 承認と復旧 UX の改善
+- インストール可能な connector と runtime skill の拡充
+- 個人用 agent からチーム導入までの道筋をより明確にする
+
+## Get Help
+
+- Install guide: `https://semibot.ai/help/install`
+- CLI reference: `https://semibot.ai/help/cli`
+- Bot setup guide: `https://semibot.ai/help/bot-setup`
+- Feishu guide: `https://semibot.ai/help/feishu`
+- Telegram guide: `https://semibot.ai/help/telegram`
+- Discord guide: `https://semibot.ai/help/discord`
+- WhatsApp guide: `https://semibot.ai/help/whatsapp`
+- iMessage guide: `https://semibot.ai/help/imessage`
+
+## Contributing
+
+外部コントリビューションを歓迎します。詳細は以下を参照してください:
+
+- `CONTRIBUTING.md`
+- `CLA.md`
+- `LICENSE`
+- `TRADEMARKS.md`
+
+## Maintainers
+
+Release ビルド:
 
 ```bash
-cd /Users/yanghuaiyuan/AI/semibot-internal
 ./scripts/build_release.sh
 ```
 
@@ -87,76 +177,10 @@ INCLUDE_NODE_MODULES=1 ./scripts/build_release.sh
 INCLUDE_RUNTIME_VENV=1 ./scripts/build_release.sh
 ```
 
-生成物:
-
-- `.release/<version>/`
-- `.release/current`
-- `.release/semibot-<version>.tar.gz`
-- `.release/latest.json`
-
-## Public Core のエクスポート
-
-Public Core の境界と allowlist は以下にあります:
-
-- `docs/design/V2/public-core-directory-boundary-v1.md`
-- `docs/design/V2/open-core-and-licensing-strategy-v1.md`
-
-エクスポートコマンド:
-
-```bash
-cd /Users/yanghuaiyuan/AI/semibot-internal
-FORCE=1 bash scripts/export_public_core.sh /Users/yanghuaiyuan/AI/semibot
-```
-
-最小検証つきエクスポート:
-
-```bash
-FORCE=1 RUN_VALIDATION=1 bash scripts/export_public_core.sh /Users/yanghuaiyuan/AI/semibot
-```
-
-補足:
-
-- エクスポートスクリプトは公開リポジトリの `.git` を保持する
-- Public Core 検証では `INCLUDE_RUNTIME_VENV=0` を許可する
-- Node 22 環境では、推移的依存 `canvas` により `pkg-config` や `pixman` のようなシステムパッケージが必要になる場合がある
-- `website` と `docs/design/V2` は非公開のままで、Public Core には含めない
-- `runtime/workspaces` と `runtime/.semibot` は内部状態ディレクトリのため、エクスポートしない
-
-## 公開/非公開の境界
-
-以下は非公開のまま保持する:
-
-- `website`
-- `docs/design/V2`
-- `runtime/workspaces`
-- `runtime/.semibot`
-- 内部実験、顧客向け資料、内部スクリプト、私有 connector
-
-Public Core には、release インストーラパッケージをビルドするために必要な allowlist 済みの内容だけを含める。
-
-## License とブランド
-
-現在の方針:
-
-- 公開リポジトリは source-available
-- 外部コントリビューションには `CLA` が必要
-- `Semibot` 名称、ロゴ、ドメイン、Website コンテンツは商標/ブランドポリシーで保護する
-
-関連ファイル:
-
-- `LICENSE`
-- `TRADEMARKS.md`
-- `CLA.md`
-- `CONTRIBUTING.md`
-
-## よく使う検証
+よく使う検証:
 
 ```bash
 pnpm --dir apps/api type-check
 python3 -m pytest runtime/tests/test_cli.py -q
 python3 -m compileall runtime/src
 ```
-
-より詳しいメンテナ向けガイド:
-
-- `docs/design/V2/build-release-install-update-development-guide.md`
