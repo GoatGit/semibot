@@ -300,7 +300,7 @@ GENERATED_FILES_CLEANUP_INTERVAL_SECONDS = 300
 # Gateway
 # =============================================================================
 
-GATEWAY_TASK_TIMEOUT_SECONDS = 600
+GATEWAY_TASK_TIMEOUT_SECONDS = 1800
 """Gateway 任务执行超时时间（秒）"""
 
 GATEWAY_APPROVAL_POLL_INTERVAL_SECONDS = 1.0
@@ -339,4 +339,3 @@ GH_AUTH_LOGIN_TIMEOUT_SECONDS = 120
 
 GH_AUTH_POLL_INTERVAL_SECONDS = 3
 """轮询 gh auth status 的间隔（秒）"""
-

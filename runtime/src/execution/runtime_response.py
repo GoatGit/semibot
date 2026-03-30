@@ -52,6 +52,14 @@ def derive_terminal_failure_reason(result: dict[str, Any], final_response: str) 
         plan_steps = list(raw_plan.get("steps") or [])
 
     normalized = str(final_response or "").strip()
+    raw_final_response = normalize_execution_result(result).final_response
+    raw_normalized = str(raw_final_response or "").strip()
+    if not normalized and raw_normalized and _looks_like_raw_delivery_payload(raw_normalized):
+        return (
+            "Model returned raw tool payload as terminal response; "
+            "no user-facing answer was produced."
+        )
+
     lowered = normalized.lower()
     if normalized and (
         '"tool_calls"' in normalized

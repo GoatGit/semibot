@@ -31,9 +31,9 @@ from src.execution.runtime_execution_core import (
 )
 from src.execution.runtime_llm import (
     instantiate_llm_provider,
-    pick_openai_compatible_provider_key,
-    provider_base,
     provider_cfg_base_url,
+    provider_base,
+    resolve_model_and_provider_key,
 )
 from src.execution.runtime_response import (
     derive_terminal_failure_reason,
@@ -48,9 +48,7 @@ from src.llm.base import LLMProvider
 from src.llm.kimi_provider import KimiProvider
 from src.llm.openai_provider import OpenAIProvider
 from src.llm.provider_factory import (
-    MODEL_PROVIDER_HINTS,
     SUPPORTED_PROVIDER_BASES,
-    infer_provider_base_from_model,
 )
 from src.memory.service import RuntimeMemoryService
 from src.orchestrator.context import (
@@ -80,7 +78,7 @@ from src.ws.client import ControlPlaneClient
 from src.ws.event_emitter import EventEmitter
 
 logger = get_logger(__name__)
-_SEMIGRAPH_RUN_HARD_TIMEOUT_SECONDS = float(os.getenv("SEMIBOT_GRAPH_HARD_TIMEOUT_SECONDS", "1200"))
+_SEMIGRAPH_RUN_HARD_TIMEOUT_SECONDS = float(os.getenv("SEMIBOT_GRAPH_HARD_TIMEOUT_SECONDS", "1800"))
 
 try:
     from src.mcp.bootstrap import setup_mcp_client
@@ -97,7 +95,6 @@ def _session_working_dir(session_id: str) -> str:
 
 
 _OPENAI_COMPATIBLE_PROVIDER_BASES = SUPPORTED_PROVIDER_BASES
-_MODEL_PROVIDER_HINTS = MODEL_PROVIDER_HINTS
 
 
 @dataclass
@@ -261,28 +258,23 @@ class SemiGraphAdapter(RuntimeAdapter):
     def _provider_base(provider_key: str) -> str:
         return provider_base(provider_key)
 
-    @classmethod
-    def _infer_openai_compatible_provider_base(cls, model: str) -> str | None:
-        return infer_provider_base_from_model(model)
-
-    @classmethod
-    def _pick_openai_compatible_provider_key(
-        cls,
-        model: str,
-        api_keys: dict[str, str],
-        *,
-        strict_preferred_base: bool = False,
-    ) -> str | None:
-        return pick_openai_compatible_provider_key(
-            model,
-            api_keys,
-            set(_OPENAI_COMPATIBLE_PROVIDER_BASES),
-            strict_preferred_base=strict_preferred_base,
-        )
+    @staticmethod
+    def _pick_primary_model_from_roles(model_roles: Any) -> str | None:
+        if not isinstance(model_roles, dict):
+            return None
+        for key in ("plan", "act", "respond", "textProcessing", "text_processing"):
+            row = model_roles.get(key)
+            if not isinstance(row, dict):
+                continue
+            model = str(row.get("model") or "").strip()
+            if model:
+                return model
+        return None
 
     @staticmethod
     def _provider_cfg_base_url(raw_cfg: Any) -> str | None:
         return provider_cfg_base_url(raw_cfg)
+
 
     def _create_llm_provider(self) -> LLMProvider | None:
         api_keys_raw = self.init_data.get("api_keys") or {}
@@ -304,9 +296,6 @@ class SemiGraphAdapter(RuntimeAdapter):
         agent_fallback_model = str(
             cfg.get("fallback_model") or cfg.get("fallbackModel") or ""
         ).strip()
-        agent_fallback_provider_key = str(
-            cfg.get("fallback_provider_key") or cfg.get("fallbackProviderKey") or ""
-        ).strip()
         default_model = (
             llm_config.get("default_model") if isinstance(llm_config, dict) else None
         )
@@ -315,62 +304,35 @@ class SemiGraphAdapter(RuntimeAdapter):
             or
             (llm_config.get("default_provider_key") if isinstance(llm_config, dict) else None)
         )
-        fallback_provider_key = (
-            agent_fallback_provider_key
-            or
-            (llm_config.get("fallback_provider_key") if isinstance(llm_config, dict) else None)
-        )
         agent_model = cfg.get("model")
+        role_primary_model = self._pick_primary_model_from_roles(cfg.get("model_roles"))
         model = (
             agent_model
+            or role_primary_model
             or default_model
             or agent_fallback_model
             or (llm_config.get("fallback_model") if isinstance(llm_config, dict) else None)
         )
 
-        selected_provider_key = None
-        if default_model and str(model or "").strip() == str(default_model).strip():
-            if isinstance(default_provider_key, str) and default_provider_key.strip() and api_keys.get(default_provider_key.strip()):
-                selected_provider_key = default_provider_key.strip()
-        fallback_model = (
-            agent_fallback_model
-            or (llm_config.get("fallback_model") if isinstance(llm_config, dict) else None)
+        requested_model = str(model or "").strip() or None
+        resolved_model, selected_provider_key, used_default_model_fallback = resolve_model_and_provider_key(
+            requested_model=requested_model,
+            default_model=str(default_model or "").strip() or None,
+            default_provider_key=str(default_provider_key or "").strip() or None,
+            api_keys=api_keys,
+            compatible_provider_bases=set(_OPENAI_COMPATIBLE_PROVIDER_BASES),
         )
-        if fallback_model and str(model or "").strip() == str(fallback_model).strip():
-            if isinstance(fallback_provider_key, str) and fallback_provider_key.strip() and api_keys.get(fallback_provider_key.strip()):
-                selected_provider_key = fallback_provider_key.strip()
-        if not selected_provider_key:
-            selected_provider_key = self._pick_openai_compatible_provider_key(str(model or ""), api_keys)
-        if agent_model:
-            strict_provider_for_agent_model = self._pick_openai_compatible_provider_key(
-                str(agent_model),
-                api_keys,
-                strict_preferred_base=True,
+        model = resolved_model
+        if used_default_model_fallback and agent_model and default_model:
+            logger.warning(
+                "semigraph_agent_model_fallback_to_default_model",
+                extra={
+                    "session_id": self.session_id,
+                    "agent_model": str(agent_model),
+                    "default_model": str(default_model),
+                    "fallback_provider_key": selected_provider_key,
+                },
             )
-            default_model_text = str(default_model or "").strip()
-            if (
-                strict_provider_for_agent_model is None
-                and default_model_text
-            ):
-                default_provider = (
-                    default_provider_key.strip()
-                    if isinstance(default_provider_key, str)
-                    and default_provider_key.strip()
-                    and api_keys.get(default_provider_key.strip())
-                    else self._pick_openai_compatible_provider_key(default_model_text, api_keys)
-                )
-                if default_provider:
-                    logger.warning(
-                        "semigraph_agent_model_fallback_to_default_model",
-                        extra={
-                            "session_id": self.session_id,
-                            "agent_model": str(agent_model),
-                            "default_model": default_model_text,
-                            "fallback_provider_key": default_provider,
-                        },
-                    )
-                    model = default_model_text
-                    selected_provider_key = default_provider
         if not selected_provider_key:
             return None
 

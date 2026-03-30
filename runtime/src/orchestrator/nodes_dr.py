@@ -393,8 +393,6 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
     """Execute one bounded direct reasoning run."""
     session_id = str(state.get("session_id") or "").strip()
     runtime_context = state.get("context")
-    runtime_metadata = getattr(runtime_context, "metadata", None)
-    org_id = str((runtime_metadata or {}).get("org_id") or "").strip() if isinstance(runtime_metadata, dict) else ""
     runtime_event_emitter = context.get("runtime_event_emitter")
     llm_provider = context.get("llm_provider")
     skill_registry = context.get("skill_registry")
@@ -406,15 +404,12 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
         event_type="dr.started",
         source="runtime.dr_node",
         subject=session_id or None,
-        payload={"session_id": session_id, "org_id": org_id or None},
+        payload={"session_id": session_id},
     )
 
     routing_decision = state.get("routing_decision") or {}
     dr_policy = routing_decision.get("dr_policy") if isinstance(routing_decision, dict) else None
     goal = str((routing_decision or {}).get("goal") or _latest_user_text(state)).strip() or "direct reasoning task"
-
-    if not org_id:
-        logger.warning("dr_node_missing_org_id", extra={"session_id": session_id})
 
     if llm_provider is None:
         dr_result: DirectReasoningResult = {
@@ -438,7 +433,7 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
             event_type="dr.failed",
             source="runtime.dr_node",
             subject=session_id or None,
-            payload={"session_id": session_id, "org_id": org_id or None, "failure": dr_result.get("failure")},
+            payload={"session_id": session_id, "failure": dr_result.get("failure")},
         )
         return {"dr_result": dr_result, "tool_results": [], "current_step": "dr"}
 
@@ -630,7 +625,6 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
         subject=session_id or None,
         payload={
             "session_id": session_id,
-            "org_id": org_id or None,
             "status": dr_result.get("status"),
             "upgrade_reason": dr_result.get("upgrade_reason"),
             "resource_usage": dr_result.get("resource_usage"),

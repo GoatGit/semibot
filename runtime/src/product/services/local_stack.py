@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.llm.provider_factory import infer_provider_base_from_model
 from src.product.config import ProductConfigLoader
 from src.product.health import probe_http_with_retry, probe_port_with_retry
 from src.product.installer import InstallLayout
@@ -657,9 +656,6 @@ class LocalProductStack:
         default_model = str(self.product_config.llm.default_model or "").strip()
         if default_model:
             env["DEFAULT_LLM_MODEL"] = default_model
-            inferred_provider = infer_provider_base_from_model(default_model)
-            if inferred_provider:
-                env["DEFAULT_LLM_PROVIDER_KEY"] = inferred_provider
         openai_api_key = str(self.product_config.llm.openai_api_key or "").strip()
         if openai_api_key:
             env["OPENAI_API_KEY"] = openai_api_key

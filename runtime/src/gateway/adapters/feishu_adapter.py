@@ -117,10 +117,14 @@ def parse_card_action(body: dict[str, Any]) -> dict[str, Any]:
         normalized_decision = ""
 
     approval_id = action_value.get("approval_id") or body.get("approval_id")
+    execution_id = action_value.get("execution_id") or body.get("execution_id")
+    anchor_id = action_value.get("anchor_id") or body.get("anchor_id")
     trace_id = action_value.get("trace_id") or body.get("trace_id")
 
     return {
         "approval_id": approval_id if isinstance(approval_id, str) else None,
+        "execution_id": execution_id if isinstance(execution_id, str) else None,
+        "anchor_id": anchor_id if isinstance(anchor_id, str) else None,
         "decision": normalized_decision,
         "raw_decision": decision,
         "trace_id": trace_id if isinstance(trace_id, str) and trace_id else None,

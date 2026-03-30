@@ -15,8 +15,6 @@ from time import perf_counter
 from typing import Any, Iterator
 from uuid import uuid4
 
-from src.llm.provider_factory import infer_provider_base_from_model
-
 logger = logging.getLogger(__name__)
 
 
@@ -491,18 +489,7 @@ class RuntimeConfigStore:
 
     def _llm_env_defaults(self) -> dict[str, Any]:
         default_model = str(os.getenv("DEFAULT_LLM_MODEL") or "").strip()
-        default_provider_key = str(os.getenv("DEFAULT_LLM_PROVIDER_KEY") or "").strip()
         fallback_model = str(os.getenv("FALLBACK_LLM_MODEL") or "").strip()
-        fallback_provider_key = str(os.getenv("FALLBACK_LLM_PROVIDER_KEY") or "").strip()
-
-        if default_model and not default_provider_key:
-            inferred = infer_provider_base_from_model(default_model)
-            if inferred:
-                default_provider_key = inferred
-        if fallback_model and not fallback_provider_key:
-            inferred = infer_provider_base_from_model(fallback_model)
-            if inferred:
-                fallback_provider_key = inferred
 
         providers: dict[str, dict[str, Any]] = {}
         for provider in SUPPORTED_LLM_PROVIDERS:
@@ -517,9 +504,9 @@ class RuntimeConfigStore:
 
         return {
             "default_model": default_model,
-            "default_provider_key": default_provider_key,
+            "default_provider_key": "",
             "fallback_model": fallback_model,
-            "fallback_provider_key": fallback_provider_key,
+            "fallback_provider_key": "",
             "providers": providers,
         }
 
@@ -542,8 +529,8 @@ class RuntimeConfigStore:
             ).strip()
         if not str(item.get("fallback_model") or "").strip():
             item["fallback_model"] = str(env_defaults.get("fallback_model") or "").strip()
-        if not str(item.get("fallback_provider_key") or "").strip():
-            item["fallback_provider_key"] = str(env_defaults.get("fallback_provider_key") or "").strip()
+        # fallback provider routing is no longer used; keep field empty for backward compatibility.
+        item["fallback_provider_key"] = ""
 
         providers = item.get("providers") if isinstance(item.get("providers"), dict) else {}
         env_providers = env_defaults.get("providers") if isinstance(env_defaults.get("providers"), dict) else {}

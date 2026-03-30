@@ -15,7 +15,7 @@ import httpx
 
 from src.events.models import Event
 
-SendFn = Callable[[str, dict[str, Any], float], Awaitable[None]]
+SendFn = Callable[[str, dict[str, Any], float], Awaitable[Any]]
 
 
 class IMessageNotifier:
@@ -35,6 +35,7 @@ class IMessageNotifier:
             "rule.run_agent.executed",
         }
         self.send_fn = send_fn
+        self._last_delivery_metadata: dict[str, Any] = {}
 
     async def send_message(
         self,
@@ -68,13 +69,19 @@ class IMessageNotifier:
             "files": normalized_files,
         }
         timeout_seconds = 10.0
+        self._last_delivery_metadata = {}
         if self.send_fn is not None:
-            await self.send_fn(self.bridge_url.rstrip("/"), payload, timeout_seconds)
+            response = await self.send_fn(self.bridge_url.rstrip("/"), payload, timeout_seconds)
+            self._remember_delivery_metadata(response)
         else:
             timeout = httpx.Timeout(timeout_seconds, connect=5.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(f"{self.bridge_url.rstrip('/')}/messages/send", json=payload)
                 response.raise_for_status()
+                try:
+                    self._remember_delivery_metadata(response.json())
+                except Exception:
+                    pass
         return True
 
     async def send_notify_payload(self, payload: dict[str, Any]) -> bool:
@@ -125,3 +132,15 @@ class IMessageNotifier:
             )
         target_handle = str(payload.get("chat_id") or payload.get("handle") or "").strip() or None
         await self.send_message(text=text, handle=target_handle)
+
+    def last_delivery_metadata(self) -> dict[str, Any]:
+        return dict(self._last_delivery_metadata)
+
+    def _remember_delivery_metadata(self, response: Any) -> None:
+        payload = response if isinstance(response, dict) else {}
+        message_id = payload.get("message_id") or payload.get("id")
+        metadata: dict[str, Any] = {}
+        if message_id is not None:
+            metadata["channel_message_id"] = str(message_id)
+        if metadata:
+            self._last_delivery_metadata = metadata

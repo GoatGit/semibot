@@ -8,7 +8,7 @@ import logging
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterator
@@ -96,8 +96,15 @@ class GatewayStore:
                   id TEXT PRIMARY KEY,
                   conversation_id TEXT NOT NULL,
                   runtime_session_id TEXT NOT NULL,
+                  parent_run_id TEXT,
+                  title TEXT,
                   source_message_id TEXT,
                   snapshot_version INTEGER NOT NULL,
+                  context_strategy TEXT NOT NULL DEFAULT 'fresh',
+                  context_snapshot_id TEXT,
+                  anchor_id TEXT,
+                  archived_at TEXT,
+                  approval_binding_json TEXT NOT NULL DEFAULT '{}',
                   status TEXT NOT NULL,
                   result_summary TEXT,
                   result_metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -106,6 +113,32 @@ class GatewayStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_gateway_task_runs_conv ON gateway_task_runs(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_gateway_task_runs_runtime_session ON gateway_task_runs(runtime_session_id);
+
+                CREATE TABLE IF NOT EXISTS gateway_context_snapshots (
+                  id TEXT PRIMARY KEY,
+                  execution_id TEXT NOT NULL,
+                  strategy TEXT NOT NULL,
+                  schema_version TEXT NOT NULL,
+                  source_execution_id TEXT,
+                  payload_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_context_snapshots_execution ON gateway_context_snapshots(execution_id);
+
+                CREATE TABLE IF NOT EXISTS gateway_interaction_anchors (
+                  id TEXT PRIMARY KEY,
+                  conversation_id TEXT NOT NULL,
+                  execution_id TEXT NOT NULL,
+                  provider TEXT NOT NULL,
+                  channel_target_id TEXT NOT NULL,
+                  channel_message_id TEXT NOT NULL,
+                  channel_thread_id TEXT,
+                  capability_mode TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_interaction_anchors_execution ON gateway_interaction_anchors(execution_id);
+                CREATE INDEX IF NOT EXISTS idx_gateway_interaction_anchors_message ON gateway_interaction_anchors(provider, channel_message_id);
 
                 CREATE TABLE IF NOT EXISTS capability_install_requests (
                   id TEXT PRIMARY KEY,
@@ -166,6 +199,24 @@ class GatewayStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_gateway_conversations_instance ON gateway_conversations(instance_id)"
             )
+            task_run_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(gateway_task_runs)").fetchall()
+            }
+            if "parent_run_id" not in task_run_columns:
+                conn.execute("ALTER TABLE gateway_task_runs ADD COLUMN parent_run_id TEXT")
+            if "context_strategy" not in task_run_columns:
+                conn.execute("ALTER TABLE gateway_task_runs ADD COLUMN context_strategy TEXT NOT NULL DEFAULT 'fresh'")
+            if "context_snapshot_id" not in task_run_columns:
+                conn.execute("ALTER TABLE gateway_task_runs ADD COLUMN context_snapshot_id TEXT")
+            if "anchor_id" not in task_run_columns:
+                conn.execute("ALTER TABLE gateway_task_runs ADD COLUMN anchor_id TEXT")
+            if "archived_at" not in task_run_columns:
+                conn.execute("ALTER TABLE gateway_task_runs ADD COLUMN archived_at TEXT")
+            if "title" not in task_run_columns:
+                conn.execute("ALTER TABLE gateway_task_runs ADD COLUMN title TEXT")
+            if "approval_binding_json" not in task_run_columns:
+                conn.execute("ALTER TABLE gateway_task_runs ADD COLUMN approval_binding_json TEXT NOT NULL DEFAULT '{}'")
 
     @staticmethod
     def _slow_threshold_ms() -> float:
@@ -214,8 +265,15 @@ class GatewayStore:
             "id": row["id"],
             "conversation_id": row["conversation_id"],
             "runtime_session_id": row["runtime_session_id"],
+            "parent_run_id": row["parent_run_id"] if "parent_run_id" in row.keys() else None,
+            "title": row["title"] if "title" in row.keys() else None,
             "source_message_id": row["source_message_id"],
             "snapshot_version": int(row["snapshot_version"]),
+            "context_strategy": row["context_strategy"] if "context_strategy" in row.keys() else "fresh",
+            "context_snapshot_id": row["context_snapshot_id"] if "context_snapshot_id" in row.keys() else None,
+            "anchor_id": row["anchor_id"] if "anchor_id" in row.keys() else None,
+            "archived_at": row["archived_at"] if "archived_at" in row.keys() else None,
+            "approval_binding": _json_loads(row["approval_binding_json"], {}) if "approval_binding_json" in row.keys() else {},
             "status": row["status"],
             "result_summary": row["result_summary"],
             "result_metadata": _json_loads(row["result_metadata_json"], {}),
@@ -264,6 +322,33 @@ class GatewayStore:
             "success": bool(row["success"]),
             "metadata": _json_loads(row["metadata_json"], {}),
             "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _context_snapshot_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "execution_id": row["execution_id"],
+            "strategy": row["strategy"],
+            "schema_version": row["schema_version"],
+            "source_execution_id": row["source_execution_id"],
+            "payload": _json_loads(row["payload_json"], {}),
+            "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _anchor_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "conversation_id": row["conversation_id"],
+            "execution_id": row["execution_id"],
+            "provider": row["provider"],
+            "channel_target_id": row["channel_target_id"],
+            "channel_message_id": row["channel_message_id"],
+            "channel_thread_id": row["channel_thread_id"],
+            "capability_mode": row["capability_mode"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }
 
     def get_or_create_conversation(
@@ -419,7 +504,13 @@ class GatewayStore:
         conversation_id: str,
         runtime_session_id: str,
         snapshot_version: int,
+        parent_run_id: str | None = None,
+        title: str | None = None,
         source_message_id: str | None = None,
+        context_strategy: str = "fresh",
+        context_snapshot_id: str | None = None,
+        anchor_id: str | None = None,
+        approval_binding: dict[str, Any] | None = None,
         status: str = "queued",
     ) -> dict[str, Any]:
         now = _now_iso()
@@ -428,17 +519,24 @@ class GatewayStore:
             conn.execute(
                 """
                 INSERT INTO gateway_task_runs (
-                  id, conversation_id, runtime_session_id, source_message_id,
-                  snapshot_version, status, result_summary, result_metadata_json,
+                  id, conversation_id, runtime_session_id, parent_run_id, title, source_message_id,
+                  snapshot_version, context_strategy, context_snapshot_id, anchor_id, approval_binding_json,
+                  status, result_summary, result_metadata_json,
                   created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, '{}', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '{}', ?, ?)
                 """,
                 (
                     run_id,
                     conversation_id,
                     runtime_session_id,
+                    parent_run_id,
+                    title,
                     source_message_id,
                     snapshot_version,
+                    context_strategy,
+                    context_snapshot_id,
+                    anchor_id,
+                    _json_dumps(approval_binding or {}),
                     status,
                     now,
                     now,
@@ -456,21 +554,248 @@ class GatewayStore:
         status: str,
         result_summary: str | None = None,
         result_metadata: dict[str, Any] | None = None,
+        parent_run_id: str | None = None,
+        title: str | None = None,
+        context_strategy: str | None = None,
+        context_snapshot_id: str | None = None,
+        anchor_id: str | None = None,
+        archived_at: str | None = None,
+        approval_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         now = _now_iso()
         with self._connect() as conn:
+            existing = conn.execute("SELECT * FROM gateway_task_runs WHERE id = ?", (run_id,)).fetchone()
+            if not existing:
+                return None
             cur = conn.execute(
                 """
                 UPDATE gateway_task_runs
-                SET status = ?, result_summary = ?, result_metadata_json = ?, updated_at = ?
+                SET status = ?, result_summary = ?, result_metadata_json = ?,
+                    parent_run_id = ?, title = ?, context_strategy = ?, context_snapshot_id = ?,
+                    anchor_id = ?, archived_at = ?, approval_binding_json = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (status, result_summary, _json_dumps(result_metadata or {}), now, run_id),
+                (
+                    status,
+                    result_summary,
+                    _json_dumps(result_metadata or {}),
+                    parent_run_id if parent_run_id is not None else existing["parent_run_id"],
+                    title if title is not None else existing["title"],
+                    context_strategy if context_strategy is not None else existing["context_strategy"],
+                    context_snapshot_id if context_snapshot_id is not None else existing["context_snapshot_id"],
+                    anchor_id if anchor_id is not None else existing["anchor_id"],
+                    archived_at if archived_at is not None else existing["archived_at"],
+                    _json_dumps(
+                        approval_binding
+                        if approval_binding is not None
+                        else _json_loads(existing["approval_binding_json"], {})
+                    ),
+                    now,
+                    run_id,
+                ),
             )
             if cur.rowcount <= 0:
                 return None
             row = conn.execute("SELECT * FROM gateway_task_runs WHERE id = ?", (run_id,)).fetchone()
         return self._run_row(row) if row else None
+
+    def create_context_snapshot(
+        self,
+        *,
+        execution_id: str,
+        strategy: str,
+        schema_version: str,
+        source_execution_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = _now_iso()
+        snapshot_id = f"gctxsnap_{uuid4().hex}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO gateway_context_snapshots (
+                  id, execution_id, strategy, schema_version, source_execution_id, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    execution_id,
+                    strategy,
+                    schema_version,
+                    source_execution_id,
+                    _json_dumps(payload or {}),
+                    now,
+                ),
+            )
+            row = conn.execute("SELECT * FROM gateway_context_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+        if not row:
+            raise RuntimeError("failed_to_create_gateway_context_snapshot")
+        return self._context_snapshot_row(row)
+
+    def get_context_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM gateway_context_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+        return self._context_snapshot_row(row) if row else None
+
+    def create_interaction_anchor(
+        self,
+        *,
+        conversation_id: str,
+        execution_id: str,
+        provider: str,
+        channel_target_id: str,
+        channel_message_id: str,
+        channel_thread_id: str | None = None,
+        capability_mode: str = "append_only",
+    ) -> dict[str, Any]:
+        now = _now_iso()
+        anchor_id = f"ganchor_{uuid4().hex}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO gateway_interaction_anchors (
+                  id, conversation_id, execution_id, provider, channel_target_id,
+                  channel_message_id, channel_thread_id, capability_mode, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    anchor_id,
+                    conversation_id,
+                    execution_id,
+                    provider,
+                    channel_target_id,
+                    channel_message_id,
+                    channel_thread_id,
+                    capability_mode,
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute("SELECT * FROM gateway_interaction_anchors WHERE id = ?", (anchor_id,)).fetchone()
+        if not row:
+            raise RuntimeError("failed_to_create_gateway_interaction_anchor")
+        return self._anchor_row(row)
+
+    def get_interaction_anchor(self, anchor_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM gateway_interaction_anchors WHERE id = ?", (anchor_id,)).fetchone()
+        return self._anchor_row(row) if row else None
+
+    def get_interaction_anchor_by_execution(self, execution_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM gateway_interaction_anchors
+                WHERE execution_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (execution_id,),
+            ).fetchone()
+        return self._anchor_row(row) if row else None
+
+    def get_interaction_anchor_by_channel_message(
+        self,
+        *,
+        provider: str,
+        channel_message_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM gateway_interaction_anchors
+                WHERE provider = ? AND channel_message_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (provider, channel_message_id),
+            ).fetchone()
+        return self._anchor_row(row) if row else None
+
+    def update_interaction_anchor(
+        self,
+        anchor_id: str,
+        *,
+        channel_message_id: str | None = None,
+        channel_thread_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM gateway_interaction_anchors WHERE id = ?",
+                (anchor_id,),
+            ).fetchone()
+            if not existing:
+                return None
+            next_message_id = (
+                str(channel_message_id).strip()
+                if channel_message_id is not None and str(channel_message_id).strip()
+                else str(existing["channel_message_id"] or "").strip()
+            )
+            next_thread_id = (
+                str(channel_thread_id).strip()
+                if channel_thread_id is not None and str(channel_thread_id).strip()
+                else (
+                    str(existing["channel_thread_id"] or "").strip()
+                    if existing["channel_thread_id"] is not None
+                    else None
+                )
+            )
+            conn.execute(
+                """
+                UPDATE gateway_interaction_anchors
+                SET channel_message_id = ?, channel_thread_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    next_message_id,
+                    next_thread_id,
+                    _now_iso(),
+                    anchor_id,
+                ),
+            )
+            row = conn.execute("SELECT * FROM gateway_interaction_anchors WHERE id = ?", (anchor_id,)).fetchone()
+        return self._anchor_row(row) if row else None
+
+    def find_task_runs_by_approval_ids(
+        self,
+        approval_ids: list[str],
+        *,
+        conversation_id: str | None = None,
+        statuses: list[str] | None = None,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        normalized_ids = {str(item).strip() for item in approval_ids if str(item).strip()}
+        if not normalized_ids:
+            return []
+        clauses: list[str] = []
+        args: list[Any] = []
+        if conversation_id:
+            clauses.append("conversation_id = ?")
+            args.append(conversation_id)
+        if statuses:
+            placeholders = ",".join("?" * len(statuses))
+            clauses.append(f"status IN ({placeholders})")
+            args.extend(statuses)
+        if not include_archived:
+            clauses.append("archived_at IS NULL")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM gateway_task_runs
+                {where}
+                ORDER BY updated_at DESC
+                """,
+                tuple(args),
+            ).fetchall()
+        matches: list[dict[str, Any]] = []
+        for row in rows:
+            item = self._run_row(row)
+            binding = item.get("approval_binding") if isinstance(item.get("approval_binding"), dict) else {}
+            ids = binding.get("approval_ids") if isinstance(binding.get("approval_ids"), list) else []
+            if any(str(candidate).strip() in normalized_ids for candidate in ids):
+                matches.append(item)
+        return matches
 
     def get_task_run(self, run_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -490,24 +815,63 @@ class GatewayStore:
             ).fetchall()
         return [self._conversation_row(row) for row in rows]
 
-    def list_task_runs(self, conversation_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_task_runs(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        archived_clause = "" if include_archived else "AND archived_at IS NULL"
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM gateway_task_runs
                 WHERE conversation_id = ?
+                  {archived_clause}
                 ORDER BY created_at DESC
                 LIMIT ?
-                """,
+                """.format(archived_clause=archived_clause),
                 (conversation_id, limit),
             ).fetchall()
         return [self._run_row(row) for row in rows]
 
-    def batch_latest_task_run(self, conversation_ids: list[str]) -> dict[str, dict[str, Any]]:
+    def archive_old_task_runs(
+        self,
+        *,
+        retention_days: int = 7,
+        statuses: list[str] | None = None,
+    ) -> int:
+        terminal_statuses = statuses or ["done", "failed", "cancelled"]
+        if retention_days <= 0 or not terminal_statuses:
+            return 0
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+        placeholders = ",".join("?" * len(terminal_statuses))
+        now = _now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE gateway_task_runs
+                SET archived_at = ?, updated_at = ?
+                WHERE archived_at IS NULL
+                  AND status IN ({placeholders})
+                  AND updated_at < ?
+                """,
+                (now, now, *terminal_statuses, cutoff),
+            )
+            return int(cur.rowcount or 0)
+
+    def batch_latest_task_run(
+        self,
+        conversation_ids: list[str],
+        *,
+        include_archived: bool = False,
+    ) -> dict[str, dict[str, Any]]:
         """Return the latest task run for each conversation_id in a single query."""
         if not conversation_ids:
             return {}
         placeholders = ",".join("?" * len(conversation_ids))
+        archived_clause = "" if include_archived else "AND archived_at IS NULL"
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -517,6 +881,7 @@ class GatewayStore:
                     ) AS _rn
                     FROM gateway_task_runs
                     WHERE conversation_id IN ({placeholders})
+                      {archived_clause}
                 ) WHERE _rn = 1
                 """,
                 conversation_ids,
@@ -842,7 +1207,13 @@ class GatewayStore:
         conversation_id: str,
         runtime_session_id: str,
         snapshot_version: int,
+        parent_run_id: str | None = None,
+        title: str | None = None,
         source_message_id: str | None = None,
+        context_strategy: str = "fresh",
+        context_snapshot_id: str | None = None,
+        anchor_id: str | None = None,
+        approval_binding: dict[str, Any] | None = None,
         status: str = "queued",
     ) -> dict[str, Any]:
         return await self._run_async(
@@ -850,7 +1221,13 @@ class GatewayStore:
             conversation_id=conversation_id,
             runtime_session_id=runtime_session_id,
             snapshot_version=snapshot_version,
+            parent_run_id=parent_run_id,
+            title=title,
             source_message_id=source_message_id,
+            context_strategy=context_strategy,
+            context_snapshot_id=context_snapshot_id,
+            anchor_id=anchor_id,
+            approval_binding=approval_binding,
             status=status,
             op_name="create_task_run",
         )
@@ -862,6 +1239,13 @@ class GatewayStore:
         status: str,
         result_summary: str | None = None,
         result_metadata: dict[str, Any] | None = None,
+        parent_run_id: str | None = None,
+        title: str | None = None,
+        context_strategy: str | None = None,
+        context_snapshot_id: str | None = None,
+        anchor_id: str | None = None,
+        archived_at: str | None = None,
+        approval_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         return await self._run_async(
             self.update_task_run,
@@ -869,11 +1253,121 @@ class GatewayStore:
             status=status,
             result_summary=result_summary,
             result_metadata=result_metadata,
+            parent_run_id=parent_run_id,
+            title=title,
+            context_strategy=context_strategy,
+            context_snapshot_id=context_snapshot_id,
+            anchor_id=anchor_id,
+            archived_at=archived_at,
+            approval_binding=approval_binding,
             op_name="update_task_run",
         )
 
     async def aget_conversation(self, conversation_id: str) -> dict[str, Any] | None:
         return await self._run_async(self.get_conversation, conversation_id, op_name="get_conversation")
+
+    async def aget_task_run(self, run_id: str) -> dict[str, Any] | None:
+        return await self._run_async(self.get_task_run, run_id, op_name="get_task_run")
+
+    async def acreate_context_snapshot(
+        self,
+        *,
+        execution_id: str,
+        strategy: str,
+        schema_version: str,
+        source_execution_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._run_async(
+            self.create_context_snapshot,
+            execution_id=execution_id,
+            strategy=strategy,
+            schema_version=schema_version,
+            source_execution_id=source_execution_id,
+            payload=payload,
+            op_name="create_context_snapshot",
+        )
+
+    async def aget_context_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        return await self._run_async(self.get_context_snapshot, snapshot_id, op_name="get_context_snapshot")
+
+    async def acreate_interaction_anchor(
+        self,
+        *,
+        conversation_id: str,
+        execution_id: str,
+        provider: str,
+        channel_target_id: str,
+        channel_message_id: str,
+        channel_thread_id: str | None = None,
+        capability_mode: str = "append_only",
+    ) -> dict[str, Any]:
+        return await self._run_async(
+            self.create_interaction_anchor,
+            conversation_id=conversation_id,
+            execution_id=execution_id,
+            provider=provider,
+            channel_target_id=channel_target_id,
+            channel_message_id=channel_message_id,
+            channel_thread_id=channel_thread_id,
+            capability_mode=capability_mode,
+            op_name="create_interaction_anchor",
+        )
+
+    async def aget_interaction_anchor(self, anchor_id: str) -> dict[str, Any] | None:
+        return await self._run_async(self.get_interaction_anchor, anchor_id, op_name="get_interaction_anchor")
+
+    async def aget_interaction_anchor_by_execution(self, execution_id: str) -> dict[str, Any] | None:
+        return await self._run_async(
+            self.get_interaction_anchor_by_execution,
+            execution_id,
+            op_name="get_interaction_anchor_by_execution",
+        )
+
+    async def aget_interaction_anchor_by_channel_message(
+        self,
+        *,
+        provider: str,
+        channel_message_id: str,
+    ) -> dict[str, Any] | None:
+        return await self._run_async(
+            self.get_interaction_anchor_by_channel_message,
+            provider=provider,
+            channel_message_id=channel_message_id,
+            op_name="get_interaction_anchor_by_channel_message",
+        )
+
+    async def aupdate_interaction_anchor(
+        self,
+        anchor_id: str,
+        *,
+        channel_message_id: str | None = None,
+        channel_thread_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        return await self._run_async(
+            self.update_interaction_anchor,
+            anchor_id,
+            channel_message_id=channel_message_id,
+            channel_thread_id=channel_thread_id,
+            op_name="update_interaction_anchor",
+        )
+
+    async def afind_task_runs_by_approval_ids(
+        self,
+        approval_ids: list[str],
+        *,
+        conversation_id: str | None = None,
+        statuses: list[str] | None = None,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        return await self._run_async(
+            self.find_task_runs_by_approval_ids,
+            approval_ids,
+            conversation_id=conversation_id,
+            statuses=statuses,
+            include_archived=include_archived,
+            op_name="find_task_runs_by_approval_ids",
+        )
 
     async def alist_conversations(
         self,
@@ -883,11 +1377,46 @@ class GatewayStore:
     ) -> list[dict[str, Any]]:
         return await self._run_async(self.list_conversations, provider=provider, limit=limit, op_name="list_conversations")
 
-    async def alist_task_runs(self, conversation_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
-        return await self._run_async(self.list_task_runs, conversation_id, limit=limit, op_name="list_task_runs")
+    async def alist_task_runs(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        return await self._run_async(
+            self.list_task_runs,
+            conversation_id,
+            limit=limit,
+            include_archived=include_archived,
+            op_name="list_task_runs",
+        )
 
-    async def abatch_latest_task_run(self, conversation_ids: list[str]) -> dict[str, dict[str, Any]]:
-        return await self._run_async(self.batch_latest_task_run, conversation_ids, op_name="batch_latest_task_run")
+    async def aarchive_old_task_runs(
+        self,
+        *,
+        retention_days: int = 7,
+        statuses: list[str] | None = None,
+    ) -> int:
+        return await self._run_async(
+            self.archive_old_task_runs,
+            retention_days=retention_days,
+            statuses=statuses,
+            op_name="archive_old_task_runs",
+        )
+
+    async def abatch_latest_task_run(
+        self,
+        conversation_ids: list[str],
+        *,
+        include_archived: bool = False,
+    ) -> dict[str, dict[str, Any]]:
+        return await self._run_async(
+            self.batch_latest_task_run,
+            conversation_ids,
+            include_archived=include_archived,
+            op_name="batch_latest_task_run",
+        )
 
     async def alist_context_messages(
         self,

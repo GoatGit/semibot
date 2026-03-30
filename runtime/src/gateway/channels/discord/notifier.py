@@ -12,7 +12,7 @@ import httpx
 
 from src.events.models import Event
 
-SendFn = Callable[[str, str, dict[str, Any], list[tuple[str, Any]] | None, float], Awaitable[None]]
+SendFn = Callable[[str, str, dict[str, Any], list[tuple[str, Any]] | None, float], Awaitable[Any]]
 
 
 async def default_send_discord(
@@ -31,6 +31,10 @@ async def default_send_discord(
         else:
             resp = await client.post(url, headers=headers, json=payload)
     resp.raise_for_status()
+    try:
+        return resp.json()
+    except Exception:
+        return None
 
 
 class DiscordNotifier:
@@ -47,6 +51,7 @@ class DiscordNotifier:
         self.default_channel_id = str(default_channel_id or "").strip() or None
         self.timeout = timeout
         self.send_fn = send_fn or default_send_discord
+        self._last_delivery_metadata: dict[str, Any] = {}
         self.subscribed_event_types = subscribed_event_types or {
             "approval.requested",
             "task.completed",
@@ -75,11 +80,13 @@ class DiscordNotifier:
         target_channel_id = str(channel_id or self.default_channel_id or "").strip()
         if not token or not target_channel_id:
             return False
+        self._last_delivery_metadata = {}
         chunks = self._split_text(text)
         if not chunks:
             return False
         for chunk in chunks:
-            await self.send_fn(token, target_channel_id, {"content": chunk}, None, self.timeout)
+            response = await self.send_fn(token, target_channel_id, {"content": chunk}, None, self.timeout)
+            self._remember_delivery_metadata(response, preserve_existing=True)
         return True
 
     async def send_notify_payload(self, payload: dict[str, Any]) -> bool:
@@ -107,6 +114,7 @@ class DiscordNotifier:
         if not files_meta:
             return await self.send_message(text=text, channel_id=channel_id)
 
+        self._last_delivery_metadata = {}
         file_payload: dict[str, Any] = {"content": text}
         files: list[tuple[str, Any]] = []
         opened: list[Any] = []
@@ -123,7 +131,8 @@ class DiscordNotifier:
                 field_name = f"files[{idx}]"
                 files.append((field_name, (str(item.get("filename") or path.name), fh, str(item.get("mime_type") or "application/octet-stream"))))
             if files:
-                await self.send_fn(token, channel_id, file_payload, files, self.timeout)
+                response = await self.send_fn(token, channel_id, file_payload, files, self.timeout)
+                self._remember_delivery_metadata(response, preserve_existing=True)
                 return True
         finally:
             for fh in opened:
@@ -132,6 +141,23 @@ class DiscordNotifier:
                 except Exception:
                     pass
         return await self.send_message(text=text, channel_id=channel_id)
+
+    def last_delivery_metadata(self) -> dict[str, Any]:
+        return dict(self._last_delivery_metadata)
+
+    def _remember_delivery_metadata(self, response: Any, *, preserve_existing: bool = False) -> None:
+        payload = response if isinstance(response, dict) else {}
+        if preserve_existing and self._last_delivery_metadata.get("channel_message_id"):
+            return
+        message_id = payload.get("id") or payload.get("message_id")
+        channel_id = payload.get("channel_id")
+        metadata: dict[str, Any] = {}
+        if message_id is not None:
+            metadata["channel_message_id"] = str(message_id)
+        if channel_id is not None:
+            metadata["channel_target_id"] = str(channel_id)
+        if metadata:
+            self._last_delivery_metadata = metadata
 
     async def handle_event(self, event: Event) -> None:
         if event.event_type not in self.subscribed_event_types:

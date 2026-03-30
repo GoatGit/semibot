@@ -25,11 +25,11 @@ def test_local_product_stack_injects_install_llm_env(monkeypatch, tmp_path: Path
     api_env = definitions["api"].env
 
     assert runtime_env["DEFAULT_LLM_MODEL"] == "gpt-4o-mini"
-    assert runtime_env["DEFAULT_LLM_PROVIDER_KEY"] == "openai"
+    assert "DEFAULT_LLM_PROVIDER_KEY" not in runtime_env
     assert runtime_env["OPENAI_API_KEY"] == "sk-test-openai"
     assert runtime_env["ANTHROPIC_API_KEY"] == "sk-test-anthropic"
     assert api_env["DEFAULT_LLM_MODEL"] == "gpt-4o-mini"
-    assert api_env["DEFAULT_LLM_PROVIDER_KEY"] == "openai"
+    assert "DEFAULT_LLM_PROVIDER_KEY" not in api_env
     assert api_env["OPENAI_API_KEY"] == "sk-test-openai"
     assert api_env["ANTHROPIC_API_KEY"] == "sk-test-anthropic"
 

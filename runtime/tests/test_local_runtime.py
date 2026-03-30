@@ -79,14 +79,13 @@ def test_create_llm_provider_reads_config_when_env_missing(monkeypatch, tmp_path
 
 def test_runtime_config_store_reads_llm_defaults_from_env(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
-    monkeypatch.delenv("DEFAULT_LLM_PROVIDER_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "env-openai")
     monkeypatch.setenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
 
     config = RuntimeConfigStore(db_path=str(tmp_path / "semibot.db")).get_llm_settings()
 
     assert config["default_model"] == "gpt-4o-mini"
-    assert config["default_provider_key"] == "openai"
+    assert config["default_provider_key"] == ""
     assert config["providers"]["openai"]["api_key"] == "env-openai"
     assert config["providers"]["openai"]["base_url"] == "https://api.openai.com/v1"
 
@@ -183,7 +182,6 @@ def test_create_llm_provider_honors_default_provider_key(monkeypatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("CUSTOM_LLM_API_KEY", "env-custom")
     monkeypatch.setenv("DEFAULT_LLM_MODEL", "kimi-k2.5")
-    monkeypatch.setenv("DEFAULT_LLM_PROVIDER_KEY", "kimi:kimiprovider")
     monkeypatch.setenv(
         "LLM_PROVIDER_INSTANCES",
         '[{"type":"kimi","id":"kimiprovider","apiKey":"env-kimi-instance","baseUrl":"https://api.moonshot.cn/v1"}]',
@@ -197,6 +195,29 @@ def test_create_llm_provider_honors_default_provider_key(monkeypatch) -> None:
     assert provider_cfg.model == "kimi-k2.5"
     assert provider_cfg.api_key == "env-kimi-instance"
     assert provider_cfg.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_create_llm_provider_ignores_incompatible_default_provider_key(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.local_runtime._load_llm_config",
+        lambda: {
+            "default_model": "gpt-4o-mini",
+            "default_provider_key": "kimi:kimiprovider",
+            "providers": {
+                "openai": {"api_key": "sk-openai", "base_url": "https://api.openai.com/v1"},
+                "kimi:kimiprovider": {"api_key": "sk-kimi", "base_url": "https://api.moonshot.cn/v1"},
+            },
+        },
+    )
+    monkeypatch.setattr("src.local_runtime.OpenAIProvider", lambda cfg: cfg)
+    monkeypatch.setattr("src.local_runtime.KimiProvider", lambda cfg: cfg)
+
+    provider_cfg = _create_llm_provider()
+
+    assert isinstance(provider_cfg, LLMConfig)
+    assert provider_cfg.model == "gpt-4o-mini"
+    assert provider_cfg.api_key == "sk-openai"
+    assert provider_cfg.base_url == "https://api.openai.com/v1"
 
 
 def test_create_llm_provider_falls_back_to_default_model_when_explicit_model_provider_unavailable(monkeypatch) -> None:

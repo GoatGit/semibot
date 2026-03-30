@@ -45,6 +45,7 @@ def build_ingress_result(
         "conversation_id": gateway_result.get("conversation_id") if gateway_result else None,
         "main_context_id": gateway_result.get("main_context_id") if gateway_result else None,
         "task_run_id": gateway_result.get("task_run_id") if gateway_result else None,
+        "anchor_id": gateway_result.get("anchor_id") if gateway_result else None,
         "runtime_session_id": gateway_result.get("runtime_session_id") if gateway_result else None,
         "agent_id": gateway_result.get("agent_id") if gateway_result else None,
         "resume": resume_result,

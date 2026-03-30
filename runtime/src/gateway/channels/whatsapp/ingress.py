@@ -113,6 +113,7 @@ async def ingest_events(
             if scope_id:
                 approval_scope_ids.append(scope_id)
         trace_payload: dict[str, Any] = dict(data)
+        trace_payload["provider"] = "whatsapp"
         if approval_scope_ids:
             trace_payload["approval_scope_ids"] = approval_scope_ids
         approval_command = await manager.handle_text_approval_command(

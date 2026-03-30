@@ -167,6 +167,7 @@ def normalize_update(
         if isinstance(reply_to, dict):
             from_user = reply_to.get("from") if isinstance(reply_to.get("from"), dict) else {}
             is_reply_to_bot = bool(from_user.get("is_bot"))
+        reply_to_message_id = reply_to.get("message_id") if isinstance(reply_to, dict) else None
 
         normalized = NormalizedGatewayMessage(
             provider="telegram",
@@ -185,6 +186,7 @@ def normalize_update(
                 "chat_id": chat.get("id"),
                 "chat_type": chat.get("type"),
                 "sender": sender,
+                "reply_to_message_id": reply_to_message_id,
                 "content": {
                     **({"text": text} if text else {}),
                     **({"attachments": attachments} if attachments else {}),
@@ -264,6 +266,8 @@ def parse_callback_action(body: dict[str, Any]) -> dict[str, str | None]:
     data = callback_query.get("data")
     raw_data = str(data).strip() if isinstance(data, str) else ""
     approval_id: str | None = None
+    execution_id: str | None = None
+    anchor_id: str | None = None
     decision = ""
     trace_id: str | None = None
 
@@ -277,6 +281,16 @@ def parse_callback_action(body: dict[str, Any]) -> dict[str, str | None]:
                 approval_id = (
                     str(parsed.get("approval_id")).strip()
                     if parsed.get("approval_id") is not None
+                    else None
+                )
+                execution_id = (
+                    str(parsed.get("execution_id")).strip()
+                    if parsed.get("execution_id") is not None
+                    else None
+                )
+                anchor_id = (
+                    str(parsed.get("anchor_id")).strip()
+                    if parsed.get("anchor_id") is not None
                     else None
                 )
                 trace_id = (
@@ -314,6 +328,8 @@ def parse_callback_action(body: dict[str, Any]) -> dict[str, str | None]:
 
     return {
         "approval_id": approval_id,
+        "execution_id": execution_id,
+        "anchor_id": anchor_id,
         "decision": decision,
         "raw_decision": lower,
         "trace_id": trace_id,

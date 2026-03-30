@@ -1,7 +1,12 @@
 """OpenAI LLM Provider implementation."""
 
+import os
+import socket
+from ipaddress import ip_address, ip_network
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
+import httpx
 from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -55,12 +60,51 @@ class OpenAIProvider(LLMProvider):
             config: Provider configuration
         """
         super().__init__(config)
+        self._http_client = self._build_http_client(config)
         self.client = AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            http_client=self._http_client,
         )
+
+    @staticmethod
+    def _env_bool(name: str) -> bool:
+        raw = str(os.getenv(name, "")).strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _is_fake_ip_host(base_url: str | None) -> bool:
+        host = str(urlparse(str(base_url or "")).hostname or "").strip()
+        if not host:
+            return False
+        try:
+            resolved = ip_address(socket.gethostbyname(host))
+        except Exception:
+            return False
+        return resolved in ip_network("198.18.0.0/15")
+
+    @classmethod
+    def _build_http_client(cls, config: LLMConfig) -> httpx.AsyncClient:
+        # Dev-network compatibility:
+        # - SEMIBOT_LLM_SSL_VERIFY=false disables TLS verification (dev only).
+        # - SEMIBOT_LLM_SSL_CA_BUNDLE points to a custom CA bundle path.
+        verify: bool | str = True
+        raw_ssl_verify = str(os.getenv("SEMIBOT_LLM_SSL_VERIFY", "")).strip()
+        ca_bundle = str(os.getenv("SEMIBOT_LLM_SSL_CA_BUNDLE") or "").strip()
+        if ca_bundle:
+            verify = ca_bundle
+        elif cls._env_bool("SEMIBOT_LLM_SSL_VERIFY") is False and raw_ssl_verify:
+            verify = False
+            logger.warning("llm_ssl_verify_disabled_for_openai_provider")
+        elif cls._is_fake_ip_host(config.base_url):
+            verify = False
+            logger.warning(
+                "llm_ssl_verify_auto_disabled_for_fake_ip_dns",
+                extra={"base_url": config.base_url},
+            )
+        return httpx.AsyncClient(verify=verify, trust_env=True)
 
     @staticmethod
     def _is_skill_context_tool_message(message: dict[str, Any]) -> bool:

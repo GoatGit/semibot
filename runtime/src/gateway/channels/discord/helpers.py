@@ -81,6 +81,7 @@ async def resume_after_approval(
     *,
     target_instance: dict[str, Any] | None,
     event_payload: dict[str, Any],
+    approval_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     channel_id = str(event_payload.get("chat_id") or event_payload.get("channel_id") or "").strip()
     bot_id = str(event_payload.get("bot_id") or "").strip()
@@ -100,71 +101,68 @@ async def resume_after_approval(
         bot_id=bot_id,
         chat_id=channel_id,
     )
-    messages = await manager.gateway_context.store.alist_context_messages(conversation["id"], limit=500)
-    latest_user = next(
-        (
-            item
-            for item in reversed(messages)
-            if str(item.get("role") or "") == "user"
-            and str(((item.get("metadata") if isinstance(item.get("metadata"), dict) else {}) or {}).get("source") or "")
-            != "discord.gateway.resume"
-        ),
-        None,
+    matched_runs = await manager.gateway_context.find_executions_for_approval_ids(
+        approval_ids=approval_ids or [],
+        conversation_id=conversation["id"],
+        statuses=["awaiting_approval"],
     )
-    if latest_user is None:
-        latest_user = next((item for item in reversed(messages) if str(item.get("role") or "") == "user"), None)
-    if not latest_user:
-        return {"resumed": False, "reason": "no_user_message", "conversation_id": conversation["id"]}
-
-    content = str(latest_user.get("content") or "").strip()
-    if not content:
-        return {"resumed": False, "reason": "latest_user_message_empty", "conversation_id": conversation["id"]}
-
-    metadata = latest_user.get("metadata")
-    meta = metadata if isinstance(metadata, dict) else {}
-    attachments = meta.get("attachments")
-    chat_type = str(meta.get("chat_type") or "")
-    resume_payload: dict[str, Any] = {
-        "instance_id": instance_id,
-        "chat_id": channel_id,
-        "bot_id": bot_id,
-        "sender_id": meta.get("sender_id"),
-        "is_mention": True,
-        "is_reply_to_bot": True,
-        "chat_type": chat_type,
-        "attachments": attachments if isinstance(attachments, list) else [],
-        "approval_scope_id": str(latest_user.get("id") or "").strip() or None,
-    }
+    if not matched_runs:
+        return {"resumed": False, "reason": "no_execution_bound_to_approval", "conversation_id": conversation["id"]}
 
     async def _discord_result_sender(reply_text: str, ctx: dict[str, Any]) -> bool:
         notifier = manager.build_discord_notifier(target_instance)
         if not notifier:
             return False
         target_channel_id = str(ctx.get("chat_id") or "").strip() or channel_id
-        return await notifier.send_notify_payload(
+        sent = await notifier.send_notify_payload(
             {
                 "content": reply_text,
                 "channel_id": target_channel_id,
                 "files": ctx.get("files") if isinstance(ctx, dict) else [],
             }
         )
+        if sent:
+            metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
+            await manager.gateway_context.bind_anchor_delivery(
+                anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
+                channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
+                channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
+            )
+        return sent
 
-    result = await manager.gateway_context.ingest_message(
-        provider="discord",
-        event_payload=resume_payload,
-        source="discord.gateway.resume",
-        subject=channel_id,
-        text=content,
-        agent_id=manager._gateway_agent_id("discord", target_instance, event_payload=resume_payload),  # noqa: SLF001
-        force_execute=True,
-        on_result=_discord_result_sender,
-    )
+    resumed: list[dict[str, Any]] = []
+    agent = manager._gateway_agent_id(
+        "discord",
+        target_instance,
+        event_payload={
+            "instance_id": instance_id,
+            "chat_id": channel_id,
+            "bot_id": bot_id,
+        },
+    )  # noqa: SLF001
+    seen_execution_ids: set[str] = set()
+    for run in matched_runs:
+        execution_id = str(run.get("id") or "").strip()
+        if not execution_id or execution_id in seen_execution_ids:
+            continue
+        seen_execution_ids.add(execution_id)
+        item = await manager.gateway_context.resume_execution(
+            provider="discord",
+            execution_id=execution_id,
+            chat_id=channel_id,
+            agent_id=agent,
+            on_result=_discord_result_sender,
+        )
+        if item.get("resumed"):
+            resumed.append(item)
+    if not resumed:
+        return {"resumed": False, "reason": "resume_execution_failed", "conversation_id": conversation["id"]}
     return {
         "resumed": True,
-        "conversation_id": result.get("conversation_id"),
-        "task_run_id": result.get("task_run_id"),
-        "runtime_session_id": result.get("runtime_session_id"),
-        "agent_id": result.get("agent_id"),
+        "conversation_id": conversation["id"],
+        "execution_ids": [item.get("task_run_id") for item in resumed],
+        "runtime_session_ids": [item.get("runtime_session_id") for item in resumed],
+        "agent_id": agent,
     }
 
 
@@ -195,11 +193,12 @@ async def handle_approval_followup(
     if (
         approval_command.get("resolved")
         and str(approval_command.get("status") or "") == "approved"
-        and int(approval_command.get("resolved_count") or 0) > 0
+        and any(str(item or "").strip() for item in (approval_command.get("approval_ids") or []))
     ):
         return await resume_after_approval(
             manager,
             target_instance=target_instance,
             event_payload=event_payload,
+            approval_ids=[str(item) for item in (approval_command.get("approval_ids") or []) if str(item or "").strip()],
         )
     return None

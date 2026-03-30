@@ -1146,11 +1146,16 @@ router.get(
                 instanceId: item.instance_id || '',
                 botId: item.bot_id || '',
                 chatId: item.chat_id || '',
-                activeRuntimeSessionId: item.active_runtime_session_id || '',
-                activeRuntimeSessionStatus: item.active_runtime_session_status || 'idle',
-                activeRuntimeForkedFromSessionId: item.active_runtime_forked_from_session_id || '',
                 status: item.status || 'active',
                 updatedAt: item.updated_at || new Date().toISOString(),
+                legacyDebug:
+                  item.active_runtime_session_id || item.active_runtime_forked_from_session_id
+                    ? {
+                        activeRuntimeSessionId: item.active_runtime_session_id || '',
+                        activeRuntimeSessionStatus: item.active_runtime_session_status || 'idle',
+                        activeRuntimeForkedFromSessionId: item.active_runtime_forked_from_session_id || '',
+                      }
+                    : null,
                 latestRun: item.latest_run ? {
                   runId: item.latest_run.run_id || '',
                   runtimeSessionId: item.latest_run.runtime_session_id || '',

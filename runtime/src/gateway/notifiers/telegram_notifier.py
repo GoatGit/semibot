@@ -10,14 +10,18 @@ import httpx
 
 from src.events.models import Event
 
-SendFn = Callable[[str, dict[str, Any], float], Awaitable[None]]
-SendDocumentFn = Callable[[str, dict[str, Any], Any | None, float], Awaitable[None]]
+SendFn = Callable[[str, dict[str, Any], float], Awaitable[Any]]
+SendDocumentFn = Callable[[str, dict[str, Any], Any | None, float], Awaitable[Any]]
 
 
 async def default_send_json(token: str, payload: dict[str, Any], timeout: float) -> None:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     async with httpx.AsyncClient(timeout=timeout) as client:
-        await client.post(url, json=payload)
+        response = await client.post(url, json=payload)
+        try:
+            return response.json()
+        except Exception:
+            return None
 
 
 async def default_send_document(
@@ -29,9 +33,13 @@ async def default_send_document(
     url = f"https://api.telegram.org/bot{token}/sendDocument"
     async with httpx.AsyncClient(timeout=timeout) as client:
         if file_upload:
-            await client.post(url, data=data, files={"document": file_upload})
+            response = await client.post(url, data=data, files={"document": file_upload})
         else:
-            await client.post(url, data=data)
+            response = await client.post(url, data=data)
+        try:
+            return response.json()
+        except Exception:
+            return None
 
 
 class TelegramNotifier:
@@ -54,6 +62,7 @@ class TelegramNotifier:
         self.timeout = timeout
         self.send_fn = send_fn or default_send_json
         self.send_document_fn = send_document_fn or default_send_document
+        self._last_delivery_metadata: dict[str, Any] = {}
         self.subscribed_event_types = subscribed_event_types or {
             "approval.requested",
             "task.completed",
@@ -85,6 +94,7 @@ class TelegramNotifier:
         if not token or not target_chat_id:
             return False
 
+        self._last_delivery_metadata = {}
         chunks = self._split_text(text)
         if not chunks:
             return False
@@ -96,7 +106,8 @@ class TelegramNotifier:
             }
             if self.parse_mode:
                 payload["parse_mode"] = self.parse_mode
-            await self.send_fn(token, payload, self.timeout)
+            response = await self.send_fn(token, payload, self.timeout)
+            self._remember_delivery_metadata(response, preserve_existing=True)
         return True
 
     async def send_notify_payload(self, payload: dict[str, Any]) -> bool:
@@ -119,6 +130,7 @@ class TelegramNotifier:
         if not token or not target_chat_id:
             return False
 
+        self._last_delivery_metadata = {}
         sent_any = False
         caption_text = text.strip()
         for idx, file_item in enumerate(files):
@@ -142,23 +154,46 @@ class TelegramNotifier:
                 if path.is_file():
                     with path.open("rb") as fh:
                         upload_name = filename or path.name
-                        await self.send_document_fn(
+                        response = await self.send_document_fn(
                             token,
                             data,
                             (upload_name, fh, mime_type),
                             self.timeout,
                         )
+                        self._remember_delivery_metadata(response, preserve_existing=True)
                         sent_any = True
                     continue
 
             if file_url:
                 data["document"] = file_url
-                await self.send_document_fn(token, data, None, self.timeout)
+                response = await self.send_document_fn(token, data, None, self.timeout)
+                self._remember_delivery_metadata(response, preserve_existing=True)
                 sent_any = True
 
         if not sent_any:
             return await self.send_message(text=text, chat_id=target_chat_id)
         return True
+
+    def last_delivery_metadata(self) -> dict[str, Any]:
+        return dict(self._last_delivery_metadata)
+
+    def _remember_delivery_metadata(self, response: Any, *, preserve_existing: bool = False) -> None:
+        payload = response if isinstance(response, dict) else {}
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        message_id = result.get("message_id") or payload.get("message_id")
+        chat = result.get("chat") if isinstance(result.get("chat"), dict) else {}
+        thread_id = result.get("message_thread_id") or payload.get("message_thread_id")
+        if preserve_existing and self._last_delivery_metadata.get("channel_message_id"):
+            return
+        metadata: dict[str, Any] = {}
+        if message_id is not None:
+            metadata["channel_message_id"] = str(message_id)
+        if thread_id is not None:
+            metadata["channel_thread_id"] = str(thread_id)
+        if chat.get("id") is not None:
+            metadata["channel_target_id"] = str(chat.get("id"))
+        if metadata:
+            self._last_delivery_metadata = metadata
 
     async def handle_event(self, event: Event) -> None:
         if event.event_type not in self.subscribed_event_types:

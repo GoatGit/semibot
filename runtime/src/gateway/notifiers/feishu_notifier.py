@@ -9,10 +9,10 @@ import httpx
 
 from src.events.models import Event
 
-SendFn = Callable[[str, dict[str, Any], float], Awaitable[None]]
+SendFn = Callable[[str, dict[str, Any], float], Awaitable[Any]]
 SdkSendFn = Callable[
     [str, str, str, str, str, str | None],
-    Awaitable[bool],
+    Awaitable[Any],
 ]
 
 
@@ -23,7 +23,11 @@ class _SafeDict(dict[str, str]):
 
 async def default_send_json(url: str, payload: dict[str, Any], timeout: float) -> None:
     async with httpx.AsyncClient(timeout=timeout) as client:
-        await client.post(url, json=payload)
+        response = await client.post(url, json=payload)
+        try:
+            return response.json()
+        except Exception:
+            return None
 
 
 class FeishuNotifier:
@@ -64,6 +68,7 @@ class FeishuNotifier:
         self.sdk_receive_id_type = receive_id_type or "chat_id"
         self.sdk_domain = str(sdk_domain or "").strip() or None
         self.sdk_send_fn = sdk_send_fn
+        self._last_delivery_metadata: dict[str, Any] = {}
 
     async def send_markdown(
         self,
@@ -87,8 +92,9 @@ class FeishuNotifier:
             and self.sdk_app_secret
             and sdk_receive_id
         ):
+            self._last_delivery_metadata = {}
             merged_text = f"{title}\n\n{content}".strip()
-            return await self.sdk_send_fn(
+            response = await self.sdk_send_fn(
                 self.sdk_app_id,
                 self.sdk_app_secret,
                 normalized_receive_type,
@@ -96,10 +102,13 @@ class FeishuNotifier:
                 merged_text,
                 self.sdk_domain,
             )
+            self._remember_delivery_metadata(response)
+            return bool(response)
 
         webhook = self._resolve_webhook(channel)
         if not webhook:
             return False
+        self._last_delivery_metadata = {}
         payload = {
             "msg_type": "interactive",
             "card": {
@@ -107,7 +116,8 @@ class FeishuNotifier:
                 "elements": [{"tag": "markdown", "content": content}],
             },
         }
-        await self.send_fn(webhook, payload, self.timeout)
+        response = await self.send_fn(webhook, payload, self.timeout)
+        self._remember_delivery_metadata(response)
         return True
 
     async def send_notify_payload(self, payload: dict[str, Any]) -> bool:
@@ -147,6 +157,24 @@ class FeishuNotifier:
             receive_id=str(receive_id or "").strip() or None,
             receive_id_type=str(receive_id_type or "").strip() or None,
         )
+
+    def last_delivery_metadata(self) -> dict[str, Any]:
+        return dict(self._last_delivery_metadata)
+
+    def _remember_delivery_metadata(self, response: Any) -> None:
+        payload = response if isinstance(response, dict) else {}
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        message_id = (
+            data.get("message_id")
+            or data.get("messageId")
+            or payload.get("message_id")
+            or payload.get("messageId")
+        )
+        metadata: dict[str, Any] = {}
+        if message_id is not None:
+            metadata["channel_message_id"] = str(message_id)
+        if metadata:
+            self._last_delivery_metadata = metadata
 
     async def handle_event(self, event: Event) -> None:
         if event.event_type not in self.subscribed_event_types:

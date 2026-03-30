@@ -239,6 +239,8 @@ async def approve_and_maybe_resume(
             approval_id=approval.approval_id,
             status=approval.status,
             approval_action_event_id=approval_action_event.event_id,
+            attempt_id=context.attempt_id,
+            user_message_id=context.user_message_id,
             resume=_normalize_resume_outcome(
                 resumed=False,
                 session_id=context.runtime_session_id,

@@ -34,6 +34,13 @@ def infer_openai_compatible_provider_base(model: str) -> str | None:
     return infer_provider_base_from_model(model)
 
 
+def provider_matches_model(provider_key: str, model: str) -> bool:
+    preferred = infer_openai_compatible_provider_base(str(model or ""))
+    if not preferred:
+        return True
+    return provider_base(provider_key) == preferred
+
+
 def pick_openai_compatible_provider_key(
     model: str,
     api_keys: dict[str, str],
@@ -67,6 +74,101 @@ def pick_openai_compatible_provider_key(
             return scoped[0]
 
     return sorted(candidates)[0]
+
+
+def select_provider_for_model(
+    model: str,
+    api_keys: dict[str, str],
+    compatible_provider_bases: set[str],
+) -> str | None:
+    strict = pick_openai_compatible_provider_key(
+        str(model or ""),
+        api_keys,
+        compatible_provider_bases,
+        strict_preferred_base=True,
+    )
+    if strict:
+        return strict
+
+    relaxed = pick_openai_compatible_provider_key(
+        str(model or ""),
+        api_keys,
+        compatible_provider_bases,
+    )
+    if not relaxed:
+        return None
+
+    if provider_base(relaxed) != "custom":
+        return None
+
+    has_non_custom_provider = any(
+        provider_base(key) != "custom" and bool(value)
+        for key, value in api_keys.items()
+    )
+    return None if has_non_custom_provider else relaxed
+
+
+def resolve_model_and_provider_key(
+    *,
+    requested_model: str | None,
+    default_model: str | None,
+    default_provider_key: str | None,
+    api_keys: dict[str, str],
+    compatible_provider_bases: set[str],
+) -> tuple[str | None, str | None, bool]:
+    resolved_model = str(requested_model or "").strip() or str(default_model or "").strip() or None
+    default_provider = str(default_provider_key or "").strip() or None
+    if not resolved_model:
+        return None, None, False
+
+    selected_provider_key: str | None = None
+    if (
+        default_model
+        and str(resolved_model).strip() == str(default_model).strip()
+        and default_provider
+        and api_keys.get(default_provider)
+        and provider_matches_model(default_provider, resolved_model)
+    ):
+        selected_provider_key = default_provider
+
+    if not selected_provider_key:
+        selected_provider_key = select_provider_for_model(
+            resolved_model,
+            api_keys,
+            compatible_provider_bases,
+        )
+
+    used_default_model_fallback = False
+    explicit_model = str(requested_model or "").strip() or None
+    default_model_text = str(default_model or "").strip() or None
+    if explicit_model and default_model_text:
+        strict_provider_for_explicit_model = pick_openai_compatible_provider_key(
+            explicit_model,
+            api_keys,
+            compatible_provider_bases,
+            strict_preferred_base=True,
+        )
+        if strict_provider_for_explicit_model is None:
+            fallback_provider = (
+                default_provider
+                if (
+                    default_provider
+                    and api_keys.get(default_provider)
+                    and provider_matches_model(default_provider, default_model_text)
+                )
+                else pick_openai_compatible_provider_key(
+                    default_model_text,
+                    api_keys,
+                    compatible_provider_bases,
+                    strict_preferred_base=True,
+                )
+            )
+            if fallback_provider:
+                resolved_model = default_model_text
+                selected_provider_key = fallback_provider
+                used_default_model_fallback = True
+
+    return resolved_model, selected_provider_key, used_default_model_fallback
 
 
 def instantiate_llm_provider(

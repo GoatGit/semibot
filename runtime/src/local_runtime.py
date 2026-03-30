@@ -39,11 +39,10 @@ from src.execution.runtime_execution_core import (
 )
 from src.execution.runtime_llm import (
     as_non_empty_str,
-    infer_openai_compatible_provider_base,
     instantiate_llm_provider,
-    pick_openai_compatible_provider_key,
     provider_base,
     provider_cfg_base_url,
+    resolve_model_and_provider_key,
 )
 from src.execution.runtime_response import guard_rule_authoring_success_claim
 from src.execution.runtime_result import normalize_execution_result
@@ -114,24 +113,6 @@ def _provider_base(provider_key: str) -> str:
 
 def _provider_cfg_base_url(raw_cfg: Any) -> str | None:
     return provider_cfg_base_url(raw_cfg)
-
-
-def _infer_openai_compatible_provider_base(model: str) -> str | None:
-    return infer_openai_compatible_provider_base(model)
-
-
-def _pick_openai_compatible_provider_key(
-    model: str,
-    api_keys: dict[str, str],
-    *,
-    strict_preferred_base: bool = False,
-) -> str | None:
-    return pick_openai_compatible_provider_key(
-        model,
-        api_keys,
-        set(_OPENAI_COMPATIBLE_PROVIDER_BASES),
-        strict_preferred_base=strict_preferred_base,
-    )
 
 
 def _build_approval_policy(
@@ -423,9 +404,7 @@ def _create_llm_provider(
 ) -> LLMProvider | None:
     llm_config = _load_llm_config()
     env_default_model = _as_non_empty_str(os.getenv("DEFAULT_LLM_MODEL"))
-    env_default_provider_key = _as_non_empty_str(os.getenv("DEFAULT_LLM_PROVIDER_KEY"))
     env_fallback_model = _as_non_empty_str(os.getenv("FALLBACK_LLM_MODEL"))
-    env_fallback_provider_key = _as_non_empty_str(os.getenv("FALLBACK_LLM_PROVIDER_KEY"))
     env_custom_model = _as_non_empty_str(os.getenv("CUSTOM_LLM_MODEL_NAME"))
 
     default_model = (
@@ -442,12 +421,6 @@ def _create_llm_provider(
     default_provider_key = (
         _as_non_empty_str(model_provider_key)
         or _as_non_empty_str(llm_config.get("default_provider_key"))
-        or env_default_provider_key
-    )
-    configured_fallback_provider_key = (
-        _as_non_empty_str(fallback_provider_key)
-        or _as_non_empty_str(llm_config.get("fallback_provider_key"))
-        or env_fallback_provider_key
     )
     resolved_model = (
         model
@@ -499,46 +472,23 @@ def _create_llm_provider(
         if generic_key:
             api_keys["custom"] = generic_key
 
-    if not default_provider_key and default_model:
-        default_provider_key = _infer_openai_compatible_provider_base(default_model)
-    if not configured_fallback_provider_key and configured_fallback_model:
-        configured_fallback_provider_key = _infer_openai_compatible_provider_base(
-            configured_fallback_model
+    requested_model = _as_non_empty_str(model) or resolved_model
+    resolved_model, selected_provider_key, used_default_model_fallback = resolve_model_and_provider_key(
+        requested_model=requested_model,
+        default_model=default_model,
+        default_provider_key=default_provider_key,
+        api_keys=api_keys,
+        compatible_provider_bases=set(_OPENAI_COMPATIBLE_PROVIDER_BASES),
+    )
+    if used_default_model_fallback and default_model and requested_model:
+        logger.warning(
+            "local_runtime_model_fallback_to_default_model",
+            extra={
+                "explicit_model": requested_model,
+                "default_model": default_model,
+                "fallback_provider_key": selected_provider_key,
+            },
         )
-
-    selected_provider_key = None
-    if default_model and str(resolved_model).strip() == str(default_model).strip():
-        if default_provider_key and api_keys.get(default_provider_key):
-            selected_provider_key = default_provider_key
-    if configured_fallback_model and str(resolved_model).strip() == str(configured_fallback_model).strip():
-        if configured_fallback_provider_key and api_keys.get(configured_fallback_provider_key):
-            selected_provider_key = configured_fallback_provider_key
-    if not selected_provider_key:
-        selected_provider_key = _pick_openai_compatible_provider_key(str(resolved_model), api_keys)
-    explicit_model = _as_non_empty_str(model)
-    if explicit_model:
-        strict_provider_for_explicit_model = _pick_openai_compatible_provider_key(
-            explicit_model,
-            api_keys,
-            strict_preferred_base=True,
-        )
-        if strict_provider_for_explicit_model is None and default_model:
-            default_provider = (
-                default_provider_key
-                if default_provider_key and api_keys.get(default_provider_key)
-                else _pick_openai_compatible_provider_key(default_model, api_keys)
-            )
-            if default_provider:
-                logger.warning(
-                    "local_runtime_model_fallback_to_default_model",
-                    extra={
-                        "explicit_model": explicit_model,
-                        "default_model": default_model,
-                        "fallback_provider_key": default_provider,
-                    },
-                )
-                resolved_model = default_model
-                selected_provider_key = default_provider
     if not selected_provider_key:
         return None
 

@@ -35,12 +35,29 @@ class TestOpenAIProviderInit:
             )
             OpenAIProvider(config)
 
-            mock_client.assert_called_once_with(
+            assert mock_client.call_count == 1
+            kwargs = mock_client.call_args.kwargs
+            assert kwargs["api_key"] == "sk-test"
+            assert kwargs["base_url"] == "https://api.example.com"
+            assert kwargs["timeout"] == 30
+            assert kwargs["max_retries"] == 5
+            assert "http_client" in kwargs
+
+    def test_init_auto_disables_tls_verify_for_fake_ip_dns(self, monkeypatch: pytest.MonkeyPatch):
+        with patch("src.llm.openai_provider.AsyncOpenAI") as mock_client, patch(
+            "src.llm.openai_provider.httpx.AsyncClient"
+        ) as mock_async_client:
+            monkeypatch.setattr("src.llm.openai_provider.socket.gethostbyname", lambda _host: "198.18.0.56")
+            config = LLMConfig(
+                model="kimi-k2.5",
                 api_key="sk-test",
-                base_url="https://api.example.com",
-                timeout=30,
-                max_retries=5,
+                base_url="https://api.moonshot.cn/v1",
             )
+            OpenAIProvider(config)
+
+            mock_async_client.assert_called_once_with(verify=False, trust_env=True)
+            kwargs = mock_client.call_args.kwargs
+            assert kwargs.get("http_client") is mock_async_client.return_value
 
 
 class TestOpenAIProviderChat:

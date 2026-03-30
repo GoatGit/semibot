@@ -60,6 +60,43 @@ async def ingest_webhook(
     if not normalized:
         return {"accepted": False, "reason": "unsupported_telegram_event"}
 
+    parsed_callback = None
+    if normalized.get("event_type") == "chat.card.action":
+        parsed_callback = parse_telegram_callback_action(data)
+        if parsed_callback["approval_id"] and parsed_callback["decision"] in {"approved", "rejected"}:
+            action_idempotency_key = manager._approval_action_idempotency_key(  # noqa: SLF001
+                source="telegram.gateway",
+                action=str(parsed_callback["decision"]),
+                subject=str(normalized.get("subject") or "").strip() or None,
+                trace_payload=data,
+                approval_ids=[str(parsed_callback["approval_id"])],
+                execution_id=str(parsed_callback["execution_id"] or "").strip() or None,
+            )
+            if action_idempotency_key and manager.engine.store.exists_idempotency(action_idempotency_key):
+                duplicate_command = {
+                    "recognized": True,
+                    "resolved": True,
+                    "resolved_count": 0,
+                    "approval_ids": [str(parsed_callback["approval_id"])],
+                    "status": parsed_callback["decision"],
+                    "duplicate": True,
+                    "reason": "idempotency_hit",
+                    "execution_id": str(parsed_callback["execution_id"] or "").strip() or None,
+                }
+                resume_result = await handle_approval_followup(
+                    manager,
+                    target_instance=target_instance,
+                    token=token,
+                    event_payload=normalized.get("payload") if isinstance(normalized.get("payload"), dict) else {},
+                    approval_command=duplicate_command,
+                )
+                return {
+                    "accepted": True,
+                    "event_type": "chat.card.action",
+                    "approval_command": duplicate_command,
+                    "resume": resume_result,
+                }
+
     payload_obj = normalized.get("payload")
     normalized_payload = payload_obj if isinstance(payload_obj, dict) else {}
     if target_instance and str(target_instance.get("id") or "").strip():
@@ -98,33 +135,56 @@ async def ingest_webhook(
 
     approval_command = None
     if event.event_type == "chat.card.action":
-        parsed = parse_telegram_callback_action(data)
+        parsed = parsed_callback or parse_telegram_callback_action(data)
         if parsed["approval_id"] and parsed["decision"] in {"approved", "rejected"}:
-            approval = await manager.engine.resolve_approval(str(parsed["approval_id"]), str(parsed["decision"]))
-            approval_action_event = Event(
-                event_id=f"evt_approval_action_{uuid4().hex}",
-                event_type="approval.action",
+            action_idempotency_key = manager._approval_action_idempotency_key(  # noqa: SLF001
                 source="telegram.gateway",
-                subject=str(parsed["approval_id"]),
-                payload={
-                    "approval_id": parsed["approval_id"],
-                    "decision": parsed["decision"],
-                    "trace_id": parsed["trace_id"],
-                    "resolved": approval is not None,
-                    "raw": data,
-                },
-                risk_hint="low",
-                timestamp=datetime.now(UTC),
+                action=str(parsed["decision"]),
+                subject=str(event.subject) if isinstance(event.subject, str) else None,
+                trace_payload=data,
+                approval_ids=[str(parsed["approval_id"])],
+                execution_id=str(parsed["execution_id"] or "").strip() or None,
             )
-            await manager.engine.emit(approval_action_event)
-            approval_command = {
-                "recognized": True,
-                "resolved": approval is not None,
-                "resolved_count": 1 if approval else 0,
-                "approval_ids": [parsed["approval_id"]],
-                "status": parsed["decision"],
-                "event_id": approval_action_event.event_id,
-            }
+            if action_idempotency_key and manager.engine.store.exists_idempotency(action_idempotency_key):
+                approval_command = {
+                    "recognized": True,
+                    "resolved": True,
+                    "resolved_count": 0,
+                    "approval_ids": [parsed["approval_id"]],
+                    "status": parsed["decision"],
+                    "duplicate": True,
+                    "reason": "idempotency_hit",
+                    "execution_id": str(parsed["execution_id"] or "").strip() or None,
+                }
+            else:
+                approval = await manager.engine.resolve_approval(str(parsed["approval_id"]), str(parsed["decision"]))
+                approval_action_event = Event(
+                    event_id=f"evt_approval_action_{uuid4().hex}",
+                    event_type="approval.action",
+                    source="telegram.gateway",
+                    subject=str(parsed["approval_id"]),
+                    idempotency_key=action_idempotency_key,
+                    payload={
+                        "approval_id": parsed["approval_id"],
+                        "decision": parsed["decision"],
+                        "trace_id": parsed["trace_id"],
+                        "execution_id": parsed["execution_id"],
+                        "anchor_id": parsed["anchor_id"],
+                        "resolved": approval is not None,
+                        "raw": data,
+                    },
+                    risk_hint="low",
+                    timestamp=datetime.now(UTC),
+                )
+                await manager.engine.emit(approval_action_event)
+                approval_command = {
+                    "recognized": True,
+                    "resolved": approval is not None,
+                    "resolved_count": 1 if approval else 0,
+                    "approval_ids": [parsed["approval_id"]],
+                    "status": parsed["decision"],
+                    "event_id": approval_action_event.event_id,
+                }
 
     payload_map = event.payload if isinstance(event.payload, dict) else {}
     text = extract_message_text(payload_map)
@@ -151,6 +211,9 @@ async def ingest_webhook(
                     approval_scope_ids.append(scope_id)
 
         trace_payload: dict[str, Any] = dict(data)
+        trace_payload["provider"] = "telegram"
+        if normalized_payload.get("reply_to_message_id") is not None:
+            trace_payload["reply_to_message_id"] = normalized_payload.get("reply_to_message_id")
         if approval_scope_ids:
             trace_payload["approval_scope_ids"] = approval_scope_ids
         approval_command = await manager.handle_text_approval_command(
@@ -166,13 +229,21 @@ async def ingest_webhook(
                 if not notifier:
                     return False
                 target_chat_id = str(ctx.get("chat_id") or "").strip() or None
-                return await notifier.send_notify_payload(
+                sent = await notifier.send_notify_payload(
                     {
                         "content": reply_text,
                         "chat_id": target_chat_id,
                         "files": ctx.get("files") if isinstance(ctx, dict) else [],
                     }
                 )
+                if sent:
+                    metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
+                    await manager.gateway_context.bind_anchor_delivery(
+                        anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
+                        channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
+                        channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
+                    )
+                return sent
 
             gateway_result = await manager.gateway_context.ingest_message(
                 provider="telegram",

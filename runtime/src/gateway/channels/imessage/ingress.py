@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from src.events.models import Event
-from src.gateway.channels.imessage.helpers import resolve_instance_for_ingest
+from src.gateway.channels.imessage.helpers import handle_approval_followup, resolve_instance_for_ingest
 from src.gateway.channels.shared import build_ingress_result
 from src.gateway.parsers.approval_text import extract_message_text
 
@@ -96,6 +96,7 @@ async def ingest_events(
     extracted_text = extract_message_text(normalized_payload)
     if extracted_text or attachments:
         trace_payload: dict[str, Any] = dict(data)
+        trace_payload["provider"] = "imessage"
         approval_command = await manager.handle_text_approval_command(
             text=extracted_text,
             source="imessage.gateway",
@@ -109,13 +110,21 @@ async def ingest_events(
                 if not notifier:
                     return False
                 target_handle = str(ctx.get("chat_id") or "").strip() or chat_id
-                return await notifier.send_notify_payload(
+                sent = await notifier.send_notify_payload(
                     {
                         "content": reply_text,
                         "chat_id": target_handle,
                         "files": ctx.get("files") if isinstance(ctx, dict) else [],
                     }
                 )
+                if sent:
+                    metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
+                    await manager.gateway_context.bind_anchor_delivery(
+                        anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
+                        channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
+                        channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
+                    )
+                return sent
 
             gateway_result = await manager.gateway_context.ingest_message(
                 provider="imessage",
@@ -128,8 +137,13 @@ async def ingest_events(
                 on_result=_imessage_result_sender,
             )
 
-    if approval_command and approval_command.get("resolved") and str(approval_command.get("status") or "") == "approved":
-        resume_result = {"resumed": True, "status": "approved"}
+    if approval_command:
+        resume_result = await handle_approval_followup(
+            manager,
+            target_instance=target_instance,
+            event_payload=normalized_payload,
+            approval_command=approval_command,
+        )
 
     return build_ingress_result(
         event_id=event.event_id,

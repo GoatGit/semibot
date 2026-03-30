@@ -65,6 +65,19 @@ class GatewayContextService:
         return normalized in {"idle", "done", "completed", "received", "planning", ""}
 
     @staticmethod
+    def _new_runtime_session_id(provider: str) -> str:
+        return f"sess_{provider}_{uuid4().hex[:12]}"
+
+    @staticmethod
+    def _requested_context_strategy(event_payload: dict[str, Any] | None) -> str:
+        strategy = str(
+            (event_payload or {}).get("context_strategy")
+            or (event_payload or {}).get("execution_context_strategy")
+            or ""
+        ).strip().lower()
+        return "fork" if strategy == "fork" else "fresh"
+
+    @staticmethod
     def _session_checkpoint_root() -> Path:
         root = Path(str(Path.home() / ".semibot" / "sessions")).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
@@ -143,40 +156,25 @@ class GatewayContextService:
         *,
         provider: str,
         conversation: dict[str, Any],
+        event_payload: dict[str, Any] | None = None,
     ) -> tuple[str, str | None]:
-        mounted_session_id = str(conversation.get("active_runtime_session_id") or "").strip()
-        mounted_status = str(conversation.get("active_runtime_session_status") or "idle").strip().lower()
+        strategy = str((event_payload or {}).get("context_strategy") or (event_payload or {}).get("execution_context_strategy") or "").strip().lower()
+        source_session_id = await self._resolve_fork_source_session_id(
+            conversation=conversation,
+            event_payload=event_payload or {},
+        )
 
-        if not mounted_session_id:
-            created = f"sess_{provider}_{uuid4().hex[:12]}"
-            await self.store.aset_active_runtime_session(
-                conversation["id"],
-                runtime_session_id=created,
-                status="queued",
-                forked_from_session_id=None,
-            )
-            return created, None
-
-        if self._session_busy(mounted_status):
-            forked = self._fork_runtime_session(provider=provider, source_session_id=mounted_session_id)
+        if strategy == "fork" and source_session_id:
+            forked = self._fork_runtime_session(provider=provider, source_session_id=source_session_id)
             await self.store.aset_active_runtime_session(
                 conversation["id"],
                 runtime_session_id=forked,
                 status="queued",
-                forked_from_session_id=mounted_session_id,
+                forked_from_session_id=source_session_id,
             )
-            return forked, mounted_session_id
+            return forked, source_session_id
 
-        if self._session_reusable(mounted_status):
-            await self.store.aset_active_runtime_session(
-                conversation["id"],
-                runtime_session_id=mounted_session_id,
-                status="queued",
-                forked_from_session_id=str(conversation.get("active_runtime_forked_from_session_id") or "").strip() or None,
-            )
-            return mounted_session_id, None
-
-        created = f"sess_{provider}_{uuid4().hex[:12]}"
+        created = self._new_runtime_session_id(provider)
         await self.store.aset_active_runtime_session(
             conversation["id"],
             runtime_session_id=created,
@@ -184,6 +182,53 @@ class GatewayContextService:
             forked_from_session_id=None,
         )
         return created, None
+
+    async def _resolve_fork_source_session_id(
+        self,
+        *,
+        conversation: dict[str, Any],
+        event_payload: dict[str, Any],
+    ) -> str | None:
+        explicit_session_id = str(
+            event_payload.get("source_runtime_session_id")
+            or event_payload.get("fork_from_session_id")
+            or ""
+        ).strip()
+        if explicit_session_id:
+            return explicit_session_id
+
+        run_id = str(
+            event_payload.get("source_task_run_id")
+            or event_payload.get("fork_from_task_run_id")
+            or ""
+        ).strip()
+        if run_id:
+            run = await self.store.aget_task_run(run_id)
+            if run and str(run.get("conversation_id") or "") == str(conversation.get("id") or ""):
+                source_runtime_session_id = str(run.get("runtime_session_id") or "").strip()
+                if source_runtime_session_id:
+                    return source_runtime_session_id
+        return None
+
+    async def _resolve_fork_source_run(
+        self,
+        *,
+        conversation: dict[str, Any],
+        event_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        run_id = str(
+            event_payload.get("source_task_run_id")
+            or event_payload.get("fork_from_task_run_id")
+            or ""
+        ).strip()
+        if not run_id:
+            return None
+        run = await self.store.aget_task_run(run_id)
+        if not run:
+            return None
+        if str(run.get("conversation_id") or "") != str(conversation.get("id") or ""):
+            return None
+        return run
 
     async def _should_send_immediate_ack(self, provider: str) -> bool:
         cfg = await self._provider_config(provider)
@@ -205,15 +250,58 @@ class GatewayContextService:
     def _format_immediate_ack_message() -> str:
         return "已收到，正在处理。"
 
-    async def _agent_runtime_config(self, agent_id: str) -> dict[str, str | None]:
+    @staticmethod
+    def _merge_model_roles(
+        base: dict[str, Any] | None,
+        override: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        base_map = base if isinstance(base, dict) else {}
+        override_map = override if isinstance(override, dict) else {}
+        if not base_map and not override_map:
+            return None
+        merged: dict[str, Any] = {}
+        for role in ("plan", "act", "textProcessing", "text_processing"):
+            role_base = base_map.get(role)
+            role_override = override_map.get(role)
+            if isinstance(role_base, dict) or isinstance(role_override, dict):
+                payload: dict[str, Any] = {}
+                if isinstance(role_base, dict):
+                    payload.update(role_base)
+                if isinstance(role_override, dict):
+                    payload.update(role_override)
+                if payload:
+                    merged[role] = payload
+        return merged or None
+
+    @staticmethod
+    def _pick_primary_model_from_roles(model_roles: dict[str, Any] | None) -> str | None:
+        roles = model_roles if isinstance(model_roles, dict) else {}
+        for key in ("plan", "act", "respond", "textProcessing", "text_processing"):
+            item = roles.get(key)
+            if not isinstance(item, dict):
+                continue
+            model = str(item.get("model") or "").strip()
+            if model:
+                return model
+        return None
+
+    async def _agent_runtime_config(self, agent_id: str) -> dict[str, Any]:
         safe_agent_id = str(agent_id or "").strip()
+        llm_settings = await self.config_store.aget_llm_settings() or {}
+        global_roles = (
+            llm_settings.get("model_roles")
+            if isinstance(llm_settings.get("model_roles"), dict)
+            else None
+        )
+        global_primary_model = self._pick_primary_model_from_roles(global_roles)
         if not safe_agent_id:
             return {
-                "model": None,
+                "model": global_primary_model or str(llm_settings.get("default_model") or "").strip() or None,
                 "model_provider_key": None,
-                "fallback_model": None,
+                "fallback_model": str(llm_settings.get("fallback_model") or "").strip() or None,
                 "fallback_provider_key": None,
                 "system_prompt": None,
+                "model_roles": global_roles,
             }
 
         profile = await self.config_store.aget_agent_profile(safe_agent_id) or {}
@@ -221,19 +309,29 @@ class GatewayContextService:
         metadata_map = metadata if isinstance(metadata, dict) else {}
         config = metadata_map.get("config")
         config_map = config if isinstance(config, dict) else {}
+        default_roles = global_roles
+        config_roles = config_map.get("modelRoles") if isinstance(config_map.get("modelRoles"), dict) else (
+            config_map.get("model_roles") if isinstance(config_map.get("model_roles"), dict) else None
+        )
+        merged_roles = self._merge_model_roles(default_roles, config_roles)
+        role_primary_model = self._pick_primary_model_from_roles(merged_roles)
 
         def _clean(value: Any) -> str | None:
             text = str(value or "").strip()
             return text or None
 
         return {
-            "model": _clean(profile.get("model")),
+            "model": (
+                _clean(profile.get("model"))
+                or role_primary_model
+                or _clean(llm_settings.get("default_model"))
+            ),
             "model_provider_key": _clean(
                 config_map.get("modelProviderKey") or config_map.get("model_provider_key")
             ),
             "fallback_model": _clean(
                 config_map.get("fallbackModel") or config_map.get("fallback_model")
-            ),
+            ) or _clean(llm_settings.get("fallback_model")),
             "fallback_provider_key": _clean(
                 config_map.get("fallbackProviderKey") or config_map.get("fallback_provider_key")
             ),
@@ -242,6 +340,7 @@ class GatewayContextService:
                 or config_map.get("systemPrompt")
                 or config_map.get("system_prompt")
             ),
+            "model_roles": merged_roles,
         }
 
     async def _provider_config(self, provider: str) -> dict[str, Any]:
@@ -324,6 +423,472 @@ class GatewayContextService:
                 detail_parts.append(f"size={size}")
             lines.append(f"{idx}. {name} ({', '.join(detail_parts)})")
         return "\n".join(lines)
+
+    @staticmethod
+    def _build_execution_title(text: str) -> str:
+        compact = " ".join(str(text or "").strip().split())
+        if not compact:
+            return "未命名任务"
+        return compact[:80]
+
+    async def bind_anchor_delivery(
+        self,
+        *,
+        anchor_id: str | None,
+        channel_message_id: str | None = None,
+        channel_thread_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        anchor = str(anchor_id or "").strip()
+        if not anchor:
+            return None
+        message_id = str(channel_message_id or "").strip()
+        thread_id = str(channel_thread_id or "").strip() or None
+        if not message_id and not thread_id:
+            return None
+        return await self.store.aupdate_interaction_anchor(
+            anchor,
+            channel_message_id=message_id or None,
+            channel_thread_id=thread_id,
+        )
+
+    async def _start_execution(
+        self,
+        *,
+        provider: str,
+        conversation: dict[str, Any],
+        run: dict[str, Any],
+        runtime_session_id: str,
+        task_input: str,
+        approval_scope_id: str,
+        chat_id: str,
+        agent_id: str,
+        on_result: ReplySender | None = None,
+    ) -> None:
+        anchor_id = str(run.get("anchor_id") or "").strip() or None
+        await self.store.aupdate_task_run(run["id"], status="running")
+        await self.store.aupdate_active_runtime_session_status(
+            conversation["id"],
+            runtime_session_id=runtime_session_id,
+            status="running",
+        )
+        plan_preview_sent = False
+        agent_runtime_config = await self._agent_runtime_config(agent_id)
+
+        async def _runtime_event_callback(runtime_event: dict[str, Any]) -> None:
+            nonlocal plan_preview_sent
+            if plan_preview_sent or not on_result:
+                return
+            if str(runtime_event.get("event") or "") != "plan_created":
+                return
+            payload = runtime_event.get("data")
+            data = payload if isinstance(payload, dict) else {}
+            steps = data.get("steps")
+            steps_list = steps if isinstance(steps, list) else []
+            text_preview = self._format_plan_preview_message(
+                [item for item in steps_list if isinstance(item, dict)]
+            )
+            ok = await on_result(
+                text_preview,
+                {
+                    "chat_id": chat_id,
+                    "conversation_id": conversation["id"],
+                    "task_run_id": run["id"],
+                    "runtime_session_id": runtime_session_id,
+                    "anchor_id": anchor_id,
+                    "status": "planning",
+                },
+            )
+            if ok:
+                plan_preview_sent = True
+                logger.info("gateway_notice_delivered", extra={"kind": "planning", "provider": provider})
+
+        try:
+            recent_tool_usage = await self.store.asummarize_recent_tool_usage(
+                session_id=runtime_session_id,
+                limit=100,
+                success_only=True,
+            )
+            runner_task = asyncio.create_task(
+                self.task_runner(
+                    task=task_input,
+                    db_path=self.runtime_db_path,
+                    rules_path=self.rules_path,
+                    agent_id=agent_id,
+                    session_id=runtime_session_id,
+                    approval_scope_id=approval_scope_id,
+                    model=agent_runtime_config["model"],
+                    model_provider_key=agent_runtime_config["model_provider_key"],
+                    fallback_model=agent_runtime_config["fallback_model"],
+                    fallback_provider_key=agent_runtime_config["fallback_provider_key"],
+                    model_roles=agent_runtime_config["model_roles"],
+                    system_prompt=agent_runtime_config["system_prompt"],
+                    recent_tool_usage=recent_tool_usage,
+                    runtime_event_callback=_runtime_event_callback,
+                )
+            )
+            deadline = asyncio.get_running_loop().time() + float(self.task_timeout_seconds)
+            runtime_result: dict[str, Any] | None = None
+            while runtime_result is None:
+                now = asyncio.get_running_loop().time()
+                remaining = deadline - now
+                if remaining <= 0:
+                    raise TimeoutError
+
+                done, _ = await asyncio.wait({runner_task}, timeout=min(GATEWAY_APPROVAL_POLL_INTERVAL_SECONDS, remaining))
+                if runner_task in done:
+                    runtime_result = await runner_task
+                    break
+
+                pending_approval_ids = await self._pending_approval_ids_for_session(runtime_session_id)
+                if pending_approval_ids:
+                    runner_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await runner_task
+
+                    msg = self._resolve_awaiting_approval_notice(
+                        approval_ids=pending_approval_ids,
+                        fallback_message="操作需要人工审批后继续。",
+                    )
+                    await self.store.aupdate_task_run(
+                        run["id"],
+                        status="awaiting_approval",
+                        result_summary=msg,
+                        approval_binding={
+                            "approval_ids": pending_approval_ids,
+                            "binding_source": "poll",
+                        },
+                        result_metadata={
+                            "status": "awaiting_approval",
+                            "notice_kind": "awaiting_approval",
+                            "approval_ids": pending_approval_ids,
+                        },
+                    )
+                    await self.store.aupdate_active_runtime_session_status(
+                        conversation["id"],
+                        runtime_session_id=runtime_session_id,
+                        status="awaiting_approval",
+                    )
+                    if on_result:
+                        await on_result(
+                            msg,
+                            {
+                                "chat_id": chat_id,
+                            "conversation_id": conversation["id"],
+                            "task_run_id": run["id"],
+                            "runtime_session_id": runtime_session_id,
+                            "anchor_id": anchor_id,
+                            "status": "awaiting_approval",
+                            "notice_kind": "awaiting_approval",
+                            "approval_ids": pending_approval_ids,
+                            },
+                        )
+                    return
+
+            if runtime_result is None:
+                raise TimeoutError
+            final_response = str(runtime_result.get("final_response") or "").strip()
+            error = str(runtime_result.get("error") or "").strip()
+            generated_files = self._extract_generated_files(runtime_result)
+            approval_ids = self._extract_pending_approval_ids(runtime_result)
+            normalized_runtime_status = str(runtime_result.get("status") or "").strip().lower()
+            missing_capability = self._extract_missing_capability(runtime_result)
+            proposed_cli_import = self._extract_proposed_cli_import(runtime_result)
+            tool_usage_events = self._extract_tool_usage_events(runtime_result, task_run_id=run["id"])
+            for event in tool_usage_events:
+                await self.store.acreate_tool_usage_event(
+                    session_id=runtime_session_id,
+                    task_run_id=event["task_run_id"],
+                    tool_id=event["tool_id"],
+                    tool_name=event["tool_name"],
+                    actual_tool_name=event["actual_tool_name"],
+                    source_type=event["source_type"],
+                    success=bool(event["success"]),
+                    metadata=event.get("metadata") if isinstance(event.get("metadata"), dict) else None,
+                )
+            if approval_ids or normalized_runtime_status == "awaiting_approval":
+                msg = self._resolve_awaiting_approval_notice(
+                    runtime_result=runtime_result,
+                    approval_ids=approval_ids,
+                    fallback_message=final_response or "操作需要人工审批后继续。",
+                )
+                await self.store.aupdate_task_run(
+                    run["id"],
+                    status="awaiting_approval",
+                    result_summary=msg,
+                    approval_binding={
+                        "approval_ids": approval_ids,
+                        "binding_source": "runtime_result",
+                    },
+                    result_metadata={
+                        "status": "awaiting_approval",
+                        "notice_kind": "awaiting_approval",
+                        "approval_ids": approval_ids,
+                        "runtime_result": runtime_result,
+                    },
+                )
+                await self.store.aupdate_active_runtime_session_status(
+                    conversation["id"],
+                    runtime_session_id=runtime_session_id,
+                    status="awaiting_approval",
+                )
+                if on_result:
+                    await on_result(
+                        msg,
+                        {
+                            "chat_id": chat_id,
+                            "conversation_id": conversation["id"],
+                            "task_run_id": run["id"],
+                            "runtime_session_id": runtime_session_id,
+                            "anchor_id": anchor_id,
+                            "status": "awaiting_approval",
+                            "notice_kind": "awaiting_approval",
+                            "approval_ids": approval_ids,
+                        },
+                    )
+                return
+            if normalized_runtime_status in {"failed", "cancelled"}:
+                msg = error or ("任务已取消。" if normalized_runtime_status == "cancelled" else "任务执行失败。")
+                await self.store.aupdate_task_run(
+                    run["id"],
+                    status="failed" if normalized_runtime_status == "cancelled" else normalized_runtime_status,
+                    result_summary=msg,
+                    result_metadata={
+                        "status": normalized_runtime_status,
+                        "notice_kind": "error",
+                        "error": error or None,
+                        "runtime_result": runtime_result,
+                    },
+                )
+                await self.store.aupdate_active_runtime_session_status(
+                    conversation["id"],
+                    runtime_session_id=runtime_session_id,
+                    status="failed" if normalized_runtime_status == "cancelled" else normalized_runtime_status,
+                )
+                if on_result:
+                    await on_result(msg, {
+                        "chat_id": chat_id,
+                        "conversation_id": conversation["id"],
+                        "task_run_id": run["id"],
+                        "runtime_session_id": runtime_session_id,
+                        "anchor_id": anchor_id,
+                        "status": normalized_runtime_status,
+                        "notice_kind": "error",
+                        "error": error or None,
+                    })
+                return
+            if not final_response:
+                final_response = "任务已执行，但没有可返回结果。"
+            cli_import_request = None
+            if proposed_cli_import:
+                try:
+                    cli_registry = create_default_registry()
+                    cli_import_request = await create_cli_import_request(
+                        config_store=self.config_store,
+                        registry=cli_registry,
+                        command=[str(item) for item in (proposed_cli_import.get("command") or []) if str(item or "").strip()],
+                        shape="group" if str(proposed_cli_import.get("shape") or "") == "group" else "direct",
+                        source="channel_auto",
+                        requested_by=provider,
+                        display_name=str(proposed_cli_import.get("display_name") or proposed_cli_import.get("displayName") or "").strip() or None,
+                        description=str(proposed_cli_import.get("description") or "").strip() or None,
+                        tool_name=str(proposed_cli_import.get("tool_name") or proposed_cli_import.get("toolName") or "").strip() or None,
+                        reason=str(proposed_cli_import.get("reason") or "").strip() or None,
+                    )
+                    final_response = self._append_cli_import_hint(final_response, str(cli_import_request.get("id") or ""))
+                except Exception as exc:
+                    logger.warning("gateway_cli_import_request_failed", extra={"error": str(exc), "provider": provider})
+            await self.store.aupdate_task_run(
+                run["id"],
+                status="done",
+                result_summary=final_response,
+                approval_binding={},
+                result_metadata={
+                    "runtime_result": runtime_result,
+                    "generated_files": generated_files,
+                    "missing_capability": missing_capability,
+                    "proposed_cli_import": proposed_cli_import,
+                    "cli_import_request": cli_import_request,
+                },
+            )
+            await self.store.aupdate_active_runtime_session_status(
+                conversation["id"],
+                runtime_session_id=runtime_session_id,
+                status="idle",
+            )
+            await self.store.aappend_context_message(
+                conversation_id=conversation["id"],
+                role="assistant",
+                content=final_response,
+                metadata={
+                    "provider": provider,
+                    "task_run_id": run["id"],
+                    "runtime_session_id": runtime_session_id,
+                    "minimal_writeback": True,
+                    "generated_files": generated_files,
+                    "missing_capability": missing_capability,
+                    "proposed_cli_import": proposed_cli_import,
+                    "cli_import_request": cli_import_request,
+                },
+            )
+            if on_result:
+                await on_result(final_response, {
+                    "chat_id": chat_id,
+                    "conversation_id": conversation["id"],
+                    "task_run_id": run["id"],
+                    "runtime_session_id": runtime_session_id,
+                    "anchor_id": anchor_id,
+                    "files": generated_files,
+                    "cli_import_request": cli_import_request,
+                })
+        except TimeoutError:
+            msg = f"任务执行超时（>{self.task_timeout_seconds}s），请重试或缩小任务范围。"
+            await self.store.aupdate_task_run(
+                run["id"],
+                status="failed",
+                result_summary=msg,
+                result_metadata={"error": "timeout", "timeout_sec": self.task_timeout_seconds},
+            )
+            await self.store.aupdate_active_runtime_session_status(
+                conversation["id"],
+                runtime_session_id=runtime_session_id,
+                status="failed",
+            )
+            if on_result:
+                await on_result(msg, {
+                    "chat_id": chat_id,
+                    "conversation_id": conversation["id"],
+                    "task_run_id": run["id"],
+                    "runtime_session_id": runtime_session_id,
+                    "anchor_id": anchor_id,
+                    "status": "failed",
+                    "error": "timeout",
+                })
+        except Exception as exc:  # noqa: BLE001
+            msg = f"任务执行失败：{exc}"
+            await self.store.aupdate_task_run(
+                run["id"],
+                status="failed",
+                result_summary=msg,
+                result_metadata={"error": str(exc)},
+            )
+            await self.store.aupdate_active_runtime_session_status(
+                conversation["id"],
+                runtime_session_id=runtime_session_id,
+                status="failed",
+            )
+            if on_result:
+                await on_result(msg, {
+                    "chat_id": chat_id,
+                    "conversation_id": conversation["id"],
+                    "task_run_id": run["id"],
+                    "runtime_session_id": runtime_session_id,
+                    "anchor_id": anchor_id,
+                    "status": "failed",
+                })
+
+    @staticmethod
+    def _log_execution_task_exception(task: asyncio.Task[None], *, conversation_id: str | None) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "[GatewayContext] 执行任务异常 conversation_id=%s",
+                conversation_id,
+                exc_info=task.exception(),
+            )
+
+    def _spawn_execution_task(
+        self,
+        *,
+        provider: str,
+        conversation: dict[str, Any],
+        run: dict[str, Any],
+        runtime_session_id: str,
+        task_input: str,
+        approval_scope_id: str,
+        chat_id: str,
+        agent_id: str,
+        on_result: ReplySender | None = None,
+    ) -> asyncio.Task[None]:
+        async def _execute() -> None:
+            await self._start_execution(
+                provider=provider,
+                conversation=conversation,
+                run=run,
+                runtime_session_id=runtime_session_id,
+                task_input=task_input,
+                approval_scope_id=approval_scope_id,
+                chat_id=chat_id,
+                agent_id=agent_id,
+                on_result=on_result,
+            )
+
+        task = asyncio.create_task(_execute())
+        task.add_done_callback(
+            lambda done_task: self._log_execution_task_exception(
+                done_task,
+                conversation_id=str(conversation.get("id") or "").strip() or None,
+            )
+        )
+        return task
+
+    async def resume_execution(
+        self,
+        *,
+        provider: str,
+        execution_id: str,
+        chat_id: str,
+        agent_id: str = "semibot",
+        on_result: ReplySender | None = None,
+    ) -> dict[str, Any]:
+        run = await self.store.aget_task_run(execution_id)
+        if not run:
+            return {"resumed": False, "reason": "execution_not_found", "execution_id": execution_id}
+        if str(run.get("status") or "") != "awaiting_approval":
+            return {
+                "resumed": False,
+                "reason": "execution_not_awaiting_approval",
+                "execution_id": execution_id,
+                "status": run.get("status"),
+            }
+        snapshot_id = str(run.get("context_snapshot_id") or "").strip()
+        if not snapshot_id:
+            return {"resumed": False, "reason": "context_snapshot_missing", "execution_id": execution_id}
+        snapshot = await self.store.aget_context_snapshot(snapshot_id)
+        if not snapshot:
+            return {"resumed": False, "reason": "context_snapshot_not_found", "execution_id": execution_id}
+        conversation_id = str(run.get("conversation_id") or "").strip()
+        conversation = await self.store.aget_conversation(conversation_id)
+        if not conversation:
+            return {"resumed": False, "reason": "conversation_not_found", "execution_id": execution_id}
+        payload = snapshot.get("payload") if isinstance(snapshot.get("payload"), dict) else {}
+        task_input = str(payload.get("task_input") or "").strip()
+        if not task_input:
+            return {"resumed": False, "reason": "task_input_missing", "execution_id": execution_id}
+        source_message_id = str(run.get("source_message_id") or payload.get("source_message_id") or "").strip()
+        approval_scope_id = source_message_id or execution_id
+        await self.store.aupdate_task_run(run["id"], status="queued")
+        await self.store.aupdate_active_runtime_session_status(
+            conversation["id"],
+            runtime_session_id=str(run.get("runtime_session_id") or "").strip(),
+            status="queued",
+        )
+        self._spawn_execution_task(
+            provider=provider,
+            conversation=conversation,
+            run=run,
+            runtime_session_id=str(run.get("runtime_session_id") or "").strip(),
+            task_input=task_input,
+            approval_scope_id=approval_scope_id,
+            chat_id=chat_id,
+            agent_id=agent_id,
+            on_result=on_result,
+        )
+        return {
+            "resumed": True,
+            "conversation_id": conversation_id,
+            "task_run_id": execution_id,
+            "runtime_session_id": run.get("runtime_session_id"),
+            "agent_id": agent_id,
+        }
 
     @staticmethod
     def _format_plan_preview_message(steps: list[dict[str, Any]]) -> str:
@@ -648,6 +1213,14 @@ class GatewayContextService:
         if not decision.should_execute:
             return result
 
+        context_strategy = self._requested_context_strategy(event_payload)
+        parent_run = None
+        if context_strategy == "fork":
+            parent_run = await self._resolve_fork_source_run(
+                conversation=conversation,
+                event_payload=event_payload,
+            )
+
         task_input = self._build_task_input(
             text=text,
             attachments=attachments,
@@ -660,16 +1233,62 @@ class GatewayContextService:
         runtime_session_id, forked_from_session_id = await self._resolve_runtime_session_for_execution(
             provider=provider,
             conversation=conversation,
+            event_payload=event_payload,
         )
         run = await self.store.acreate_task_run(
             conversation_id=conversation["id"],
             runtime_session_id=runtime_session_id,
+            parent_run_id=str(parent_run.get("id") or "").strip() or None if isinstance(parent_run, dict) else None,
+            title=self._build_execution_title(text),
             source_message_id=user_message["id"],
             snapshot_version=user_message["context_version"],
-            status="queued",
+            context_strategy=context_strategy,
+            status="created",
         )
+        context_snapshot = await self.store.acreate_context_snapshot(
+            execution_id=run["id"],
+            strategy=context_strategy,
+            schema_version="1.0",
+            source_execution_id=str(parent_run.get("id") or "").strip() or None if isinstance(parent_run, dict) else None,
+            payload={
+                "text": text,
+                "attachments": attachments,
+                "gateway_key": gateway_key,
+                "provider": provider,
+                "instance_id": instance_id,
+                "bot_id": bot_id,
+                "chat_id": chat_id,
+                "source_message_id": user_message["id"],
+                "snapshot_version": int(user_message["context_version"]),
+                "task_input": task_input,
+            },
+        )
+        run = await self.store.aupdate_task_run(
+            run["id"],
+            status="queued",
+            parent_run_id=str(parent_run.get("id") or "").strip() or None if isinstance(parent_run, dict) else None,
+            title=self._build_execution_title(text),
+            context_strategy=context_strategy,
+            context_snapshot_id=context_snapshot["id"],
+        ) or run
         result["task_run_id"] = run["id"]
         result["runtime_session_id"] = runtime_session_id
+        result["context_strategy"] = context_strategy
+        result["context_snapshot_id"] = context_snapshot["id"]
+        anchor = await self.store.acreate_interaction_anchor(
+            conversation_id=conversation["id"],
+            execution_id=run["id"],
+            provider=provider,
+            channel_target_id=chat_id,
+            channel_message_id=run["id"],
+            capability_mode="append_only",
+        )
+        run = await self.store.aupdate_task_run(
+            run["id"],
+            status=run["status"],
+            anchor_id=anchor["id"],
+        ) or run
+        result["anchor_id"] = anchor["id"]
         if forked_from_session_id:
             result["forked_from_session_id"] = forked_from_session_id
 
@@ -682,326 +1301,24 @@ class GatewayContextService:
                     "conversation_id": conversation["id"],
                     "task_run_id": run["id"],
                     "runtime_session_id": runtime_session_id,
+                    "anchor_id": anchor["id"],
                     "status": "received",
                 },
             )
             if ack_ok:
                 logger.info("gateway_notice_delivered", extra={"kind": "received", "provider": provider})
 
-        async def _execute() -> None:
-            await self.store.aupdate_task_run(run["id"], status="running")
-            await self.store.aupdate_active_runtime_session_status(
-                conversation["id"],
-                runtime_session_id=runtime_session_id,
-                status="running",
-            )
-            plan_preview_sent = False
-            agent_runtime_config = await self._agent_runtime_config(agent_id)
-
-            async def _runtime_event_callback(runtime_event: dict[str, Any]) -> None:
-                nonlocal plan_preview_sent
-                if plan_preview_sent or not on_result:
-                    return
-                if str(runtime_event.get("event") or "") != "plan_created":
-                    return
-                payload = runtime_event.get("data")
-                data = payload if isinstance(payload, dict) else {}
-                steps = data.get("steps")
-                steps_list = steps if isinstance(steps, list) else []
-                text_preview = self._format_plan_preview_message(
-                    [item for item in steps_list if isinstance(item, dict)]
-                )
-                ok = await on_result(
-                    text_preview,
-                    {
-                        "chat_id": chat_id,
-                        "conversation_id": conversation["id"],
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "status": "planning",
-                    },
-                )
-                if ok:
-                    plan_preview_sent = True
-                    logger.info("gateway_notice_delivered", extra={"kind": "planning", "provider": provider})
-            try:
-                recent_tool_usage = await self.store.asummarize_recent_tool_usage(
-                    session_id=runtime_session_id,
-                    limit=100,
-                    success_only=True,
-                )
-                runner_task = asyncio.create_task(
-                    self.task_runner(
-                        task=task_input,
-                        db_path=self.runtime_db_path,
-                        rules_path=self.rules_path,
-                        agent_id=agent_id,
-                        session_id=runtime_session_id,
-                        approval_scope_id=approval_scope_id,
-                        model=agent_runtime_config["model"],
-                        model_provider_key=agent_runtime_config["model_provider_key"],
-                        fallback_model=agent_runtime_config["fallback_model"],
-                        fallback_provider_key=agent_runtime_config["fallback_provider_key"],
-                        system_prompt=agent_runtime_config["system_prompt"],
-                        recent_tool_usage=recent_tool_usage,
-                        runtime_event_callback=_runtime_event_callback,
-                    )
-                )
-                deadline = asyncio.get_running_loop().time() + float(self.task_timeout_seconds)
-                runtime_result: dict[str, Any] | None = None
-                while runtime_result is None:
-                    now = asyncio.get_running_loop().time()
-                    remaining = deadline - now
-                    if remaining <= 0:
-                        raise TimeoutError
-
-                    done, _ = await asyncio.wait({runner_task}, timeout=min(GATEWAY_APPROVAL_POLL_INTERVAL_SECONDS, remaining))
-                    if runner_task in done:
-                        runtime_result = await runner_task
-                        break
-
-                    pending_approval_ids = await self._pending_approval_ids_for_session(runtime_session_id)
-                    if pending_approval_ids:
-                        runner_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await runner_task
-
-                        msg = self._resolve_awaiting_approval_notice(
-                            approval_ids=pending_approval_ids,
-                            fallback_message="操作需要人工审批后继续。",
-                        )
-                        await self.store.aupdate_task_run(
-                            run["id"],
-                            status="awaiting_approval",
-                            result_summary=msg,
-                            result_metadata={
-                                "status": "awaiting_approval",
-                                "notice_kind": "awaiting_approval",
-                                "approval_ids": pending_approval_ids,
-                            },
-                        )
-                        await self.store.aupdate_active_runtime_session_status(
-                            conversation["id"],
-                            runtime_session_id=runtime_session_id,
-                            status="awaiting_approval",
-                        )
-                        if on_result:
-                            await on_result(
-                                msg,
-                                {
-                                    "chat_id": chat_id,
-                                    "conversation_id": conversation["id"],
-                                    "task_run_id": run["id"],
-                                    "runtime_session_id": runtime_session_id,
-                                    "status": "awaiting_approval",
-                                    "notice_kind": "awaiting_approval",
-                                    "approval_ids": pending_approval_ids,
-                                },
-                            )
-                        return
-
-                if runtime_result is None:
-                    raise TimeoutError
-                final_response = str(runtime_result.get("final_response") or "").strip()
-                error = str(runtime_result.get("error") or "").strip()
-                generated_files = self._extract_generated_files(runtime_result)
-                approval_ids = self._extract_pending_approval_ids(runtime_result)
-                normalized_runtime_status = str(runtime_result.get("status") or "").strip().lower()
-                missing_capability = self._extract_missing_capability(runtime_result)
-                proposed_cli_import = self._extract_proposed_cli_import(runtime_result)
-                tool_usage_events = self._extract_tool_usage_events(runtime_result, task_run_id=run["id"])
-                for event in tool_usage_events:
-                    await self.store.acreate_tool_usage_event(
-                        session_id=runtime_session_id,
-                        task_run_id=event["task_run_id"],
-                        tool_id=event["tool_id"],
-                        tool_name=event["tool_name"],
-                        actual_tool_name=event["actual_tool_name"],
-                        source_type=event["source_type"],
-                        success=bool(event["success"]),
-                        metadata=event.get("metadata") if isinstance(event.get("metadata"), dict) else None,
-                    )
-                if approval_ids or normalized_runtime_status == "awaiting_approval":
-                    msg = self._resolve_awaiting_approval_notice(
-                        runtime_result=runtime_result,
-                        approval_ids=approval_ids,
-                        fallback_message=final_response or "操作需要人工审批后继续。",
-                    )
-                    await self.store.aupdate_task_run(
-                        run["id"],
-                        status="awaiting_approval",
-                        result_summary=msg,
-                        result_metadata={
-                            "status": "awaiting_approval",
-                            "notice_kind": "awaiting_approval",
-                            "approval_ids": approval_ids,
-                            "runtime_result": runtime_result,
-                        },
-                    )
-                    await self.store.aupdate_active_runtime_session_status(
-                        conversation["id"],
-                        runtime_session_id=runtime_session_id,
-                        status="awaiting_approval",
-                    )
-                    if on_result:
-                        await on_result(
-                            msg,
-                            {
-                                "chat_id": chat_id,
-                                "conversation_id": conversation["id"],
-                                "task_run_id": run["id"],
-                                "runtime_session_id": runtime_session_id,
-                                "status": "awaiting_approval",
-                                "notice_kind": "awaiting_approval",
-                                "approval_ids": approval_ids,
-                            },
-                        )
-                    return
-                if normalized_runtime_status in {"failed", "cancelled"}:
-                    msg = error or ("任务已取消。" if normalized_runtime_status == "cancelled" else "任务执行失败。")
-                    await self.store.aupdate_task_run(
-                        run["id"],
-                        status="failed" if normalized_runtime_status == "cancelled" else normalized_runtime_status,
-                        result_summary=msg,
-                        result_metadata={
-                            "status": normalized_runtime_status,
-                            "notice_kind": "error",
-                            "error": error or None,
-                            "runtime_result": runtime_result,
-                        },
-                    )
-                    await self.store.aupdate_active_runtime_session_status(
-                        conversation["id"],
-                        runtime_session_id=runtime_session_id,
-                        status="failed" if normalized_runtime_status == "cancelled" else normalized_runtime_status,
-                    )
-                    if on_result:
-                        await on_result(msg, {
-                            "chat_id": chat_id,
-                            "conversation_id": conversation["id"],
-                            "task_run_id": run["id"],
-                            "runtime_session_id": runtime_session_id,
-                            "status": normalized_runtime_status,
-                            "notice_kind": "error",
-                            "error": error or None,
-                        })
-                    return
-                if not final_response:
-                    final_response = "任务已执行，但没有可返回结果。"
-                cli_import_request = None
-                if proposed_cli_import:
-                    try:
-                        cli_registry = create_default_registry()
-                        cli_import_request = await create_cli_import_request(
-                            config_store=self.config_store,
-                            registry=cli_registry,
-                            command=[str(item) for item in (proposed_cli_import.get("command") or []) if str(item or "").strip()],
-                            shape="group" if str(proposed_cli_import.get("shape") or "") == "group" else "direct",
-                            source="channel_auto",
-                            requested_by=provider,
-                            display_name=str(proposed_cli_import.get("display_name") or proposed_cli_import.get("displayName") or "").strip() or None,
-                            description=str(proposed_cli_import.get("description") or "").strip() or None,
-                            tool_name=str(proposed_cli_import.get("tool_name") or proposed_cli_import.get("toolName") or "").strip() or None,
-                            reason=str(proposed_cli_import.get("reason") or "").strip() or None,
-                        )
-                        final_response = self._append_cli_import_hint(final_response, str(cli_import_request.get("id") or ""))
-                    except Exception as exc:
-                        logger.warning("gateway_cli_import_request_failed", extra={"error": str(exc), "provider": provider})
-                await self.store.aupdate_task_run(
-                    run["id"],
-                    status="done",
-                    result_summary=final_response,
-                    result_metadata={
-                        "runtime_result": runtime_result,
-                        "generated_files": generated_files,
-                        "missing_capability": missing_capability,
-                        "proposed_cli_import": proposed_cli_import,
-                        "cli_import_request": cli_import_request,
-                    },
-                )
-                await self.store.aupdate_active_runtime_session_status(
-                    conversation["id"],
-                    runtime_session_id=runtime_session_id,
-                    status="idle",
-                )
-                await self.store.aappend_context_message(
-                    conversation_id=conversation["id"],
-                    role="assistant",
-                    content=final_response,
-                    metadata={
-                        "provider": provider,
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "minimal_writeback": True,
-                        "generated_files": generated_files,
-                        "missing_capability": missing_capability,
-                        "proposed_cli_import": proposed_cli_import,
-                        "cli_import_request": cli_import_request,
-                    },
-                )
-                if on_result:
-                    await on_result(final_response, {
-                        "chat_id": chat_id,
-                        "conversation_id": conversation["id"],
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "files": generated_files,
-                        "cli_import_request": cli_import_request,
-                    })
-            except TimeoutError:
-                msg = f"任务执行超时（>{self.task_timeout_seconds}s），请重试或缩小任务范围。"
-                await self.store.aupdate_task_run(
-                    run["id"],
-                    status="failed",
-                    result_summary=msg,
-                    result_metadata={"error": "timeout", "timeout_sec": self.task_timeout_seconds},
-                )
-                await self.store.aupdate_active_runtime_session_status(
-                    conversation["id"],
-                    runtime_session_id=runtime_session_id,
-                    status="failed",
-                )
-                if on_result:
-                    await on_result(msg, {
-                        "chat_id": chat_id,
-                        "conversation_id": conversation["id"],
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "status": "failed",
-                        "error": "timeout",
-                    })
-            except Exception as exc:  # noqa: BLE001
-                msg = f"任务执行失败：{exc}"
-                await self.store.aupdate_task_run(
-                    run["id"],
-                    status="failed",
-                    result_summary=msg,
-                    result_metadata={"error": str(exc)},
-                )
-                await self.store.aupdate_active_runtime_session_status(
-                    conversation["id"],
-                    runtime_session_id=runtime_session_id,
-                    status="failed",
-                )
-                if on_result:
-                    await on_result(msg, {
-                        "chat_id": chat_id,
-                        "conversation_id": conversation["id"],
-                        "task_run_id": run["id"],
-                        "runtime_session_id": runtime_session_id,
-                        "status": "failed",
-                    })
-
-        def _on_task_done(task: asyncio.Task[None]) -> None:
-            if not task.cancelled() and task.exception() is not None:
-                logger.error(
-                    "[GatewayContext] 执行任务异常 conversation_id=%s",
-                    conversation.get("id"),
-                    exc_info=task.exception(),
-                )
-
-        task = asyncio.create_task(_execute())
-        task.add_done_callback(_on_task_done)
+        self._spawn_execution_task(
+            provider=provider,
+            conversation=conversation,
+            run=run,
+            runtime_session_id=runtime_session_id,
+            task_input=task_input,
+            approval_scope_id=approval_scope_id,
+            chat_id=chat_id,
+            agent_id=agent_id,
+            on_result=on_result,
+        )
         return result
 
     def list_conversations(self, *, provider: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -1012,3 +1329,76 @@ class GatewayContextService:
 
     def list_context(self, conversation_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
         return self.store.list_context_messages(conversation_id, limit=limit)
+
+    @staticmethod
+    def _is_actionable_execution(run: dict[str, Any] | None) -> bool:
+        if not isinstance(run, dict):
+            return False
+        return not str(run.get("archived_at") or "").strip()
+
+    async def find_executions_for_approval_ids(
+        self,
+        *,
+        approval_ids: list[str],
+        conversation_id: str | None = None,
+        statuses: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self.store.afind_task_runs_by_approval_ids(
+            approval_ids,
+            conversation_id=conversation_id,
+            statuses=statuses or ["awaiting_approval"],
+            include_archived=False,
+        )
+
+    async def resolve_execution_target(
+        self,
+        *,
+        provider: str,
+        execution_id: str | None = None,
+        anchor_id: str | None = None,
+        channel_message_id: str | None = None,
+        approval_id: str | None = None,
+        conversation_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        execution = str(execution_id or "").strip()
+        if execution:
+            run = await self.store.aget_task_run(execution)
+            return run if self._is_actionable_execution(run) else None
+
+        anchor = str(anchor_id or "").strip()
+        if anchor:
+            anchor_row = await self.store.aget_interaction_anchor(anchor)
+            if anchor_row:
+                run = await self.store.aget_task_run(str(anchor_row.get("execution_id") or "").strip())
+                return run if self._is_actionable_execution(run) else None
+
+        message_id = str(channel_message_id or "").strip()
+        if message_id:
+            anchor_row = await self.store.aget_interaction_anchor_by_channel_message(
+                provider=provider,
+                channel_message_id=message_id,
+            )
+            if anchor_row:
+                run = await self.store.aget_task_run(str(anchor_row.get("execution_id") or "").strip())
+                return run if self._is_actionable_execution(run) else None
+
+        approval = str(approval_id or "").strip()
+        if approval:
+            matches = await self.find_executions_for_approval_ids(
+                approval_ids=[approval],
+                conversation_id=conversation_id,
+            )
+            if matches:
+                return matches[0]
+        return None
+
+    async def archive_old_executions(
+        self,
+        *,
+        retention_days: int = 7,
+        statuses: list[str] | None = None,
+    ) -> int:
+        return await self.store.aarchive_old_task_runs(
+            retention_days=retention_days,
+            statuses=statuses,
+        )

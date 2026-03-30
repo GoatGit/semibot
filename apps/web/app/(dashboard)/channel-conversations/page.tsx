@@ -27,11 +27,13 @@ interface GatewayConversationSummary {
   instanceId: string
   botId: string
   chatId: string
-  activeRuntimeSessionId: string
-  activeRuntimeSessionStatus: string
-  activeRuntimeForkedFromSessionId: string
   status: string
   updatedAt: string
+  legacyDebug?: {
+    activeRuntimeSessionId?: string
+    activeRuntimeSessionStatus?: string
+    activeRuntimeForkedFromSessionId?: string
+  } | null
   latestRun: GatewayConversationRunSummary | null
 }
 
@@ -61,9 +63,6 @@ interface GatewayConversationGroup {
   chatId: string
   instanceIds: string[]
   botIds: string[]
-  activeRuntimeSessionId: string
-  activeRuntimeSessionStatus: string
-  activeRuntimeForkedFromSessionId: string
   conversationIds: string[]
   conversationCount: number
   runs: GatewayRunDisplay[]
@@ -92,14 +91,6 @@ function mapStatusVariant(status: string): 'outline' | 'success' | 'warning' | '
   if (normalized === 'done' || normalized === 'completed') return 'success'
   if (normalized === 'running' || normalized === 'queued' || normalized === 'awaiting_approval') return 'warning'
   if (normalized === 'failed' || normalized === 'error') return 'error'
-  return 'outline'
-}
-
-function mapMountedSessionVariant(status: string): 'outline' | 'success' | 'warning' | 'error' {
-  const normalized = String(status || '').toLowerCase()
-  if (normalized === 'idle') return 'success'
-  if (normalized === 'queued' || normalized === 'running' || normalized === 'awaiting_approval') return 'warning'
-  if (normalized === 'failed' || normalized === 'stopped' || normalized === 'error') return 'error'
   return 'outline'
 }
 
@@ -149,9 +140,6 @@ export default function GatewayConversationListPage() {
         chatId: string
         instanceSet: Set<string>
         botSet: Set<string>
-        activeRuntimeSessionId: string
-        activeRuntimeSessionStatus: string
-        activeRuntimeForkedFromSessionId: string
         conversationSet: Set<string>
         runs: GatewayRunDisplay[]
         latestTs: number
@@ -168,9 +156,6 @@ export default function GatewayConversationListPage() {
             chatId,
             instanceSet: new Set<string>(),
             botSet: new Set<string>(),
-            activeRuntimeSessionId: '',
-            activeRuntimeSessionStatus: 'idle',
-            activeRuntimeForkedFromSessionId: '',
             conversationSet: new Set<string>(),
             runs: [],
             latestTs: 0,
@@ -180,11 +165,8 @@ export default function GatewayConversationListPage() {
         group.conversationSet.add(conversation.conversationId)
         if (conversation.instanceId) group.instanceSet.add(conversation.instanceId)
         if (conversation.botId) group.botSet.add(conversation.botId)
-        if (!group.activeRuntimeSessionId && conversation.activeRuntimeSessionId) group.activeRuntimeSessionId = conversation.activeRuntimeSessionId
-        if (conversation.activeRuntimeSessionStatus) group.activeRuntimeSessionStatus = conversation.activeRuntimeSessionStatus
-        if (!group.activeRuntimeForkedFromSessionId && conversation.activeRuntimeForkedFromSessionId) group.activeRuntimeForkedFromSessionId = conversation.activeRuntimeForkedFromSessionId
 
-        const baseHref = `/channel-conversations/${encodeURIComponent(conversation.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}&instanceId=${encodeURIComponent(conversation.instanceId || '')}&botId=${encodeURIComponent(conversation.botId || '')}&mountedSessionId=${encodeURIComponent(conversation.activeRuntimeSessionId || '')}&mountedSessionStatus=${encodeURIComponent(conversation.activeRuntimeSessionStatus || '')}&forkedFrom=${encodeURIComponent(conversation.activeRuntimeForkedFromSessionId || '')}`
+        const baseHref = `/channel-conversations/${encodeURIComponent(conversation.conversationId)}?provider=${source}&chatId=${encodeURIComponent(chatId || '')}&instanceId=${encodeURIComponent(conversation.instanceId || '')}&botId=${encodeURIComponent(conversation.botId || '')}`
 
         if (conversation.latestRun) {
           const run = conversation.latestRun
@@ -221,9 +203,6 @@ export default function GatewayConversationListPage() {
             chatId: group.chatId,
             instanceIds: Array.from(group.instanceSet),
             botIds: Array.from(group.botSet),
-            activeRuntimeSessionId: group.activeRuntimeSessionId,
-            activeRuntimeSessionStatus: group.activeRuntimeSessionStatus,
-            activeRuntimeForkedFromSessionId: group.activeRuntimeForkedFromSessionId,
             conversationIds: Array.from(group.conversationSet),
             conversationCount: group.conversationSet.size,
             runs: sortedRuns,
@@ -251,7 +230,7 @@ export default function GatewayConversationListPage() {
       if (sourceFilter !== 'all' && group.source !== sourceFilter) return false
       if (!keyword) return true
 
-      const groupFields = `${group.chatId} ${group.source} ${group.instanceIds.join(' ')} ${group.botIds.join(' ')} ${group.activeRuntimeSessionId || ''} ${group.conversationIds.join(' ')}`.toLowerCase()
+      const groupFields = `${group.chatId} ${group.source} ${group.instanceIds.join(' ')} ${group.botIds.join(' ')} ${group.conversationIds.join(' ')}`.toLowerCase()
       if (groupFields.includes(keyword)) return true
 
       return group.runs.some((run) => (
@@ -337,17 +316,6 @@ export default function GatewayConversationListPage() {
                           <span>{t('dashboard.channelList.conversations', { count: group.conversationCount })}</span>
                           <span>{t('dashboard.channelList.runs', { count: group.totalRuns })}</span>
                           <span>{t('dashboard.channelList.latest', { time: formatRelativeTime(group.latestAt, locale) })}</span>
-                          {group.activeRuntimeSessionId && (
-                            <>
-                              <Badge variant={mapMountedSessionVariant(group.activeRuntimeSessionStatus)}>
-                                {t('dashboard.channelDetail.mountedSession')} · {group.activeRuntimeSessionStatus}
-                              </Badge>
-                              <span>{group.activeRuntimeSessionId}</span>
-                            </>
-                          )}
-                          {group.activeRuntimeForkedFromSessionId && (
-                            <span>{t('dashboard.channelDetail.forkedFrom')}: {group.activeRuntimeForkedFromSessionId}</span>
-                          )}
                           {group.instanceIds.length > 0 && (
                             <span>{t('dashboard.channelDetail.instanceId')}: {group.instanceIds.join(', ')}</span>
                           )}

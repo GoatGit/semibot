@@ -114,6 +114,18 @@ interface ApprovalResolveResponse {
 
 type AssistantViewMode = 'report'
 
+type TerminalAttemptStatus = 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled'
+
+function normalizeTerminalAttemptStatus(rawStatus: string): TerminalAttemptStatus {
+  const status = String(rawStatus || '').trim().toLowerCase()
+  if (status === 'awaiting_approval') return 'awaiting_approval'
+  if (status === 'failed') return 'failed'
+  if (status === 'cancelled') return 'cancelled'
+  if (status === 'completed') return 'completed'
+  // done/execution_complete should be treated as terminal completion even if status is empty/"success"/"ok"
+  return 'completed'
+}
+
 function isAgent2UIMessage(value: unknown): value is Agent2UIMessage {
   if (!value || typeof value !== 'object') return false
   const obj = value as Record<string, unknown>
@@ -778,7 +790,7 @@ export default function ChatSessionPage() {
       }
     },
     onComplete: (data) => {
-      const terminalStatus = String(data.status || '').trim().toLowerCase()
+      const normalizedTerminalStatus = normalizeTerminalAttemptStatus(String(data.status || ''))
       const completedRequestId = activeAssistantRequestIdRef.current
       const processSnapshot = buildProcessState(latestAgent2UIMessagesRef.current)
       const hasProcessSnapshot = !!(
@@ -804,23 +816,27 @@ export default function ChatSessionPage() {
         return next
       })
       activeAssistantRequestIdRef.current = null
-      if (terminalStatus === 'completed' || terminalStatus === 'failed' || terminalStatus === 'cancelled') {
-        setSessionMeta((prev) => (prev ? {
+      setSessionMeta((prev) => {
+        if (!prev) return prev
+        if (normalizedTerminalStatus === 'awaiting_approval') {
+          return { ...prev, status: 'active' }
+        }
+        return {
           ...prev,
-          status: terminalStatus === 'completed' ? 'completed' : 'failed',
-        } : prev))
-        setCurrentAttemptView((prev) => (
-          prev
-            ? {
-                ...prev,
-                attempt: {
-                  ...prev.attempt,
-                  status: terminalStatus as typeof prev.attempt.status,
-                },
-              }
-            : prev
-        ))
-      }
+          status: normalizedTerminalStatus === 'completed' ? 'completed' : 'failed',
+        }
+      })
+      setCurrentAttemptView((prev) => (
+        prev
+          ? {
+              ...prev,
+              attempt: {
+                ...prev.attempt,
+                status: normalizedTerminalStatus as typeof prev.attempt.status,
+              },
+            }
+          : prev
+      ))
       resetChatState()
       void reloadSessionData()
       void loadPendingApprovals()
@@ -1113,6 +1129,7 @@ export default function ChatSessionPage() {
   useEffect(() => {
     if (!pendingInitialMessage || isLoadingSession || !pendingInitialFilesReady || initialMessageSentRef.current || isSending) return
     initialMessageSentRef.current = true
+    resumeAttemptedRef.current = true
 
     // 清除 URL 参数，避免刷新重复发送
     router.replace(`/chat/${sessionId}`, { scroll: false })
@@ -1150,6 +1167,7 @@ export default function ChatSessionPage() {
 
   useEffect(() => {
     if (isLoadingSession) return
+    if (isSending) return
     if (resumeAttemptedRef.current) return
     if (pendingInitialMessage) return
     if (sessionMeta?.status !== 'active') return
@@ -1173,7 +1191,7 @@ export default function ChatSessionPage() {
     })
     resumeAttemptedRef.current = true
     void resumeSession()
-  }, [currentAttemptStatus, isLoadingSession, pendingInitialMessage, resumeSession, sessionMeta?.status])
+  }, [currentAttemptStatus, isLoadingSession, isSending, pendingInitialMessage, resumeSession, sessionMeta?.status])
 
   useEffect(() => {
     if (!isSending) return
@@ -1194,6 +1212,7 @@ export default function ChatSessionPage() {
   // 发送消息
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isSending) return
+    resumeAttemptedRef.current = true
 
     const userMessage: DisplayMessage = {
       id: `user-${Date.now()}`,

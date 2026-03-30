@@ -1049,6 +1049,90 @@ class GatewayManager:
         values = raw if isinstance(raw, list) else [raw] if isinstance(raw, str) else []
         return {str(item).strip() for item in values if str(item).strip()}
 
+    @staticmethod
+    def _trace_string(trace_payload: dict[str, Any] | None, *paths: str) -> str | None:
+        if not isinstance(trace_payload, dict):
+            return None
+        for path in paths:
+            current: Any = trace_payload
+            for part in path.split("."):
+                if not isinstance(current, dict):
+                    current = None
+                    break
+                current = current.get(part)
+            value = str(current or "").strip() if current is not None else ""
+            if value:
+                return value
+        return None
+
+    def _approval_action_event_ref(self, trace_payload: dict[str, Any] | None) -> str | None:
+        return self._trace_string(
+            trace_payload,
+            "callback_query.id",
+            "callback_query.inline_message_id",
+            "header.event_id",
+            "event.message.message_id",
+            "callback_query.message.message_id",
+            "open_message_id",
+            "message_id",
+            "telegram_update_id",
+            "update_id",
+            "trace_id",
+            "action.value.trace_id",
+        )
+
+    def _approval_action_idempotency_key(
+        self,
+        *,
+        source: str,
+        action: str,
+        subject: str | None,
+        trace_payload: dict[str, Any] | None = None,
+        approval_ids: list[str] | None = None,
+        execution_id: str | None = None,
+        scope_ids: set[str] | None = None,
+    ) -> str | None:
+        event_ref = self._approval_action_event_ref(trace_payload)
+        target = ",".join(sorted(str(item).strip() for item in (approval_ids or []) if str(item).strip()))
+        if not target:
+            target = str(execution_id or "").strip()
+        if not target and scope_ids:
+            target = ",".join(sorted(str(item).strip() for item in scope_ids if str(item).strip()))
+        if not target:
+            target = str(subject or "").strip()
+        if not event_ref and not target:
+            return None
+        parts = ["gateway", "approval_action", source.strip(), action.strip()]
+        if event_ref:
+            parts.append(event_ref)
+        if target:
+            parts.append(target)
+        return ":".join(part for part in parts if part)
+
+    async def _bound_execution_from_trace_payload(
+        self,
+        *,
+        trace_payload: dict[str, Any] | None,
+        subject: str | None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(trace_payload, dict):
+            return None
+        provider = str(trace_payload.get("provider") or "").strip()
+        if not provider:
+            return None
+        execution_id = str(trace_payload.get("execution_id") or "").strip() or None
+        anchor_id = str(trace_payload.get("anchor_id") or "").strip() or None
+        channel_message_id = str(trace_payload.get("reply_to_message_id") or "").strip() or None
+        approval_id = str(trace_payload.get("approval_id") or "").strip() or None
+        return await self.gateway_context.resolve_execution_target(
+            provider=provider,
+            execution_id=execution_id,
+            anchor_id=anchor_id,
+            channel_message_id=channel_message_id,
+            approval_id=approval_id,
+            conversation_id=str(subject or "").strip() or None,
+        )
+
     def _latest_gateway_user_scope_id(
         self,
         *,
@@ -1101,12 +1185,26 @@ class GatewayManager:
 
         pending = self.engine.list_approvals(status="pending", limit=500)
         scope_ids = self._approval_scope_ids_from_trace_payload(trace_payload)
+        bound_execution = await self._bound_execution_from_trace_payload(
+            trace_payload=trace_payload,
+            subject=subject,
+        )
         scoped_pending = [
             item
             for item in pending
             if self._approval_matches_subject(item, subject, scope_ids=scope_ids)
         ]
-        candidate_pool = scoped_pending or pending
+        bound_approval_ids: list[str] = []
+        if isinstance(bound_execution, dict):
+            binding = bound_execution.get("approval_binding") if isinstance(bound_execution.get("approval_binding"), dict) else {}
+            raw_ids = binding.get("approval_ids")
+            if isinstance(raw_ids, list):
+                bound_approval_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+        candidate_pool = scoped_pending
+        if bound_approval_ids:
+            bound_pending = [item for item in pending if item.approval_id in set(bound_approval_ids)]
+            if bound_pending:
+                candidate_pool = bound_pending
 
         if kind == "list":
             return {
@@ -1119,10 +1217,35 @@ class GatewayManager:
             }
 
         decision = "approved" if kind in {"approve", "approve_all"} else "rejected"
-        target_ids: list[str] = []
+        execution_id = bound_execution.get("id") if isinstance(bound_execution, dict) else None
         requested_id = parsed.get("approval_id")
+        requested_ids = [requested_id] if isinstance(requested_id, str) and requested_id else []
+        action_idempotency_key = self._approval_action_idempotency_key(
+            source=source,
+            action=decision,
+            subject=subject,
+            trace_payload=trace_payload,
+            approval_ids=requested_ids or bound_approval_ids,
+            execution_id=str(execution_id or "").strip() or None,
+            scope_ids=scope_ids,
+        )
+        if action_idempotency_key and self.engine.store.exists_idempotency(action_idempotency_key):
+            return {
+                "command": kind,
+                "recognized": True,
+                "resolved": True,
+                "resolved_count": 0,
+                "approval_ids": requested_ids or bound_approval_ids,
+                "status": decision,
+                "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
+                "execution_id": execution_id,
+                "duplicate": True,
+                "reason": "idempotency_hit",
+            }
+
+        target_ids: list[str] = []
         if isinstance(requested_id, str) and requested_id:
-            requested = next((item for item in candidate_pool if item.approval_id == requested_id), None)
+            requested = next((item for item in pending if item.approval_id == requested_id), None)
             if requested is None:
                 return {
                     "command": kind,
@@ -1130,12 +1253,14 @@ class GatewayManager:
                     "resolved": False,
                     "resolved_count": 0,
                     "pending_count": len(candidate_pool),
-                    "scope": "subject" if scoped_pending else "global",
+                    "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
                     "reason": "approval_not_in_scope_or_not_pending",
                 }
             target_ids = [requested_id]
         elif kind in {"approve_all", "reject_all"}:
             target_ids = [item.approval_id for item in candidate_pool]
+        elif kind in {"approve", "reject"} and bound_approval_ids:
+            target_ids = bound_approval_ids
         elif kind in {"approve", "reject"} and scoped_pending:
             # Gateway conversational ergonomics:
             # in same subject scope, plain "同意/拒绝" approves/rejects all pending items once.
@@ -1150,7 +1275,7 @@ class GatewayManager:
                 "resolved": False,
                 "resolved_count": 0,
                 "pending_count": len(candidate_pool),
-                "scope": "subject" if scoped_pending else "global",
+                "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
                 "reason": "no_pending_approval_found",
             }
 
@@ -1165,12 +1290,14 @@ class GatewayManager:
             event_type="approval.action",
             source=source,
             subject=subject or (target_ids[0] if target_ids else None),
+            idempotency_key=action_idempotency_key,
             payload={
                 "command": kind,
                 "decision": decision,
                 "approval_ids": target_ids,
                 "resolved_count": len(resolved_items),
-                "scope": "subject" if scoped_pending else "global",
+                "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
+                "execution_id": execution_id,
                 "text": text,
                 "raw": trace_payload or {},
             },
@@ -1186,7 +1313,8 @@ class GatewayManager:
             "resolved_count": len(resolved_items),
             "approval_ids": [item.approval_id for item in resolved_items],
             "status": decision,
-            "scope": "subject" if scoped_pending else "global",
+            "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
+            "execution_id": execution_id,
             "event_id": approval_action_event.event_id,
         }
 

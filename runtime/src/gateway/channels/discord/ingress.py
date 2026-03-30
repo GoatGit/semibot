@@ -130,6 +130,7 @@ async def ingest_events(
         if scope_id:
             approval_scope_ids.append(scope_id)
     trace_payload: dict[str, Any] = dict(data)
+    trace_payload["provider"] = "discord"
     if approval_scope_ids:
         trace_payload["approval_scope_ids"] = approval_scope_ids
     approval_command = (
@@ -151,13 +152,21 @@ async def ingest_events(
             if not notifier:
                 return False
             target_channel_id = str(ctx.get("chat_id") or "").strip() or channel_id
-            return await notifier.send_notify_payload(
+            sent = await notifier.send_notify_payload(
                 {
                     "content": reply_text,
                     "channel_id": target_channel_id,
                     "files": ctx.get("files") if isinstance(ctx, dict) else [],
                 }
             )
+            if sent:
+                metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
+                await manager.gateway_context.bind_anchor_delivery(
+                    anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
+                    channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
+                    channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
+                )
+            return sent
 
         gateway_result = await manager.gateway_context.ingest_message(
             provider="discord",
