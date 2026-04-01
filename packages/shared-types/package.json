@@ -17,7 +17,7 @@
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist index.js index.mjs index.d.ts index.d.mts"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

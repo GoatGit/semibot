@@ -4,9 +4,9 @@ Provides safe code execution in isolated environments.
 """
 
 import asyncio
-import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import uuid

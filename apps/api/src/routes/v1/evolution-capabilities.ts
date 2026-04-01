@@ -29,8 +29,9 @@ router.get(
   combinedRateLimit,
   requirePermission('tools:read'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
     const userId = req.user?.userId
-    const docs = await evolutionCapabilityService.getActiveCapabilities(userId)
+    const docs = await evolutionCapabilityService.getActiveCapabilities(orgId, userId)
     res.json({ success: true, data: docs })
   })
 )
@@ -42,9 +43,10 @@ router.get(
   requirePermission('tools:read'),
   validate(versionsQuerySchema, 'query'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
     const capabilityType = capabilityTypeSchema.parse(req.params.capabilityType)
     const { limit } = req.query as z.infer<typeof versionsQuerySchema>
-    const docs = await evolutionCapabilityService.getCapabilityVersions(capabilityType, limit ?? 20)
+    const docs = await evolutionCapabilityService.getCapabilityVersions(orgId, capabilityType, limit ?? 20)
     res.json({ success: true, data: docs })
   })
 )
@@ -57,8 +59,10 @@ router.put(
   validate(updateCapabilitySchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const userId = req.user!.userId
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
     const capabilityType = capabilityTypeSchema.parse(req.params.capabilityType)
     const doc = await evolutionCapabilityService.updateCapability(
+      orgId,
       userId,
       capabilityType,
       req.body.content,
@@ -76,8 +80,10 @@ router.post(
   validate(switchCapabilitySchema, 'body'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const userId = req.user!.userId
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
     const capabilityType = capabilityTypeSchema.parse(req.params.capabilityType)
     const doc = await evolutionCapabilityService.switchCapabilityVersion(
+      orgId,
       userId,
       capabilityType,
       req.body.targetVersion,
@@ -88,4 +94,3 @@ router.post(
 )
 
 export default router
-

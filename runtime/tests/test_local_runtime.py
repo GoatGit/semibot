@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-
 import pytest
 
 from src.llm.base import LLMConfig
@@ -12,11 +11,36 @@ from src.local_runtime import (
     _build_skill_definitions,
     _create_llm_provider,
     _guard_rule_authoring_success_claim,
+    _materialize_runtime_contract,
     _maybe_bootstrap_llm_from_control_plane,
     _maybe_load_local_env_files,
 )
+from src.orchestrator.context import AgentConfig, RuntimeSessionContext, SkillDefinition, ToolDefinition
 from src.server.config_store import RuntimeConfigStore
 from src.skills.bootstrap import create_default_registry
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "OPENAI_API_KEY",
+        "CUSTOM_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_BASE_URL",
+        "CUSTOM_LLM_API_BASE_URL",
+        "CUSTOM_LLM_MODEL_NAME",
+        "DEFAULT_LLM_MODEL",
+        "FALLBACK_LLM_MODEL",
+        "DEFAULT_LLM_PROVIDER_KEY",
+        "FALLBACK_LLM_PROVIDER_KEY",
+        "LLM_PROVIDER_INSTANCES",
+        "SEMIBOT_EVENTS_DB_PATH",
+        "SEMIBOT_RUNTIME_DB_PATH",
+        "SEMIBOT_CONFIG",
+        "SEMIBOT_CONFIG_PATH",
+        "API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_create_llm_provider_reads_env(monkeypatch) -> None:
@@ -33,6 +57,23 @@ def test_create_llm_provider_reads_env(monkeypatch) -> None:
     assert provider_cfg.api_key == "env-key"
     assert provider_cfg.model == "gpt-4o-mini"
     assert provider_cfg.base_url == "http://localhost:11434/v1"
+
+
+def test_materialize_runtime_contract_freezes_explicit_capabilities_and_skill_context() -> None:
+    runtime_context = RuntimeSessionContext(
+        agent_id="semibot",
+        session_id="sess-1",
+        agent_config=AgentConfig(id="semibot", name="Semibot"),
+        available_skills=[SkillDefinition(id="deep-research", name="deep-research", description="Research")],
+        available_tools=[ToolDefinition(name="search", description="Search the web")],
+    )
+
+    materialized = _materialize_runtime_contract(runtime_context)
+
+    assert materialized._explicit_capabilities_provided is True
+    assert materialized._explicit_skill_context_provided is True
+    assert any(item.id == "builtin:search" for item in materialized.capabilities)
+    assert any(item.skill_id == "deep-research" for item in materialized.skill_context)
 
 
 def test_create_llm_provider_prefers_explicit_model_override(monkeypatch) -> None:
@@ -382,6 +423,7 @@ def test_create_llm_provider_uses_anthropic_provider_for_anthropic_instance(monk
 
 def test_build_approval_policy_uses_generic_session_action_scope() -> None:
     scope_key, context = _build_approval_policy(
+        "builtin:browser_automation",
         "browser_automation",
         {"action": "open", "session_id": "s1", "url": "https://example.com"},
         "high",
@@ -389,12 +431,13 @@ def test_build_approval_policy_uses_generic_session_action_scope() -> None:
         {},
     )
 
-    assert scope_key == "browser_automation|risk:high|session:s1"
+    assert scope_key == "builtin:browser_automation|risk:high|session:s1"
     assert context["summary"] == "工具 `browser_automation` 执行动作 `open`，目标 `https://example.com`"
 
 
 def test_build_approval_policy_supports_generic_custom_dedupe_keys() -> None:
     scope_key, context = _build_approval_policy(
+        "builtin:any_tool",
         "any_tool",
         {"operation": "sync", "resource_id": "abc-1", "value": 42},
         "medium",
@@ -402,7 +445,7 @@ def test_build_approval_policy_supports_generic_custom_dedupe_keys() -> None:
         {"approval_dedupe_keys": ["resource_id"], "approval_scope": "call"},
     )
 
-    assert scope_key == "any_tool|risk:medium|custom:resource_id=abc-1"
+    assert scope_key == "builtin:any_tool|risk:medium|custom:resource_id=abc-1"
     assert context["action"] == "sync"
 
 

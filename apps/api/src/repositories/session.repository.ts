@@ -21,6 +21,13 @@ export interface ListSessionsParams {
   status?: local.SessionStatus
 }
 
+export interface ListSessionsByOrgParams {
+  page?: number
+  limit?: number
+  agentId?: string
+  status?: local.SessionStatus
+}
+
 export interface PaginatedResult<T> {
   data: T[]
   meta: { total: number; page: number; limit: number; totalPages: number }
@@ -40,6 +47,10 @@ export async function findByIdAndOrg(id: string): Promise<local.LocalSessionRow 
 
 export async function findByUserAndOrg(params: ListSessionsParams): Promise<PaginatedResult<local.LocalSessionRow>> {
   return local.localFindSessionsByUserAndOrg(params)
+}
+
+export async function findByOrg(params: ListSessionsByOrgParams): Promise<PaginatedResult<local.LocalSessionRow>> {
+  return local.localFindSessionsByOrg(params)
 }
 
 export async function updateStatus(id: string, status: local.SessionStatus): Promise<local.LocalSessionRow | null> {

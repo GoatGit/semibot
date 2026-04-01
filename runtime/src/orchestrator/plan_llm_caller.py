@@ -506,6 +506,7 @@ def handle_plan_llm_error(
             session_current_date=session_current_date,
             session_current_weekday=session_current_weekday,
             session_current_timezone=session_current_timezone,
+            available_planning_tools=["read_skill", "inspect_sub_agent"],
         )
         logger.warning(
             "plan_loop_retry_with_compact_prompt_after_timeout",
@@ -555,6 +556,7 @@ def handle_plan_llm_error(
             session_current_date=session_current_date,
             session_current_weekday=session_current_weekday,
             session_current_timezone=session_current_timezone,
+            available_planning_tools=["read_skill", "inspect_sub_agent"],
         )
         logger.warning(
             "plan_loop_retry_with_compact_prompt_after_bad_request",
@@ -617,6 +619,7 @@ def _build_compact_mode_context(
     session_current_date: str,
     session_current_weekday: str,
     session_current_timezone: str,
+    available_planning_tools: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Build compact mode system prompt and planning messages."""
     from src.orchestrator.nodes_shared import _serialize_tool_backfeed_content
@@ -658,6 +661,7 @@ def _build_compact_mode_context(
         compact_skill_index=compact_skill_index,
         available_execution_capability_names=available_execution_capability_names,
         compact_memory=compact_memory,
+        available_planning_tools=available_planning_tools,
     )
     if agent_system_prompt:
         compact_prompt = f"{agent_system_prompt}\n\n---\n\n{compact_prompt}"

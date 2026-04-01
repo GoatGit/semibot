@@ -100,6 +100,8 @@ async function sendReviewerPrompt(sessionId: string, message: string, agentId: s
       model_roles: runtimeAgentConfig.modelRoles,
       system_prompt: agent.systemPrompt || 'You are an APS reviewer. Return only valid JSON.',
       skill_index: [],
+      capabilities: [],
+      skillContext: [],
       stream: true,
     }),
   })

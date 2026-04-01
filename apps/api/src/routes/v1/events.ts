@@ -18,6 +18,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 const listEventsQuerySchema = z.object({
   type: z.string().max(120).optional(),
+  capability: z.string().max(240).optional(),
   page: z.coerce.number().min(1).max(1000).optional(),
   limit: z.coerce.number().min(1).max(200).optional(),
   sessionId: z.string().min(1).max(120).optional(),
@@ -64,6 +65,17 @@ function eventBelongsToSession(event: unknown, sessionId: string): boolean {
     if (nestedId === sessionId) return true
   }
   return false
+}
+
+function eventMatchesCapability(event: unknown, capability: string): boolean {
+  if (!event || typeof event !== 'object') return false
+  const row = event as Record<string, unknown>
+  const payload = row.payload
+  if (!payload || typeof payload !== 'object') return false
+  const payloadRecord = payload as Record<string, unknown>
+  const capabilityId = normalizeSessionId(payloadRecord.capability_id) ?? normalizeSessionId(payloadRecord.capabilityId)
+  if (!capabilityId) return false
+  return capabilityId.toLowerCase().includes(capability.toLowerCase())
 }
 
 type SessionDerivedEvent = {
@@ -187,8 +199,9 @@ router.get(
   requirePermission('events:read'),
   validate(listEventsQuerySchema, 'query'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { type, page, limit, sessionId, session_id } = req.query as z.infer<typeof listEventsQuerySchema>
+    const { type, capability, page, limit, sessionId, session_id } = req.query as z.infer<typeof listEventsQuerySchema>
     const targetSessionId = normalizeSessionId(sessionId) ?? normalizeSessionId(session_id)
+    const targetCapability = normalizeSessionId(capability)
     const perPage = limit ?? 50
     const pageNumber = page ?? 1
     const runtimeLimit = targetSessionId ? Math.max(perPage * pageNumber, 300) : perPage
@@ -196,6 +209,7 @@ router.get(
       method: 'GET',
       query: {
         event_type: type,
+        capability_id: targetCapability ?? undefined,
         limit: runtimeLimit,
       },
       timeoutMs: 4000,
@@ -204,6 +218,9 @@ router.get(
     let filteredItems = targetSessionId
       ? rawItems.filter((item) => eventBelongsToSession(item, targetSessionId))
       : rawItems
+    if (targetCapability) {
+      filteredItems = filteredItems.filter((item) => eventMatchesCapability(item, targetCapability))
+    }
 
     if (isUuidSessionId(targetSessionId) && filteredItems.length === 0) {
       try {

@@ -18,6 +18,7 @@ import pytest
 from src.agents.delegator import SubAgentDelegator, SUB_AGENT_EXECUTION_TIMEOUT
 from src.orchestrator.context import (
     AgentConfig,
+    CapabilityDescriptor,
     McpServerDefinition,
     RuntimeSessionContext,
     SubAgentDefinition,
@@ -103,6 +104,36 @@ def delegator(runtime_context):
         event_emitter=AsyncMock(),
         max_depth=2,
         current_depth=0,
+    )
+
+
+@pytest.fixture
+def capability_only_runtime_context():
+    return RuntimeSessionContext(
+        user_id="user-1",
+        agent_id="parent-agent",
+        session_id="session-1",
+        agent_config=AgentConfig(id="parent-agent", name="Parent Agent"),
+        available_sub_agents=[],
+        capabilities=[
+            CapabilityDescriptor(
+                id="agent:researcher",
+                kind="sub_agent",
+                name="subagent:researcher",
+                display_name="Research Agent",
+                description="Handles research tasks",
+                source={"type": "agent", "agentId": "researcher"},
+                constraints={"timeoutMs": 3000},
+                metadata={
+                    "sub_agent_id": "researcher",
+                    "system_prompt": "You are a research assistant.",
+                    "model": "gpt-4o",
+                    "temperature": 0.5,
+                    "max_tokens": 2048,
+                },
+            )
+        ],
+        metadata={"org_id": "org-1"},
     )
 
 
@@ -200,6 +231,29 @@ async def test_delegate_success(delegator):
 
 
 @pytest.mark.asyncio
+async def test_delegate_success_with_capability_only_runtime(capability_only_runtime_context):
+    delegator = SubAgentDelegator(
+        runtime_context=capability_only_runtime_context,
+        llm_provider=AsyncMock(),
+        skill_registry=MagicMock(),
+        event_emitter=AsyncMock(),
+    )
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "messages": [{"role": "assistant", "content": "Capability-only delegation works"}],
+        }
+    )
+
+    with patch("src.agents.delegator.create_agent_graph", return_value=mock_graph):
+        result = await delegator.delegate(sub_agent_id="researcher", task="Research topic X")
+
+    assert result["result"] == "Capability-only delegation works"
+    assert result["agent_id"] == "researcher"
+    assert result["agent_name"] == "Research Agent"
+
+
+@pytest.mark.asyncio
 async def test_delegate_passes_context(delegator):
     """Delegation should pass extra context to sub-agent."""
     mock_graph = AsyncMock()
@@ -249,11 +303,11 @@ async def test_delegate_timeout(delegator):
     mock_graph.ainvoke = slow_invoke
 
     with patch("src.agents.delegator.create_agent_graph", return_value=mock_graph):
-        with patch("src.agents.delegator.SUB_AGENT_EXECUTION_TIMEOUT", 0.01):
-            result = await delegator.delegate(
-                sub_agent_id="sub-agent-1",
-                task="Slow task",
-            )
+        result = await delegator.delegate(
+            sub_agent_id="sub-agent-1",
+            task="Slow task",
+            timeout_seconds=0.01,
+        )
 
     assert "error" in result
     assert "timed out" in result["error"].lower()
@@ -450,19 +504,18 @@ def delegation_state(delegation_plan):
 
 @pytest.mark.asyncio
 async def test_delegate_node_success(delegation_state):
-    """delegate_node should call delegator and return tool results."""
-    mock_delegator = AsyncMock()
-    mock_delegator.delegate = AsyncMock(return_value={
-        "result": "Research findings here",
-        "agent_id": "sub-agent-1",
-        "agent_name": "Research Agent",
-    })
-
-    mock_emitter = AsyncMock()
+    """delegate_node should call unified executor with sub-agent capability."""
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=ToolCallResult(
+        tool_name="subagent:sub-agent-1",
+        capability_id="agent:sub-agent-1",
+        params={},
+        result="Research findings here",
+        success=True,
+    ))
 
     context = {
-        "sub_agent_delegator": mock_delegator,
-        "event_emitter": mock_emitter,
+        "unified_executor": mock_executor,
     }
 
     result = await delegate_node(delegation_state, context)
@@ -473,25 +526,21 @@ async def test_delegate_node_success(delegation_state):
     assert tool_result.tool_name == "subagent:sub-agent-1"
     assert tool_result.success is True
     assert tool_result.result == "Research findings here"
-
-    # Verify delegator was called correctly
-    mock_delegator.delegate.assert_awaited_once_with(
-        sub_agent_id="sub-agent-1",
-        task="Research the topic using specialist",
-        context={
-            "memory": "structured memory",
-            "memory_snapshot": delegation_state["memory_snapshot"],
-            "parent_session_id": "session-1",
-        },
-    )
+    delegated_action = mock_executor.execute.await_args.args[0]
+    assert delegated_action.capability_id == "agent:sub-agent-1"
+    assert delegated_action.tool == "subagent:sub-agent-1"
+    assert delegated_action.params["task"] == "Research the topic using specialist"
+    assert delegated_action.params["context"] == {
+        "memory": "Recent context:\n[user] some memory\n\nRelevant knowledge:\nsaved preference",
+        "memory_snapshot": delegation_state["memory_snapshot"],
+        "parent_session_id": "session-1",
+    }
 
 
 @pytest.mark.asyncio
 async def test_delegate_node_no_delegator(delegation_state):
-    """delegate_node should handle missing delegator gracefully."""
-    context = {
-        "event_emitter": AsyncMock(),
-    }
+    """delegate_node should handle missing unified executor gracefully."""
+    context = {}
 
     result = await delegate_node(delegation_state, context)
 
@@ -507,8 +556,7 @@ async def test_delegate_node_no_plan(delegation_state):
     delegation_state["plan"] = None
 
     context = {
-        "sub_agent_delegator": AsyncMock(),
-        "event_emitter": AsyncMock(),
+        "unified_executor": AsyncMock(),
     }
 
     result = await delegate_node(delegation_state, context)
@@ -518,16 +566,18 @@ async def test_delegate_node_no_plan(delegation_state):
 
 @pytest.mark.asyncio
 async def test_delegate_node_delegator_error(delegation_state):
-    """delegate_node should handle delegator returning error."""
-    mock_delegator = AsyncMock()
-    mock_delegator.delegate = AsyncMock(return_value={
-        "error": "SubAgent crashed",
-        "agent_id": "sub-agent-1",
-    })
+    """delegate_node should handle executor returning delegated failure."""
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=ToolCallResult(
+        tool_name="subagent:sub-agent-1",
+        capability_id="agent:sub-agent-1",
+        params={},
+        error="SubAgent crashed",
+        success=False,
+    ))
 
     context = {
-        "sub_agent_delegator": mock_delegator,
-        "event_emitter": AsyncMock(),
+        "unified_executor": mock_executor,
     }
 
     result = await delegate_node(delegation_state, context)
@@ -539,15 +589,12 @@ async def test_delegate_node_delegator_error(delegation_state):
 
 @pytest.mark.asyncio
 async def test_delegate_node_exception(delegation_state):
-    """delegate_node should handle exceptions from delegator."""
-    mock_delegator = AsyncMock()
-    mock_delegator.delegate = AsyncMock(side_effect=RuntimeError("Connection lost"))
-
-    mock_emitter = AsyncMock()
+    """delegate_node should handle exceptions from unified executor."""
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(side_effect=RuntimeError("Connection lost"))
 
     context = {
-        "sub_agent_delegator": mock_delegator,
-        "event_emitter": mock_emitter,
+        "unified_executor": mock_executor,
     }
 
     result = await delegate_node(delegation_state, context)
@@ -559,28 +606,22 @@ async def test_delegate_node_exception(delegation_state):
 
 @pytest.mark.asyncio
 async def test_delegate_node_emits_events(delegation_state):
-    """delegate_node should emit skill_call_start and skill_call_complete events."""
-    mock_delegator = AsyncMock()
-    mock_delegator.delegate = AsyncMock(return_value={
-        "result": "Done",
-        "agent_id": "sub-agent-1",
-    })
-
-    mock_emitter = AsyncMock()
+    """delegate node should annotate delegated execution metadata."""
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=ToolCallResult(
+        tool_name="subagent:sub-agent-1",
+        capability_id="agent:sub-agent-1",
+        params={},
+        result="Done",
+        success=True,
+        metadata={},
+    ))
 
     context = {
-        "sub_agent_delegator": mock_delegator,
-        "event_emitter": mock_emitter,
+        "unified_executor": mock_executor,
     }
 
-    await delegate_node(delegation_state, context)
-
-    # Should emit start event
-    mock_emitter.emit_skill_call_start.assert_awaited_once()
-    start_args = mock_emitter.emit_skill_call_start.call_args
-    assert start_args[0][0] == "sub-agent-1"
-
-    # Should emit complete event
-    mock_emitter.emit_skill_call_complete.assert_awaited_once()
-    complete_args = mock_emitter.emit_skill_call_complete.call_args
-    assert complete_args[0][0] == "sub-agent-1"
+    result = await delegate_node(delegation_state, context)
+    tool_result = result["tool_results"][0]
+    assert tool_result.metadata["delegate"] is True
+    assert tool_result.metadata["sub_agent_id"] == "sub-agent-1"

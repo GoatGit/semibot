@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import re as _re
 import time
@@ -47,6 +48,38 @@ def _raw_delivery_payload_dict_like(value: Any) -> bool:
     return False
 
 
+def _parse_structured_text_payload(value: Any) -> dict[str, Any] | list[Any] | None:
+    if not isinstance(value, str):
+        return None
+    content = value.strip()
+    if not content or not content.startswith(("{", "[")):
+        return None
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(content)
+        except Exception:
+            continue
+        if isinstance(parsed, (dict, list)):
+            return parsed
+    return None
+
+
+def _looks_like_python_literal_payload_text(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    content = value.strip()
+    if not content or not content.startswith(("{", "[")):
+        return False
+    lowered = content.lower()
+    strong_markers = ("'rank':", "'title':", "'author':", "'url':", "'likes':")
+    marker_hits = sum(1 for marker in strong_markers if marker in lowered)
+    if marker_hits >= 2:
+        return True
+    if "[{" in content and ("':" in content or "}, {" in content):
+        return True
+    return False
+
+
 def _looks_like_raw_delivery_payload(value: Any) -> bool:
     if _raw_delivery_payload_dict_like(value):
         return True
@@ -57,6 +90,11 @@ def _looks_like_raw_delivery_payload(value: Any) -> bool:
     content = value.strip()
     if not content or not content.startswith(("{", "[")):
         return False
+    parsed_literal = _parse_structured_text_payload(content)
+    if parsed_literal is not None:
+        return _looks_like_raw_delivery_payload(parsed_literal)
+    if _looks_like_python_literal_payload_text(content):
+        return True
     try:
         parsed = json.loads(content)
     except Exception:
@@ -112,8 +150,20 @@ def _dr_tool_phase_prompt(goal: str, dr_policy: dict[str, Any] | None) -> str:
         f"Hard limits: max_tool_calls={max_tool_calls}, max_react_iterations={max_iterations}.\n"
         "If tools are needed, call them directly. If not, answer from current context.\n"
         "Never present raw tool payloads, scraped JSON, HTML extracts, or unformatted fetch results as the final answer.\n"
+        "If you used any tool call in this run, your final response MUST be exactly one JSON object with this shape:\n"
+        '{"status":"completed|partial|upgrade_required|failed","answer":"user-facing markdown answer or null","upgrade_reason":"optional string","diagnostics":{"budget_exceeded":false,"loop_signal":false,"context_insufficient":false},"evidence":[],"artifacts":[],"failure":null,"intermediate_context":null,"resource_usage":{}}\n'
+        "When tools were used, do not return plain prose, Python literals, markdown lists, or raw snippets outside that JSON object.\n"
         "When you have enough evidence, stop requesting tools and provide a concise assistant message.\n"
         f"Task goal: {goal}\n"
+    )
+
+
+def _dr_post_tool_contract_prompt() -> str:
+    return (
+        "Tool results are now available.\n"
+        "If you need another tool, call it directly.\n"
+        "Otherwise, return exactly one JSON object only, with keys status and answer at minimum.\n"
+        "Do not return free-form prose, markdown, Python literals, or raw tool payloads outside the JSON wrapper.\n"
     )
 
 
@@ -213,6 +263,36 @@ def _render_dr_structured_value(value: Any, *, depth: int = 0) -> list[str]:
     return [f"{child_indent if depth > 0 else ''}{scalar}"] if scalar else []
 
 
+def _render_dr_structured_list_markdown(items: list[Any]) -> str:
+    lines: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if isinstance(item, dict):
+            title_key = next(
+                (
+                    key
+                    for key in ("title", "name", "label", "summary", "author", "url")
+                    if _compact_scalar(item.get(key))
+                ),
+                None,
+            )
+            title = _compact_scalar(item.get(title_key)) if title_key else ""
+            heading = f"### {index}. {title}" if title else f"### {index}"
+            lines.append(heading)
+            remaining = {key: value for key, value in item.items() if key != title_key}
+            lines.extend(_render_dr_structured_value(remaining, depth=0))
+            lines.append("")
+            continue
+        if isinstance(item, list):
+            lines.append(f"### {index}")
+            lines.extend(_render_dr_structured_value(item, depth=0))
+            lines.append("")
+            continue
+        scalar = _compact_scalar(item)
+        if scalar:
+            lines.append(f"{index}. {scalar}")
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
 def _render_dr_structured_payload_markdown(payload: dict[str, Any]) -> str:
     lines: list[str] = []
     if isinstance(payload.get("executive_summary"), str) and str(payload.get("executive_summary")).strip():
@@ -228,6 +308,24 @@ def _render_dr_structured_payload_markdown(payload: dict[str, Any]) -> str:
     rendered = "\n".join(line for line in lines if line is not None).strip()
     # Never fall back to raw JSON in user-facing DR answers.
     return rendered
+
+
+def _render_structured_answer_candidate(value: Any) -> str | None:
+    if isinstance(value, dict):
+        return None if _looks_like_raw_delivery_payload(value) else _render_dr_structured_payload_markdown(value)
+    if isinstance(value, list):
+        return None if _looks_like_raw_delivery_payload(value) else _render_dr_structured_list_markdown(value)
+    parsed = _parse_structured_text_payload(value)
+    if parsed is None:
+        candidate = str(value or "").strip() or None
+        if not candidate or _looks_like_raw_delivery_payload(candidate) or _looks_like_python_literal_payload_text(candidate):
+            return None
+        return candidate
+    if _looks_like_raw_delivery_payload(parsed):
+        return None
+    if isinstance(parsed, dict):
+        return _render_dr_structured_payload_markdown(parsed)
+    return _render_dr_structured_list_markdown(parsed)
 
 
 def _is_dr_wrapper_payload(raw: dict[str, Any]) -> bool:
@@ -255,7 +353,7 @@ def _normalize_dr_result(
     tool_results: list[ToolCallResult],
     fallback_answer: str | None = None,
 ) -> DirectReasoningResult:
-    safe_fallback_answer = None if _looks_like_raw_delivery_payload(fallback_answer) else fallback_answer
+    safe_fallback_answer = _render_structured_answer_candidate(fallback_answer)
     if not isinstance(raw, dict):
         return {
             "status": "completed" if safe_fallback_answer else "failed",
@@ -325,25 +423,14 @@ def _normalize_dr_result(
     if status not in {"completed", "partial", "upgrade_required", "failed"}:
         status = "completed"
 
+    has_explicit_answer_field = "answer" in raw
     answer_value = raw.get("answer")
     rendered_answer: str | None = None
     diagnostics = _ensure_dict(raw.get("diagnostics"))
-    if isinstance(answer_value, dict):
-        if _looks_like_raw_delivery_payload(answer_value):
-            diagnostics["raw_payload_suppressed"] = True
-        else:
-            rendered_answer = _render_dr_structured_payload_markdown(answer_value)
-    elif isinstance(answer_value, list):
-        if _looks_like_raw_delivery_payload(answer_value):
-            diagnostics["raw_payload_suppressed"] = True
-        else:
-            rendered_answer = "\n".join(_render_dr_structured_value(answer_value, depth=0)).strip() or None
-    else:
-        candidate_answer = str(answer_value or safe_fallback_answer or "").strip() or None
-        if _looks_like_raw_delivery_payload(candidate_answer):
-            diagnostics["raw_payload_suppressed"] = True
-        else:
-            rendered_answer = candidate_answer
+    candidate_answer = answer_value if has_explicit_answer_field else safe_fallback_answer
+    rendered_answer = _render_structured_answer_candidate(candidate_answer)
+    if candidate_answer is not None and rendered_answer is None:
+        diagnostics["raw_payload_suppressed"] = True
 
     if rendered_answer is None and status in {"completed", "partial"}:
         if diagnostics.get("raw_payload_suppressed"):
@@ -542,6 +629,7 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
                         break
                 if terminal_raw is not None:
                     break
+                messages.append({"role": "system", "content": _dr_post_tool_contract_prompt()})
                 continue
 
             parsed_tool_phase = _parse_dr_json(last_tool_phase_response_content) if last_tool_phase_response_content else None
@@ -549,7 +637,30 @@ async def dr_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
                 terminal_raw = parsed_tool_phase
                 break
             if last_tool_phase_response_content:
-                terminal_raw = {"status": "completed", "answer": last_tool_phase_response_content}
+                if tool_call_count > 0:
+                    terminal_raw = {
+                        "status": "upgrade_required",
+                        "answer": None,
+                        "upgrade_reason": "direct reasoning returned a non-wrapper terminal response after tool use",
+                        "failure": {
+                            "code": "dr_missing_terminal_wrapper",
+                            "message": "DR used tools but did not return the required terminal JSON wrapper",
+                            "retryable": False,
+                        },
+                        "diagnostics": {
+                            "budget_exceeded": False,
+                            "loop_signal": False,
+                            "context_insufficient": False,
+                            "contract_violation": True,
+                            "missing_wrapper": True,
+                        },
+                        "intermediate_context": {
+                            "raw_terminal_response": last_tool_phase_response_content[:2000],
+                            "tool_results": _tool_result_snapshot(step_results),
+                        },
+                    }
+                else:
+                    terminal_raw = {"status": "completed", "answer": last_tool_phase_response_content}
             else:
                 terminal_raw = {
                     "status": "failed",

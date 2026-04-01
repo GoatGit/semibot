@@ -85,6 +85,8 @@ async function sendMessageToRuntime(
       model_roles: runtimeAgentConfig.modelRoles,
       system_prompt: systemPrompt,
       skill_index: [],
+      capabilities: [],
+      skillContext: [],
       stream: true,
     }),
   })

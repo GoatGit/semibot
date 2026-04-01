@@ -1,14 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockSql } = vi.hoisted(() => {
-  const fn = vi.fn()
-  ;(fn as any).json = (value: unknown) => value
-  return { mockSql: fn }
-})
-
-vi.mock('../lib/db', () => ({
-  sql: mockSql,
+const memoryService = vi.hoisted(() => ({
+  searchSimilarMemories: vi.fn(),
+  listMemories: vi.fn(),
 }))
+
+vi.mock('../services/memory.service', () => memoryService)
 
 import { WSServer } from '../ws/ws-server'
 
@@ -18,12 +15,13 @@ describe('ws-server memory_search request', () => {
   })
 
   it('uses vector search when embedding is available', async () => {
-    mockSql.mockResolvedValueOnce([
+    memoryService.searchSimilarMemories.mockResolvedValueOnce([
       {
         content: 'memory via vector',
-        score: 0.92,
+        similarity: 0.92,
         metadata: { source: 'vector' },
-        created_at: '2026-01-01T00:00:00.000Z',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        memoryType: 'semantic',
       },
     ])
 
@@ -33,7 +31,6 @@ describe('ws-server memory_search request', () => {
     server.cacheRequestResult = vi.fn()
 
     const conn = {
-      orgId: 'org-1',
       ws: { send: (raw: string) => sent.push(JSON.parse(raw)) },
       requestResults: new Map(),
     }
@@ -43,16 +40,16 @@ describe('ws-server memory_search request', () => {
       id: 'req-1',
       session_id: 'sess-1',
       method: 'memory_search',
-      params: { query: 'what is this', top_k: 3, agent_id: 'agent-1', session_id: 'sess-1', memory_type: 'semantic' },
+      params: { query: 'what is this', top_k: 3, agent_id: 'agent-1', memory_type: 'semantic' },
     })
 
     expect(server.generateOpenAIEmbedding).toHaveBeenCalledWith('what is this')
-    expect(mockSql).toHaveBeenCalledTimes(1)
-    const values = mockSql.mock.calls[0].slice(1)
-    expect(values).toContain('agent-1')
-    expect(values).toContain('sess-1')
-    expect(values).toContain('semantic')
-    expect(sent).toHaveLength(1)
+    expect(memoryService.searchSimilarMemories).toHaveBeenCalledWith({
+      agentId: 'agent-1',
+      embedding: [0.01, 0.02, 0.03],
+      limit: 3,
+      minSimilarity: 0.5,
+    })
     expect(sent[0]).toMatchObject({
       type: 'response',
       id: 'req-1',
@@ -62,22 +59,23 @@ describe('ws-server memory_search request', () => {
           {
             content: 'memory via vector',
             score: 0.92,
-            metadata: { source: 'vector' },
+            metadata: { source: 'vector', created_at: '2026-01-01T00:00:00.000Z' },
           },
         ],
       },
     })
   })
 
-  it('falls back to ilike search when embedding is unavailable', async () => {
-    mockSql.mockResolvedValueOnce([
-      {
-        content: 'memory via ilike',
-        score: 0.31,
-        metadata: null,
-        created_at: '2026-01-02T00:00:00.000Z',
-      },
-    ])
+  it('falls back to list filtering when embedding is unavailable', async () => {
+    memoryService.listMemories.mockResolvedValueOnce({
+      data: [
+        {
+          content: 'memory via ilike',
+          metadata: {},
+          createdAt: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+    })
 
     const sent: Array<Record<string, unknown>> = []
     const server = Object.create(WSServer.prototype) as any
@@ -85,7 +83,6 @@ describe('ws-server memory_search request', () => {
     server.cacheRequestResult = vi.fn()
 
     const conn = {
-      orgId: 'org-1',
       ws: { send: (raw: string) => sent.push(JSON.parse(raw)) },
       requestResults: new Map(),
     }
@@ -98,34 +95,36 @@ describe('ws-server memory_search request', () => {
       params: { query: 'fallback-query', top_k: 5 },
     })
 
-    expect(server.generateOpenAIEmbedding).toHaveBeenCalledWith('fallback-query')
-    expect(mockSql).toHaveBeenCalledTimes(1)
+    expect(memoryService.listMemories).toHaveBeenCalledWith({
+      agentId: undefined,
+      memoryType: undefined,
+      limit: 5,
+    })
     expect(sent[0]).toMatchObject({
       type: 'response',
       id: 'req-2',
       error: null,
-      result: {
-        results: [
-          {
-            content: 'memory via ilike',
-            score: 0.31,
-            metadata: { created_at: '2026-01-02T00:00:00.000Z' },
-          },
-        ],
-      },
+      result: { results: [] },
     })
   })
 
   it('ignores unsupported memory_type filters', async () => {
-    mockSql.mockResolvedValueOnce([])
+    memoryService.listMemories.mockResolvedValueOnce({
+      data: [
+        {
+          content: 'what is this exactly',
+          metadata: {},
+          createdAt: '2026-01-03T00:00:00.000Z',
+        },
+      ],
+    })
 
     const sent: Array<Record<string, unknown>> = []
     const server = Object.create(WSServer.prototype) as any
-    server.generateOpenAIEmbedding = vi.fn().mockResolvedValue([0.01, 0.02, 0.03])
+    server.generateOpenAIEmbedding = vi.fn().mockResolvedValue(null)
     server.cacheRequestResult = vi.fn()
 
     const conn = {
-      orgId: 'org-1',
       ws: { send: (raw: string) => sent.push(JSON.parse(raw)) },
       requestResults: new Map(),
     }
@@ -138,19 +137,21 @@ describe('ws-server memory_search request', () => {
       params: { query: 'what is this', top_k: 3, memory_type: 'invalid_type' },
     })
 
-    const values = mockSql.mock.calls[0].slice(1)
-    expect(values).toContain(null)
+    expect(memoryService.listMemories).toHaveBeenCalledWith({
+      agentId: undefined,
+      memoryType: undefined,
+      limit: 3,
+    })
     expect(sent[0]).toMatchObject({ type: 'response', id: 'req-4', error: null })
   })
 
-  it('returns empty results for blank query without database access', async () => {
+  it('returns empty results for blank query without service access', async () => {
     const sent: Array<Record<string, unknown>> = []
     const server = Object.create(WSServer.prototype) as any
     server.generateOpenAIEmbedding = vi.fn()
     server.cacheRequestResult = vi.fn()
 
     const conn = {
-      orgId: 'org-1',
       ws: { send: (raw: string) => sent.push(JSON.parse(raw)) },
       requestResults: new Map(),
     }
@@ -164,7 +165,8 @@ describe('ws-server memory_search request', () => {
     })
 
     expect(server.generateOpenAIEmbedding).not.toHaveBeenCalled()
-    expect(mockSql).not.toHaveBeenCalled()
+    expect(memoryService.searchSimilarMemories).not.toHaveBeenCalled()
+    expect(memoryService.listMemories).not.toHaveBeenCalled()
     expect(sent[0]).toMatchObject({
       type: 'response',
       id: 'req-3',

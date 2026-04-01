@@ -42,6 +42,7 @@ export interface RuntimeSessionDetailContent {
   drUpgrades: number
   totalTokens: string
   toolName?: string
+  capabilityId?: string
   routeMode?: string
   routeReason?: string
   routeAt?: string

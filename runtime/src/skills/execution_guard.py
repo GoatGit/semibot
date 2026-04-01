@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -195,29 +193,44 @@ class ExecutionAdvisor:
 
     def _run_help(self, full_path: Path) -> str | None:
         suffix = full_path.suffix.lower()
-        if suffix == ".py":
-            cmd = [sys.executable, str(full_path), "--help"]
-        elif suffix in {".sh", ".bash"}:
-            cmd = ["bash", str(full_path), "--help"]
-        elif suffix in {".js", ".mjs", ".cjs"}:
-            cmd = ["node", str(full_path), "--help"]
-        else:
-            cmd = [str(full_path), "--help"]
+        if suffix != ".py":
+            return None
+        return self._extract_python_argparse_help(full_path)
+
+    @staticmethod
+    def _extract_python_argparse_help(full_path: Path) -> str | None:
         try:
-            completed = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=2,
-                cwd=str(full_path.parent.parent),
-            )
+            content = full_path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return None
-        output = (completed.stdout or "").strip()
-        return output or None
+        flag_pattern = re.compile(r"['\"](?P<flag>--[a-zA-Z0-9][\w-]*|-\w)['\"]")
+        flags: set[str] = set()
+        required_flags: set[str] = set()
+
+        for line in content.splitlines():
+            if "add_argument(" not in line:
+                continue
+            found_flags = set(flag_pattern.findall(line))
+            if not found_flags:
+                continue
+            flags.update(found_flags)
+            if re.search(r"required\s*=\s*True", line):
+                required_flags.update(flag for flag in found_flags if flag.startswith("--"))
+
+        if not flags:
+            return None
+
+        script_name = full_path.name
+        usage_tokens = sorted(required_flags)
+        optional_token = "[options]" if flags else ""
+        usage_parts = [script_name]
+        if optional_token:
+            usage_parts.append(optional_token)
+        usage_parts.extend(usage_tokens)
+        lines = [f"usage: {' '.join(part for part in usage_parts if part).strip()}", "", "options:"]
+        for flag in sorted(flags):
+            lines.append(f"  {flag}")
+        return "\n".join(lines)
 
     def _parse_help_output(self, help_text: str) -> tuple[bool, set[str], set[str]]:
         text = help_text or ""

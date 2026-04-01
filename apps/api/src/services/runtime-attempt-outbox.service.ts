@@ -8,7 +8,12 @@ const logger = createLogger('runtime-attempt-outbox')
 
 const DEFAULT_SWEEP_INTERVAL_MS = 5_000
 const DEFAULT_SWEEP_LIMIT = 100
-const OUTBOX_ROOT = path.join(os.homedir(), '.semibot', 'attempt-outbox')
+
+function resolveOutboxRoot(): string {
+  const configured = String(process.env.SEMIBOT_RUNTIME_ATTEMPT_OUTBOX_DIR || '').trim()
+  if (configured) return configured
+  return path.join(os.homedir(), '.semibot', 'attempt-outbox')
+}
 
 let sweepTimer: NodeJS.Timeout | null = null
 let sweepPromise: Promise<SweepRuntimeAttemptOutboxResult> | null = null
@@ -39,7 +44,7 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 async function writeProjectionFile(relativeDir: string, filename: string, payload: Record<string, unknown> | null): Promise<void> {
-  const dir = path.join(OUTBOX_ROOT, relativeDir)
+  const dir = path.join(resolveOutboxRoot(), relativeDir)
   await ensureDir(dir)
   await fs.writeFile(
     path.join(dir, filename),

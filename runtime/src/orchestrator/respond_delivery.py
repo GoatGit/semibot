@@ -11,6 +11,7 @@ from src.orchestrator.nodes_shared import (
     _iter_generated_files_from_result,
 )
 from src.orchestrator.state import AgentState, ToolCallResult
+from src.orchestrator.text_cleanup import clean_user_facing_snippet
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -89,7 +90,7 @@ def _extract_search_results(tool_results: list[ToolCallResult]) -> list[dict[str
             continue
         title = str(item.get("title") or "").strip()
         url = str(item.get("url") or "").strip()
-        content = str(item.get("content") or item.get("snippet") or "").strip()
+        content = clean_user_facing_snippet(str(item.get("content") or item.get("snippet") or "").strip())
         if title.lower() in {"detailed results:", "detailed results"} and not url and not content:
             continue
         if not title and not url and not content:
@@ -109,9 +110,14 @@ def _build_inline_delivery_fallback(
     heading = "关键结果" if lang == "zh" else "Key results"
     lines = [f"# {normalized_title}", "", f"## {heading}"]
     for idx, item in enumerate(source_items, start=1):
-        row_title = str(item.get("title") or item.get("label") or f"{idx}").strip()
+        row_title = clean_user_facing_snippet(str(item.get("title") or item.get("label") or f"{idx}").strip(), max_chars=160)
+        if not row_title:
+            row_title = f"{idx}"
         row_url = str(item.get("url") or "").strip()
-        row_summary = str(item.get("summary") or item.get("content") or "").strip().replace("\n", " ")
+        row_summary = clean_user_facing_snippet(
+            str(item.get("summary") or item.get("content") or "").strip().replace("\n", " "),
+            max_chars=600,
+        )
         title_line = f"{idx}. [{row_title}]({row_url})" if row_url else f"{idx}. {row_title}"
         lines.append(title_line)
         if row_summary:

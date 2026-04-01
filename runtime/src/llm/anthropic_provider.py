@@ -315,20 +315,26 @@ class AnthropicProvider(LLMProvider):
                         })
 
             _raw_usage = response.usage
-            _cache_creation = getattr(_raw_usage, "cache_creation_input_tokens", 0) or 0
-            _cache_read = getattr(_raw_usage, "cache_read_input_tokens", 0) or 0
-            _total_input = _raw_usage.input_tokens + _cache_creation + _cache_read
+
+            def _usage_int(value: Any) -> int:
+                return int(value) if isinstance(value, (int, float)) else 0
+
+            _uncached_input = _usage_int(getattr(_raw_usage, "input_tokens", 0))
+            _cache_creation = _usage_int(getattr(_raw_usage, "cache_creation_input_tokens", 0))
+            _cache_read = _usage_int(getattr(_raw_usage, "cache_read_input_tokens", 0))
+            _output_tokens = _usage_int(getattr(_raw_usage, "output_tokens", 0))
+            _total_input = _uncached_input + _cache_creation + _cache_read
 
             return LLMResponse(
                 content=content,
                 model=response.model,
                 usage={
                     "prompt_tokens": _total_input,
-                    "completion_tokens": _raw_usage.output_tokens,
-                    "total_tokens": _total_input + _raw_usage.output_tokens,
+                    "completion_tokens": _output_tokens,
+                    "total_tokens": _total_input + _output_tokens,
                     "cache_creation_input_tokens": _cache_creation,
                     "cache_read_input_tokens": _cache_read,
-                    "uncached_input_tokens": _raw_usage.input_tokens,
+                    "uncached_input_tokens": _uncached_input,
                 },
                 tool_calls=tool_calls,
                 finish_reason=response.stop_reason or "end_turn",

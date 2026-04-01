@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from src.events.models import Event
-from src.gateway.channels.shared import build_ingress_result
+from src.gateway.channels.shared import ChannelAnchorAdapter, build_ingress_result
 from src.gateway.channels.whatsapp.helpers import handle_approval_followup, resolve_instance_for_ingest
 from src.gateway.parsers.approval_text import extract_message_text
 
@@ -129,12 +129,14 @@ async def ingest_events(
                 if not notifier:
                     return False
                 target_chat_id = str(ctx.get("chat_id") or "").strip() or chat_id
-                return await notifier.send_notify_payload(
+                adapter = ChannelAnchorAdapter(manager=manager, notifier=notifier)
+                return await adapter.deliver(
                     {
                         "content": reply_text,
                         "chat_id": target_chat_id,
                         "files": ctx.get("files") if isinstance(ctx, dict) else [],
-                    }
+                    },
+                    anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
                 )
 
             gateway_result = await manager.gateway_context.ingest_message(

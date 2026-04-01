@@ -81,7 +81,7 @@ describe('approvals route behavior', () => {
 
     expect(mockRuntimeRequest).toHaveBeenCalledWith('/v1/approvals', {
       method: 'GET',
-      query: { status: 'pending', limit: '50' },
+      query: { status: 'pending', capability_id: undefined, limit: '50' },
     })
     expect(res.json).toHaveBeenCalledWith({
       success: true,
@@ -91,6 +91,37 @@ describe('approvals route behavior', () => {
           session_id: 'sess-1',
           attempt_id: 'att-1',
           user_message_id: 'msg-user-1',
+        }),
+      ],
+    })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('GET / filters approval items by capability id', async () => {
+    mockRuntimeRequest.mockResolvedValue({
+      items: [
+        { id: 'appr-1', status: 'pending', capability_id: 'mcp:browser.open_url' },
+        { id: 'appr-2', status: 'pending', capability_id: 'tool:bash.exec' },
+      ],
+    })
+
+    const handler = getRouteHandler('/', 'get')
+    const req = { query: { status: 'pending', limit: '50', capability: 'browser' }, user: { userId: 'user-1' } }
+    const res = { json: vi.fn() }
+    const next = vi.fn()
+
+    await handler(req, res, next)
+
+    expect(mockRuntimeRequest).toHaveBeenCalledWith('/v1/approvals', {
+      method: 'GET',
+      query: { status: 'pending', capability_id: 'browser', limit: '50' },
+    })
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      items: [
+        expect.objectContaining({
+          id: 'appr-1',
+          capability_id: 'mcp:browser.open_url',
         }),
       ],
     })

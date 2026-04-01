@@ -16,6 +16,8 @@ def test_default_registry_includes_core_builtin_tools() -> None:
     assert "http_client" in tools
     assert "web_fetch" in tools
     assert "text_processing" in tools
+    assert "tool_search" in tools
+    assert "synthetic_output" in tools
     assert "memory" in tools
     assert "control_plane" in tools
     assert "rule_authoring" in tools

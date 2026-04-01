@@ -91,6 +91,7 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
     case 'tool_call_start':
       return mkMessage('tool_call', {
         toolName: (event.tool_name as string) ?? '',
+        capabilityId: (event.capability_id as string) ?? undefined,
         arguments: (event.arguments as Record<string, unknown>) ?? {},
         status: 'calling',
       })
@@ -98,6 +99,7 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
     case 'tool_call_complete':
       return mkMessage('tool_result', {
         toolName: (event.tool_name as string) ?? '',
+        capabilityId: (event.capability_id as string) ?? undefined,
         result: event.result,
         success: (event.success as boolean) ?? true,
         error: event.error as string | undefined,
@@ -235,6 +237,7 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
     case 'tool_call':
       return mkMessage('tool_call', {
         toolName: (event.tool_name as string) ?? '',
+        capabilityId: (event.capability_id as string) ?? undefined,
         arguments: (event.input as Record<string, unknown>) ?? {},
         status: 'calling',
       })
@@ -242,6 +245,7 @@ export function mapRuntimeEventToAgent2UI(event: Record<string, unknown>): Agent
     case 'tool_result':
       return mkMessage('tool_result', {
         toolName: (event.tool_name as string) ?? '',
+        capabilityId: (event.capability_id as string) ?? undefined,
         result: event.output ?? event.result,
         success: (event.success as boolean) ?? true,
         error: event.error as string | undefined,

@@ -7,6 +7,7 @@ import type { EventRecord, RuntimeMonitorSnapshot, RuntimeMonitorSummary, Runtim
 interface RuntimeMonitorQuery {
   limit?: number
   sessionId?: string
+  capability?: string
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -146,6 +147,7 @@ export function useRuntimeMonitor() {
         params: {
           limit: query.limit ?? 200,
           sessionId: query.sessionId,
+          capability: query.capability,
         },
       })
       const data = isObject(response?.data) ? response.data : {}

@@ -9,7 +9,13 @@ Consolidates duplicated patterns across telegram/discord/whatsapp/imessage helpe
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.gateway.manager import GatewayManager
 
 
 def query_value(query_params: Mapping[str, str] | None, *keys: str) -> str | None:
@@ -59,3 +65,28 @@ def format_approval_notice(*, status: str, resolved_count: int) -> str:
     if status == "approved":
         notice += " 正在继续执行任务。"
     return notice
+
+
+@dataclass(slots=True)
+class ChannelAnchorAdapter:
+    """Minimal shared delivery adapter for channel send + anchor binding."""
+
+    manager: GatewayManager
+    notifier: Any
+
+    async def deliver(
+        self,
+        payload: dict[str, Any],
+        *,
+        anchor_id: str | None = None,
+    ) -> bool:
+        sent = await self.notifier.send_notify_payload(payload)
+        if not sent:
+            return False
+        metadata = self.notifier.last_delivery_metadata() if hasattr(self.notifier, "last_delivery_metadata") else {}
+        await self.manager.gateway_context.bind_anchor_delivery(
+            anchor_id=str(anchor_id or "").strip() or None,
+            channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
+            channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
+        )
+        return True

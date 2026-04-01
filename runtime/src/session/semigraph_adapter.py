@@ -521,8 +521,9 @@ class SemiGraphAdapter(RuntimeAdapter):
                     "session_id": self.session_id,
                     "agent_id": agent_id,
                     "history_len": len(initial_state.get("messages") or []),
-                    "skill_count": len(runtime_context.available_skills or []),
-                    "tool_count": len(runtime_context.available_tools or []),
+                    "skill_count": len(getattr(runtime_context, "skill_context", None) or runtime_context.available_skills or []),
+                    "tool_count": len(runtime_context.get_tool_catalog() if hasattr(runtime_context, "get_tool_catalog") else (runtime_context.available_tools or [])),
+                    "capability_count": len(runtime_context.get_capability_descriptors() if hasattr(runtime_context, "get_capability_descriptors") else []),
                 },
             )
             result = await invoke_graph_once(
@@ -1378,6 +1379,16 @@ class SemiGraphAdapter(RuntimeAdapter):
             available_tools=tool_definitions,
             available_mcp_servers=mcp_servers,
             available_sub_agents=sub_agent_definitions,
+            capabilities=self.start_payload.get("capabilities")
+            if isinstance(self.start_payload.get("capabilities"), list)
+            else [],
+            skill_context=self.start_payload.get("skillContext")
+            if isinstance(self.start_payload.get("skillContext"), list)
+            else (
+                self.start_payload.get("skill_context")
+                if isinstance(self.start_payload.get("skill_context"), list)
+                else []
+            ),
             runtime_policy=self._build_runtime_policy(
                 tool_definitions,
                 enable_delegation=enable_delegation,
@@ -1556,6 +1567,7 @@ class SemiGraphAdapter(RuntimeAdapter):
             final_response = "".join(self._streamed_response_parts).strip()
         tool_results = (
             [row.model_dump() if hasattr(row, "model_dump") else dict(row) if isinstance(row, dict) else {
+                "capability_id": str(getattr(row, "capability_id", "") or ""),
                 "tool_name": str(getattr(row, "tool_name", "") or ""),
                 "params": dict(getattr(row, "params", {}) or {}) if isinstance(getattr(row, "params", None), dict) else {},
                 "result": getattr(row, "result", None),

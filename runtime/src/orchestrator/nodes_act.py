@@ -52,7 +52,7 @@ logger = get_logger(__name__)
 _MAX_INNER_TURNS = int(os.getenv("SEMIBOT_ACT_MAX_INNER_TURNS") or "30")
 _MAX_TOOL_CALLS_PER_STEP = int(os.getenv("SEMIBOT_ACT_MAX_TOOL_CALLS_PER_STEP") or "50")
 _ACT_LLM_HARD_TIMEOUT_SECONDS = float(os.getenv("SEMIBOT_ACT_LLM_HARD_TIMEOUT_SECONDS") or "120")
-_ENABLE_FRESHNESS_VALIDATION = str(os.getenv("SEMIBOT_ENABLE_FRESHNESS_VALIDATION", "false")).strip().lower() in {
+_ENABLE_FRESHNESS_VALIDATION = str(os.getenv("SEMIBOT_ENABLE_FRESHNESS_VALIDATION", "true")).strip().lower() in {
     "1",
     "true",
     "yes",
@@ -250,6 +250,7 @@ async def _execute_llm_act_step(
                     if isinstance(observe_loop_guard, dict)
                     else 0
                 )
+                metadata["_current_selected_skill"] = current_skill_id
         available_tools = _build_act_tool_schemas(runtime_context, skill_registry)
         agent_model = None
         act_temperature = 0.2

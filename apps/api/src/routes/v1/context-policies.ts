@@ -39,9 +39,10 @@ router.get(
   authenticate,
   combinedRateLimit,
   requirePermission('tools:read'),
-  asyncHandler(async (_req: AuthRequest, res: Response) => {
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     applyDeprecationHeaders(res)
-    const docs = await contextPolicyService.getActivePolicies()
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
+    const docs = await contextPolicyService.getActivePolicies(orgId)
     res.json({ success: true, data: docs })
   })
 )
@@ -54,9 +55,10 @@ router.get(
   validate(versionsQuerySchema, 'query'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
     applyDeprecationHeaders(res)
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
     const docType = docTypeSchema.parse(req.params.docType)
     const { limit } = req.query as z.infer<typeof versionsQuerySchema>
-    const docs = await contextPolicyService.getPolicyVersions(docType, limit ?? 20)
+    const docs = await contextPolicyService.getPolicyVersions(orgId, docType, limit ?? 20)
     res.json({ success: true, data: docs })
   })
 )
@@ -70,8 +72,10 @@ router.put(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     applyDeprecationHeaders(res)
     const userId = req.user!.userId
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
     const docType = docTypeSchema.parse(req.params.docType)
     const doc = await contextPolicyService.updatePolicy(
+      orgId,
       userId,
       docType,
       req.body.content,
@@ -90,8 +94,10 @@ router.post(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     applyDeprecationHeaders(res)
     const userId = req.user!.userId
+    const orgId = (req.user as { orgId?: string } | undefined)?.orgId || 'local'
     const docType = docTypeSchema.parse(req.params.docType)
     const doc = await contextPolicyService.rollbackPolicy(
+      orgId,
       userId,
       docType,
       req.body.targetVersion,

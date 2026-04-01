@@ -40,7 +40,6 @@ describe('Rate Limit Middleware', () => {
       socket: { remoteAddress: '127.0.0.1' } as any,
       user: {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: [],
       },
@@ -97,20 +96,19 @@ describe('Rate Limit Middleware', () => {
   })
 
   describe('orgRateLimit', () => {
-    it('有 orgId 时应该检查组织级限流', async () => {
+    it('单租户模式下应该直接跳过', async () => {
       await orgRateLimit(mockReq as AuthRequest, mockRes as Response, mockNext)
 
       expect(mockNext).toHaveBeenCalled()
-      expect(mockRes.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', expect.any(Number))
+      expect(mockRes.setHeader).not.toHaveBeenCalled()
     })
 
-    it('无 orgId 时应该直接跳过', async () => {
+    it('无用户时应该直接跳过', async () => {
       mockReq.user = undefined
 
       await orgRateLimit(mockReq as AuthRequest, mockRes as Response, mockNext)
 
       expect(mockNext).toHaveBeenCalled()
-      // 不应该设置限流头
       expect(mockRes.setHeader).not.toHaveBeenCalled()
     })
   })

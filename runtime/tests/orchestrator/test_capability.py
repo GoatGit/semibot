@@ -13,12 +13,15 @@ from src.orchestrator.capability import (
     McpCapability,
 )
 from src.orchestrator.context import (
+    CapabilityDescriptor,
     RuntimeSessionContext,
     AgentConfig,
     SkillDefinition,
     ToolDefinition,
     McpServerDefinition,
     RuntimePolicy,
+    SkillContextBinding,
+    SubAgentDefinition,
 )
 
 
@@ -226,6 +229,131 @@ def test_capability_graph_build():
     assert "code_executor" not in graph.capabilities
     assert "builtin:calculator" in graph.capabilities
     assert "github_create_issue" in graph.capabilities_by_name
+
+
+def test_runtime_context_derives_capabilities_and_skill_context():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_skills=[
+            SkillDefinition(
+                id="skill_1",
+                name="deep-research",
+                description="Research skill",
+                metadata={"has_skill_md": True, "package_id": "pkg.deep-research"},
+            )
+        ],
+        available_tools=[
+            ToolDefinition(
+                name="calculator",
+                description="Perform calculations",
+                parameters={"type": "object", "properties": {"expression": {"type": "string"}}},
+                metadata={"risk_level": "low", "requires_approval": False},
+            )
+        ],
+    )
+
+    capabilities = runtime_context.get_capability_descriptors()
+    assert len(capabilities) == 1
+    assert capabilities[0].id == "builtin:calculator"
+    assert capabilities[0].name == "calculator"
+    assert capabilities[0].source["type"] == "builtin"
+
+    assert len(runtime_context.skill_context) == 1
+    assert runtime_context.skill_context[0].skill_id == "deep-research"
+    assert runtime_context.skill_context[0].skill_package_id == "pkg.deep-research"
+    assert runtime_context.skill_context[0].has_skill_md is True
+
+
+def test_capability_graph_prefers_context_descriptors():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(
+                name="calculator",
+                description="Old calculator",
+                parameters={"type": "object", "properties": {"expression": {"type": "string"}}},
+            )
+        ],
+        capabilities=[
+            CapabilityDescriptor(
+                id="builtin:tool_search",
+                kind="tool",
+                name="tool_search",
+                display_name="tool_search",
+                description="Search tools",
+                source={"type": "builtin", "key": "tool_search"},
+                input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+                risk_level="low",
+                requires_approval=False,
+            )
+        ],
+        skill_context=[
+            SkillContextBinding(
+                skill_id="deep-research",
+                skill_definition_id="skill_1",
+                description="Research skill",
+                has_skill_md=True,
+            )
+        ],
+    )
+
+    graph = CapabilityGraph(runtime_context)
+    graph.build()
+
+    assert "builtin:tool_search" in graph.capabilities
+    assert "tool_search" in graph.capabilities_by_name
+    assert "builtin:calculator" not in graph.capabilities
+
+
+def test_capability_graph_get_core_schemas_for_planner():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(name="search", description="Search the web"),
+            ToolDefinition(name="custom_tool", description="Custom workflow helper"),
+        ],
+    )
+
+    graph = CapabilityGraph(runtime_context)
+    core_schemas = graph.get_core_schemas_for_planner()
+
+    core_names = {schema["function"]["name"] for schema in core_schemas}
+    assert "search" in core_names
+    assert "custom_tool" not in core_names
+
+
+def test_runtime_context_derives_sub_agent_capability_descriptor():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_sub_agents=[
+            SubAgentDefinition(
+                id="agent_research",
+                name="Research Agent",
+                description="Handles research tasks",
+            )
+        ],
+    )
+
+    descriptors = runtime_context.get_capability_descriptors()
+    sub_agent = next(item for item in descriptors if item.kind == "sub_agent")
+    assert sub_agent.id == "agent:agent_research"
+    assert sub_agent.name == "subagent:agent_research"
+    assert sub_agent.source["type"] == "agent"
+    assert sub_agent.risk_level == "medium"
+    assert sub_agent.requires_approval is False
+    assert sub_agent.constraints["timeoutMs"] == 120_000
 
 
 def test_capability_graph_adds_projected_group_action_capabilities():

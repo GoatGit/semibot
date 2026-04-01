@@ -552,6 +552,7 @@ class GatewayStore:
         run_id: str,
         *,
         status: str,
+        runtime_session_id: str | None = None,
         result_summary: str | None = None,
         result_metadata: dict[str, Any] | None = None,
         parent_run_id: str | None = None,
@@ -570,13 +571,14 @@ class GatewayStore:
             cur = conn.execute(
                 """
                 UPDATE gateway_task_runs
-                SET status = ?, result_summary = ?, result_metadata_json = ?,
+                SET status = ?, runtime_session_id = ?, result_summary = ?, result_metadata_json = ?,
                     parent_run_id = ?, title = ?, context_strategy = ?, context_snapshot_id = ?,
                     anchor_id = ?, archived_at = ?, approval_binding_json = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     status,
+                    runtime_session_id if runtime_session_id is not None else existing["runtime_session_id"],
                     result_summary,
                     _json_dumps(result_metadata or {}),
                     parent_run_id if parent_run_id is not None else existing["parent_run_id"],
@@ -593,6 +595,29 @@ class GatewayStore:
                     now,
                     run_id,
                 ),
+            )
+            if cur.rowcount <= 0:
+                return None
+            row = conn.execute("SELECT * FROM gateway_task_runs WHERE id = ?", (run_id,)).fetchone()
+        return self._run_row(row) if row else None
+
+    def claim_task_run_for_resume(
+        self,
+        run_id: str,
+        *,
+        from_status: str = "awaiting_approval",
+        to_status: str = "queued",
+        runtime_session_id: str,
+    ) -> dict[str, Any] | None:
+        now = _now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE gateway_task_runs
+                SET status = ?, runtime_session_id = ?, updated_at = ?
+                WHERE id = ? AND status = ?
+                """,
+                (to_status, runtime_session_id, now, run_id, from_status),
             )
             if cur.rowcount <= 0:
                 return None
@@ -699,17 +724,29 @@ class GatewayStore:
         *,
         provider: str,
         channel_message_id: str,
+        channel_target_id: str | None = None,
     ) -> dict[str, Any] | None:
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT * FROM gateway_interaction_anchors
-                WHERE provider = ? AND channel_message_id = ?
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (provider, channel_message_id),
-            ).fetchone()
+            if str(channel_target_id or "").strip():
+                row = conn.execute(
+                    """
+                    SELECT * FROM gateway_interaction_anchors
+                    WHERE provider = ? AND channel_message_id = ? AND channel_target_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (provider, channel_message_id, str(channel_target_id or "").strip()),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT * FROM gateway_interaction_anchors
+                    WHERE provider = ? AND channel_message_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (provider, channel_message_id),
+                ).fetchone()
         return self._anchor_row(row) if row else None
 
     def update_interaction_anchor(
@@ -1237,6 +1274,7 @@ class GatewayStore:
         run_id: str,
         *,
         status: str,
+        runtime_session_id: str | None = None,
         result_summary: str | None = None,
         result_metadata: dict[str, Any] | None = None,
         parent_run_id: str | None = None,
@@ -1251,6 +1289,7 @@ class GatewayStore:
             self.update_task_run,
             run_id,
             status=status,
+            runtime_session_id=runtime_session_id,
             result_summary=result_summary,
             result_metadata=result_metadata,
             parent_run_id=parent_run_id,
@@ -1268,6 +1307,23 @@ class GatewayStore:
 
     async def aget_task_run(self, run_id: str) -> dict[str, Any] | None:
         return await self._run_async(self.get_task_run, run_id, op_name="get_task_run")
+
+    async def aclaim_task_run_for_resume(
+        self,
+        run_id: str,
+        *,
+        from_status: str = "awaiting_approval",
+        to_status: str = "queued",
+        runtime_session_id: str,
+    ) -> dict[str, Any] | None:
+        return await self._run_async(
+            self.claim_task_run_for_resume,
+            run_id,
+            from_status=from_status,
+            to_status=to_status,
+            runtime_session_id=runtime_session_id,
+            op_name="claim_task_run_for_resume",
+        )
 
     async def acreate_context_snapshot(
         self,
@@ -1329,11 +1385,13 @@ class GatewayStore:
         *,
         provider: str,
         channel_message_id: str,
+        channel_target_id: str | None = None,
     ) -> dict[str, Any] | None:
         return await self._run_async(
             self.get_interaction_anchor_by_channel_message,
             provider=provider,
             channel_message_id=channel_message_id,
+            channel_target_id=channel_target_id,
             op_name="get_interaction_anchor_by_channel_message",
         )
 

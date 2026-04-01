@@ -14,7 +14,9 @@ from src.skills.registry import SkillRegistry
 from src.skills.rule_authoring import RuleAuthoringTool
 from src.skills.search import SearchTool
 from src.skills.skill_installer import SkillInstallerTool
+from src.skills.synthetic_output import SyntheticOutputTool
 from src.skills.text_processing import TextProcessingTool
+from src.skills.tool_search import ToolSearchTool
 from src.skills.web_fetch import WebFetchTool
 from src.utils.logging import get_logger
 
@@ -37,6 +39,8 @@ def create_default_registry() -> SkillRegistry:
     registry.register_tool(HttpClientTool())
     registry.register_tool(WebFetchTool())
     registry.register_tool(TextProcessingTool())
+    registry.register_tool(ToolSearchTool(registry))
+    registry.register_tool(SyntheticOutputTool())
     registry.register_tool(MemoryTool())
     registry.register_tool(RuleAuthoringTool(tool_name="control_plane", registry=registry))
     registry.register_tool(RuleAuthoringTool(tool_name="rule_authoring", legacy_alias=True, registry=registry))
@@ -51,6 +55,8 @@ def create_default_registry() -> SkillRegistry:
                 "http_client",
                 "web_fetch",
                 "text_processing",
+                "tool_search",
+                "synthetic_output",
                 "memory",
                 "control_plane",
                 "rule_authoring",

@@ -161,6 +161,56 @@ def test_list_events_after_supports_event_types_filter(store: EventStore):
     assert rows[0].event_type == "beta"
 
 
+def test_list_events_supports_capability_filter(store: EventStore):
+    store.append(
+        Event(
+            event_id="evt_capability_1",
+            event_type="tool.exec.started",
+            source="test",
+            subject=None,
+            payload={"capability_id": "mcp:browser.open_url"},
+        )
+    )
+    store.append(
+        Event(
+            event_id="evt_capability_2",
+            event_type="tool.exec.started",
+            source="test",
+            subject=None,
+            payload={"capability_id": "tool:bash.exec"},
+        )
+    )
+
+    rows = store.list_events(limit=10, capability_id="browser")
+    assert len(rows) == 1
+    assert rows[0].event_id == "evt_capability_1"
+
+
+def test_list_approvals_supports_capability_filter(store: EventStore):
+    store.insert_approval(
+        ApprovalRequest(
+            approval_id="appr_capability_1",
+            rule_id="rule_1",
+            event_id="evt_1",
+            risk_level="high",
+            context={"capability_id": "mcp:browser.open_url"},
+        )
+    )
+    store.insert_approval(
+        ApprovalRequest(
+            approval_id="appr_capability_2",
+            rule_id="rule_2",
+            event_id="evt_2",
+            risk_level="high",
+            context={"capability_id": "tool:bash.exec"},
+        )
+    )
+
+    rows = store.list_approvals(limit=10, capability_id="browser")
+    assert len(rows) == 1
+    assert rows[0].approval_id == "appr_capability_1"
+
+
 def _make_llm_usage_event(event_id: str, session_id: str, node: str, model: str, prompt: int, completion: int) -> Event:
     return Event(
         event_id=event_id,

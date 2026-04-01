@@ -5,6 +5,7 @@ from contextlib import suppress
 from typing import Any
 
 from src.orchestrator.state import ExecutionPlan, PlanStep
+from src.skills.skill_context_extractor import normalize_skill_context_for_act
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -325,12 +326,18 @@ def validate_plan_candidate(
         parsed_response, candidate_plan, completed_step_ids=completed_step_ids,
     )
     if contract_error:
+        if "does not define output_contract" in contract_error:
+            return (
+                contract_error
+                + " Regenerate the plan and add an output_contract to every producer step referenced by "
+                "input_refs.source_step_id."
+            )
         return contract_error + " Regenerate the plan with valid delivery and handoff contract fields."
 
     # 3. Selected skill without read_skill
-    # Only enforce this when the skill is actually in the skill index (i.e., read_skill
-    # was available). If there's no skill index, the LLM may reference a skill name
-    # generically without needing to call read_skill first.
+    # Execution constraint: if the planner selected a skill that exists in the
+    # current skill index, that skill must have been loaded via read_skill first.
+    # Reject and retry instead of silently clearing selected_skill.
     if isinstance(candidate_plan, ExecutionPlan):
         selected_skill = str(candidate_plan.selected_skill or "").strip()
         if (
@@ -338,11 +345,11 @@ def validate_plan_candidate(
             and _lookup_enabled_skill_item(runtime_context, selected_skill)
             and str(loaded_skill_id or "").strip() != selected_skill
         ):
-            # Clear the invalid selected_skill instead of rejecting the entire plan.
-            # This avoids unnecessary retry loops when the LLM picks a skill name
-            # without calling read_skill first (common for simple tasks).
-            candidate_plan.selected_skill = None
-            candidate_plan.skill_context_for_act = None
+            return (
+                f"Invalid plan: you selected skill '{selected_skill}' before loading it via read_skill. "
+                "Call read_skill for that skill first, then regenerate the plan with selected_skill "
+                "and a valid skill_context_for_act."
+            )
 
     # 4. Missing skill_context_for_act
     if isinstance(candidate_plan, ExecutionPlan):
@@ -442,9 +449,10 @@ def _check_skill_context_structure(candidate_plan: ExecutionPlan) -> str | None:
     if not isinstance(candidate_plan, ExecutionPlan):
         return None
     selected_skill = str(candidate_plan.selected_skill or "").strip()
-    raw_skill_context = candidate_plan.skill_context_for_act
+    raw_skill_context = normalize_skill_context_for_act(candidate_plan.skill_context_for_act)
     if not selected_skill or not isinstance(raw_skill_context, dict):
         return None
+    candidate_plan.skill_context_for_act = raw_skill_context
 
     skill_id = str(raw_skill_context.get("skill_id") or "").strip()
     execution_rules = raw_skill_context.get("execution_rules")

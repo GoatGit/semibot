@@ -6,6 +6,7 @@ from src.skills.http_client import HttpClientTool
 from src.skills.memory import MemoryTool
 from src.skills.search import SearchTool
 from src.skills.semi_browser import SemiBrowserTool
+from src.skills.synthetic_output import SyntheticOutputTool
 from src.skills.text_processing import TextProcessingTool
 from src.skills.web_fetch import WebFetchTool
 
@@ -46,9 +47,12 @@ def test_text_processing_schema_exposes_compact_extract_slice_and_transform() ->
 
     assert props["text"]["type"] == "string"
     assert props["schema"]["type"] == "object"
-    assert props["operation"]["enum"] == ["compact", "extract", "slice", "transform"]
+    assert props["operation"]["enum"] == ["brief", "compact", "extract", "slice", "transform"]
+    assert props["brief_mode"]["enum"] == ["summary", "brief", "key_points", "compress"]
+    assert props["style"]["enum"] == ["neutral", "executive", "bullet"]
     assert props["extract_mode"]["enum"] == ["single_object", "array_of_objects"]
     assert "operation=compact" in tool.description
+    assert "operation=brief" in tool.description
     assert "returns a deterministic slice wrapped in a slices array" in tool.description
     assert "operation=transform" in tool.description
 
@@ -74,6 +78,10 @@ def test_memory_tool_schema_exposes_snapshot_target_session_and_budget() -> None
 
 def test_data_tools_descriptions_capture_mode_boundaries() -> None:
     assert "auto mode" in TextProcessingTool().description
+    synthetic_output = SyntheticOutputTool()
+    assert "final schema-bound structured output" in synthetic_output.description
+    assert synthetic_output.parameters["required"] == ["schema"]
+    assert synthetic_output.parameters["properties"]["value"]["description"].startswith("Structured payload")
 
 
 def test_pdf_generator_is_marked_as_wrapper() -> None:

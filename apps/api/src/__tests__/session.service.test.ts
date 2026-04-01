@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const mockFindByIdAndOrg = vi.fn()
+const mockFindByUserAndOrg = vi.fn()
+const mockFindByOrg = vi.fn()
+const mockCreateMessage = vi.fn()
+const mockCountBySessionId = vi.fn()
 const mockFindBySessionId = vi.fn()
 const mockRuntimeRequest = vi.fn()
 const mockGetLocalDb = vi.fn()
@@ -9,9 +13,13 @@ const mockReadFile = vi.fn()
 
 vi.mock('../repositories/session.repository', () => ({
   findByIdAndOrg: mockFindByIdAndOrg,
+  findByUserAndOrg: mockFindByUserAndOrg,
+  findByOrg: mockFindByOrg,
 }))
 
 vi.mock('../repositories/message.repository', () => ({
+  create: mockCreateMessage,
+  countBySessionId: mockCountBySessionId,
   findBySessionId: mockFindBySessionId,
 }))
 
@@ -36,6 +44,10 @@ describe('session.service', () => {
   beforeEach(() => {
     vi.resetModules()
     mockFindByIdAndOrg.mockReset()
+    mockFindByUserAndOrg.mockReset()
+    mockFindByOrg.mockReset()
+    mockCreateMessage.mockReset()
+    mockCountBySessionId.mockReset()
     mockFindBySessionId.mockReset()
     mockRuntimeRequest.mockReset()
     mockGetLocalDb.mockReset()
@@ -48,6 +60,30 @@ describe('session.service', () => {
     })
     mockReadDir.mockRejectedValue(new Error('no checkpoints'))
     mockReadFile.mockRejectedValue(new Error('no checkpoint file'))
+    mockFindByUserAndOrg.mockResolvedValue({
+      data: [],
+      meta: { total: 0, page: 1, limit: 20, totalPages: 1 },
+    })
+    mockFindByOrg.mockResolvedValue({
+      data: [],
+      meta: { total: 0, page: 1, limit: 20, totalPages: 1 },
+    })
+    mockCountBySessionId.mockResolvedValue(0)
+    mockCreateMessage.mockResolvedValue({
+      id: 'msg-1',
+      session_id: 'sess-1',
+      attempt_id: null,
+      user_message_id: null,
+      parent_id: null,
+      role: 'assistant',
+      content: 'ok',
+      tool_calls: null,
+      tool_call_id: null,
+      tokens_used: null,
+      latency_ms: null,
+      metadata: null,
+      created_at: '2026-03-28T08:00:00.000Z',
+    })
   })
 
   it('returns persisted session even when runtime /v1/sessions is unavailable', async () => {
@@ -623,5 +659,91 @@ describe('session.service', () => {
         message: 'web_fetch request failed: ConnectError',
       },
     ])
+  })
+
+  it('falls back to org sessions when user-scoped query is empty and keeps sessions visible', async () => {
+    mockFindByUserAndOrg.mockResolvedValue({
+      data: [],
+      meta: { total: 0, page: 1, limit: 20, totalPages: 1 },
+    })
+    mockFindByOrg.mockResolvedValue({
+      data: [
+        {
+          id: 'sess-org-fallback-1',
+          org_id: 'local',
+          agent_id: 'agent-1',
+          user_id: 'legacy-user',
+          status: 'active',
+          title: 'Legacy Web Session',
+          metadata_json: null,
+          started_at: '2026-03-28T08:00:00.000Z',
+          ended_at: null,
+          created_at: '2026-03-28T08:00:00.000Z',
+          deleted_at: null,
+          deleted_by: null,
+        },
+      ],
+      meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+    })
+    mockRuntimeRequest.mockRejectedValue(new Error('runtime unavailable'))
+
+    const { listSessions } = await import('../services/session.service')
+    const result = await listSessions('current-user', { page: 1, limit: 20 })
+
+    expect(result.data).toHaveLength(1)
+    expect(result.data[0]).toMatchObject({
+      id: 'sess-org-fallback-1',
+      userId: 'current-user',
+      title: 'Legacy Web Session',
+    })
+  })
+
+  it('allows adding assistant message when persisted session is active', async () => {
+    mockFindByIdAndOrg.mockResolvedValue({
+      id: 'sess-live-1',
+      org_id: 'local',
+      agent_id: 'agent-1',
+      user_id: 'user-1',
+      status: 'active',
+      title: 'Active Session',
+      metadata_json: null,
+      started_at: '2026-03-28T08:00:00.000Z',
+      ended_at: null,
+      created_at: '2026-03-28T08:00:00.000Z',
+      deleted_at: null,
+      deleted_by: null,
+    })
+    mockCreateMessage.mockResolvedValue({
+      id: 'msg-live-1',
+      session_id: 'sess-live-1',
+      attempt_id: 'att-1',
+      user_message_id: 'user-msg-1',
+      parent_id: null,
+      role: 'assistant',
+      content: 'final answer',
+      tool_calls: null,
+      tool_call_id: null,
+      tokens_used: null,
+      latency_ms: null,
+      metadata: null,
+      created_at: '2026-03-28T08:00:10.000Z',
+    })
+
+    const { addMessage } = await import('../services/session.service')
+    const message = await addMessage('sess-live-1', {
+      role: 'assistant',
+      content: 'final answer',
+      attemptId: 'att-1',
+      userMessageId: 'user-msg-1',
+    })
+
+    expect(mockCountBySessionId).toHaveBeenCalledWith('sess-live-1')
+    expect(mockCreateMessage).toHaveBeenCalled()
+    expect(message).toMatchObject({
+      id: 'msg-live-1',
+      sessionId: 'sess-live-1',
+      role: 'assistant',
+      content: 'final answer',
+    })
   })
 })

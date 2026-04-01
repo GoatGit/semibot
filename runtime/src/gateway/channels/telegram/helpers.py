@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.gateway.channels.shared import format_approval_notice, query_value
+from src.gateway.channels.shared import ChannelAnchorAdapter, format_approval_notice, query_value
 
 if TYPE_CHECKING:
     from src.gateway.manager import GatewayManager
@@ -160,21 +160,15 @@ async def resume_after_approval(
         if not notifier:
             return False
         target_chat_id = str(ctx.get("chat_id") or "").strip() or chat_id
-        sent = await notifier.send_notify_payload(
+        adapter = ChannelAnchorAdapter(manager=manager, notifier=notifier)
+        return await adapter.deliver(
             {
                 "content": reply_text,
                 "chat_id": target_chat_id,
                 "files": ctx.get("files") if isinstance(ctx, dict) else [],
-            }
+            },
+            anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
         )
-        if sent:
-            metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
-            await manager.gateway_context.bind_anchor_delivery(
-                anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
-                channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
-                channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
-            )
-        return sent
 
     resumed: list[dict[str, Any]] = []
     agent = manager._gateway_agent_id(

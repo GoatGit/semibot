@@ -88,15 +88,13 @@ class TestPolicyEngine:
         policy.tool_permissions["code_run"] = ToolPermission(
             tool_name="code_run",
             risk_level=RiskLevel.MEDIUM,
-            requires_sandbox=True,
-            max_memory_mb=512,
+            sandbox_enabled=True,
             max_execution_time_seconds=60,
         )
 
         config = policy.get_sandbox_config("code_run")
 
         assert config is not None
-        assert config.max_memory_mb == 512
         assert config.max_execution_time_seconds == 60
 
     def test_check_permission_allowed(self, policy):

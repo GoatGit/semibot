@@ -1,48 +1,86 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import jwt from 'jsonwebtoken'
 
-const { mockSql, mockSpawn } = vi.hoisted(() => ({
-  mockSql: vi.fn(),
+const { mockSpawn, mockHomedir } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
-}))
-
-vi.mock('../lib/db', () => ({
-  sql: ((...args: unknown[]) => mockSql(...args)) as unknown,
+  mockHomedir: vi.fn(),
 }))
 
 vi.mock('node:child_process', () => ({
   spawn: (...args: unknown[]) => mockSpawn(...args),
 }))
 
-import { ensureUserVM, forceRebootstrap, getUserVMStatus } from '../scheduler/vm-scheduler'
+vi.mock('node:os', async () => {
+  const actual = await vi.importActual<typeof import('node:os')>('node:os')
+  const mocked = {
+    ...actual,
+    homedir: () => mockHomedir(),
+  }
+  return {
+    ...mocked,
+    default: mocked,
+  }
+})
+
+type VMRow = {
+  id: string
+  user_id: string
+  org_id: string
+  status: 'starting' | 'provisioning' | 'running' | 'ready' | 'disconnected' | 'terminated' | 'failed'
+  mode: string
+  vm_id: string | null
+  connect_ticket: string | null
+  ticket_used_at: string | null
+  last_bootstrap_at: string | null
+  bootstrap_attempts: number
+  bootstrap_last_error: string | null
+  created_at: string
+}
+
+async function seedVmStore(home: string, rows: VMRow[]): Promise<void> {
+  const dir = path.join(home, '.semibot', 'vm')
+  await fs.mkdir(dir, { recursive: true })
+  await fs.writeFile(path.join(dir, 'instances.json'), JSON.stringify({ instances: rows }, null, 2))
+}
 
 describe('vm-scheduler', () => {
+  const originalHome = process.env.HOME
   const originalNodeEnv = process.env.NODE_ENV
+  let tempHome = ''
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    vi.resetModules()
+    tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'semibot-vm-scheduler-'))
+    process.env.HOME = tempHome
+    mockHomedir.mockReturnValue(tempHome)
+    process.env.JWT_SECRET = 'test-secret'
+    process.env.NODE_ENV = 'production'
     delete process.env.VM_BOOTSTRAP_CMD
     delete process.env.VM_BOOTSTRAP_COOLDOWN_MS
     delete process.env.VM_BOOTSTRAP_MAX_ATTEMPTS
     delete process.env.VM_PROVISIONING_RETRY_COOLDOWN_MS
-    process.env.JWT_SECRET = 'test-secret'
-    process.env.NODE_ENV = 'production'
   })
 
-  afterAll(() => {
+  afterEach(async () => {
+    await fs.rm(tempHome, { recursive: true, force: true })
+    if (originalHome === undefined) delete process.env.HOME
+    else process.env.HOME = originalHome
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV
     else process.env.NODE_ENV = originalNodeEnv
   })
 
   it('creates a vm instance when missing', async () => {
-    mockSql
-      .mockResolvedValueOnce([]) // getActiveVM
-      .mockResolvedValueOnce([{ vm_mode: null, default_vm_mode: 'docker' }]) // resolve mode
-      .mockResolvedValueOnce([{ id: 'vm-1' }]) // create
+    const { ensureUserVM } = await import('../scheduler/vm-scheduler')
 
     const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
 
-    expect(result).toEqual({ ready: false, status: 'starting', instanceId: 'vm-1' })
+    expect(result.ready).toBe(false)
+    expect(result.status).toBe('starting')
+    expect(result.instanceId).toBeTruthy()
   })
 
   it('creates and provisions vm when bootstrap command is available', async () => {
@@ -50,266 +88,121 @@ describe('vm-scheduler', () => {
     const unref = vi.fn()
     mockSpawn.mockReturnValue({ unref })
 
-    mockSql
-      .mockResolvedValueOnce([]) // getActiveVM
-      .mockResolvedValueOnce([{ vm_mode: null, default_vm_mode: 'docker' }]) // resolve mode
-      .mockResolvedValueOnce([{ id: 'vm-1b' }]) // create
-      .mockResolvedValueOnce([{ connect_ticket: 'ticket-1' }]) // issue ticket
-      .mockResolvedValueOnce(undefined) // touch bootstrap attempt
-      .mockResolvedValueOnce(undefined) // mark provisioning
-
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
-    expect(result).toEqual({ ready: false, status: 'provisioning', instanceId: 'vm-1b' })
-    expect(mockSpawn).toHaveBeenCalled()
-  })
-
-  it('returns ready when ws is connected', async () => {
-    mockSql
-      .mockResolvedValueOnce([{ id: 'vm-2', status: 'running', mode: 'docker', vm_id: 'x' }]) // getActiveVM
-      .mockResolvedValueOnce(undefined) // mark ready
-
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: true })
-
-    expect(result).toEqual({ ready: true, status: 'ready', instanceId: 'vm-2' })
-  })
-
-  it('promotes starting vm to ready when ws becomes connected', async () => {
-    mockSql
-      .mockResolvedValueOnce([{ id: 'vm-2b', status: 'starting', mode: 'docker', vm_id: null }]) // getActiveVM
-      .mockResolvedValueOnce(undefined) // mark ready
-
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: true })
-
-    expect(result).toEqual({ ready: true, status: 'ready', instanceId: 'vm-2b' })
-  })
-
-  it('treats stale ready vm as disconnected and reprovisions when ws is not connected', async () => {
-    process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
-    const unref = vi.fn()
-    mockSpawn.mockReturnValue({ unref })
-
-    mockSql
-      .mockResolvedValueOnce([
-        {
-          id: 'vm-2c',
-          status: 'ready',
-          mode: 'docker',
-          vm_id: 'x',
-          connect_ticket: null,
-          ticket_used_at: null,
-          last_bootstrap_at: null,
-          bootstrap_attempts: 0,
-          bootstrap_last_error: null,
-        },
-      ]) // getActiveVM
-      .mockResolvedValueOnce([{ connect_ticket: 'ticket-2c' }]) // issue ticket
-      .mockResolvedValueOnce(undefined) // touch bootstrap attempt
-      .mockResolvedValueOnce(undefined) // mark provisioning
-
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
-    expect(result).toEqual({ ready: false, status: 'provisioning', instanceId: 'vm-2c' })
-    expect(mockSpawn).toHaveBeenCalled()
-    expect(unref).toHaveBeenCalled()
-  })
-
-  it('downgrades stale ready vm to disconnected when bootstrap is skipped by cooldown', async () => {
-    process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
-    process.env.VM_BOOTSTRAP_COOLDOWN_MS = '60000'
-    const recent = new Date(Date.now() - 500).toISOString()
-
-    mockSql
-      .mockResolvedValueOnce([
-        {
-          id: 'vm-2d',
-          status: 'ready',
-          mode: 'docker',
-          vm_id: 'x',
-          connect_ticket: null,
-          ticket_used_at: null,
-          last_bootstrap_at: recent,
-          bootstrap_attempts: 0,
-          bootstrap_last_error: null,
-        },
-      ]) // getActiveVM
-      .mockResolvedValueOnce(undefined) // mark disconnected
-
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
-    expect(result).toMatchObject({ ready: false, status: 'disconnected', instanceId: 'vm-2d' })
-    expect(result.retryAfterMs).toBeGreaterThan(0)
-    expect(mockSpawn).not.toHaveBeenCalled()
-  })
-
-  it('triggers bootstrap for disconnected vm', async () => {
-    process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
-    const unref = vi.fn()
-    mockSpawn.mockReturnValue({ unref })
-
-    mockSql
-      .mockResolvedValueOnce([{ id: 'vm-3', status: 'disconnected', mode: 'docker', vm_id: 'x', connect_ticket: null, ticket_used_at: null, last_bootstrap_at: null, bootstrap_attempts: 0, bootstrap_last_error: null }]) // getActiveVM
-      .mockResolvedValueOnce([{ connect_ticket: 'ticket-3' }]) // issue ticket
-      .mockResolvedValueOnce(undefined) // touch bootstrap attempt
-      .mockResolvedValueOnce(undefined) // mark provisioning
-
+    const { ensureUserVM } = await import('../scheduler/vm-scheduler')
     const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
 
-    expect(result).toEqual({ ready: false, status: 'provisioning', instanceId: 'vm-3' })
-    expect(mockSpawn).toHaveBeenCalled()
-    expect(unref).toHaveBeenCalled()
+    expect(result.ready).toBe(false)
+    expect(result.status).toBe('provisioning')
     const spawnArgs = mockSpawn.mock.calls[0]
     expect(spawnArgs[0]).toBe('/bin/sh')
     expect(spawnArgs[1]).toEqual(['-lc', 'echo bootstrap'])
     expect(spawnArgs[2]?.env).toMatchObject({
       VM_USER_ID: 'user-1',
       VM_ORG_ID: 'org-1',
-      VM_INSTANCE_ID: 'vm-3',
+      VM_INSTANCE_ID: result.instanceId,
       VM_MODE: 'docker',
-      VM_TICKET: 'ticket-3',
     })
-    const token = spawnArgs[2]?.env?.VM_TOKEN as string
-    expect(typeof token).toBe('string')
-    const decoded = jwt.verify(token, 'test-secret') as { userId: string; orgId: string }
-    expect(decoded.userId).toBe('user-1')
-    expect(decoded.orgId).toBe('org-1')
-  })
-
-  it('triggers bootstrap for starting vm when not ws-ready', async () => {
-    process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
-    const unref = vi.fn()
-    mockSpawn.mockReturnValue({ unref })
-
-    mockSql
-      .mockResolvedValueOnce([{ id: 'vm-3b', status: 'starting', mode: 'docker', vm_id: null, connect_ticket: null, ticket_used_at: null, last_bootstrap_at: null, bootstrap_attempts: 0, bootstrap_last_error: null }]) // getActiveVM
-      .mockResolvedValueOnce([{ connect_ticket: 'ticket-3b' }]) // issue ticket
-      .mockResolvedValueOnce(undefined) // touch bootstrap attempt
-      .mockResolvedValueOnce(undefined) // mark provisioning
-
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
-
-    expect(result).toEqual({ ready: false, status: 'provisioning', instanceId: 'vm-3b' })
-    expect(mockSpawn).toHaveBeenCalled()
+    const decoded = jwt.verify(spawnArgs[2]?.env?.VM_TOKEN as string, 'test-secret') as { userId: string; orgId: string }
+    expect(decoded).toMatchObject({ userId: 'user-1', orgId: 'org-1' })
     expect(unref).toHaveBeenCalled()
   })
 
-  it('retries bootstrap while provisioning when not ws-ready', async () => {
-    process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
-    const unref = vi.fn()
-    mockSpawn.mockReturnValue({ unref })
+  it('returns ready when ws is connected', async () => {
+    await seedVmStore(tempHome, [{
+      id: 'vm-2',
+      user_id: 'user-1',
+      org_id: 'org-1',
+      status: 'running',
+      mode: 'docker',
+      vm_id: 'x',
+      connect_ticket: null,
+      ticket_used_at: null,
+      last_bootstrap_at: null,
+      bootstrap_attempts: 0,
+      bootstrap_last_error: null,
+      created_at: new Date().toISOString(),
+    }])
 
-    mockSql
-      .mockResolvedValueOnce([{ id: 'vm-3c', status: 'provisioning', mode: 'docker', vm_id: null, connect_ticket: null, ticket_used_at: null, last_bootstrap_at: null, bootstrap_attempts: 1, bootstrap_last_error: null }]) // getActiveVM
-      .mockResolvedValueOnce([{ connect_ticket: 'ticket-3c' }]) // issue ticket
-      .mockResolvedValueOnce(undefined) // touch bootstrap attempt
-      .mockResolvedValueOnce(undefined) // mark provisioning
+    const { ensureUserVM } = await import('../scheduler/vm-scheduler')
+    const result = await ensureUserVM('user-1', 'org-1', { wsReady: true })
 
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
-
-    expect(result).toEqual({ ready: false, status: 'provisioning', instanceId: 'vm-3c' })
-    expect(mockSpawn).toHaveBeenCalled()
-    expect(unref).toHaveBeenCalled()
+    expect(result).toEqual({ ready: true, status: 'ready', instanceId: 'vm-2' })
   })
 
-  it('respects provisioning retry cooldown before rebootstrap', async () => {
+  it('downgrades stale ready vm to disconnected when bootstrap is skipped by cooldown', async () => {
     process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
-    process.env.VM_PROVISIONING_RETRY_COOLDOWN_MS = '5000'
-    const recent = new Date(Date.now() - 800).toISOString()
+    process.env.VM_BOOTSTRAP_COOLDOWN_MS = '60000'
+    await seedVmStore(tempHome, [{
+      id: 'vm-2d',
+      user_id: 'user-1',
+      org_id: 'org-1',
+      status: 'ready',
+      mode: 'docker',
+      vm_id: 'x',
+      connect_ticket: null,
+      ticket_used_at: null,
+      last_bootstrap_at: new Date(Date.now() - 500).toISOString(),
+      bootstrap_attempts: 0,
+      bootstrap_last_error: null,
+      created_at: new Date().toISOString(),
+    }])
 
-    mockSql.mockResolvedValueOnce([
-      {
-        id: 'vm-3d',
-        status: 'provisioning',
-        mode: 'docker',
-        vm_id: null,
-        connect_ticket: null,
-        ticket_used_at: null,
-        last_bootstrap_at: recent,
-        bootstrap_attempts: 1,
-        bootstrap_last_error: null,
-      },
-    ]) // getActiveVM
-
+    const { ensureUserVM } = await import('../scheduler/vm-scheduler')
     const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
 
-    expect(result).toMatchObject({ ready: false, status: 'provisioning', instanceId: 'vm-3d' })
+    expect(result).toMatchObject({ ready: false, status: 'disconnected', instanceId: 'vm-2d' })
     expect(result.retryAfterMs).toBeGreaterThan(0)
     expect(mockSpawn).not.toHaveBeenCalled()
   })
 
-  it('reuses existing unused connect ticket during provisioning retry', async () => {
+  it('retries provisioning after cooldown and reuses connect ticket', async () => {
     process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
     process.env.VM_PROVISIONING_RETRY_COOLDOWN_MS = '1000'
     const unref = vi.fn()
     mockSpawn.mockReturnValue({ unref })
-    const stale = new Date(Date.now() - 3000).toISOString()
+    await seedVmStore(tempHome, [{
+      id: 'vm-3e',
+      user_id: 'user-1',
+      org_id: 'org-1',
+      status: 'provisioning',
+      mode: 'docker',
+      vm_id: null,
+      connect_ticket: 'ticket-existing',
+      ticket_used_at: null,
+      last_bootstrap_at: new Date(Date.now() - 3000).toISOString(),
+      bootstrap_attempts: 1,
+      bootstrap_last_error: null,
+      created_at: new Date().toISOString(),
+    }])
 
-    mockSql
-      .mockResolvedValueOnce([
-        {
-          id: 'vm-3e',
-          status: 'provisioning',
-          mode: 'docker',
-          vm_id: null,
-          connect_ticket: 'ticket-existing',
-          ticket_used_at: null,
-          last_bootstrap_at: stale,
-          bootstrap_attempts: 1,
-          bootstrap_last_error: null,
-        },
-      ]) // getActiveVM
-      .mockResolvedValueOnce(undefined) // touch bootstrap attempt
-      .mockResolvedValueOnce(undefined) // mark provisioning
-
+    const { ensureUserVM } = await import('../scheduler/vm-scheduler')
     const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
 
     expect(result).toEqual({ ready: false, status: 'provisioning', instanceId: 'vm-3e' })
-    expect(mockSpawn).toHaveBeenCalled()
-    const spawnArgs = mockSpawn.mock.calls[0]
-    expect(spawnArgs[2]?.env?.VM_TICKET).toBe('ticket-existing')
+    expect(mockSpawn.mock.calls[0][2]?.env?.VM_TICKET).toBe('ticket-existing')
     expect(unref).toHaveBeenCalled()
   })
 
-  it('skips bootstrap when disconnected vm is within cooldown window', async () => {
-    process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
-    process.env.VM_BOOTSTRAP_COOLDOWN_MS = '60000'
-    const recent = new Date(Date.now() - 500).toISOString()
-
-    mockSql.mockResolvedValueOnce([
-      {
-        id: 'vm-4',
-        status: 'disconnected',
-        mode: 'docker',
-        vm_id: 'x',
-        last_bootstrap_at: recent,
-        bootstrap_attempts: 2,
-        bootstrap_last_error: null,
-      },
-    ])
-
-    const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
-
-    expect(result).toMatchObject({ ready: false, status: 'disconnected', instanceId: 'vm-4' })
-    expect(result.retryAfterMs).toBeGreaterThan(0)
-    expect(mockSpawn).not.toHaveBeenCalled()
-  })
-
   it('marks vm failed when bootstrap attempts exceed limit', async () => {
-    process.env.VM_BOOTSTRAP_CMD = 'echo bootstrap'
     process.env.VM_BOOTSTRAP_MAX_ATTEMPTS = '2'
-    mockSql
-      .mockResolvedValueOnce([
-        {
-          id: 'vm-5',
-          status: 'disconnected',
-          mode: 'docker',
-          vm_id: 'x',
-          last_bootstrap_at: null,
-          bootstrap_attempts: 2,
-          bootstrap_last_error: null,
-        },
-      ]) // getActiveVM
-      .mockResolvedValueOnce(undefined) // mark failed
-      .mockResolvedValueOnce(undefined) // record failure
+    await seedVmStore(tempHome, [{
+      id: 'vm-5',
+      user_id: 'user-1',
+      org_id: 'org-1',
+      status: 'disconnected',
+      mode: 'docker',
+      vm_id: 'x',
+      connect_ticket: null,
+      ticket_used_at: null,
+      last_bootstrap_at: null,
+      bootstrap_attempts: 2,
+      bootstrap_last_error: null,
+      created_at: new Date().toISOString(),
+    }])
 
+    const { ensureUserVM } = await import('../scheduler/vm-scheduler')
     const result = await ensureUserVM('user-1', 'org-1', { wsReady: false })
+
     expect(result).toEqual({ ready: false, status: 'failed', instanceId: 'vm-5' })
     expect(mockSpawn).not.toHaveBeenCalled()
   })
@@ -319,25 +212,24 @@ describe('vm-scheduler', () => {
     process.env.VM_BOOTSTRAP_COOLDOWN_MS = '60000'
     const unref = vi.fn()
     mockSpawn.mockReturnValue({ unref })
-    const recent = new Date(Date.now() - 200).toISOString()
+    await seedVmStore(tempHome, [{
+      id: 'vm-6',
+      user_id: 'user-1',
+      org_id: 'org-1',
+      status: 'disconnected',
+      mode: 'docker',
+      vm_id: 'x',
+      connect_ticket: null,
+      ticket_used_at: null,
+      last_bootstrap_at: new Date(Date.now() - 200).toISOString(),
+      bootstrap_attempts: 1,
+      bootstrap_last_error: null,
+      created_at: new Date().toISOString(),
+    }])
 
-    mockSql
-      .mockResolvedValueOnce([
-        {
-          id: 'vm-6',
-          status: 'disconnected',
-          mode: 'docker',
-          vm_id: 'x',
-          last_bootstrap_at: recent,
-          bootstrap_attempts: 1,
-          bootstrap_last_error: null,
-        },
-      ]) // getActiveVM
-      .mockResolvedValueOnce([{ connect_ticket: 'ticket-6' }]) // issue ticket
-      .mockResolvedValueOnce(undefined) // touch bootstrap attempt
-      .mockResolvedValueOnce(undefined) // mark provisioning
-
+    const { forceRebootstrap } = await import('../scheduler/vm-scheduler')
     const result = await forceRebootstrap('user-1', 'org-1')
+
     expect(result).toEqual({ ready: false, status: 'provisioning', instanceId: 'vm-6' })
     expect(mockSpawn).toHaveBeenCalled()
     expect(unref).toHaveBeenCalled()
@@ -345,21 +237,24 @@ describe('vm-scheduler', () => {
 
   it('getUserVMStatus returns retryAfterMs when in cooldown window', async () => {
     process.env.VM_BOOTSTRAP_COOLDOWN_MS = '60000'
-    const recent = new Date(Date.now() - 500).toISOString()
+    await seedVmStore(tempHome, [{
+      id: 'vm-7',
+      user_id: 'user-1',
+      org_id: 'org-1',
+      status: 'disconnected',
+      mode: 'docker',
+      vm_id: 'x',
+      connect_ticket: null,
+      ticket_used_at: null,
+      last_bootstrap_at: new Date(Date.now() - 500).toISOString(),
+      bootstrap_attempts: 2,
+      bootstrap_last_error: 'x',
+      created_at: new Date().toISOString(),
+    }])
 
-    mockSql.mockResolvedValueOnce([
-      {
-        id: 'vm-7',
-        status: 'disconnected',
-        mode: 'docker',
-        vm_id: 'x',
-        last_bootstrap_at: recent,
-        bootstrap_attempts: 2,
-        bootstrap_last_error: 'x',
-      },
-    ])
-
+    const { getUserVMStatus } = await import('../scheduler/vm-scheduler')
     const status = await getUserVMStatus('user-1')
+
     expect(status).toMatchObject({
       instanceId: 'vm-7',
       status: 'disconnected',

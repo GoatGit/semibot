@@ -233,7 +233,7 @@ def _prepare_artifact_aware_action(
         _inject_skill_script_artifacts(action, prior_results, session_id)
 
 
-_ENABLE_FRESHNESS_VALIDATION = str(os.getenv("SEMIBOT_ENABLE_FRESHNESS_VALIDATION", "false")).strip().lower() in {
+_ENABLE_FRESHNESS_VALIDATION = str(os.getenv("SEMIBOT_ENABLE_FRESHNESS_VALIDATION", "true")).strip().lower() in {
     "1",
     "true",
     "yes",
@@ -247,16 +247,36 @@ def _get_freshness_validation_flag() -> bool:
     return bool(getattr(_nodes_act_mod, "_ENABLE_FRESHNESS_VALIDATION", _ENABLE_FRESHNESS_VALIDATION))
 
 
-# --- Disabled: latest intent detection (non-generic) ---
-_LATEST_INTENT_TOKENS: tuple[str, ...] = ()
+_LATEST_INTENT_TOKENS: tuple[str, ...] = (
+    "最新",
+    "最近",
+    "今日",
+    "今天",
+    "latest",
+    "recent",
+    "today",
+    "current",
+    "up-to-date",
+    "up to date",
+)
 
 
-def _is_latest_research_intent(text: str) -> bool:  # noqa: ARG001
-    return False
+def _is_latest_research_intent(text: str) -> bool:
+    haystack = str(text or "").strip().lower()
+    if not haystack:
+        return False
+    return any(token in haystack for token in _LATEST_INTENT_TOKENS)
 
 
-def _search_query_contains_stale_year(query: str, *, today: datetime) -> bool:  # noqa: ARG001
-    return False
+def _search_query_contains_stale_year(query: str, *, today: datetime) -> bool:
+    text = str(query or "").strip()
+    if not text:
+        return False
+    years = [int(match) for match in _re.findall(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)]
+    if not years:
+        return False
+    current_year = int(getattr(today, "year", datetime.now(timezone.utc).year))
+    return any(year < current_year for year in years)
 
 
 def _has_same_step_search_provider_failures(

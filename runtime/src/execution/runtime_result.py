@@ -40,9 +40,11 @@ def serialize_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
             serialized.append(dict(item))
             continue
         tool_name = getattr(item, "tool_name", None)
+        capability_id = getattr(item, "capability_id", None)
         params = getattr(item, "params", None)
         serialized.append(
             {
+                "capability_id": str(capability_id or ""),
                 "tool_name": str(tool_name or ""),
                 "params": dict(params) if isinstance(params, dict) else {},
                 "result": getattr(item, "result", None),
@@ -65,6 +67,7 @@ def normalize_tool_results(raw_results: Any) -> list[ToolCallResult]:
             continue
         if not isinstance(row, dict):
             continue
+        capability_id = str(row.get("capability_id") or row.get("capabilityId") or "").strip() or None
         tool_name = str(row.get("tool_name") or "").strip()
         params = row.get("params") if isinstance(row.get("params"), dict) else {}
         result = row.get("result")
@@ -77,6 +80,7 @@ def normalize_tool_results(raw_results: Any) -> list[ToolCallResult]:
         normalized.append(
             ToolCallResult(
                 tool_name=tool_name or "unknown",
+                capability_id=capability_id,
                 params=params,
                 result=result,
                 error=error,

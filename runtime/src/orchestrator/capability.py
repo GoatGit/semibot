@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.orchestrator.context import (
+    CapabilityDescriptor,
     RuntimeSessionContext,
     SkillDefinition,
     ToolDefinition,
@@ -321,6 +322,41 @@ class McpCapability(Capability):
         return True
 
 
+@dataclass
+class SubAgentCapability(Capability):
+    """Capability representing a delegatable sub-agent."""
+
+    agent_id: str = ""
+    capability_type: str = field(default="sub_agent", init=False)
+
+    def to_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description or f"Delegate to {self.name}",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "Delegated task"},
+                    },
+                    "required": ["task"],
+                },
+            },
+            "metadata": {
+                "capability_type": "sub_agent",
+                "agent_id": self.agent_id,
+            },
+        }
+
+    def validate_params(self, params: dict[str, Any]) -> tuple[bool, str | None]:
+        if not isinstance(params, dict):
+            return False, "Parameters must be a dictionary"
+        if not str(params.get("task") or "").strip():
+            return False, "Missing required parameter: task"
+        return True, None
+
+
 class CapabilityGraph:
     """
     Session-level capability graph.
@@ -387,24 +423,42 @@ class CapabilityGraph:
                 },
             )
 
-        for entry in self.context.get_tool_catalog():
-            entry_variants = [entry, *expand_catalog_entry_for_llm(entry)]
-            seen_variant_ids: set[str] = set()
-            for variant in entry_variants:
-                if variant.tool_id in seen_variant_ids:
+        descriptors = self.context.get_capability_descriptors()
+        if descriptors:
+            for descriptor in descriptors:
+                capability = self._capability_from_descriptor(descriptor)
+                if capability is None:
                     continue
-                seen_variant_ids.add(variant.tool_id)
-                capability = self._capability_from_catalog_entry(variant)
-                self.capabilities[variant.tool_id] = capability
-                self.capabilities_by_name[variant.tool_name] = capability
-            logger.debug(
-                "Added catalog capability",
-                extra={
-                    "tool_id": entry.tool_id,
-                    "tool_name": entry.tool_name,
-                    "source_type": entry.source_type,
-                },
-            )
+                self.capabilities[descriptor.id] = capability
+                self.capabilities_by_name[descriptor.name] = capability
+                logger.debug(
+                    "Added descriptor capability",
+                    extra={
+                        "capability_id": descriptor.id,
+                        "capability_name": descriptor.name,
+                        "kind": descriptor.kind,
+                        "source_type": descriptor.source.get("type"),
+                    },
+                )
+        else:
+            for entry in self.context.get_tool_catalog():
+                entry_variants = [entry, *expand_catalog_entry_for_llm(entry)]
+                seen_variant_ids: set[str] = set()
+                for variant in entry_variants:
+                    if variant.tool_id in seen_variant_ids:
+                        continue
+                    seen_variant_ids.add(variant.tool_id)
+                    capability = self._capability_from_catalog_entry(variant)
+                    self.capabilities[variant.tool_id] = capability
+                    self.capabilities_by_name[variant.tool_name] = capability
+                logger.debug(
+                    "Added catalog capability",
+                    extra={
+                        "tool_id": entry.tool_id,
+                        "tool_name": entry.tool_name,
+                        "source_type": entry.source_type,
+                    },
+                )
 
         self._built = True
 
@@ -454,6 +508,64 @@ class CapabilityGraph:
         )
         return ToolCapability(tool_definition=tool_definition)
 
+    def _capability_from_descriptor(self, descriptor: CapabilityDescriptor) -> Capability | None:
+        if str(descriptor.kind or "").strip() == "sub_agent":
+            return SubAgentCapability(
+                name=descriptor.name,
+                description=descriptor.description,
+                agent_id=str(descriptor.source.get("agentId") or ""),
+                metadata={
+                    "tool_id": descriptor.id,
+                    "capability_id": descriptor.id,
+                    "display_name": descriptor.display_name,
+                    "source": "agent",
+                    "risk_level": descriptor.risk_level,
+                    "requires_approval": descriptor.requires_approval,
+                    "approval_policy_key": descriptor.approval_policy_key,
+                    "agent_id": str(descriptor.source.get("agentId") or ""),
+                    "sub_agent_id": str(descriptor.source.get("agentId") or ""),
+                    **dict(descriptor.constraints or {}),
+                    **dict(descriptor.metadata or {}),
+                },
+            )
+
+        source_type = str(descriptor.source.get("type") or "builtin").strip() or "builtin"
+        if source_type == "mcp":
+            return McpCapability(
+                name=descriptor.name,
+                description=descriptor.description,
+                mcp_server_id=str(descriptor.source.get("serverId") or ""),
+                mcp_server_name=str(descriptor.source.get("serverName") or ""),
+                tool_schema={
+                    "name": descriptor.source.get("toolName") or descriptor.name,
+                    "description": descriptor.description,
+                    "inputSchema": dict(descriptor.input_schema or {}),
+                },
+                metadata={
+                    "tool_id": descriptor.id,
+                    "display_name": descriptor.display_name,
+                    "source": "mcp",
+                    **dict(descriptor.metadata or {}),
+                },
+            )
+
+        tool_definition = ToolDefinition(
+            name=descriptor.name,
+            description=descriptor.description,
+            parameters=dict(descriptor.input_schema or {}),
+            metadata={
+                "tool_id": descriptor.id,
+                "display_name": descriptor.display_name,
+                "source": source_type,
+                "requires_approval": descriptor.requires_approval,
+                "risk_level": descriptor.risk_level,
+                "approval_policy_key": descriptor.approval_policy_key,
+                **dict(descriptor.constraints or {}),
+                **dict(descriptor.metadata or {}),
+            },
+        )
+        return ToolCapability(tool_definition=tool_definition)
+
     def get_schemas_for_planner(self) -> list[dict[str, Any]]:
         """
         Generate LLM-compatible schemas for the planner.
@@ -482,6 +594,33 @@ class CapabilityGraph:
             extra={"session_id": self.context.session_id},
         )
 
+        return schemas
+
+    def get_core_schemas_for_planner(self) -> list[dict[str, Any]]:
+        """Return a small stable subset of schemas for planner-side grounding."""
+        if not self._built:
+            self.build()
+
+        core_names = {
+            "search",
+            "web_fetch",
+            "file_io",
+            "semi_browser",
+            "http_client",
+            "text_processing",
+            "memory",
+            "code_executor",
+        }
+        schemas: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for capability in self.capabilities.values():
+            if capability.name not in core_names or capability.name in seen:
+                continue
+            try:
+                schemas.append(capability.to_schema())
+                seen.add(capability.name)
+            except Exception as e:
+                logger.warning(f"Failed to generate core schema for {capability.name}: {e}")
         return schemas
 
     def validate_action(self, action_name: str) -> bool:
@@ -525,6 +664,17 @@ class CapabilityGraph:
             self.build()
 
         return self.capabilities.get(name) or self.capabilities_by_name.get(name)
+
+    def get_capability_id(self, name: str) -> str | None:
+        """Resolve canonical capability id for a capability name or id."""
+        if not self._built:
+            self.build()
+
+        capability = self.get_capability(name)
+        if capability is None:
+            return None
+        metadata = capability.metadata if isinstance(capability.metadata, dict) else {}
+        return str(metadata.get("tool_id") or "").strip() or None
 
     def list_capabilities(self) -> list[str]:
         """

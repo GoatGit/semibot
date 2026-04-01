@@ -11,6 +11,11 @@ from src.skills.registry import SkillRegistry
 from src.skills.skill_installer import SkillInstallerTool, _search_registry, _is_auth_failure, install_or_refresh_skill
 
 
+@pytest.fixture(autouse=True)
+def _isolate_skills_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SEMIBOT_SKILLS_PATH", raising=False)
+
+
 def _write_skill_package(base: Path) -> None:
     (base / "scripts").mkdir(parents=True, exist_ok=True)
     (base / "SKILL.md").write_text("# Demo Skill\n", encoding="utf-8")

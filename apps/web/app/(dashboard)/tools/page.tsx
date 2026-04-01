@@ -156,6 +156,53 @@ interface CliImportRequestItem {
   created_at?: string
 }
 
+function normalizeToolDescription(description: string): string {
+  return String(description || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([,.:;])\s*/g, '$1 ')
+    .trim()
+}
+
+function extractFirstSentence(text: string): string {
+  const match = text.match(/^(.+?[。.!?])(?:\s|$)/)
+  return match?.[1]?.trim() || text
+}
+
+function buildToolCardCopy(item: ToolCatalogItem): { summary: string; highlights: string[] } {
+  const normalized = normalizeToolDescription(item.description)
+  if (!normalized) {
+    return { summary: '--', highlights: [] }
+  }
+
+  const withoutExamples = normalized.replace(/\s*Minimal examples:.*/i, '').trim()
+  const summary = extractFirstSentence(withoutExamples)
+  const highlights: string[] = []
+
+  const operationsMatch = withoutExamples.match(/operations:\s*([^.]+)/i)
+  if (operationsMatch?.[1]) {
+    const count = operationsMatch[1]
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean).length
+    if (count > 0) highlights.push(`${count} actions`)
+  }
+
+  const useMatch = withoutExamples.match(/\bUse\s+([^.]+)/i)
+  if (useMatch?.[1]) {
+    highlights.push(useMatch[1].trim())
+  }
+
+  const supportsMatch = withoutExamples.match(/\bSupports?\s+([^.]+)/i)
+  if (supportsMatch?.[1]) {
+    highlights.push(supportsMatch[1].trim())
+  }
+
+  return {
+    summary,
+    highlights: Array.from(new Set(highlights)).slice(0, 3),
+  }
+}
+
 export default function ToolsPage() {
   const { t } = useLocale()
   const router = useRouter()
@@ -552,12 +599,13 @@ export default function ToolsPage() {
                 const isBuiltinEditable = editable && item.sourceType === 'builtin'
                 const isActive = builtinRecord?.isActive !== false
                 const isSaving = savingBuiltinName === item.toolName
+                const cardCopy = buildToolCardCopy(item)
                 return (
                   <>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-text-primary">{item.displayName || item.toolName}</p>
-                  <p className="mt-1 text-sm text-text-secondary">{item.description || '--'}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{cardCopy.summary}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   {isBuiltinEditable ? (
@@ -566,6 +614,15 @@ export default function ToolsPage() {
                   <Badge variant="outline">{item.sourceType}</Badge>
                 </div>
               </div>
+              {cardCopy.highlights.length > 0 ? (
+                <div className="flex flex-wrap gap-2 text-xs text-text-secondary">
+                  {cardCopy.highlights.map((highlight) => (
+                    <span key={highlight} className="rounded-full bg-bg-surface px-2.5 py-1">
+                      {highlight}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="flex flex-wrap gap-2 text-xs text-text-tertiary">
                 <span className="rounded border border-border-subtle bg-bg-surface px-2 py-1 font-mono">
                   {item.toolName}

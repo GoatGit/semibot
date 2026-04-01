@@ -5,7 +5,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
-from src.queue.producer import TaskProducer
+from src.queue.producer import QueueFullError, TaskPayload, TaskProducer
 from src.queue.consumer import TaskConsumer, TaskMessage
 
 
@@ -30,7 +30,7 @@ def producer(mock_redis):
     prod = TaskProducer(
         redis_url="redis://localhost:6379",
         queue_name="test:queue",
-        max_queue_size=10,
+        max_queue_length=10,
     )
     prod._redis = mock_redis
     return prod
@@ -55,7 +55,7 @@ async def test_producer_backpressure_when_queue_full(producer, mock_redis):
     # Simulate full queue
     mock_redis.llen.return_value = 10  # max_queue_size
 
-    task = TaskMessage(
+    task = TaskPayload(
         task_id="task_001",
         session_id="sess_123",
         agent_id="agent_456",
@@ -66,10 +66,10 @@ async def test_producer_backpressure_when_queue_full(producer, mock_redis):
     )
 
     # Should raise or handle backpressure
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(QueueFullError) as exc_info:
         await producer.enqueue(task)
 
-    assert "queue full" in str(exc_info.value).lower() or "backpressure" in str(exc_info.value).lower()
+    assert "queue length exceeded" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_consumer_concurrent_limit_enforcement(consumer, mock_redis):
         await asyncio.sleep(0.1)  # Simulate work
         concurrent_count -= 1
 
-    consumer._handler = slow_handler
+    consumer.handler = slow_handler
 
     # Start consumer briefly
     consumer_task = asyncio.create_task(consumer.start())
@@ -125,7 +125,7 @@ async def test_consumer_concurrent_limit_enforcement(consumer, mock_redis):
 @pytest.mark.asyncio
 async def test_dead_letter_queue_retry_logic(producer, mock_redis):
     """Test dead letter queue handles failed tasks with retry."""
-    task = TaskMessage(
+    task = TaskPayload(
         task_id="task_001",
         session_id="sess_123",
         agent_id="agent_456",
@@ -135,22 +135,20 @@ async def test_dead_letter_queue_retry_logic(producer, mock_redis):
         metadata={"retry_count": 2},
     )
 
-    # Mock DLQ operations
-    dlq_key = "test:queue:dlq"
-
-    await producer.move_to_dlq(task, error="execution failed")
-
-    # Should push to DLQ
-    mock_redis.lpush.assert_called()
-    call_args = mock_redis.lpush.call_args
-    assert dlq_key in call_args[0]
+    # Producer no longer exposes a dedicated DLQ API; enqueue should still work
+    # and preserve retry metadata for the consumer-side dead-letter flow.
+    await producer.enqueue(task)
+    mock_redis.lpush.assert_called_once()
+    enqueued = json.loads(mock_redis.lpush.call_args[0][1])
+    assert enqueued["metadata"]["retry_count"] == 2
+    assert "enqueued_at" in enqueued["metadata"]
 
 
 @pytest.mark.asyncio
 async def test_consumer_handles_malformed_task_data(consumer, mock_redis):
     """Test consumer handles malformed task data gracefully."""
     # Mock brpop to return invalid JSON
-    mock_redis.brpop.return_value = ("test:queue", b"invalid json {{{")
+    mock_redis.brpop.side_effect = [("test:queue", b"invalid json {{{"), None]
 
     # Should not crash, should log error and continue
     consumer_task = asyncio.create_task(consumer.start())
@@ -162,8 +160,8 @@ async def test_consumer_handles_malformed_task_data(consumer, mock_redis):
     except asyncio.TimeoutError:
         pass
 
-    # Consumer should still be functional (not crashed)
-    assert consumer._redis is not None
+    # Consumer should stop cleanly after the malformed payload.
+    assert consumer._running is False
 
 
 @pytest.mark.asyncio
@@ -175,7 +173,7 @@ async def test_consumer_handles_missing_required_fields(consumer, mock_redis):
         # Missing session_id, agent_id, org_id, messages
     }
 
-    mock_redis.brpop.return_value = ("test:queue", json.dumps(incomplete_task).encode())
+    mock_redis.brpop.side_effect = [("test:queue", json.dumps(incomplete_task).encode()), None]
 
     # Should handle gracefully
     consumer_task = asyncio.create_task(consumer.start())
@@ -187,8 +185,8 @@ async def test_consumer_handles_missing_required_fields(consumer, mock_redis):
     except asyncio.TimeoutError:
         pass
 
-    # Should not crash
-    assert consumer._redis is not None
+    # Consumer should stop cleanly after handling the incomplete payload.
+    assert consumer._running is False
 
 
 @pytest.mark.asyncio
@@ -197,7 +195,7 @@ async def test_producer_handles_redis_connection_failure(producer):
     # Simulate connection failure
     producer._redis = None
 
-    task = TaskMessage(
+    task = TaskPayload(
         task_id="task_001",
         session_id="sess_123",
         agent_id="agent_456",
@@ -225,7 +223,7 @@ async def test_consumer_graceful_shutdown_waits_for_tasks(consumer, mock_redis):
         "metadata": {},
     }
 
-    mock_redis.brpop.return_value = ("test:queue", json.dumps(task_data).encode())
+    mock_redis.brpop.side_effect = [("test:queue", json.dumps(task_data).encode()), None]
 
     # Track if task completed
     task_completed = False
@@ -235,7 +233,7 @@ async def test_consumer_graceful_shutdown_waits_for_tasks(consumer, mock_redis):
         await asyncio.sleep(0.5)
         task_completed = True
 
-    consumer._handler = slow_handler
+    consumer.handler = slow_handler
 
     # Start consumer and immediately stop
     consumer_task = asyncio.create_task(consumer.start())

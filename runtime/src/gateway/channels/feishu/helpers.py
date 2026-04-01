@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import logging
 
-from src.gateway.channels.shared import format_approval_notice, query_value
+from src.gateway.channels.shared import ChannelAnchorAdapter, format_approval_notice, query_value
 
 if TYPE_CHECKING:
     from src.gateway.manager import GatewayManager
@@ -118,7 +118,8 @@ async def resume_after_approval(
         context_map = context if isinstance(context, dict) else {}
         files = context_map.get("files")
         target_chat_id = str(context_map.get("chat_id") or chat_id).strip()
-        sent = await notifier.send_notify_payload(
+        adapter = ChannelAnchorAdapter(manager=manager, notifier=notifier)
+        return await adapter.deliver(
             {
                 "title": "Semibot",
                 "content": reply_text,
@@ -126,16 +127,9 @@ async def resume_after_approval(
                 "receive_id_type": "chat_id" if target_chat_id else None,
                 "receive_id": target_chat_id or None,
                 "files": files if isinstance(files, list) else [],
-            }
+            },
+            anchor_id=str(context_map.get("anchor_id") or "").strip() or None,
         )
-        if sent:
-            metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
-            await manager.gateway_context.bind_anchor_delivery(
-                anchor_id=str(context_map.get("anchor_id") or "").strip() or None,
-                channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
-                channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
-            )
-        return sent
 
     resumed: list[dict[str, Any]] = []
     seen_execution_ids: set[str] = set()

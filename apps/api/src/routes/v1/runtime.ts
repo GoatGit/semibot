@@ -33,9 +33,11 @@ interface RuntimeGatewayConversationsPayload {
     instance_id?: string
     bot_id?: string
     chat_id?: string
-    active_runtime_session_id?: string | null
-    active_runtime_session_status?: string
-    active_runtime_forked_from_session_id?: string | null
+    legacy_debug?: {
+      active_runtime_session_id?: string | null
+      active_runtime_session_status?: string
+      active_runtime_forked_from_session_id?: string | null
+    } | null
     status?: string
     updated_at?: string
     latest_run?: {
@@ -69,6 +71,7 @@ interface RuntimeGatewayContextPayload {
   messages?: Array<{
     id?: string
     context_version?: number
+    version?: number
     role?: string
     content?: string
     metadata?: Record<string, unknown>
@@ -143,6 +146,7 @@ const runtimeSkillsCliSchema = z.object({
 const runtimeMonitorQuerySchema = z.object({
   limit: z.coerce.number().min(20).max(500).optional(),
   sessionId: z.string().min(1).max(120).optional(),
+  capability: z.string().min(1).max(240).optional(),
 })
 
 const controlPlaneActionParamsSchema = z.object({
@@ -222,6 +226,13 @@ function eventSessionId(event: RuntimeMonitorEvent): string | null {
   const payload = event.payload
   if (!payload) return null
   const direct = readString(payload.session_id) || readString(payload.sessionId)
+  return direct || null
+}
+
+function eventCapabilityId(event: RuntimeMonitorEvent): string | null {
+  const payload = event.payload
+  if (!payload) return null
+  const direct = readString(payload.capability_id) || readString(payload.capabilityId)
   return direct || null
 }
 
@@ -541,9 +552,10 @@ router.get(
   combinedRateLimit,
   validate(runtimeMonitorQuerySchema, 'query'),
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { limit, sessionId } = req.query as z.infer<typeof runtimeMonitorQuerySchema>
+    const { limit, sessionId, capability } = req.query as z.infer<typeof runtimeMonitorQuerySchema>
     const fetchLimit = limit ?? 200
     const targetSessionId = readString(sessionId) || undefined
+    const targetCapability = readString(capability) || undefined
 
     try {
       const response = await runtimeRequest<{ items?: unknown[] }>('/v1/events', {
@@ -552,6 +564,7 @@ router.get(
           event_types: RUNTIME_MONITOR_EVENT_TYPES.join(','),
           limit: fetchLimit,
           ...(targetSessionId ? { session_id: targetSessionId } : {}),
+          ...(targetCapability ? { capability_id: targetCapability } : {}),
         },
         timeoutMs: 4000,
       })
@@ -559,6 +572,9 @@ router.get(
       const events = items
         .map(normalizeRuntimeMonitorEvent)
         .filter((item): item is RuntimeMonitorEvent => item !== null)
+        .filter((event) =>
+          !targetCapability || Boolean(eventCapabilityId(event)?.toLowerCase().includes(targetCapability.toLowerCase()))
+        )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
       const signals = events.filter((event) => event.eventType === 'runtime.signal')
@@ -570,7 +586,7 @@ router.get(
       const drUpgradeEvents = events.filter((event) => event.eventType === 'observe_dr.upgrade_to_plan_act')
 
       let tokenUsage = summarizeTokenUsageFromEvents(usageEvents)
-      if (!targetSessionId) {
+      if (!targetSessionId && !targetCapability) {
         try {
           const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
           const usageResponse = await runtimeRequest<{
@@ -1119,7 +1135,7 @@ router.get(
       try {
         const url = new URL(`${baseUrl}/v1/gateway/conversations`)
         if (query.provider) url.searchParams.set('provider', query.provider)
-        if (query.limit) url.searchParams.set('limit', String(query.limit))
+        url.searchParams.set('limit', String(query.limit ?? 20))
 
         const response = await fetch(url.toString(), {
           method: 'GET',
@@ -1149,11 +1165,11 @@ router.get(
                 status: item.status || 'active',
                 updatedAt: item.updated_at || new Date().toISOString(),
                 legacyDebug:
-                  item.active_runtime_session_id || item.active_runtime_forked_from_session_id
+                  item.legacy_debug?.active_runtime_session_id || item.legacy_debug?.active_runtime_forked_from_session_id
                     ? {
-                        activeRuntimeSessionId: item.active_runtime_session_id || '',
-                        activeRuntimeSessionStatus: item.active_runtime_session_status || 'idle',
-                        activeRuntimeForkedFromSessionId: item.active_runtime_forked_from_session_id || '',
+                        activeRuntimeSessionId: item.legacy_debug?.active_runtime_session_id || '',
+                        activeRuntimeSessionStatus: item.legacy_debug?.active_runtime_session_status || 'idle',
+                        activeRuntimeForkedFromSessionId: item.legacy_debug?.active_runtime_forked_from_session_id || '',
                       }
                     : null,
                 latestRun: item.latest_run ? {
@@ -1314,7 +1330,7 @@ router.get(
             messages: messages
               .map((item) => ({
                 id: item.id || '',
-                contextVersion: item.context_version ?? 0,
+                contextVersion: item.context_version ?? item.version ?? 0,
                 role: item.role || 'unknown',
                 content: item.content || '',
                 metadata: item.metadata || {},

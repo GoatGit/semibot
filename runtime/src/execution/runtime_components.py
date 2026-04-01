@@ -85,6 +85,7 @@ def build_runtime_tool_definitions(
         extra_metadata = metadata_resolver(tool.name) if metadata_resolver is not None else {}
         if not isinstance(extra_metadata, dict):
             extra_metadata = {}
+        search_hint = str(getattr(tool, "search_hint", "") or extra_metadata.get("search_hint") or "").strip()
         source = str(extra_metadata.get("source") or "builtin").strip() or "builtin"
         tools.append(
             ToolDefinition(
@@ -93,6 +94,7 @@ def build_runtime_tool_definitions(
                 parameters=tool.parameters,
                 metadata={
                     **extra_metadata,
+                    **({"search_hint": search_hint} if search_hint else {}),
                     "source": source,
                     "requires_approval": requires_approval,
                     "risk_level": risk_level,
@@ -135,7 +137,7 @@ def build_runtime_skill_definitions(
     for item in skill_index:
         if not isinstance(item, dict):
             continue
-        skill_id = str(item.get("id") or item.get("name") or "").strip()
+        skill_id = str(item.get("skill_id") or item.get("id") or item.get("name") or "").strip()
         if not skill_id or skill_id in seen:
             continue
         package = item.get("package")
@@ -159,6 +161,7 @@ def build_runtime_skill_definitions(
             normalized_inventory_scripts = {
                 path for path in package_files if path.startswith("scripts/") and path.strip()
             }
+        resources = item.get("resources") if isinstance(item.get("resources"), dict) else {}
         skills.append(
             SkillDefinition(
                 id=skill_id,
@@ -168,9 +171,22 @@ def build_runtime_skill_definitions(
                 source=str(item.get("source") or "local"),
                 schema={},
                 metadata={
-                    "has_skill_md": "SKILL.md" in package_files,
+                    "has_skill_md": bool(resources.get("has_skill_md", "SKILL.md" in package_files or item.get("has_skill_md"))),
                     "package_files": package_files[:50],
                     "script_files": sorted(normalized_inventory_scripts)[:50],
+                    "when_to_use": str(item.get("when_to_use") or "").strip() or None,
+                    "execution_context": str(item.get("execution_context") or "").strip() or None,
+                    "effort": str(item.get("effort") or "").strip() or None,
+                    "paths": [
+                        str(path).strip()
+                        for path in (item.get("paths") if isinstance(item.get("paths"), list) else [])
+                        if str(path).strip()
+                    ],
+                    "allowed_tools": [
+                        str(path).strip()
+                        for path in (item.get("allowed_tools") if isinstance(item.get("allowed_tools"), list) else [])
+                        if str(path).strip()
+                    ],
                 },
             )
         )

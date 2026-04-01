@@ -236,18 +236,32 @@ class EventStore:
             ).fetchone()
             return _from_iso(row["created_at"]) if row else None
 
-    def list_events_by_session(self, session_id: str, *, limit: int = 200) -> list[Event]:
+    def list_events_by_session(
+        self,
+        session_id: str,
+        *,
+        capability_id: str | None = None,
+        limit: int = 200,
+    ) -> list[Event]:
         """Return events for a specific session_id using SQL-level json_extract."""
+        clauses = ["json_extract(payload, '$.session_id') = ?"]
+        args: list[str | int] = [session_id]
+        if capability_id:
+            clauses.append(
+                "(LOWER(json_extract(payload, '$.capability_id')) LIKE ? OR LOWER(json_extract(payload, '$.capabilityId')) LIKE ?)"
+            )
+            needle = f"%{capability_id.lower()}%"
+            args.extend([needle, needle])
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT id, event_type, source, subject, payload, idempotency_key, risk_hint, created_at
                 FROM events
-                WHERE json_extract(payload, '$.session_id') = ?
+                WHERE {' AND '.join(clauses)}
                 ORDER BY created_at ASC
                 LIMIT ?
                 """,
-                (session_id, limit),
+                (*args, limit),
             ).fetchall()
         return [
             Event(
@@ -326,6 +340,7 @@ class EventStore:
         limit: int = 100,
         event_type: str | None = None,
         event_types: list[str] | None = None,
+        capability_id: str | None = None,
         since: datetime | None = None,
     ) -> list[Event]:
         query = """
@@ -350,6 +365,12 @@ class EventStore:
         if since:
             clauses.append("created_at >= ?")
             args.append(_to_iso(since) or "")
+        if capability_id:
+            clauses.append(
+                "(LOWER(json_extract(payload, '$.capability_id')) LIKE ? OR LOWER(json_extract(payload, '$.capabilityId')) LIKE ?)"
+            )
+            needle = f"%{capability_id.lower()}%"
+            args.extend([needle, needle])
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at DESC LIMIT ?"
@@ -380,6 +401,7 @@ class EventStore:
         limit: int = 100,
         event_type: str | None = None,
         event_types: list[str] | None = None,
+        capability_id: str | None = None,
     ) -> list[Event]:
         """
         List events after cursor in ascending order for incremental streaming.
@@ -413,6 +435,12 @@ class EventStore:
         elif cursor_created_at:
             clauses.append("created_at > ?")
             args.append(cursor_created_at)
+        if capability_id:
+            clauses.append(
+                "(LOWER(json_extract(payload, '$.capability_id')) LIKE ? OR LOWER(json_extract(payload, '$.capabilityId')) LIKE ?)"
+            )
+            needle = f"%{capability_id.lower()}%"
+            args.extend([needle, needle])
 
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
@@ -588,30 +616,32 @@ class EventStore:
         self,
         *,
         status: str | None = None,
+        capability_id: str | None = None,
         limit: int = 100,
     ) -> list[ApprovalRequest]:
         with self._connect() as conn:
+            clauses: list[str] = []
+            args: list[str | int] = []
             if status:
-                rows = conn.execute(
-                    """
-                    SELECT id, rule_id, event_id, attempt_id, user_message_id, risk_level, blocking, context, status, created_at, resolved_at
-                    FROM approval_requests
-                    WHERE status = ?
-                    ORDER BY created_at ASC
-                    LIMIT ?
-                    """,
-                    (status, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT id, rule_id, event_id, attempt_id, user_message_id, risk_level, blocking, context, status, created_at, resolved_at
-                    FROM approval_requests
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
+                clauses.append("status = ?")
+                args.append(status)
+            if capability_id:
+                clauses.append(
+                    "(LOWER(json_extract(context, '$.capability_id')) LIKE ? OR LOWER(json_extract(context, '$.capabilityId')) LIKE ?)"
+                )
+                needle = f"%{capability_id.lower()}%"
+                args.extend([needle, needle])
+            query = """
+                SELECT id, rule_id, event_id, attempt_id, user_message_id, risk_level, blocking, context, status, created_at, resolved_at
+                FROM approval_requests
+            """
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY created_at "
+            query += "ASC" if status else "DESC"
+            query += " LIMIT ?"
+            args.append(limit)
+            rows = conn.execute(query, tuple(args)).fetchall()
             results: list[ApprovalRequest] = []
             for row in rows:
                 results.append(

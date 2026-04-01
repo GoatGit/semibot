@@ -75,9 +75,9 @@ function normalizeDocType(value: string): ContextPolicyDocType {
   throw createError(RESOURCE_NOT_FOUND, `Unsupported doc type: ${value}`)
 }
 
-export async function getActivePolicies(): Promise<ContextPolicyDoc[]> {
+export async function getActivePolicies(orgId?: string): Promise<ContextPolicyDoc[]> {
   try {
-    const latestRows = await contextPolicyRepo.listLatestApprovedByOrg()
+    const latestRows = await contextPolicyRepo.listLatestApprovedByOrg(orgId)
     const byType = new Map(latestRows.map((row) => [row.doc_type, rowToDoc(row)]))
     return DOC_TYPES.map((docType) => byType.get(docType) ?? buildDefaultDoc(docType))
   } catch (error) {
@@ -89,12 +89,13 @@ export async function getActivePolicies(): Promise<ContextPolicyDoc[]> {
 }
 
 export async function getPolicyVersions(
+  orgId: string,
   docTypeInput: string,
   limit = 20
 ): Promise<ContextPolicyDoc[]> {
   const docType = normalizeDocType(docTypeInput)
   try {
-    const rows = await contextPolicyRepo.listByOrgAndType(docType, limit)
+    const rows = await contextPolicyRepo.listByOrgAndType(orgId, docType, limit)
     return rows.map(rowToDoc)
   } catch (error) {
     if (isMissingContextPolicyTableError(error)) {
@@ -105,6 +106,7 @@ export async function getPolicyVersions(
 }
 
 export async function updatePolicy(
+  orgId: string,
   userId: string,
   docTypeInput: string,
   content: string,
@@ -113,6 +115,7 @@ export async function updatePolicy(
   const docType = normalizeDocType(docTypeInput)
   try {
     const row = await contextPolicyRepo.createApprovedVersion({
+      orgId,
       docType,
       content,
       reviewedBy: userId,
@@ -128,6 +131,7 @@ export async function updatePolicy(
 }
 
 export async function rollbackPolicy(
+  orgId: string,
   userId: string,
   docTypeInput: string,
   targetVersion: string,
@@ -135,11 +139,12 @@ export async function rollbackPolicy(
 ): Promise<ContextPolicyDoc> {
   const docType = normalizeDocType(docTypeInput)
   try {
-    const target = await contextPolicyRepo.findByOrgTypeAndVersion(docType, targetVersion)
+    const target = await contextPolicyRepo.findByOrgTypeAndVersion(orgId, docType, targetVersion)
     if (!target) {
       throw createError(RESOURCE_NOT_FOUND, `Version not found: ${targetVersion}`)
     }
     const row = await contextPolicyRepo.createApprovedVersion({
+      orgId,
       docType,
       content: target.content,
       reviewedBy: userId,

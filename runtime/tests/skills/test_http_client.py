@@ -88,7 +88,7 @@ async def test_http_client_uses_default_api_key_auth_header(monkeypatch: pytest.
 
     monkeypatch.setattr("src.skills.http_client.httpx.AsyncClient", DummyClient)
     monkeypatch.setattr(HttpClientTool, "_load_runtime_config", lambda self: None)
-    monkeypatch.setattr(HttpClientTool, "_validate_url", lambda self, raw_url: (True, None))
+    monkeypatch.setattr("src.skills.http_client._validate_remote_url", lambda *args, **kwargs: (True, None))
 
     tool = HttpClientTool()
     tool.default_auth_type = "api_key"

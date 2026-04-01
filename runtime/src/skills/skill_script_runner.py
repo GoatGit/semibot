@@ -179,7 +179,78 @@ class SkillScriptRunnerTool(BaseTool):
                 "command must reference at least one file under scripts/. "
                 f"available scripts: {hint}"
             )
-        return self._normalize_command_interpreter(normalized_parts), rewrites
+        normalized_parts = self._normalize_command_interpreter(normalized_parts)
+        self._enforce_safe_entrypoint(normalized_parts)
+        return normalized_parts, rewrites
+
+    @staticmethod
+    def _is_env_assignment(token: str) -> bool:
+        text = str(token or "").strip()
+        if not text or "=" not in text or text.startswith("-"):
+            return False
+        key, _, _value = text.partition("=")
+        return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key))
+
+    @staticmethod
+    def _is_allowed_interpreter(token: str) -> bool:
+        candidate = Path(str(token or "").strip().strip("'\"")).name.lower()
+        return candidate in {
+            "python",
+            "python3",
+            "python3.10",
+            "python3.11",
+            "python3.12",
+            "node",
+            "bash",
+            "sh",
+            "zsh",
+        }
+
+    @staticmethod
+    def _normalize_path_token(token: str) -> str:
+        return str(token or "").strip().strip("'\"").replace("\\", "/")
+
+    def _find_leading_script_argument_index(self, parts: list[str], start_idx: int) -> int | None:
+        idx = start_idx
+        while idx < len(parts):
+            token = self._normalize_path_token(parts[idx])
+            if not token:
+                idx += 1
+                continue
+            if token.startswith("-"):
+                idx += 1
+                continue
+            if token.startswith("scripts/"):
+                return idx
+            return None
+        return None
+
+    def _enforce_safe_entrypoint(self, parts: list[str]) -> None:
+        if not parts:
+            raise ValueError("invalid command")
+        cmd_idx = 0
+        while cmd_idx < len(parts) and self._is_env_assignment(parts[cmd_idx]):
+            cmd_idx += 1
+        if cmd_idx >= len(parts):
+            raise ValueError("invalid command")
+
+        entry = self._normalize_path_token(parts[cmd_idx])
+        if entry.startswith("scripts/"):
+            return
+
+        if self._is_allowed_interpreter(entry):
+            script_idx = self._find_leading_script_argument_index(parts, cmd_idx + 1)
+            if script_idx is not None:
+                return
+            raise ValueError(
+                "command must execute a script under scripts/ as the primary entrypoint, "
+                "for example: python scripts/<name>.py ..."
+            )
+
+        raise ValueError(
+            "command entrypoint is not allowed. Use a script under scripts/ directly "
+            "or an allowed interpreter (python/python3/node/bash/sh/zsh) with scripts/<name>."
+        )
 
     @staticmethod
     def _normalize_command_interpreter(parts: list[str]) -> list[str]:
@@ -375,7 +446,7 @@ class SkillScriptRunnerTool(BaseTool):
 
                 if retried:
                     proc2 = await asyncio.create_subprocess_exec(
-                        "bash", "-lc", shell_command,
+                        *command_parts,
                         cwd=str(skill_root),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,

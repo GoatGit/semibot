@@ -123,7 +123,7 @@ def mock_llm_provider():
 @pytest.fixture
 def mock_action_executor():
     """Mock action executor."""
-    executor = AsyncMock()
+    executor = MagicMock()
     executor.execute = AsyncMock(return_value={"result": "success"})
     return executor
 
@@ -131,7 +131,7 @@ def mock_action_executor():
 @pytest.fixture
 def mock_memory_system():
     """Mock memory system."""
-    memory = AsyncMock()
+    memory = MagicMock()
     memory.get_short_term = AsyncMock(return_value="")
     memory.search_long_term = AsyncMock(return_value="")
     memory.save_long_term = AsyncMock(return_value="entry_123")

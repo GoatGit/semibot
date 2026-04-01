@@ -24,11 +24,14 @@ function isExpired(entry: KVEntry): boolean {
 }
 
 // 定期清理过期 key（每 60s）
-setInterval(() => {
+const kvCleanupTimer = setInterval(() => {
   for (const [key, entry] of kvStore) {
     if (isExpired(entry)) kvStore.delete(key)
   }
 }, 60_000)
+if (typeof kvCleanupTimer.unref === 'function') {
+  kvCleanupTimer.unref()
+}
 
 export async function setWithExpiry(key: string, value: string, ttlSeconds: number): Promise<void> {
   kvStore.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 })

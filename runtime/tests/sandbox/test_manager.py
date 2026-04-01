@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import Mock, AsyncMock, MagicMock, patch
 from datetime import datetime
 
+pytest.importorskip("docker")
+
 from src.sandbox.manager import Sandbox, SandboxManager
 from src.sandbox.models import SandboxConfig, SandboxStatus, ExecutionResult
 from src.sandbox.exceptions import (

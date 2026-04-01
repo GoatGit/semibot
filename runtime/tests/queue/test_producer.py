@@ -175,7 +175,7 @@ class TestTaskProducerEnqueue:
         assert "Queue length exceeded" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_enqueue_warning_threshold(self, producer, mock_redis, caplog):
+    async def test_enqueue_warning_threshold(self, producer, mock_redis, capsys):
         """Test warning log when queue approaches capacity."""
         mock_redis.llen = AsyncMock(return_value=5000)  # At warning threshold
         producer._redis = mock_redis
@@ -188,12 +188,9 @@ class TestTaskProducerEnqueue:
             messages=[],
         )
 
-        import logging
-
-        with caplog.at_level(logging.WARNING):
-            await producer.enqueue(payload)
-
-        assert "队列积压严重" in caplog.text
+        await producer.enqueue(payload)
+        captured = capsys.readouterr()
+        assert "队列积压严重" in captured.out
 
 
 class TestTaskProducerQueueOperations:

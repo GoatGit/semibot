@@ -49,9 +49,11 @@ def planner_system_prompt(
         f"== Decision Process ==\n"
         f"1. Read the user request and conversation history.\n"
         f"2. If the task is simple (single search, direct question, straightforward operation), skip tool calls and output a plan or terminate JSON directly.\n"
-        f"3. Only call read_skill(skill_id) when the task clearly benefits from a specific skill's multi-step methodology.\n"
-        f"4. If sub-agent delegation is appropriate, call inspect_sub_agent(agent_id) to understand capabilities.\n"
-        f"5. Output your decision as exactly one JSON object.\n"
+        f"3. Use tool_search(query) when you need to discover which execution tools are relevant in the current runtime.\n"
+        f"4. Use read_tool_schema(tool_id) only after tool_search or catalog cards indicate a specific tool is important to the plan.\n"
+        f"5. Only call read_skill(skill_id) when the task clearly benefits from a specific skill's multi-step methodology.\n"
+        f"6. If sub-agent delegation is appropriate, call inspect_sub_agent(agent_id) to understand capabilities.\n"
+        f"7. Output your decision as exactly one JSON object.\n"
         f"\n"
         f"== Decision Types ==\n"
         f'- "plan": Create an execution plan with semantic steps when tools or skill execution is needed.\n'
@@ -64,6 +66,7 @@ def planner_system_prompt(
         f"- Steps are SEMANTIC — do not specify tool names or tool parameters; ACT handles tool selection.\n"
         f"- Each step must include phase, intent, inputs_required, expected_outputs, execution_constraints, completion_criteria, input_refs, and output_contract.\n"
         f"- Use input_refs to declare step dependencies (source_step_id + medium preference). Do not handwrite input_contract.\n"
+        f"- If any step references another step via input_refs.source_step_id, the referenced producer step must define output_contract so OBSERVE can derive the handoff.\n"
         f"- Preserve stable step IDs for carried-forward completed or still-relevant steps.\n"
         f"- Do not collapse distinct phases into one step. Do not leave critical methodology decisions for ACT to guess.\n"
         f"- final_delivery_contract needs delivery_goal only.\n"
@@ -82,7 +85,7 @@ def planner_system_prompt(
         f"- If no skill matches, create a generic semantic plan using the available execution capabilities.\n"
         f"\n"
         f"== Your Tools ==\n"
-        f"- You may only use read_skill and inspect_sub_agent via actual tool calls.\n"
+        f"- You may use tool_search, read_tool_schema, read_skill, and inspect_sub_agent via actual tool calls.\n"
         f"- Your final JSON must never contain a tool_calls field.\n"
         f"\n"
         f"== Execution Capabilities (ACT will use these to execute your plan) ==\n"
@@ -103,6 +106,7 @@ def compact_planner_system_prompt(
     compact_skill_index: str,
     available_execution_capability_names: dict[str, str],
     compact_memory: str,
+    available_planning_tools: list[str] | None = None,
 ) -> str:
     """Compact-mode planner system prompt (used after context overflow)."""
     if available_execution_capability_names:
@@ -112,6 +116,22 @@ def compact_planner_system_prompt(
         )
     else:
         capabilities_text = "No capabilities available."
+    planning_tools = [
+        str(item).strip()
+        for item in (available_planning_tools or ["tool_search", "read_tool_schema", "read_skill", "inspect_sub_agent"])
+        if str(item).strip()
+    ]
+    planning_tools_text = ", ".join(planning_tools) if planning_tools else "(none)"
+    planning_tool_instruction = (
+        f"Use runtime planning tools ({planning_tools_text}) via actual tool calls."
+        if planning_tools
+        else "No runtime planning tools are currently available."
+    )
+    tool_search_instruction = (
+        "Use tool_search first when you need to discover relevant execution tools. Use read_tool_schema only for a narrowed candidate."
+        if "tool_search" in planning_tools
+        else "Skip tool_search/read_tool_schema in this retry path unless they become available again."
+    )
     return (
         f"You are a task planner. Create an execution plan as JSON only.\n"
         f"\n"
@@ -123,13 +143,14 @@ def compact_planner_system_prompt(
         f"2. For latest/recent/today requests, create a retrieval-first plan — do not terminate prematurely.\n"
         f"3. Steps are semantic and ordered by dependency. Do not pre-bind tool names or params.\n"
         f"4. Each step must include: id, title, phase, intent, inputs_required, expected_outputs, execution_constraints, completion_criteria, input_refs, output_contract.\n"
-        f"5. Use input_refs for step dependencies. Do not emit input_contract.\n"
+        f"5. Use input_refs for step dependencies. Do not emit input_contract. If step B references step A via source_step_id, step A must define output_contract.\n"
         f"6. final_delivery_contract needs delivery_goal only.\n"
-        f"7. Your final JSON must never contain tool_calls. Use runtime planning tools (read_skill, inspect_sub_agent) via actual tool calls.\n"
-        f"8. Only call read_skill(skill_id) when the task clearly benefits from a specific skill's multi-step methodology. For simple tasks, skip read_skill.\n"
-        f"9. When terminating, always provide a user_reply field with a natural response in the user's language.\n"
+        f"7. Your final JSON must never contain tool_calls. {planning_tool_instruction}\n"
+        f"8. {tool_search_instruction}\n"
+        f"9. Only call read_skill(skill_id) when the task clearly benefits from a specific skill's multi-step methodology. For simple tasks, skip read_skill.\n"
+        f"10. When terminating, always provide a user_reply field with a natural response in the user's language.\n"
         f"\n"
-        f"Available planning tools (if provided by runtime): read_skill, inspect_sub_agent\n"
+        f"Available planning tools (if provided by runtime): {planning_tools_text}\n"
         f"\n"
         f"Skill index:\n"
         f"{compact_skill_index}\n"

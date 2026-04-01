@@ -161,6 +161,12 @@ class PlanStep(BaseModel):
         exclude=True,
         repr=False,
     )
+    capability_id: str | None = Field(
+        default=None,
+        description="Canonical executable capability identity used by runtime execution",
+        exclude=True,
+        repr=False,
+    )
     params: dict[str, Any] = Field(
         default_factory=dict,
         description="Internal execution-only field; not part of the planner step contract",
@@ -313,6 +319,7 @@ class ToolCallResult(BaseModel):
     """Result of a tool call execution."""
 
     tool_name: str
+    capability_id: str | None = None
     params: dict[str, Any]
     result: Any = None
     error: str | None = None

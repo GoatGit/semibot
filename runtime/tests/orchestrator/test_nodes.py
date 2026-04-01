@@ -30,6 +30,7 @@ from src.orchestrator.act_tool_executor import (
     _summarize_generic_result_for_handoff,
     _tool_call_is_readonly_parallel_safe,
     _validate_llm_act_tool_call,
+    execute_single_act_tool_call,
 )
 from src.orchestrator.act_llm_caller import build_per_turn_user_message
 from src.orchestrator.nodes_delegate import delegate_node
@@ -44,6 +45,7 @@ from src.orchestrator.nodes_plan import (
     _parse_planner_json_object,
     _build_plan_loop_messages,
     _build_plan_loop_system_prompt,
+    _execute_plan_tool,
     _recent_user_messages_for_compact_plan,
     _trim_plan_loop_messages,
     _is_bad_request_error,
@@ -57,9 +59,10 @@ from src.orchestrator.nodes_respond import (
 )
 from src.orchestrator.nodes_shared import _current_round_skill_id, _serialize_tool_backfeed_content
 from src.orchestrator.nodes_stateflow import _build_execution_state_for_planner
+from src.orchestrator.text_cleanup import clean_user_facing_snippet
 from src.orchestrator.execution import ToolCallResult, parse_plan_response
 from src.orchestrator.state import AgentState, ExecutionPlan, PlanStep, ReflectionResult, StepInputRef, StepOutputContract
-from src.orchestrator.context import AgentConfig, RuntimeSessionContext, ToolDefinition
+from src.orchestrator.context import AgentConfig, CapabilityDescriptor, RuntimeSessionContext, ToolDefinition
 from src.skills.execution_guard import ExecutionAdvisor
 from src.llm.provider_compat import PlanExecutionStrategy, ActExecutionStrategy
 
@@ -138,6 +141,43 @@ def _act_result_json(
         # Auto-generate artifact text for advance_step/complete_task to match system derivation.
         payload["artifact_result_text"] = summary if len(summary) > 20 else f"{summary} — step execution completed successfully with results"
     return json.dumps(payload, ensure_ascii=False)
+
+
+def test_clean_user_facing_snippet_removes_urlencoded_svg_noise():
+    dirty = (
+        "AIBase%20--%3e%3cdefs%3e%3cstyle%3e%20.st0%20{%20fill:%20%23061b40;%20}%20"
+        "%3c/style%3e%3c/defs%3e%3cg%3e%3cpath%20class='st0'%20d='M55,10.5h9v3h-9'/%3e"
+        "%3c/g%3e%3c/svg%3e). # AI新闻资讯. Runway 发布 Multi-Shot App，实现 AI 视频“一键成片”跨越。"
+    )
+    cleaned = clean_user_facing_snippet(dirty)
+    assert "Runway 发布 Multi-Shot App" in cleaned
+    assert "%3c" not in cleaned.lower()
+    assert "<svg" not in cleaned.lower()
+    assert "class='st0'" not in cleaned
+
+
+def test_summarize_generic_result_for_handoff_cleans_dirty_search_snippet():
+    result = ToolCallResult(
+        tool_name="search",
+        success=True,
+        result={
+            "results": [
+                {
+                    "title": "AI最新资讯_人工智能新闻头条 - AI NEWS - AIBase",
+                    "url": "https://example.com/aibase",
+                    "snippet": (
+                        "AIBase%20--%3e%3cdefs%3e%3cstyle%3e%20.st0%20{%20fill:%20%23061b40;%20}%20"
+                        "%3c/style%3e%3c/defs%3e). # AI新闻资讯. 企业微信 CLI 正式开源：AI 获授权调用日程与文档等 7 大能力."
+                    ),
+                }
+            ]
+        },
+        params={"query": "最新AI新闻"},
+    )
+    text = _summarize_generic_result_for_handoff(result)
+    assert "企业微信 CLI 正式开源" in text
+    assert "%3c" not in text.lower()
+    assert "st0" not in text
 
 
 def test_serialize_tool_backfeed_content_truncates_large_payload():
@@ -481,8 +521,8 @@ def mock_context():
     return {
         "llm_provider": AsyncMock(),
         "skill_registry": skill_registry,
-        "unified_executor": AsyncMock(),
-        "memory": AsyncMock(),
+        "unified_executor": MagicMock(execute=AsyncMock()),
+        "memory": MagicMock(),
         "capability_graph": MagicMock(),
     }
 
@@ -1041,6 +1081,139 @@ async def test_plan_node_retries_when_generic_plan_has_no_steps(mock_context, ba
     assert result["current_step"] == "act"
     assert result["plan"].plan_type == "plan"
     assert len(result["pending_actions"]) == 1
+    assert mock_context["llm_provider"].chat.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_plan_node_retries_when_referenced_source_step_omits_output_contract(mock_context, base_state):
+    mock_context["llm_provider"].chat = AsyncMock(
+        side_effect=[
+            SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "type": "plan",
+                        "goal": "研究股票",
+                        "intent_decomposition": {
+                            "requested_operation": "研究股票",
+                            "delivery_goal": "给出分析结论",
+                        },
+                        "final_delivery_contract": {
+                            "delivery_goal": "给出分析结论",
+                            "delivery_format": "inline_summary",
+                            "delivery_scope": "full",
+                            "delivery_language": "zh",
+                        },
+                        "steps": [
+                            {
+                                "id": "step-1",
+                                "title": "收集市场信息",
+                                "phase": "retrieve",
+                                "intent": "收集最新市场信息",
+                                "expected_outputs": ["市场信息摘要"],
+                                "completion_criteria": ["信息足够"],
+                            },
+                            {
+                                "id": "step-2",
+                                "title": "形成结论",
+                                "phase": "synthesize",
+                                "intent": "基于证据形成结论",
+                                "expected_outputs": ["结论"],
+                                "completion_criteria": ["结论完整"],
+                                "input_refs": [
+                                    {
+                                        "name": "market_context",
+                                        "required": True,
+                                        "source_step_id": "step-1",
+                                        "preferred_medium": "artifact_result_text",
+                                        "fallback_medium": "artifact_result_path",
+                                    }
+                                ],
+                                "output_contract": {
+                                    "primary_output_kind": "analysis_summary",
+                                    "handoff_mode": "final_delivery",
+                                    "artifact_role": "analysis_summary",
+                                    "must_produce_text": True,
+                                    "must_materialize_file": False,
+                                    "handoff_purpose": "user_delivery",
+                                },
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                tool_calls=[],
+            ),
+            SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "type": "plan",
+                        "goal": "研究股票",
+                        "intent_decomposition": {
+                            "requested_operation": "研究股票",
+                            "delivery_goal": "给出分析结论",
+                        },
+                        "final_delivery_contract": {
+                            "delivery_goal": "给出分析结论",
+                            "delivery_format": "inline_summary",
+                            "delivery_scope": "full",
+                            "delivery_language": "zh",
+                        },
+                        "steps": [
+                            {
+                                "id": "step-1",
+                                "title": "收集市场信息",
+                                "phase": "retrieve",
+                                "intent": "收集最新市场信息",
+                                "expected_outputs": ["市场信息摘要"],
+                                "completion_criteria": ["信息足够"],
+                                "output_contract": {
+                                    "primary_output_kind": "market_evidence",
+                                    "handoff_mode": "reasoning_text",
+                                    "artifact_role": "evidence_bundle",
+                                    "must_produce_text": True,
+                                    "must_materialize_file": False,
+                                    "handoff_purpose": "reasoning_continuation",
+                                },
+                            },
+                            {
+                                "id": "step-2",
+                                "title": "形成结论",
+                                "phase": "synthesize",
+                                "intent": "基于证据形成结论",
+                                "expected_outputs": ["结论"],
+                                "completion_criteria": ["结论完整"],
+                                "input_refs": [
+                                    {
+                                        "name": "market_context",
+                                        "required": True,
+                                        "source_step_id": "step-1",
+                                        "preferred_medium": "artifact_result_text",
+                                        "fallback_medium": "artifact_result_path",
+                                    }
+                                ],
+                                "output_contract": {
+                                    "primary_output_kind": "analysis_summary",
+                                    "handoff_mode": "final_delivery",
+                                    "artifact_role": "analysis_summary",
+                                    "must_produce_text": True,
+                                    "must_materialize_file": False,
+                                    "handoff_purpose": "user_delivery",
+                                },
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                tool_calls=[],
+            ),
+        ]
+    )
+
+    result = await plan_node(base_state, mock_context)
+
+    assert result["current_step"] == "act"
+    assert result["plan"].plan_type == "plan"
+    assert len(result["pending_actions"]) == 2
     assert mock_context["llm_provider"].chat.await_count == 2
 
 
@@ -1723,11 +1896,12 @@ async def test_plan_node_retries_when_selected_skill_not_loaded_before_plan(mock
     result = await plan_node(base_state, mock_context)
 
     assert result["current_step"] == "act"
-    assert result["plan"].selected_skill is None
-    assert result["plan"].skill_context_for_act is None
+    assert result["plan"].selected_skill == "deep-research"
+    assert isinstance(result["plan"].skill_context_for_act, dict)
+    assert result["plan"].skill_context_for_act.get("skill_id") == "deep-research"
     assert [step.title for step in result["pending_actions"]] == [
-        "读取deep-research技能文档",
-        "执行deep-research研究拼多多股票",
+        "界定研究范围与方法",
+        "收集并交叉验证多源证据",
     ]
 
 
@@ -5140,7 +5314,6 @@ def test_validate_llm_act_tool_call_rejects_code_executor_terminal_json_wrapper(
 
 
 def test_validate_llm_act_tool_call_rejects_stale_year_search_for_latest_request():
-    # Disabled: stale year search validation always returns None
     action = PlanStep(
         id="step-1",
         title="搜索最新 AI 行业动态",
@@ -5160,7 +5333,9 @@ def test_validate_llm_act_tool_call_rejects_stale_year_search_for_latest_request
         today=datetime(2026, 3, 12),
     )
 
-    assert result is None
+    assert result is not None
+    assert result.success is False
+    assert "latest/current information" in str(result.error or "")
 
 
 def test_validate_llm_act_tool_call_allows_explicit_historical_search_when_not_latest_request():
@@ -6275,9 +6450,16 @@ async def test_observe_node_with_empty_plan_steps(mock_context, base_state):
 
 @pytest.mark.asyncio
 async def test_delegate_node_routes_back_to_respond(mock_context, base_state):
-    mock_context["sub_agent_delegator"] = MagicMock()
-    mock_context["sub_agent_delegator"].delegate = AsyncMock(
-        return_value={"result": "delegated answer", "error": None}
+    mock_context["unified_executor"] = AsyncMock()
+    mock_context["unified_executor"].execute = AsyncMock(
+        return_value=ToolCallResult(
+            tool_name="subagent:specialist",
+            capability_id="agent:specialist",
+            params={},
+            result="delegated answer",
+            success=True,
+            metadata={},
+        )
     )
     base_state["plan"] = ExecutionPlan(
         plan_type="delegate",
@@ -6871,6 +7053,8 @@ def test_build_plan_loop_messages_include_tool_catalog_cards():
         available_execution_capabilities={"web_retrieval": "Search the web for current information"},
         planning_limits={"remaining_iterations": 10, "max_iterations": 15},
         runtime_context=runtime_context,
+        planner_tool_catalog_cards=[{"toolName": "search", "displayName": "search", "summary": "Search the web", "sourceType": "builtin"}],
+        planner_core_tool_schemas=[{"type": "function", "function": {"name": "search", "description": "Search the web"}}],
         memory_context="",
         failure_reflection="",
         sub_agents_for_planner=[],
@@ -6881,6 +7065,105 @@ def test_build_plan_loop_messages_include_tool_catalog_cards():
     )
 
     assert any("Tool Catalog Cards" in str(item.get("content") or "") for item in messages)
+    assert any("Core Tool Schemas" in str(item.get("content") or "") for item in messages)
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_tool_search_returns_runtime_catalog_matches():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_1",
+        agent_id="agent_1",
+        session_id="session_1",
+        agent_config=AgentConfig(id="agent_1", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(name="search", description="Search the web"),
+            ToolDefinition(name="file_io", description="Read and write files"),
+        ],
+    )
+
+    result = await _execute_plan_tool(
+        tool_call={
+            "function": {
+                "name": "tool_search",
+                "arguments": json.dumps({"query": "search", "include_parameters": True}),
+            }
+        },
+        runtime_context=runtime_context,
+    )
+
+    assert result["success"] is True
+    assert result["total_matches"] >= 1
+    assert any(item.get("toolName") == "search" for item in result["items"])
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_read_tool_schema_returns_schema():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_1",
+        agent_id="agent_1",
+        session_id="session_1",
+        agent_config=AgentConfig(id="agent_1", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(
+                name="search",
+                description="Search the web",
+                parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+            )
+        ],
+    )
+
+    result = await _execute_plan_tool(
+        tool_call={
+            "function": {
+                "name": "read_tool_schema",
+                "arguments": json.dumps({"tool_id": "builtin:search"}),
+            }
+        },
+        runtime_context=runtime_context,
+    )
+
+    assert result["success"] is True
+    assert result["tool_id"] == "builtin:search"
+    assert result["tool_name"] == "search"
+    assert result["parameters"]["type"] == "object"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_inspect_sub_agent_falls_back_to_capability_summary():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_1",
+        agent_id="agent_1",
+        session_id="session_1",
+        agent_config=AgentConfig(id="agent_1", name="Test Agent"),
+        capabilities=[
+            CapabilityDescriptor(
+                id="agent:researcher",
+                kind="sub_agent",
+                name="subagent:researcher",
+                display_name="Research Specialist",
+                description="Delegated research specialist",
+                source={"type": "agent", "agentId": "researcher"},
+                metadata={"sub_agent_id": "researcher"},
+            )
+        ],
+    )
+
+    result = await _execute_plan_tool(
+        tool_call={
+            "function": {
+                "name": "inspect_sub_agent",
+                "arguments": json.dumps({"agent_id": "researcher"}),
+            }
+        },
+        runtime_context=runtime_context,
+    )
+
+    assert result["success"] is True
+    assert result["id"] == "researcher"
+    assert result["name"] == "Research Specialist"
+    assert result["description"] == "Delegated research specialist"
+    assert result["capabilities"] == []
+    assert result["supported_tools"] == []
 
 
 @pytest.mark.asyncio
@@ -8351,3 +8634,72 @@ def test_merge_dynamic_registry_schemas_skips_blocked_non_executable_skill():
     merged = _merge_dynamic_registry_schemas([], runtime_context)
     names = {str((item.get("function") or {}).get("name") or "") for item in merged}
     assert "deep-research" not in names
+
+
+@pytest.mark.asyncio
+async def test_execute_single_act_tool_call_rejects_group_cli_parent_without_command():
+    state = {
+        "session_id": "session_1",
+        "tool_results": [],
+    }
+    action = PlanStep(id="step_1", title="search xiaohongshu")
+    runtime_context = RuntimeSessionContext(
+        user_id="user_1",
+        agent_id="agent_1",
+        session_id="session_1",
+        agent_config=AgentConfig(id="agent_1", name="Test Agent"),
+        available_tools=[
+            ToolDefinition(
+                name="opencli_xiaohongshu",
+                description="Usage: opencli xiaohongshu [options] [command]",
+                metadata={
+                    "source_type": "cli",
+                    "provider_id": "opencli",
+                    "shape": "group",
+                    "actions": [
+                        {
+                            "command": "search",
+                            "description": "Search Xiaohongshu notes",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"query": {"type": "string"}},
+                                "required": ["query"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+    unified_executor = MagicMock()
+    unified_executor.capability_graph = MagicMock()
+    unified_executor.capability_graph.get_capability.return_value = None
+    unified_executor.execute = AsyncMock()
+
+    call = {
+        "id": "call_1",
+        "function": {
+            "name": "opencli_xiaohongshu",
+            "arguments": "{}",
+        },
+    }
+
+    result = await execute_single_act_tool_call(
+        call,
+        state=state,
+        action=action,
+        current_skill_id="",
+        runtime_context=runtime_context,
+        prior_results=[],
+        pipeline=None,
+        step_results=[],
+        latest_user_text="搜索小红书上最新的Claude code的笔记",
+        unified_executor=unified_executor,
+        event_emitter=None,
+        current_step_snapshot=[],
+    )
+
+    assert result.success is False
+    assert "requires a command" in str(result.error or "")
+    unified_executor.execute.assert_not_called()

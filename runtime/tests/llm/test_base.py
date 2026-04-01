@@ -303,3 +303,48 @@ hidden system note
         assert "<skill_md>" not in fallback_system_prompt
         assert "[SYSTEM] REPLAN" not in fallback_system_prompt
         assert "Latest memory" in fallback_system_prompt
+
+    @pytest.mark.asyncio
+    async def test_generate_plan_accepts_capability_card_style_tool_summaries(self, sample_llm_config):
+        class TestProvider(LLMProvider):
+            def __init__(self, config):
+                super().__init__(config)
+                self.calls = []
+
+            async def chat(self, messages, **kwargs):
+                self.calls.append(messages)
+                return LLMResponse(
+                    content='{"goal":"capability summary test","steps":[]}',
+                    model=self.model,
+                )
+
+            async def chat_stream(self, messages, **kwargs):
+                if False:
+                    yield ""
+
+        provider = TestProvider(sample_llm_config)
+        result = await provider.generate_plan(
+            messages=[{"role": "user", "content": "帮我规划"}],
+            available_tools=[
+                {
+                    "toolId": "builtin:web_search",
+                    "toolName": "web_search",
+                    "displayName": "Web Search",
+                    "summary": "Search the web for current information",
+                    "sourceType": "builtin",
+                }
+            ],
+            available_sub_agents=[
+                {
+                    "id": "researcher",
+                    "name": "Researcher",
+                    "description": "Deep research specialist",
+                }
+            ],
+        )
+
+        assert result["goal"] == "capability summary test"
+        prompt = provider.calls[0][0]["content"]
+        assert "web_search [builtin]" in prompt
+        assert "Search the web for current information" in prompt
+        assert "Researcher (id: researcher): Deep research specialist" in prompt

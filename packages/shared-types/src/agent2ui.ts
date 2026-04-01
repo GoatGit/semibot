@@ -187,6 +187,7 @@ export type ToolCallStatus = 'calling' | 'success' | 'error';
  */
 export interface ToolCallData {
   toolName: string;
+  capabilityId?: string;
   arguments: Record<string, unknown>;
   status: ToolCallStatus;
   result?: unknown;
@@ -199,6 +200,7 @@ export interface ToolCallData {
  */
 export interface ToolResultData {
   toolName: string;
+  capabilityId?: string;
   result: unknown;
   success: boolean;
   error?: string;
@@ -236,6 +238,7 @@ export interface SkillResultData {
 export interface McpCallData {
   serverId: string;
   toolName: string;
+  capabilityId?: string;
   arguments: Record<string, unknown>;
   status: ToolCallStatus;
   result?: unknown;
@@ -249,6 +252,7 @@ export interface McpCallData {
 export interface McpResultData {
   serverId: string;
   toolName: string;
+  capabilityId?: string;
   result: unknown;
   success: boolean;
   error?: string;

@@ -103,7 +103,7 @@ describe('Auth Middleware', () => {
 
     it('应该拒绝过期 JWT Token', async () => {
       const expiredToken = jwt.sign(
-        { userId: 'user-1', orgId: 'org-1', role: 'member', permissions: [] },
+        { userId: 'user-1', role: 'member', permissions: [] },
         JWT_SECRET,
         { expiresIn: '-1h' }
       )
@@ -125,7 +125,7 @@ describe('Auth Middleware', () => {
 
     it('应该接受有效 JWT Token 并设置 req.user', async () => {
       const validToken = jwt.sign(
-        { userId: 'user-1', orgId: 'org-1', role: 'member', permissions: ['read'] },
+        { userId: 'user-1', role: 'member', permissions: ['read'] },
         JWT_SECRET,
         { expiresIn: '1h' }
       )
@@ -138,7 +138,6 @@ describe('Auth Middleware', () => {
       expect(mockNext).toHaveBeenCalled()
       expect(mockReq.user).toBeDefined()
       expect(mockReq.user?.userId).toBe('user-1')
-      expect(mockReq.user?.orgId).toBe('org-1')
     })
   })
 
@@ -152,7 +151,7 @@ describe('Auth Middleware', () => {
 
     it('有有效 Token 时应该设置 req.user', async () => {
       const validToken = jwt.sign(
-        { userId: 'user-1', orgId: 'org-1', role: 'member', permissions: [] },
+        { userId: 'user-1', role: 'member', permissions: [] },
         JWT_SECRET,
         { expiresIn: '1h' }
       )
@@ -179,7 +178,6 @@ describe('Auth Middleware', () => {
     it('有通配符权限时应该允许', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'admin',
         permissions: ['*'],
       }
@@ -193,7 +191,6 @@ describe('Auth Middleware', () => {
     it('有精确权限时应该允许', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: ['agents:read'],
       }
@@ -207,7 +204,6 @@ describe('Auth Middleware', () => {
     it('有前缀通配符权限时应该允许', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: ['agents:*'],
       }
@@ -221,7 +217,6 @@ describe('Auth Middleware', () => {
     it('权限不足时应该拒绝', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: ['sessions:read'],
       }
@@ -236,7 +231,6 @@ describe('Auth Middleware', () => {
     it('多个权限任一匹配即可', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: ['sessions:read'],
       }
@@ -260,7 +254,6 @@ describe('Auth Middleware', () => {
     it('角色匹配时应该允许', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'admin',
         permissions: [],
       }
@@ -274,7 +267,6 @@ describe('Auth Middleware', () => {
     it('角色不匹配时应该拒绝', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: [],
       }
@@ -289,7 +281,6 @@ describe('Auth Middleware', () => {
     it('多个角色任一匹配即可', () => {
       mockReq.user = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'owner',
         permissions: [],
       }
@@ -305,7 +296,6 @@ describe('Auth Middleware', () => {
     it('应该生成有效的 JWT Token', () => {
       const user: AuthUser = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: ['read'],
       }
@@ -318,14 +308,12 @@ describe('Auth Middleware', () => {
       // 验证 Token 可以被解析
       const decoded = jwt.verify(token, JWT_SECRET) as Record<string, unknown>
       expect(decoded.userId).toBe('user-1')
-      expect(decoded.orgId).toBe('org-1')
       expect(decoded.role).toBe('member')
     })
 
     it('生成的 Token 应该有过期时间', () => {
       const user: AuthUser = {
         userId: 'user-1',
-        orgId: 'org-1',
         role: 'member',
         permissions: [],
       }

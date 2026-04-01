@@ -1,9 +1,9 @@
 import { createHash } from 'crypto'
 import { createError } from '../middleware/errorHandler'
 import { RESOURCE_NOT_FOUND } from '../constants/errorCodes'
-import * as local from '../lib/evolution-local-store'
+import * as repo from '../repositories/evolution-capability.repository'
 
-export type EvolutionCapabilityType = local.EvolutionCapabilityType
+export type EvolutionCapabilityType = repo.EvolutionCapabilityType
 
 export interface EvolutionCapabilityDoc {
   id: string
@@ -69,7 +69,7 @@ function normalizeType(value: string): EvolutionCapabilityType {
   throw createError(RESOURCE_NOT_FOUND, `Unsupported capability type: ${value}`)
 }
 
-function rowToDoc(row: local.CapabilityVersionRow): EvolutionCapabilityDoc {
+function rowToDoc(row: repo.CapabilityVersionRow): EvolutionCapabilityDoc {
   return {
     id: row.id,
     capabilityType: row.capability_type,
@@ -79,42 +79,42 @@ function rowToDoc(row: local.CapabilityVersionRow): EvolutionCapabilityDoc {
   }
 }
 
-async function ensureBootstrap(userId?: string): Promise<void> {
-  const latestByType = await local.localListLatestVersionsByOrg()
+async function ensureBootstrap(orgId: string, userId?: string): Promise<void> {
+  const latestByType = await repo.listLatestVersionsByOrg(orgId)
   const existingTypes = new Set(latestByType.map((row) => row.capability_type))
   for (const capabilityType of CAPABILITY_TYPES) {
     if (existingTypes.has(capabilityType)) continue
     const content = DEFAULT_CAPABILITY_CONTENT[capabilityType]
-    await local.localCreateVersion({
-      capabilityType, version: 'v1', content, checksum: sha256(content), createdBy: userId,
+    await repo.createVersion({
+      orgId, capabilityType, version: 'v1', content, checksum: sha256(content), createdBy: userId,
     })
-    await local.localCreateRelease({
-      capabilityType, fromVersion: null, toVersion: 'v1',
+    await repo.createRelease({
+      orgId, capabilityType, fromVersion: null, toVersion: 'v1',
       action: 'create_version', operatorId: userId, changeNote: 'bootstrap default version',
     })
   }
 }
 
-async function resolveActiveVersion(capabilityType: EvolutionCapabilityType): Promise<string | null> {
-  const latestRelease = await local.localFindLatestReleaseByOrgAndType(capabilityType)
+async function resolveActiveVersion(orgId: string, capabilityType: EvolutionCapabilityType): Promise<string | null> {
+  const latestRelease = await repo.findLatestReleaseByOrgAndType(orgId, capabilityType)
   if (latestRelease?.to_version) return latestRelease.to_version
-  const versions = await local.localListVersions(capabilityType, 1)
+  const versions = await repo.listVersions(orgId, capabilityType, 1)
   return versions[0]?.version ?? null
 }
 
-export async function getActiveCapabilities(userId?: string): Promise<EvolutionCapabilityDoc[]> {
-  await ensureBootstrap(userId)
+export async function getActiveCapabilities(orgId = 'local', userId?: string): Promise<EvolutionCapabilityDoc[]> {
+  await ensureBootstrap(orgId, userId)
   const [latestVersions, latestReleases] = await Promise.all([
-    local.localListLatestVersionsByOrg(),
-    local.localListLatestReleasesByOrg(),
+    repo.listLatestVersionsByOrg(orgId),
+    repo.listLatestReleasesByOrg(orgId),
   ])
   const latestVersionByType = new Map(latestVersions.map((row) => [row.capability_type, row]))
   const latestReleaseByType = new Map(latestReleases.map((row) => [row.capability_type, row]))
   const docs: EvolutionCapabilityDoc[] = []
   for (const capabilityType of CAPABILITY_TYPES) {
-    const released = latestReleaseByType.get(capabilityType)
-    if (released) {
-      const releasedVersion = await local.localFindVersion(capabilityType, released.to_version)
+      const released = latestReleaseByType.get(capabilityType)
+      if (released) {
+      const releasedVersion = await repo.findVersion(orgId, capabilityType, released.to_version)
       if (releasedVersion) { docs.push(rowToDoc(releasedVersion)); continue }
     }
     const fallback = latestVersionByType.get(capabilityType)
@@ -124,51 +124,54 @@ export async function getActiveCapabilities(userId?: string): Promise<EvolutionC
 }
 
 export async function getCapabilityVersions(
+  orgId: string,
   capabilityTypeInput: string,
   limit = 20
 ): Promise<EvolutionCapabilityDoc[]> {
   const capabilityType = normalizeType(capabilityTypeInput)
-  const rows = await local.localListVersions(capabilityType, limit)
+  const rows = await repo.listVersions(orgId, capabilityType, limit)
   return rows.map(rowToDoc)
 }
 
 export async function updateCapability(
+  orgId: string,
   userId: string,
   capabilityTypeInput: string,
   content: string,
   changeNote?: string
 ): Promise<EvolutionCapabilityDoc> {
   const capabilityType = normalizeType(capabilityTypeInput)
-  await ensureBootstrap(userId)
-  const versions = await local.localListVersions(capabilityType, 1)
-  const currentActiveVersion = await resolveActiveVersion(capabilityType)
+  await ensureBootstrap(orgId, userId)
+  const versions = await repo.listVersions(orgId, capabilityType, 1)
+  const currentActiveVersion = await resolveActiveVersion(orgId, capabilityType)
   const nextVersion = toVersionLabel(toVersionNumber(versions[0]?.version) + 1)
-  const created = await local.localCreateVersion({
-    capabilityType, version: nextVersion, content, checksum: sha256(content), createdBy: userId,
+  const created = await repo.createVersion({
+    orgId, capabilityType, version: nextVersion, content, checksum: sha256(content), createdBy: userId,
   })
-  await local.localCreateRelease({
-    capabilityType, fromVersion: currentActiveVersion, toVersion: created.version,
+  await repo.createRelease({
+    orgId, capabilityType, fromVersion: currentActiveVersion, toVersion: created.version,
     action: 'switch_version', operatorId: userId, changeNote: changeNote || 'edited via evolution center',
   })
   return rowToDoc(created)
 }
 
 export async function switchCapabilityVersion(
+  orgId: string,
   userId: string,
   capabilityTypeInput: string,
   targetVersion: string,
   reason?: string
 ): Promise<EvolutionCapabilityDoc> {
   const capabilityType = normalizeType(capabilityTypeInput)
-  await ensureBootstrap(userId)
-  const target = await local.localFindVersion(capabilityType, targetVersion)
+  await ensureBootstrap(orgId, userId)
+  const target = await repo.findVersion(orgId, capabilityType, targetVersion)
   if (!target) throw createError(RESOURCE_NOT_FOUND, `Version not found: ${targetVersion}`)
-  const currentVersion = await resolveActiveVersion(capabilityType)
+  const currentVersion = await resolveActiveVersion(orgId, capabilityType)
   const action = toVersionNumber(target.version) < toVersionNumber(currentVersion)
     ? 'rollback_version'
     : 'switch_version'
-  await local.localCreateRelease({
-    capabilityType, fromVersion: currentVersion, toVersion: target.version,
+  await repo.createRelease({
+    orgId, capabilityType, fromVersion: currentVersion, toVersion: target.version,
     action, operatorId: userId, changeNote: reason || `switch to ${targetVersion}`,
   })
   return rowToDoc(target)

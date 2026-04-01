@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import ast
 import json
 import re as _re
 
@@ -96,7 +97,13 @@ def _looks_like_raw_delivery_payload(text: str) -> bool:
                 return all(_dict_like_raw(item) for item in parsed if isinstance(item, dict))
             return _dict_like_raw(parsed)
         except Exception:
-            pass
+            try:
+                parsed = ast.literal_eval(content)
+                if isinstance(parsed, list) and parsed:
+                    return all(_dict_like_raw(item) for item in parsed if isinstance(item, dict))
+                return _dict_like_raw(parsed)
+            except Exception:
+                pass
 
     parts = [item.strip() for item in _re.split(r"\}\s*\n+\s*\{", content) if item.strip()]
     if len(parts) > 1:
@@ -117,6 +124,9 @@ def _looks_like_raw_delivery_payload(text: str) -> bool:
 
     lowered = content.lower()
     if '"url"' in lowered and '"status_code"' in lowered and '"content_type"' in lowered and '"text"' in lowered:
+        return True
+    python_literal_markers = ("'rank':", "'title':", "'author':", "'url':", "'likes':")
+    if content.startswith(("{", "[")) and sum(1 for marker in python_literal_markers if marker in lowered) >= 2:
         return True
 
     return False

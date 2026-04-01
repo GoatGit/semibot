@@ -18,6 +18,7 @@ class _DummyProvider:
     def __init__(self, content: str) -> None:
         self.content = content
         self.calls: list[dict[str, object]] = []
+        self.config = type("Config", (), {"provider_base": "openai", "base_url": "", "model": "test-model"})()
 
     async def chat(self, **kwargs):  # type: ignore[no-untyped-def]
         self.calls.append(kwargs)
@@ -127,6 +128,64 @@ async def test_text_processing_compact_returns_text() -> None:
     assert result.success is True
     assert result.result["text"] == "压缩后的摘要"
     assert result.result["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_text_processing_brief_returns_mode_style_and_metadata() -> None:
+    provider = _DummyProvider(
+        json.dumps({"text": "要点一\n要点二", "warnings": []}, ensure_ascii=False)
+    )
+    tool = TextProcessingTool()
+
+    result = await tool.execute(
+        operation="brief",
+        text="这是很长的原文",
+        brief_mode="key_points",
+        style="bullet",
+        max_chars=200,
+        _runtime_context=_RuntimeContext(provider),
+    )
+
+    assert result.success is True
+    assert result.result["text"] == "要点一\n要点二"
+    assert result.result["mode"] == "key_points"
+    assert result.result["style"] == "bullet"
+    assert result.result["metadata"]["source_chars"] == len("这是很长的原文")
+    assert result.result["metadata"]["output_chars"] == len("要点一\n要点二")
+
+
+@pytest.mark.asyncio
+async def test_text_processing_brief_requires_llm_provider() -> None:
+    tool = TextProcessingTool()
+
+    result = await tool.execute(
+        operation="brief",
+        text="OpenAI announced a launch.",
+        brief_mode="summary",
+        _runtime_context=_RuntimeContext(),
+    )
+
+    assert result.success is False
+    assert "llm_provider" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_text_processing_brief_omits_response_format_for_claude_proxy_like_provider() -> None:
+    provider = _DummyProvider(
+        json.dumps({"text": "brief output", "warnings": []}, ensure_ascii=False)
+    )
+    provider.config = type("Config", (), {"provider_base": "custom", "base_url": "", "model": "claude-3-5-sonnet"})()
+    tool = TextProcessingTool()
+
+    result = await tool.execute(
+        operation="brief",
+        text="Source text",
+        brief_mode="summary",
+        _runtime_context=_RuntimeContext(provider),
+    )
+
+    assert result.success is True
+    assert provider.calls[0]["response_format"] is None
 
 
 def test_text_processing_slice_supports_query_window() -> None:

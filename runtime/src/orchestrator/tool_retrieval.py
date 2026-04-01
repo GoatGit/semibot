@@ -16,6 +16,24 @@ _CORE_TOOL_NAMES = {
 }
 
 
+def _collect_text_fragments(value: object) -> list[str]:
+    fragments: list[str] = []
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            fragments.append(text)
+        return fragments
+    if isinstance(value, dict):
+        for item in value.values():
+            fragments.extend(_collect_text_fragments(item))
+        return fragments
+    if isinstance(value, list):
+        for item in value:
+            fragments.extend(_collect_text_fragments(item))
+        return fragments
+    return fragments
+
+
 def _tokenize(text: str) -> set[str]:
     return {
         token
@@ -25,6 +43,7 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _entry_search_blob(entry: ToolCatalogEntry) -> str:
+    metadata_text = " ".join(_collect_text_fragments(entry.metadata or {}))
     return " ".join(
         part
         for part in [
@@ -32,7 +51,7 @@ def _entry_search_blob(entry: ToolCatalogEntry) -> str:
             entry.actual_tool_name,
             entry.display_name,
             entry.description or "",
-            " ".join(str(v) for v in (entry.metadata or {}).values() if isinstance(v, str)),
+            metadata_text,
         ]
         if part
     )

@@ -21,6 +21,7 @@ from src.local_runtime import (
     _maybe_load_local_env_files,
 )
 from src.server.config_store import RuntimeConfigStore
+from src.skills.source_loader import apply_skill_visibility
 
 __all__ = ["run_task_once"]
 
@@ -110,6 +111,8 @@ async def run_task_once(
     fallback_provider_key: str | None = None,
     system_prompt: str | None = None,
     skill_index: list[dict[str, Any]] | None = None,
+    user_invoked: bool = False,
+    user_invoked_skill_ids: list[str] | None = None,
     model_roles: dict[str, Any] | None = None,
     recent_tool_usage: dict[str, int] | None = None,
     runtime_event_callback: Any | None = None,
@@ -120,6 +123,7 @@ async def run_task_once(
     resolved_session_id = session_id or f"local_{uuid4().hex}"
     client = _LocalSemigraphClient(runtime_event_callback=runtime_event_callback)
     init_data = _build_local_init_data(db_path=db_path, rules_path=rules_path)
+    resolved_skill_index = [row for row in skill_index if isinstance(row, dict)] if isinstance(skill_index, list) else []
     start_payload = {
         "session_id": resolved_session_id,
         "attempt_id": attempt_id,
@@ -136,7 +140,13 @@ async def run_task_once(
             "system_prompt": system_prompt,
             "model_roles": model_roles,
         },
-        "skill_index": [row for row in skill_index if isinstance(row, dict)] if isinstance(skill_index, list) else [],
+        "skill_index": apply_skill_visibility(
+            resolved_skill_index,
+            user_invoked=user_invoked,
+            explicitly_invoked_skill_ids=user_invoked_skill_ids,
+        ),
+        "user_invoked": bool(user_invoked),
+        "user_invoked_skill_ids": list(user_invoked_skill_ids or []),
         "recent_tool_usage": dict(recent_tool_usage or {}),
         "approval_scope_id": str(approval_scope_id or "").strip() or None,
         "events_db_path": db_path,

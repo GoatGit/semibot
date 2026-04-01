@@ -79,6 +79,7 @@ class AuditEvent:
     action_params: dict[str, Any] = field(default_factory=dict)
 
     # Execution details
+    capability_id: str | None = None
     capability_type: str | None = None  # "skill", "tool", "mcp"
     capability_source: str | None = None  # "local", "anthropic", "custom", "builtin"
     capability_version: str | None = None
@@ -115,6 +116,7 @@ class AuditEvent:
             "action_name": self.action_name,
             "action_params": self.action_params,
             "capability_type": self.capability_type,
+            "capability_id": self.capability_id,
             "capability_source": self.capability_source,
             "capability_version": self.capability_version,
             "mcp_server_id": self.mcp_server_id,
@@ -144,6 +146,7 @@ class AuditEvent:
             action_name=data.get("action_name"),
             action_params=data.get("action_params", {}),
             capability_type=data.get("capability_type"),
+            capability_id=data.get("capability_id"),
             capability_source=data.get("capability_source"),
             capability_version=data.get("capability_version"),
             mcp_server_id=data.get("mcp_server_id"),

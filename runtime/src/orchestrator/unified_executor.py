@@ -189,6 +189,7 @@ class UnifiedActionExecutor:
         runtime_context: RuntimeSessionContext,
         skill_registry: Any = None,
         mcp_client: Any = None,
+        sub_agent_delegator: Any = None,
         approval_hook: Callable[[str, dict[str, Any], ExecutionMetadata], Awaitable[bool | dict[str, Any]]] | None = None,
         audit_logger: Any = None,
         event_emitter: RuntimeEventEmitter | None = None,
@@ -209,6 +210,7 @@ class UnifiedActionExecutor:
         self.approval_hook = approval_hook
         self.audit_logger = audit_logger
         self.event_emitter = event_emitter or runtime_context.metadata.get("event_emitter")
+        self.sub_agent_delegator = sub_agent_delegator or self._build_sub_agent_delegator()
         self._config_store: RuntimeConfigStore | None = None
         self._tool_row_cache: dict[str, dict[str, Any] | None] = {}
         self._tool_config_cache: dict[str, dict[str, Any]] = {}
@@ -219,6 +221,56 @@ class UnifiedActionExecutor:
 
         # High-risk tools from runtime policy
         self.high_risk_tools = set(runtime_context.runtime_policy.high_risk_tools)
+
+    def _build_sub_agent_delegator(self) -> Any | None:
+        has_sub_agents = False
+        has_sub_agent = getattr(self.runtime_context, "has_sub_agent", None)
+        if callable(has_sub_agent):
+            try:
+                has_sub_agents = any(
+                    str(getattr(item, "kind", "") or "").strip() == "sub_agent"
+                    for item in self.runtime_context.get_capability_descriptors()
+                )
+            except Exception:
+                has_sub_agents = False
+        if not has_sub_agents and not getattr(self.runtime_context, "available_sub_agents", None):
+            return None
+        try:
+            from src.agents.delegator import SubAgentDelegator
+        except Exception:
+            return None
+        metadata = self.runtime_context.metadata if isinstance(self.runtime_context.metadata, dict) else {}
+        return SubAgentDelegator(
+            runtime_context=self.runtime_context,
+            llm_provider=metadata.get("llm_provider"),
+            skill_registry=self.skill_registry or metadata.get("skill_registry"),
+            event_emitter=self.event_emitter,
+        )
+
+    def _resolve_action_identity(self, action: PlanStep) -> tuple[str | None, str | None, Any | None]:
+        requested_capability_id = str(getattr(action, "capability_id", "") or "").strip() or None
+        requested_tool_name = str(getattr(action, "tool", "") or "").strip() or None
+
+        lookup_key = requested_capability_id or requested_tool_name
+        if not lookup_key:
+            return None, None, None
+
+        capability = self.capability_graph.get_capability(lookup_key)
+        if capability is None:
+            return requested_capability_id, requested_tool_name, None
+
+        resolved_capability_id = str(
+            getattr(capability, "metadata", {}).get("tool_id")
+            or requested_capability_id
+            or ""
+        ).strip() or None
+        resolved_tool_name = str(
+            requested_tool_name
+            or getattr(capability, "name", "")
+            or getattr(capability, "metadata", {}).get("actual_tool_name")
+            or ""
+        ).strip() or None
+        return resolved_capability_id, resolved_tool_name, capability
 
     def _get_config_store(self) -> RuntimeConfigStore:
         if self._config_store is None:
@@ -268,9 +320,11 @@ class UnifiedActionExecutor:
         Returns:
             ToolCallResult with execution result and metadata
         """
-        tool_name = action.tool
+        requested_capability_id, tool_name, capability = self._resolve_action_identity(action)
         params = _normalize_action_params(tool_name or "", action.params)
         action.params = params
+        action.capability_id = requested_capability_id
+        action.tool = tool_name
 
         if not tool_name:
             await emit_runtime_event(
@@ -281,12 +335,14 @@ class UnifiedActionExecutor:
                 payload={
                     "session_id": self.runtime_context.session_id,
                     "action_id": action.id,
+                    "capability_id": requested_capability_id,
                     "error": "no_tool_name",
                 },
                 risk_hint="low",
             )
             return ToolCallResult(
                 tool_name="unknown",
+                capability_id=requested_capability_id,
                 params=params,
                 error="No tool name specified",
                 success=False,
@@ -297,6 +353,7 @@ class UnifiedActionExecutor:
             extra={
                 "session_id": self.runtime_context.session_id,
                 "tool_name": tool_name,
+                "capability_id": requested_capability_id,
                 "action_id": action.id,
             },
         )
@@ -309,6 +366,7 @@ class UnifiedActionExecutor:
             payload={
                 "session_id": self.runtime_context.session_id,
                 "action_id": action.id,
+                "capability_id": requested_capability_id,
                 "tool_name": tool_name,
                 "params": params,
             },
@@ -324,6 +382,7 @@ class UnifiedActionExecutor:
                 payload={
                     "session_id": self.runtime_context.session_id,
                     "action_id": action.id,
+                    "capability_id": requested_capability_id,
                     "tool_name": tool_name,
                     "error": "tool_disabled",
                 },
@@ -331,6 +390,7 @@ class UnifiedActionExecutor:
             )
             return ToolCallResult(
                 tool_name=tool_name,
+                capability_id=requested_capability_id,
                 params=params,
                 error=f"Tool '{tool_name}' is disabled in runtime config",
                 success=False,
@@ -338,12 +398,13 @@ class UnifiedActionExecutor:
             )
 
         # Validate action against capability graph
-        if not self.capability_graph.validate_action(tool_name):
+        if capability is None and not self.capability_graph.validate_action(requested_capability_id or tool_name):
             logger.error(
                 "Action not in capability graph",
                 extra={
                     "session_id": self.runtime_context.session_id,
                     "tool_name": tool_name,
+                    "capability_id": requested_capability_id,
                 },
             )
             await emit_runtime_event(
@@ -354,19 +415,22 @@ class UnifiedActionExecutor:
                 payload={
                     "session_id": self.runtime_context.session_id,
                     "action_id": action.id,
+                    "capability_id": requested_capability_id,
                     "error": "not_in_capability_graph",
                 },
                 risk_hint="medium",
             )
             return ToolCallResult(
                 tool_name=tool_name,
+                capability_id=requested_capability_id,
                 params=params,
                 error=f"Action '{tool_name}' not in capability graph",
                 success=False,
             )
 
         # Get capability and metadata
-        capability = self.capability_graph.get_capability(tool_name)
+        if capability is None:
+            capability = self.capability_graph.get_capability(requested_capability_id or tool_name)
         if not capability:
             await emit_runtime_event(
                 self.event_emitter,
@@ -376,12 +440,14 @@ class UnifiedActionExecutor:
                 payload={
                     "session_id": self.runtime_context.session_id,
                     "action_id": action.id,
+                    "capability_id": requested_capability_id,
                     "error": "capability_not_found",
                 },
                 risk_hint="medium",
             )
             return ToolCallResult(
                 tool_name=tool_name,
+                capability_id=requested_capability_id,
                 params=params,
                 error=f"Capability '{tool_name}' not found",
                 success=False,
@@ -389,6 +455,8 @@ class UnifiedActionExecutor:
 
         # Build execution metadata
         metadata = self._build_metadata(capability, tool_name, params)
+        if requested_capability_id:
+            metadata.additional["requested_capability_id"] = requested_capability_id
 
         # Log action started
         if self.audit_logger:
@@ -459,17 +527,19 @@ class UnifiedActionExecutor:
                             source="runtime.unified_executor",
                             subject=tool_name,
                             payload={
-                                "session_id": self.runtime_context.session_id,
-                                "action_id": action.id,
-                                "tool_name": tool_name,
-                                "approval_id": approval_id,
-                                "status": "pending",
+                            "session_id": self.runtime_context.session_id,
+                            "action_id": action.id,
+                            "capability_id": requested_capability_id,
+                            "tool_name": tool_name,
+                            "approval_id": approval_id,
+                            "status": "pending",
                                 "message": pending_message,
                             },
                             risk_hint="high",
                         )
                         return ToolCallResult(
                             tool_name=tool_name,
+                            capability_id=requested_capability_id,
                             params=params,
                             error=pending_message,
                             success=False,
@@ -516,6 +586,7 @@ class UnifiedActionExecutor:
                         payload={
                             "session_id": self.runtime_context.session_id,
                             "action_id": action.id,
+                            "capability_id": requested_capability_id,
                             "tool_name": tool_name,
                             "error": "approval_denied",
                             "approval_id": approval_id,
@@ -524,6 +595,7 @@ class UnifiedActionExecutor:
                     )
                     return ToolCallResult(
                         tool_name=tool_name,
+                        capability_id=requested_capability_id,
                         params=params,
                         error=denial_message,
                         success=False,
@@ -556,6 +628,7 @@ class UnifiedActionExecutor:
                     payload={
                         "session_id": self.runtime_context.session_id,
                         "action_id": action.id,
+                        "capability_id": requested_capability_id,
                         "tool_name": tool_name,
                         "error": f"approval_hook_failed:{e}",
                     },
@@ -563,6 +636,7 @@ class UnifiedActionExecutor:
                 )
                 return ToolCallResult(
                     tool_name=tool_name,
+                    capability_id=requested_capability_id,
                     params=params,
                     error=f"Approval hook failed: {str(e)}",
                     success=False,
@@ -579,6 +653,7 @@ class UnifiedActionExecutor:
         # Route to appropriate executor
         try:
             result = await self._route_execution(capability, tool_name, params, metadata)
+            result.capability_id = str(metadata.additional.get("tool_id") or requested_capability_id or "") or None
 
             # Log action completed or failed
             if self.audit_logger:
@@ -611,6 +686,7 @@ class UnifiedActionExecutor:
                 payload={
                     "session_id": self.runtime_context.session_id,
                     "action_id": action.id,
+                    "capability_id": result.capability_id or requested_capability_id,
                     "tool_name": tool_name,
                     "success": result.success,
                     "result": _event_safe_result_payload(result.result),
@@ -659,6 +735,7 @@ class UnifiedActionExecutor:
 
             return ToolCallResult(
                 tool_name=tool_name,
+                capability_id=requested_capability_id,
                 params=params,
                 error=f"Execution failed: {str(e)}",
                 success=False,
@@ -671,7 +748,9 @@ class UnifiedActionExecutor:
         params: dict[str, Any] | None = None,
     ) -> ExecutionMetadata:
         """Build execution metadata from capability."""
-        metadata_map = capability.metadata if isinstance(capability.metadata, dict) else {}
+        capability_type = getattr(capability, "capability_type", "tool")
+        capability_metadata = getattr(capability, "metadata", None)
+        metadata_map = capability_metadata if isinstance(capability_metadata, dict) else {}
         raw_risk_level = metadata_map.get("risk_level")
         risk_level = str(raw_risk_level).strip().lower() if raw_risk_level is not None else ""
         configured_requires_approval = _to_bool(metadata_map.get("requires_approval"), default=False)
@@ -709,18 +788,26 @@ class UnifiedActionExecutor:
             risk_level = "high"
 
         metadata = ExecutionMetadata(
-            capability_type=capability.capability_type,
-            source=capability.metadata.get("source"),
-            version=capability.metadata.get("version"),
+            capability_type=capability_type,
+            source=metadata_map.get("source"),
+            version=metadata_map.get("version"),
             requires_approval=requires_approval,
             is_high_risk=is_high_risk,
             additional={
                 "tool_id": metadata_map.get("tool_id"),
+                "capability_id": metadata_map.get("tool_id"),
                 "actual_tool_name": metadata_map.get("actual_tool_name") or tool_name,
                 "display_name": metadata_map.get("display_name") or tool_name,
                 "risk_level": risk_level or ("high" if is_high_risk else "low"),
+                "approval_policy_key": metadata_map.get("approval_policy_key"),
+                "agent_id": metadata_map.get("agent_id"),
+                "sub_agent_id": metadata_map.get("sub_agent_id"),
                 "approval_scope": metadata_map.get("approval_scope"),
                 "approval_dedupe_keys": metadata_map.get("approval_dedupe_keys"),
+                "timeout_ms": metadata_map.get("timeout_ms") or metadata_map.get("timeoutMs"),
+                "max_retries": metadata_map.get("max_retries") or metadata_map.get("maxRetries"),
+                "concurrency_key": metadata_map.get("concurrency_key") or metadata_map.get("concurrencyKey"),
+                "side_effect_level": metadata_map.get("side_effect_level") or metadata_map.get("sideEffectLevel"),
                 "projection_type": metadata_map.get("projection_type"),
                 "projection_action": metadata_map.get("projection_action"),
                 "projection_parent_tool_name": metadata_map.get("projection_parent_tool_name"),
@@ -736,9 +823,9 @@ class UnifiedActionExecutor:
             metadata.additional["approval_scope"] = metadata.additional.get("approval_scope") or "session"
 
         # Add MCP-specific metadata
-        if capability.capability_type == "mcp":
-            metadata.mcp_server_id = capability.metadata.get("mcp_server_id")
-            metadata.mcp_server_name = capability.metadata.get("mcp_server_name")
+        if capability_type == "mcp":
+            metadata.mcp_server_id = metadata_map.get("mcp_server_id")
+            metadata.mcp_server_name = metadata_map.get("mcp_server_name")
 
         return metadata
 
@@ -772,6 +859,8 @@ class UnifiedActionExecutor:
             )
         elif capability.capability_type == "mcp":
             result = await self._execute_mcp(tool_name, params, metadata)
+        elif capability.capability_type == "sub_agent":
+            result = await self._execute_sub_agent(tool_name, params, metadata)
         else:
             return ToolCallResult(
                 tool_name=tool_name,
@@ -790,6 +879,7 @@ class UnifiedActionExecutor:
 
         result.metadata.update({
             "capability_type": metadata.capability_type,
+            "capability_id": metadata.additional.get("tool_id"),
             "source": metadata.source,
             "version": metadata.version,
             "is_high_risk": metadata.is_high_risk,
@@ -800,6 +890,74 @@ class UnifiedActionExecutor:
             result.metadata["mcp_server_name"] = metadata.mcp_server_name
 
         return result
+
+    async def _execute_sub_agent(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        metadata: ExecutionMetadata,
+    ) -> ToolCallResult:
+        if self.sub_agent_delegator is None:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error="Sub-agent delegator not configured",
+                success=False,
+            )
+
+        sub_agent_id = str(
+            metadata.additional.get("agent_id")
+            or metadata.additional.get("sub_agent_id")
+            or ""
+        ).strip()
+        task = str(params.get("task") or "").strip()
+        if not sub_agent_id:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error="Missing sub_agent_id for delegated execution",
+                success=False,
+            )
+        if not task:
+            return ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                error="Missing required parameter: task",
+                success=False,
+            )
+
+        delegation_context = params.get("context")
+        if not isinstance(delegation_context, dict):
+            delegation_context = (
+                {"planner_context": str(delegation_context).strip()}
+                if delegation_context
+                else {}
+            )
+        raw_timeout_ms = metadata.additional.get("timeout_ms")
+        timeout_seconds = None
+        if isinstance(raw_timeout_ms, (int, float)) and float(raw_timeout_ms) > 0:
+            timeout_seconds = float(raw_timeout_ms) / 1000.0
+
+        result = await self.sub_agent_delegator.delegate(
+            sub_agent_id=sub_agent_id,
+            task=task,
+            context=delegation_context,
+            timeout_seconds=timeout_seconds,
+        )
+        delegated_response = result.get("result")
+        return ToolCallResult(
+            tool_name=tool_name,
+            capability_id=str(metadata.additional.get("capability_id") or metadata.additional.get("tool_id") or "").strip() or None,
+            params=params,
+            result=delegated_response,
+            success=not result.get("error"),
+            error=result.get("error"),
+            metadata={
+                "delegate": True,
+                "sub_agent_id": sub_agent_id,
+                "agent_name": result.get("agent_name"),
+            },
+        )
 
     async def _execute_skill(
         self,

@@ -50,12 +50,11 @@ def _can_delegate(state: AgentState) -> bool:
     if policy is not None and getattr(policy, "enable_delegation", True) is False:
         return False
 
-    available_sub_agents = getattr(runtime_context, "available_sub_agents", None) or []
-    if not available_sub_agents:
-        return False
-
     delegate_to = str(plan.sub_agent_id)
-    return any(getattr(sub_agent, "id", None) == delegate_to for sub_agent in available_sub_agents)
+    has_sub_agent = getattr(runtime_context, "has_sub_agent", None)
+    if callable(has_sub_agent):
+        return bool(has_sub_agent(delegate_to))
+    return False
 
 
 def route_after_plan(

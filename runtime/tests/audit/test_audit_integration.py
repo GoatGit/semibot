@@ -18,6 +18,12 @@ from src.orchestrator.state import PlanStep
 from src.skills.base import ToolResult
 
 
+def bind_action(executor: UnifiedActionExecutor, action: PlanStep) -> PlanStep:
+    if not action.capability_id and action.tool:
+        action.capability_id = executor.capability_graph.get_capability_id(action.tool)
+    return action
+
+
 @pytest.fixture
 def storage():
     """Create in-memory storage."""
@@ -53,7 +59,19 @@ def runtime_context():
         ],
         available_tools=[
             ToolDefinition(name="test_skill", description="Test skill"),
-            ToolDefinition(name="dangerous_tool", description="Dangerous tool"),
+            ToolDefinition(
+                name="dangerous_tool",
+                description="Dangerous tool",
+                metadata={
+                    "risk_level": "high",
+                    "requires_approval": True,
+                    "execution_policy": {
+                        "risk_level": "high",
+                        "requires_approval": True,
+                        "approval_scope": "session",
+                    },
+                },
+            ),
         ],
         runtime_policy=RuntimePolicy(
             require_approval_for_high_risk=True,
@@ -93,7 +111,7 @@ async def test_audit_successful_action(
         params={"input": "test"},
     )
 
-    result = await executor.execute(action)
+    result = await executor.execute(bind_action(executor, action))
 
     assert result.success is True
 
@@ -134,7 +152,7 @@ async def test_audit_failed_action(
         params={"input": "test"},
     )
 
-    result = await executor.execute(action)
+    result = await executor.execute(bind_action(executor, action))
 
     assert result.success is False
 
@@ -182,7 +200,7 @@ async def test_audit_approval_granted(
         params={"input": "test"},
     )
 
-    result = await executor.execute(action)
+    result = await executor.execute(bind_action(executor, action))
 
     assert result.success is True
 
@@ -231,7 +249,7 @@ async def test_audit_approval_denied(
         params={"input": "test"},
     )
 
-    result = await executor.execute(action)
+    result = await executor.execute(bind_action(executor, action))
 
     assert result.success is False
 
@@ -268,7 +286,7 @@ async def test_audit_metadata_captured(
         params={"input": "test"},
     )
 
-    await executor.execute(action)
+    await executor.execute(bind_action(executor, action))
     await audit_logger.flush()
 
     events = await storage.query(AuditQuery(session_id="session_abc", org_id="org_123"))
@@ -276,7 +294,7 @@ async def test_audit_metadata_captured(
     # Check metadata in ACTION_STARTED event
     started_event = next(e for e in events if e.event_type == AuditEventType.ACTION_STARTED)
     assert started_event.capability_type == "tool"
-    assert started_event.capability_source is None
+    assert started_event.capability_source == "builtin"
     assert started_event.capability_version is None
     assert started_event.action_params == {"input": "test"}
 
@@ -300,7 +318,7 @@ async def test_audit_query_by_action_name(
             tool="test_skill",
             params={"input": f"test_{i}"},
         )
-        await executor.execute(action)
+        await executor.execute(bind_action(executor, action))
 
     await audit_logger.flush()
 
@@ -336,5 +354,5 @@ async def test_audit_without_logger(
     )
 
     # Should work without errors
-    result = await executor.execute(action)
+    result = await executor.execute(bind_action(executor, action))
     assert result.success is True

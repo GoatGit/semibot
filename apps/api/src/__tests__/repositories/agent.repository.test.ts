@@ -1,348 +1,97 @@
-/**
- * Agent Repository 测试
- */
-
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { v4 as uuid } from 'uuid'
-
-// Mock sql as tagged template literal function with .json helper
-const { mockSql } = vi.hoisted(() => {
-  const mockSql = Object.assign(vi.fn(), {
-    json: vi.fn((val: unknown) => val),
-  })
-  return { mockSql }
-})
-
-vi.mock('../../lib/db', () => ({
-  sql: mockSql,
-}))
-
-// Mock logger
-vi.mock('../../lib/logger', () => ({
-  logPaginationLimit: vi.fn(),
-  createLogger: vi.fn().mockReturnValue({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}))
-
-import * as agentRepository from '../../repositories/agent.repository'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('AgentRepository', () => {
-  const testOrgId = uuid()
-  const testUserId = uuid()
+  let dbPath = ''
 
-  beforeEach(() => {
-    vi.clearAllMocks()
+  beforeEach(async () => {
+    dbPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'semibot-agent-repo-')), 'semibot.db')
+    process.env.SEMIBOT_DB_PATH = dbPath
+    vi.resetModules()
   })
 
-  describe('create', () => {
-    it('应该成功创建 Agent', async () => {
-      const mockAgent = {
-        id: uuid(),
-        org_id: testOrgId,
-        name: 'Test Agent',
-        description: 'Test description',
-        system_prompt: 'You are a helpful assistant',
-        config: {},
-        skills: [],
-        sub_agents: [],
-        version: 1,
-        is_active: true,
-        is_public: false,
-        is_system: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-
-      mockSql.mockResolvedValueOnce([mockAgent])
-
-      const result = await agentRepository.create({
-        orgId: testOrgId,
-        name: 'Test Agent',
-        description: 'Test description',
-        systemPrompt: 'You are a helpful assistant',
-        config: {},
-      })
-
-      expect(result).toBeDefined()
-      expect(result.name).toBe('Test Agent')
-      expect(result.org_id).toBe(testOrgId)
-      expect(mockSql).toHaveBeenCalled()
-    })
-
-    it('应该设置默认值', async () => {
-      const mockAgent = {
-        id: uuid(),
-        org_id: testOrgId,
-        name: 'Test Agent',
-        description: null,
-        system_prompt: 'prompt',
-        config: {},
-        skills: [],
-        sub_agents: [],
-        version: 1,
-        is_active: true,
-        is_public: false,
-        is_system: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-
-      mockSql.mockResolvedValueOnce([mockAgent])
-
-      const result = await agentRepository.create({
-        orgId: testOrgId,
-        name: 'Test Agent',
-        systemPrompt: 'prompt',
-        config: {},
-      })
-
-      expect(result.is_active).toBe(true)
-      expect(result.version).toBe(1)
-    })
+  afterEach(async () => {
+    const { closeLocalDb } = await import('../../lib/db-local')
+    closeLocalDb()
+    await fs.rm(path.dirname(dbPath), { recursive: true, force: true })
+    delete process.env.SEMIBOT_DB_PATH
+    vi.resetModules()
   })
 
-  describe('findById', () => {
-    it('应该返回存在的 Agent', async () => {
-      const agentId = uuid()
-      const mockAgent = {
-        id: agentId,
-        org_id: testOrgId,
-        name: 'Test Agent',
-        is_active: true,
-      }
+  it('creates and fetches an agent', async () => {
+    const agentRepository = await import('../../repositories/agent.repository')
 
-      mockSql.mockResolvedValueOnce([mockAgent])
-
-      const result = await agentRepository.findById(agentId)
-
-      expect(result).toBeDefined()
-      expect(result?.id).toBe(agentId)
+    const created = await agentRepository.create({
+      name: 'Test Agent',
+      description: 'Test description',
+      systemPrompt: 'You are a helpful assistant',
+      config: {},
     })
 
-    it('应该返回 null 如果不存在', async () => {
-      mockSql.mockResolvedValueOnce([])
+    expect(created.name).toBe('Test Agent')
+    expect(created.is_active).toBe(true)
+    expect(created.is_system).toBe(false)
 
-      const result = await agentRepository.findById(uuid())
-
-      expect(result).toBeNull()
-    })
+    const found = await agentRepository.findById(created.id)
+    expect(found?.id).toBe(created.id)
   })
 
-  describe('findByIdAndOrg', () => {
-    it('应该只返回属于指定组织的 Agent', async () => {
-      const agentId = uuid()
-      const mockAgent = {
-        id: agentId,
-        org_id: testOrgId,
-        name: 'Test Agent',
-      }
+  it('lists agents with pagination and search', async () => {
+    const agentRepository = await import('../../repositories/agent.repository')
 
-      mockSql.mockResolvedValueOnce([mockAgent])
+    await agentRepository.create({ name: 'Alpha Agent', systemPrompt: 'a', config: {} })
+    await agentRepository.create({ name: 'Beta Agent', systemPrompt: 'b', config: {} })
 
-      const result = await agentRepository.findByIdAndOrg(agentId, testOrgId)
+    const searchResult = await agentRepository.findByOrg({ search: 'Alpha' })
+    expect(searchResult.data).toHaveLength(1)
+    expect(searchResult.data[0].name).toBe('Alpha Agent')
 
-      expect(result).toBeDefined()
-      expect(result?.org_id).toBe(testOrgId)
-    })
-
-    it('应该返回系统 Agent（org_id 不匹配但 is_system=true）', async () => {
-      const agentId = uuid()
-      const mockAgent = {
-        id: agentId,
-        org_id: null,
-        name: 'System Agent',
-        is_system: true,
-      }
-
-      mockSql.mockResolvedValueOnce([mockAgent])
-
-      const result = await agentRepository.findByIdAndOrg(agentId, testOrgId)
-
-      expect(result).toBeDefined()
-      expect(result?.is_system).toBe(true)
-    })
-
-    it('应该返回 null 如果组织不匹配', async () => {
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await agentRepository.findByIdAndOrg(uuid(), uuid())
-
-      expect(result).toBeNull()
-    })
+    const pageResult = await agentRepository.findByOrg({ page: 1, limit: 1 })
+    expect(pageResult.data).toHaveLength(1)
+    expect(pageResult.meta.total).toBe(2)
+    expect(pageResult.meta.totalPages).toBe(2)
   })
 
-  describe('findByOrg', () => {
-    it('应该返回分页结果', async () => {
-      const mockAgents = Array.from({ length: 10 }, (_, i) => ({
-        id: uuid(),
-        org_id: testOrgId,
-        name: `Agent ${i}`,
-      }))
+  it('updates non-system agent and blocks system agent updates', async () => {
+    const agentRepository = await import('../../repositories/agent.repository')
 
-      // Mock count query
-      mockSql.mockResolvedValueOnce([{ total: '15' }])
-      // Mock data query
-      mockSql.mockResolvedValueOnce(mockAgents)
-
-      const result = await agentRepository.findByOrg({
-        orgId: testOrgId,
-        page: 1,
-        limit: 10,
-      })
-
-      expect(result.data).toHaveLength(10)
-      expect(result.meta.total).toBe(15)
-      expect(result.meta.totalPages).toBe(2)
+    const created = await agentRepository.create({
+      name: 'Editable Agent',
+      systemPrompt: 'prompt',
+      config: {},
     })
+    const updated = await agentRepository.update(created.id, { name: 'Updated Name' })
+    expect(updated?.name).toBe('Updated Name')
+    expect(updated?.version).toBe(2)
 
-    it('应该支持搜索', async () => {
-      const mockAgents = [
-        { id: uuid(), org_id: testOrgId, name: 'Alpha Agent' },
-      ]
-
-      mockSql.mockResolvedValueOnce([{ total: '1' }])
-      mockSql.mockResolvedValueOnce(mockAgents)
-
-      const result = await agentRepository.findByOrg({
-        orgId: testOrgId,
-        search: 'Alpha',
-      })
-
-      expect(result.data).toHaveLength(1)
-      expect(result.data[0].name).toBe('Alpha Agent')
-    })
+    const systemAgent = await agentRepository.ensureSystemDefault()
+    const blocked = await agentRepository.update(systemAgent.id, { name: 'Nope' })
+    expect(blocked).toBeNull()
   })
 
-  describe('update', () => {
-    it('应该更新 Agent', async () => {
-      const agentId = uuid()
-      const existingAgent = {
-        id: agentId,
-        org_id: testOrgId,
-        name: 'Old Name',
-        description: null,
-        system_prompt: 'prompt',
-        config: {},
-        skills: [],
-        sub_agents: [],
-        version: 1,
-        is_active: true,
-        is_public: false,
-        is_system: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-      const updatedAgent = {
-        ...existingAgent,
-        name: 'Updated Name',
-        version: 2,
-      }
+  it('soft deletes agents and excludes them from listings', async () => {
+    const agentRepository = await import('../../repositories/agent.repository')
 
-      // findByIdAndOrg 查询
-      mockSql.mockResolvedValueOnce([existingAgent])
-      // UPDATE 查询
-      mockSql.mockResolvedValueOnce([updatedAgent])
-
-      const result = await agentRepository.update(agentId, testOrgId, {
-        name: 'Updated Name',
-      })
-
-      expect(result?.name).toBe('Updated Name')
-      expect(result?.version).toBe(2)
+    const created = await agentRepository.create({
+      name: 'Delete Me',
+      systemPrompt: 'prompt',
+      config: {},
     })
+    expect(await agentRepository.countByOrg()).toBe(1)
 
-    it('应该返回 null 如果不存在', async () => {
-      // findByIdAndOrg 返回空
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await agentRepository.update(uuid(), testOrgId, {
-        name: 'Updated',
-      })
-
-      expect(result).toBeNull()
-    })
-
-    it('系统 Agent 不可修改', async () => {
-      const agentId = uuid()
-      const systemAgent = {
-        id: agentId,
-        org_id: null,
-        name: 'System Agent',
-        is_system: true,
-        version: 1,
-      }
-
-      // findByIdAndOrg 返回系统 Agent
-      mockSql.mockResolvedValueOnce([systemAgent])
-
-      const result = await agentRepository.update(agentId, testOrgId, {
-        name: 'Hacked',
-      })
-
-      // 系统 Agent 更新应返回 null（is_system 守卫）
-      expect(result).toBeNull()
-      // 只调用了 findByIdAndOrg，没有执行 UPDATE
-      expect(mockSql).toHaveBeenCalledTimes(1)
-    })
+    const deleted = await agentRepository.softDelete(created.id, 'user-1')
+    expect(deleted).toBe(true)
+    expect(await agentRepository.findById(created.id)).toBeNull()
+    expect(await agentRepository.countByOrg()).toBe(0)
   })
 
-  describe('softDelete', () => {
-    it('应该软删除 Agent', async () => {
-      const agentId = uuid()
+  it('finds the system default when ensured', async () => {
+    const agentRepository = await import('../../repositories/agent.repository')
 
-      mockSql.mockResolvedValueOnce([{ id: agentId }])
-
-      const result = await agentRepository.softDelete(agentId, testOrgId, testUserId)
-
-      expect(result).toBe(true)
-    })
-
-    it('应该返回 false 如果不存在', async () => {
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await agentRepository.softDelete(uuid(), testOrgId, testUserId)
-
-      expect(result).toBe(false)
-    })
-  })
-
-  describe('countByOrg', () => {
-    it('应该返回组织的 Agent 数量', async () => {
-      mockSql.mockResolvedValueOnce([{ count: '5' }])
-
-      const result = await agentRepository.countByOrg(testOrgId)
-
-      expect(result).toBe(5)
-    })
-  })
-
-  describe('findSystemDefault', () => {
-    it('应该返回系统默认 Agent', async () => {
-      const mockAgent = {
-        id: '00000000-0000-0000-0000-000000000001',
-        org_id: null,
-        name: 'System Default Agent',
-        is_system: true,
-      }
-
-      mockSql.mockResolvedValueOnce([mockAgent])
-
-      const result = await agentRepository.findSystemDefault()
-
-      expect(result).toBeDefined()
-      expect(result?.is_system).toBe(true)
-    })
-
-    it('应该返回 null 如果不存在', async () => {
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await agentRepository.findSystemDefault()
-
-      expect(result).toBeNull()
-    })
+    expect(await agentRepository.findSystemDefault()).toBeNull()
+    const ensured = await agentRepository.ensureSystemDefault()
+    expect((await agentRepository.findSystemDefault())?.id).toBe(ensured.id)
   })
 })

@@ -15,6 +15,13 @@ def serialize_tool_results_from_runtime_events(
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         serialized.append(
             {
+                "capability_id": str(
+                    item.get("capability_id")
+                    or item.get("capabilityId")
+                    or metadata.get("capability_id")
+                    or metadata.get("capabilityId")
+                    or ""
+                ).strip(),
                 "tool_name": str(item.get("tool_name") or "").strip(),
                 "params": {},
                 "result": item.get("result"),

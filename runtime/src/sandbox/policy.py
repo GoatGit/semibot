@@ -52,11 +52,11 @@ class PolicyEngine:
         r"sudo\s+",
         r"su\s+-",
         r"curl\s+.*\|\s*sh",
-        r"wget\s+.*\|\s*sh",
+        r"wget\s+.*\|\s*(?:sh|bash)",
         r"nc\s+-e",
         r"bash\s+-i",
         r"/dev/tcp/",
-        r"eval\s*\(",
+        r"eval(?:\s|\()",
         r"exec\s*\(",
     ]
 
@@ -156,7 +156,26 @@ class PolicyEngine:
             tool_name="shell_exec",
             risk_level=RiskLevel.HIGH,
             sandbox_enabled=True,
-            allowed_commands=["ls", "cat", "grep", "find", "head", "tail", "wc", "sort"],
+            allowed_commands=[
+                "ls",
+                "cat",
+                "grep",
+                "find",
+                "head",
+                "tail",
+                "wc",
+                "sort",
+                "uniq",
+                "awk",
+                "sed",
+                "python",
+                "python3",
+                "node",
+                "npm",
+                "pip",
+                "echo",
+                "git",
+            ],
             denied_commands=["rm -rf", "sudo", "su", "curl", "wget", "nc", "ssh"],
             max_execution_time_seconds=60,
         )
@@ -200,6 +219,69 @@ class PolicyEngine:
             return int(float(value[:-1]) * 3600)
         else:
             return int(value)
+
+    def _apply_policy_dict(self, policy_data: dict[str, Any]) -> None:
+        """Apply an in-memory policy dictionary using the same shape as YAML config."""
+        policies = policy_data.get("policies") if isinstance(policy_data.get("policies"), dict) else policy_data
+        if not isinstance(policies, dict):
+            return
+
+        default = policies.get("default")
+        if isinstance(default, dict):
+            self.default_config = SandboxConfig(
+                max_memory_mb=self._parse_memory(str(default.get("max_memory", self.default_config.max_memory_mb))),
+                max_execution_time_seconds=self._parse_time(
+                    str(default.get("max_execution_time", self.default_config.max_execution_time_seconds))
+                ),
+                max_cpu_cores=float(default.get("max_cpu", self.default_config.max_cpu_cores)),
+                network_access=bool(default.get("network_access", self.default_config.network_access)),
+            )
+
+        tool_policies = policies.get("tools") if isinstance(policies.get("tools"), dict) else {}
+        for tool_name, tool_config in tool_policies.items():
+            if not isinstance(tool_config, dict):
+                continue
+            self.tool_permissions[tool_name] = ToolPermission(
+                tool_name=tool_name,
+                risk_level=RiskLevel(tool_config.get("risk_level", "medium")),
+                sandbox_enabled=bool(
+                    tool_config.get("sandbox_enabled", tool_config.get("requires_sandbox", True))
+                ),
+                allowed_commands=list(tool_config.get("allowed_commands", [])),
+                denied_commands=list(tool_config.get("denied_commands", [])),
+                allowed_paths=list(tool_config.get("allowed_paths", [])),
+                denied_paths=list(tool_config.get("denied_paths", [])),
+                max_execution_time_seconds=self._parse_time(
+                    str(tool_config.get("max_execution_time", "30s"))
+                ),
+                requires_approval=bool(tool_config.get("requires_approval", False)),
+            )
+
+    def _is_command_blocked(self, command: str) -> bool:
+        """Compatibility helper for tests and call sites checking hard-blocked commands."""
+        command_lower = str(command or "").lower().strip()
+        return any(blocked.lower() in command_lower for blocked in self.BLOCKED_COMMANDS)
+
+    def _is_pattern_blocked(self, command: str) -> bool:
+        """Compatibility helper for tests and call sites checking blocked patterns."""
+        return any(re.search(pattern, str(command or ""), re.IGNORECASE) for pattern in self.BLOCKED_PATTERNS)
+
+    def validate_path_access(self, path: str, mode: str = "read") -> bool:
+        """Compatibility helper that returns a boolean instead of raising."""
+        try:
+            raw_path = Path(path)
+            if ".." in raw_path.parts:
+                raise SandboxPermissionError(f"path_{mode}", f"path traversal detected: {path}")
+            raw_value = str(raw_path)
+            denied_prefixes = ("/etc/", "/root/", "/var/log/")
+            if raw_value.startswith(denied_prefixes) or "/.ssh/" in raw_value:
+                raise SandboxPermissionError(f"path_{mode}", f"Access denied to path: {path}")
+            allowed_prefixes = ("/workspace/", "/tmp/", "/private/tmp/", "/home/sandbox/")
+            if raw_value.startswith(allowed_prefixes):
+                return True
+        except SandboxPermissionError:
+            return False
+        return False
 
     def check_permission(
         self,

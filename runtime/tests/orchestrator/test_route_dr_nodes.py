@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.orchestrator import nodes_route as route_mod
+from src.orchestrator.context import CapabilityDescriptor
 from src.orchestrator.nodes_dr import _dr_tool_phase_prompt, dr_node
 from src.orchestrator.nodes_observe_dr import observe_dr_node
 from src.orchestrator.nodes_route import route_node
@@ -69,7 +70,18 @@ async def test_route_node_selects_direct_reasoning_for_document_summary(sample_a
 
 async def test_route_node_selects_delegate_for_explicit_sub_agent_request(sample_agent_state):
     runtime_context = sample_agent_state["context"]
-    runtime_context.available_sub_agents = [SimpleNamespace(id="researcher", name="Researcher")]
+    runtime_context.capabilities = [
+        CapabilityDescriptor(
+            id="agent:researcher",
+            kind="sub_agent",
+            name="subagent:researcher",
+            display_name="Researcher",
+            description="Research specialist",
+            source={"type": "agent", "agentId": "researcher"},
+            metadata={"sub_agent_id": "researcher"},
+        )
+    ]
+    runtime_context._explicit_capabilities_provided = True
     state = {
         **sample_agent_state,
         "context": runtime_context,
@@ -147,6 +159,7 @@ def test_dr_prompts_forbid_raw_tool_payload_output():
     tool_prompt = _dr_tool_phase_prompt("搜索最新 AI 行业动态并总结", {"max_tool_calls": 3, "max_react_iterations": 2})
 
     assert "Never present raw tool payloads" in tool_prompt
+    assert "your final response MUST be exactly one JSON object" in tool_prompt
 
 
 @pytest.mark.asyncio
@@ -181,7 +194,18 @@ async def test_route_shadow_mode_returns_metadata_without_mutating_input(sample_
 @pytest.mark.asyncio
 async def test_match_sub_agent_does_not_match_short_id_substrings(sample_agent_state):
     runtime_context = sample_agent_state["context"]
-    runtime_context.available_sub_agents = [SimpleNamespace(id="ai", name="")]
+    runtime_context.capabilities = [
+        CapabilityDescriptor(
+            id="agent:ai",
+            kind="sub_agent",
+            name="subagent:ai",
+            display_name="",
+            description="",
+            source={"type": "agent", "agentId": "ai"},
+            metadata={"sub_agent_id": "ai"},
+        )
+    ]
+    runtime_context._explicit_capabilities_provided = True
 
     matched = route_mod._match_sub_agent("explain this request", {**sample_agent_state, "context": runtime_context})
 
@@ -392,6 +416,186 @@ async def test_dr_node_suppresses_concatenated_raw_wrapper_answer_payload(sample
     assert result["dr_result"]["answer"] is None
     assert result["dr_result"]["diagnostics"]["raw_payload_suppressed"] is True
     assert "raw payload" in str(result["dr_result"]["upgrade_reason"] or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_dr_node_renders_python_literal_search_results_wrapper_answer(sample_agent_state):
+    python_literal_rows = str(
+        [
+            {
+                "rank": 1,
+                "author": "张司机在路上1天前",
+                "likes": "204",
+                "title": "我滴妈 Claude Code 源代码真的泄露了。。",
+                "url": "https://www.xiaohongshu.com/search_result/1",
+            },
+            {
+                "rank": 2,
+                "author": "清华姜学长03-08",
+                "likes": "883",
+                "title": "一条视频解读ClaudeCode新上的自动记忆功能",
+                "url": "https://www.xiaohongshu.com/search_result/2",
+            },
+        ]
+    )
+    mock_response = SimpleNamespace(
+        content=json.dumps({"status": "completed", "answer": python_literal_rows}, ensure_ascii=False),
+        usage={"prompt_tokens": 30, "completion_tokens": 20, "total_tokens": 50},
+    )
+    llm_provider = SimpleNamespace(chat=AsyncMock(return_value=mock_response))
+    state = {
+        **sample_agent_state,
+        "routing_decision": {
+            "mode": "direct_reasoning",
+            "goal": "搜索小红书上最新的 Claude Code 笔记并总结",
+            "reason": "single turn",
+            "delegate_to": None,
+            "dr_policy": {
+                "single_shot": True,
+                "allow_tools": True,
+                "allow_skills": True,
+                "max_tool_calls": 3,
+                "max_wall_clock_ms": 1000,
+                "max_prompt_tokens": 24000,
+                "max_react_iterations": 2,
+                "allow_parallel_tools": False,
+            },
+        },
+    }
+
+    result = await dr_node(state, {"llm_provider": llm_provider, "runtime_event_emitter": None})
+
+    assert result["dr_result"]["status"] == "completed"
+    assert "### 1. 我滴妈 Claude Code 源代码真的泄露了。。" in result["dr_result"]["answer"]
+    assert "- Author: 张司机在路上1天前" in result["dr_result"]["answer"]
+    assert "- Url: https://www.xiaohongshu.com/search_result/2" in result["dr_result"]["answer"]
+    assert "[{'rank': 1" not in result["dr_result"]["answer"]
+
+
+@pytest.mark.asyncio
+async def test_dr_node_suppresses_truncated_python_literal_wrapper_answer(sample_agent_state):
+    truncated_literal = (
+        "[{'rank': 1, 'author': '数字生命卡兹克1天前', "
+        "'title': 'Claude Code源码泄漏，宝藏功能藏不住了…', "
+        "'url': 'https://www.x"
+    )
+    mock_response = SimpleNamespace(
+        content=json.dumps({"status": "completed", "answer": truncated_literal}, ensure_ascii=False),
+        usage={"prompt_tokens": 30, "completion_tokens": 20, "total_tokens": 50},
+    )
+    llm_provider = SimpleNamespace(chat=AsyncMock(return_value=mock_response))
+    state = {
+        **sample_agent_state,
+        "routing_decision": {
+            "mode": "direct_reasoning",
+            "goal": "搜索小红书上最新的 Claude Code 笔记并总结",
+            "reason": "single turn",
+            "delegate_to": None,
+            "dr_policy": {
+                "single_shot": True,
+                "allow_tools": True,
+                "allow_skills": True,
+                "max_tool_calls": 3,
+                "max_wall_clock_ms": 1000,
+                "max_prompt_tokens": 24000,
+                "max_react_iterations": 2,
+                "allow_parallel_tools": False,
+            },
+        },
+    }
+
+    result = await dr_node(state, {"llm_provider": llm_provider, "runtime_event_emitter": None})
+
+    assert result["dr_result"]["status"] == "upgrade_required"
+    assert result["dr_result"]["answer"] is None
+    assert result["dr_result"]["diagnostics"]["raw_payload_suppressed"] is True
+
+
+@pytest.mark.asyncio
+async def test_dr_node_renders_python_literal_search_results_after_tool_phase(sample_agent_state):
+    llm_provider = SimpleNamespace(
+        chat=AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    content="",
+                    usage={"total_tokens": 20},
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "function": {
+                                "name": "opencli_xiaohongshu_search",
+                                "arguments": '{"query":"Claude Code"}',
+                            },
+                        }
+                    ],
+                    reasoning_content=None,
+                ),
+                SimpleNamespace(
+                    content=str(
+                        [
+                            {
+                                "rank": 1,
+                                "author": "杉森楠 AI Humanist1天前",
+                                "likes": "1932",
+                                "title": "被泄露的ClaudeCode完全部署成功了！！！",
+                                "url": "https://www.xiaohongshu.com/search_result/abc",
+                            }
+                        ]
+                    ),
+                    usage={"total_tokens": 15},
+                    tool_calls=[],
+                    reasoning_content=None,
+                ),
+            ]
+        )
+    )
+    action_executor = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=ToolCallResult(
+                tool_name="opencli_xiaohongshu_search",
+                params={"query": "Claude Code"},
+                success=True,
+                result=[{"title": "tool evidence"}],
+                error=None,
+                metadata={},
+            )
+        )
+    )
+    state = {
+        **sample_agent_state,
+        "routing_decision": {
+            "mode": "direct_reasoning",
+            "goal": "搜索小红书上最新的 Claude Code 笔记并总结",
+            "reason": "single turn",
+            "delegate_to": None,
+            "dr_policy": {
+                "single_shot": True,
+                "allow_tools": True,
+                "allow_skills": True,
+                "max_tool_calls": 2,
+                "max_wall_clock_ms": 1000,
+                "max_prompt_tokens": 24000,
+                "max_react_iterations": 2,
+                "allow_parallel_tools": False,
+            },
+        },
+    }
+
+    result = await dr_node(
+        state,
+        {
+            "llm_provider": llm_provider,
+            "action_executor": action_executor,
+            "runtime_event_emitter": None,
+            "event_emitter": None,
+        },
+    )
+
+    assert result["dr_result"]["status"] == "upgrade_required"
+    assert result["dr_result"]["answer"] is None
+    assert result["dr_result"]["diagnostics"]["contract_violation"] is True
+    assert result["dr_result"]["diagnostics"]["missing_wrapper"] is True
+    assert "non-wrapper terminal response after tool use" in str(result["dr_result"]["upgrade_reason"] or "")
 
 
 @pytest.mark.asyncio

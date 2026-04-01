@@ -16,6 +16,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_HARMLESS_BRIDGE_WARNINGS = (
+    "no im.message.message_read_v1 handle",
+    "no im.chat.access_event.bot_p2p_chat_entered_v1 handle",
+)
+
 
 @dataclass(slots=True)
 class FeishuLongConnectionSupervisor:
@@ -143,7 +148,10 @@ class FeishuLongConnectionSupervisor:
                 if not text:
                     continue
                 if level == "error":
-                    logger.warning("feishu-bridge[%s] %s", instance_id, text)
+                    if any(marker in text for marker in _HARMLESS_BRIDGE_WARNINGS):
+                        logger.debug("feishu-bridge[%s] %s", instance_id, text)
+                    else:
+                        logger.warning("feishu-bridge[%s] %s", instance_id, text)
                 else:
                     logger.info("feishu-bridge[%s] %s", instance_id, text)
 

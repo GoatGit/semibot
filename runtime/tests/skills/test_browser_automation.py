@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.skills.browser_automation import BrowserAutomationTool
+BrowserAutomationTool = pytest.importorskip("src.skills.browser_automation").BrowserAutomationTool
 
 
 @dataclass

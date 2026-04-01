@@ -521,7 +521,10 @@ def _check_search_stale_year(ctx: ToolValidationContext) -> str | None:
                 "today": ctx.today.strftime("%Y-%m-%d"),
             },
         )
-        return None
+        return (
+            "The user asked for latest/current information, but the search query is constrained to older years. "
+            "Regenerate the search call with recency-aware queries (today/latest/current) and without stale year limits."
+        )
     return None
 
 

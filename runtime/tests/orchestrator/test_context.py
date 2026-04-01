@@ -8,6 +8,9 @@ import pytest
 from src.orchestrator.context import (
     RuntimeSessionContext,
     AgentConfig,
+    CapabilityDescriptor,
+    RuntimeActionRequest,
+    RuntimeActionResult,
     SkillDefinition,
     ToolDefinition,
     McpServerDefinition,
@@ -86,12 +89,12 @@ def test_runtime_context_capability_methods():
 
     # Test get_all_capability_names
     capability_names = runtime_context.get_all_capability_names()
-    assert "web_search" in capability_names
     assert "calculator" in capability_names
+    assert "web_search" not in capability_names
 
     # Test has_capability
-    assert runtime_context.has_capability("web_search") is True
     assert runtime_context.has_capability("calculator") is True
+    assert runtime_context.has_capability("web_search") is False
     assert runtime_context.has_capability("nonexistent") is False
 
     # Test get_skill_by_name
@@ -103,6 +106,90 @@ def test_runtime_context_capability_methods():
     tool = runtime_context.get_tool_by_name("calculator")
     assert tool is not None
     assert tool.name == "calculator"
+
+
+def test_runtime_context_prefers_capability_descriptors_for_sub_agent_summaries():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        available_sub_agents=[],
+        capabilities=[
+            CapabilityDescriptor(
+                id="agent:researcher",
+                kind="sub_agent",
+                name="subagent:researcher",
+                display_name="Research Specialist",
+                description="Delegated research specialist",
+                source={"type": "agent", "agentId": "researcher"},
+                metadata={"sub_agent_id": "researcher"},
+            )
+        ],
+    )
+
+    summaries = runtime_context.get_sub_agent_summaries()
+
+    assert summaries == [
+        {
+            "id": "researcher",
+            "name": "Research Specialist",
+            "description": "Delegated research specialist",
+        }
+    ]
+    context_summary = runtime_context.get_sub_agent_summary("researcher")
+    assert context_summary is not None
+    assert context_summary["name"] == "Research Specialist"
+
+
+def test_runtime_context_derives_sub_agent_definition_from_capability_descriptor():
+    runtime_context = RuntimeSessionContext(
+        user_id="user_456",
+        agent_id="agent_123",
+        session_id="session_789",
+        agent_config=AgentConfig(id="agent_123", name="Test Agent"),
+        capabilities=[
+            CapabilityDescriptor(
+                id="agent:researcher",
+                kind="sub_agent",
+                name="subagent:researcher",
+                display_name="Research Specialist",
+                description="Delegated research specialist",
+                source={"type": "agent", "agentId": "researcher"},
+                constraints={"timeoutMs": 45000},
+                metadata={
+                    "sub_agent_id": "researcher",
+                    "system_prompt": "You do research.",
+                    "model": "gpt-4o-mini",
+                    "temperature": 0.2,
+                    "max_tokens": 2048,
+                    "skills": ["search"],
+                    "mcp_servers": [
+                        {
+                            "id": "browser",
+                            "name": "Browser",
+                            "endpoint": "http://localhost:8931",
+                            "transport": "http",
+                            "available_tools": [{"name": "open_url", "description": "Open URL"}],
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+
+    item = runtime_context.get_sub_agent_definition("researcher")
+
+    assert item is not None
+    assert item.id == "researcher"
+    assert item.name == "Research Specialist"
+    assert item.system_prompt == "You do research."
+    assert item.model == "gpt-4o-mini"
+    assert item.temperature == pytest.approx(0.2)
+    assert item.max_tokens == 2048
+    assert item.skills == ["search"]
+    assert len(item.mcp_servers) == 1
+    assert item.mcp_servers[0].id == "browser"
 
 
 def test_runtime_context_builds_unified_tool_catalog_with_collision_safe_names():
@@ -220,8 +307,37 @@ def test_agent_state_context_access():
     assert context.available_skills[0].name == "web_search"
 
     # Test capability methods through state
-    assert context.has_capability("web_search") is True
+    assert context.has_capability("web_search") is False
     assert context.has_capability("nonexistent") is False
+
+
+def test_runtime_action_contract_matches_canonical_shape():
+    request = RuntimeActionRequest(
+        action_id="action_1",
+        step_id="step_1",
+        capability_id="tool:search",
+        capability_name="search",
+        arguments={"query": "hello"},
+        requested_by={
+            "session_id": "session_789",
+            "agent_id": "agent_123",
+            "user_id": "user_456",
+        },
+    )
+    result = RuntimeActionResult(
+        action_id="action_1",
+        capability_id="tool:search",
+        status="success",
+        output={"hits": 1},
+    )
+
+    assert request.capability_name == "search"
+    assert request.requested_by["session_id"] == "session_789"
+    assert request.requested_by["agent_id"] == "agent_123"
+    assert request.requested_by["user_id"] == "user_456"
+    assert result.started_at is None
+    assert result.finished_at is None
+    assert result.duration_ms is None
 
 
 def test_runtime_policy_defaults():

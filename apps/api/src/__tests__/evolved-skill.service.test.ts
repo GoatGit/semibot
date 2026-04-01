@@ -8,29 +8,19 @@ const mockEvolvedSkillRepo = {
   create: vi.fn(),
   findByIdAndOrg: vi.fn(),
   findByOrg: vi.fn(),
-  updateReviewStatus: vi.fn(),
+  update: vi.fn(),
   softDelete: vi.fn(),
   updateStatus: vi.fn(),
-  incrementUseCount: vi.fn(),
-  incrementSuccessCount: vi.fn(),
-  updateEmbedding: vi.fn(),
-  findByEmbedding: vi.fn(),
   getStatsByAgent: vi.fn(),
   getTopSkills: vi.fn(),
-  findLowSuccessRate: vi.fn(),
-  findStaleSkills: vi.fn(),
-  findByIds: vi.fn(),
 }
-const mockSqlBegin = vi.fn()
-const mockSqlJson = vi.fn((val: unknown) => val)
+const mockSkillDefinitionRepo = {
+  existsBySkillId: vi.fn(),
+  create: vi.fn(),
+}
 
 vi.mock('../repositories/evolved-skill.repository', () => mockEvolvedSkillRepo)
-vi.mock('../lib/db', () => ({
-  sql: {
-    begin: (...args: unknown[]) => mockSqlBegin(...args),
-    json: (...args: unknown[]) => mockSqlJson(...args),
-  },
-}))
+vi.mock('../repositories/skill-definition.repository', () => mockSkillDefinitionRepo)
 
 vi.mock('../middleware/errorHandler', () => ({
   createError: vi.fn((code: string, msg?: string) => {
@@ -43,7 +33,7 @@ vi.mock('../middleware/errorHandler', () => ({
 vi.mock('../constants/errorCodes', () => ({
   EVOLVED_SKILL_NOT_FOUND: 'EVOLVED_SKILL_NOT_FOUND',
   EVOLVED_SKILL_INVALID_STATUS: 'EVOLVED_SKILL_INVALID_STATUS',
-  EVOLVED_SKILL_REVIEW_FAILED: 'EVOLVED_SKILL_REVIEW_FAILED',
+  RESOURCE_CONFLICT: 'RESOURCE_CONFLICT',
 }))
 
 vi.mock('../lib/logger', () => ({
@@ -79,10 +69,8 @@ describe('evolved-skill.service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
-    mockSqlBegin.mockImplementation(async (cb: (tx: unknown) => Promise<unknown> | unknown) => {
-      const tx = () => [{ id: 'skill-promoted-1', name: 'promoted-skill' }]
-      return cb(tx)
-    })
+    mockSkillDefinitionRepo.existsBySkillId.mockResolvedValue(false)
+    mockSkillDefinitionRepo.create.mockResolvedValue({ id: 'skill-promoted-1', name: 'promoted-skill' })
   })
 
   describe('list', () => {
@@ -94,7 +82,7 @@ describe('evolved-skill.service', () => {
 
       const { list } = await import('../services/evolved-skill.service')
 
-      const result = await list(testOrgId, { page: 1, limit: 10 })
+      const result = await list({ page: 1, limit: 10 })
       expect(result.meta.total).toBe(1)
       expect(result.data).toHaveLength(1)
     })
@@ -107,7 +95,7 @@ describe('evolved-skill.service', () => {
 
       const { list } = await import('../services/evolved-skill.service')
 
-      await list(testOrgId, { status: 'approved' })
+      await list({ status: 'approved' })
       expect(mockEvolvedSkillRepo.findByOrg).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'approved' })
       )
@@ -120,7 +108,7 @@ describe('evolved-skill.service', () => {
 
       const { getById } = await import('../services/evolved-skill.service')
 
-      const result = await getById(testSkillId, testOrgId)
+      const result = await getById(testSkillId)
       expect(result.id).toBe(testSkillId)
     })
 
@@ -130,7 +118,7 @@ describe('evolved-skill.service', () => {
       const { getById } = await import('../services/evolved-skill.service')
 
       await expect(
-        getById(uuid(), testOrgId)
+        getById(uuid())
       ).rejects.toMatchObject({ code: 'EVOLVED_SKILL_NOT_FOUND' })
     })
   })
@@ -138,7 +126,7 @@ describe('evolved-skill.service', () => {
   describe('review', () => {
     it('应审核通过 pending_review 状态的技能', async () => {
       mockEvolvedSkillRepo.findByIdAndOrg.mockResolvedValue(mockSkillRow)
-      mockEvolvedSkillRepo.updateReviewStatus.mockResolvedValue({
+      mockEvolvedSkillRepo.update.mockResolvedValue({
         ...mockSkillRow,
         status: 'approved',
         version: 2,
@@ -146,7 +134,7 @@ describe('evolved-skill.service', () => {
 
       const { review } = await import('../services/evolved-skill.service')
 
-      const result = await review(testSkillId, testOrgId, testUserId, {
+      const result = await review(testSkillId, testUserId, {
         action: 'approve',
         comment: '质量良好',
       })
@@ -155,7 +143,7 @@ describe('evolved-skill.service', () => {
 
     it('应拒绝 pending_review 状态的技能', async () => {
       mockEvolvedSkillRepo.findByIdAndOrg.mockResolvedValue(mockSkillRow)
-      mockEvolvedSkillRepo.updateReviewStatus.mockResolvedValue({
+      mockEvolvedSkillRepo.update.mockResolvedValue({
         ...mockSkillRow,
         status: 'rejected',
         version: 2,
@@ -163,7 +151,7 @@ describe('evolved-skill.service', () => {
 
       const { review } = await import('../services/evolved-skill.service')
 
-      const result = await review(testSkillId, testOrgId, testUserId, {
+      const result = await review(testSkillId, testUserId, {
         action: 'reject',
       })
       expect(result.status).toBe('rejected')
@@ -178,7 +166,7 @@ describe('evolved-skill.service', () => {
       const { review } = await import('../services/evolved-skill.service')
 
       await expect(
-        review(testSkillId, testOrgId, testUserId, { action: 'approve' })
+        review(testSkillId, testUserId, { action: 'approve' })
       ).rejects.toMatchObject({ code: 'EVOLVED_SKILL_INVALID_STATUS' })
     })
 
@@ -188,18 +176,18 @@ describe('evolved-skill.service', () => {
       const { review } = await import('../services/evolved-skill.service')
 
       await expect(
-        review(uuid(), testOrgId, testUserId, { action: 'approve' })
+        review(uuid(), testUserId, { action: 'approve' })
       ).rejects.toMatchObject({ code: 'EVOLVED_SKILL_NOT_FOUND' })
     })
 
     it('updateReviewStatus 返回 null 时抛出错误', async () => {
       mockEvolvedSkillRepo.findByIdAndOrg.mockResolvedValue(mockSkillRow)
-      mockEvolvedSkillRepo.updateReviewStatus.mockResolvedValue(null)
+      mockEvolvedSkillRepo.update.mockResolvedValue(null)
 
       const { review } = await import('../services/evolved-skill.service')
 
       await expect(
-        review(testSkillId, testOrgId, testUserId, { action: 'approve' })
+        review(testSkillId, testUserId, { action: 'approve' })
       ).rejects.toMatchObject({ code: 'EVOLVED_SKILL_INVALID_STATUS' })
     })
   })
@@ -211,7 +199,7 @@ describe('evolved-skill.service', () => {
 
       const { deprecate } = await import('../services/evolved-skill.service')
 
-      await deprecate(testSkillId, testOrgId, testUserId)
+      await deprecate(testSkillId, testUserId)
       expect(mockEvolvedSkillRepo.softDelete).toHaveBeenCalledWith(
         testSkillId, testUserId
       )
@@ -223,7 +211,7 @@ describe('evolved-skill.service', () => {
       const { deprecate } = await import('../services/evolved-skill.service')
 
       await expect(
-        deprecate(uuid(), testOrgId, testUserId)
+        deprecate(uuid(), testUserId)
       ).rejects.toMatchObject({ code: 'EVOLVED_SKILL_NOT_FOUND' })
     })
   })
@@ -234,10 +222,11 @@ describe('evolved-skill.service', () => {
         ...mockSkillRow,
         status: 'approved',
       })
+      mockEvolvedSkillRepo.updateStatus.mockResolvedValue(true)
 
       const { promote } = await import('../services/evolved-skill.service')
 
-      const result = await promote(testSkillId, testOrgId, testUserId)
+      const result = await promote(testSkillId, testUserId)
       expect(result.evolvedSkill.status).toBe('promoted')
       expect(result.skill.id).toBe('skill-promoted-1')
     })
@@ -248,7 +237,7 @@ describe('evolved-skill.service', () => {
       const { promote } = await import('../services/evolved-skill.service')
 
       await expect(
-        promote(testSkillId, testOrgId, testUserId)
+        promote(testSkillId, testUserId)
       ).rejects.toMatchObject({ code: 'EVOLVED_SKILL_INVALID_STATUS' })
     })
   })
@@ -270,7 +259,7 @@ describe('evolved-skill.service', () => {
 
       const { getStats } = await import('../services/evolved-skill.service')
 
-      const result = await getStats(testAgentId, testOrgId)
+      const result = await getStats(testAgentId)
       expect(result.totalEvolved).toBe(15)
       expect(result.approvedCount).toBe(10)
       expect(result.topSkills).toHaveLength(1)
@@ -291,7 +280,7 @@ describe('evolved-skill.service', () => {
 
       const { getStats } = await import('../services/evolved-skill.service')
 
-      const result = await getStats(testAgentId, testOrgId)
+      const result = await getStats(testAgentId)
       expect(result.approvalRate).toBe(0)
       expect(result.topSkills).toHaveLength(0)
     })

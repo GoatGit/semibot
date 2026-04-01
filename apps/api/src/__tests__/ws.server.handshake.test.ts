@@ -58,7 +58,7 @@ describe('ws-server handshake', () => {
   it('sends init with api_keys after auth', async () => {
     const server = Object.create(WSServer.prototype) as any
     server.connections = new Map()
-    server.validateAuth = vi.fn().mockResolvedValue({ userId: 'user-1', orgId: 'org-1', token: 'jwt-token' })
+    server.validateAuth = vi.fn().mockResolvedValue({ userId: 'user-1', token: 'jwt-token' })
 
     const ws = new FakeWS()
 
@@ -70,7 +70,6 @@ describe('ws-server handshake', () => {
     expect(init.type).toBe('init')
     expect(init.data).toMatchObject({
       user_id: 'user-1',
-      org_id: 'org-1',
     })
     expect(init.data.api_keys.openai.alg).toBe('aes-256-gcm')
     expect(typeof init.data.api_keys.openai.iv).toBe('string')

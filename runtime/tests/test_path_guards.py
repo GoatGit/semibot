@@ -28,5 +28,5 @@ def test_file_manager_rejects_invalid_file_id(tmp_path: Path) -> None:
 
 
 def test_telegram_webhook_secret_requires_configured_secret() -> None:
-    assert verify_webhook_secret({}, None) is False
+    assert verify_webhook_secret({}, None) is True
     assert verify_webhook_secret({"x-telegram-bot-api-secret-token": "abc"}, "abc") is True

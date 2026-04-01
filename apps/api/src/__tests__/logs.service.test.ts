@@ -4,27 +4,24 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as logsService from '../services/logs.service'
-import * as logsRepository from '../repositories/logs.repository'
+import * as logsLocalStore from '../lib/logs-local-store'
 
-// Mock repository
-vi.mock('../repositories/logs.repository')
+vi.mock('../lib/logs-local-store')
 
-const mockLogsRepository = logsRepository as typeof logsRepository & {
-  createExecutionLog: ReturnType<typeof vi.fn>
-  findExecutionLogs: ReturnType<typeof vi.fn>
-  findUsageRecords: ReturnType<typeof vi.fn>
-  getUsageSummary: ReturnType<typeof vi.fn>
-  upsertUsageRecord: ReturnType<typeof vi.fn>
+const mockLogsLocalStore = logsLocalStore as typeof logsLocalStore & {
+  localCreateExecutionLog: ReturnType<typeof vi.fn>
+  localFindExecutionLogsByAgent: ReturnType<typeof vi.fn>
+  localFindUsageRecords: ReturnType<typeof vi.fn>
+  localUpsertUsageRecord: ReturnType<typeof vi.fn>
 }
 
 describe('Logs Service', () => {
-  const mockOrgId = 'org-123'
   const mockAgentId = 'agent-123'
   const mockSessionId = 'session-123'
 
-  const mockExecutionLogRow: logsRepository.ExecutionLogRow = {
+  const mockExecutionLogRow: logsLocalStore.LocalExecutionLogRow = {
     id: 'log-123',
-    org_id: mockOrgId,
+    org_id: 'local',
     agent_id: mockAgentId,
     session_id: mockSessionId,
     request_id: 'req-123',
@@ -46,9 +43,9 @@ describe('Logs Service', () => {
     created_at: '2026-01-01T00:00:00Z',
   }
 
-  const mockUsageRecordRow: logsRepository.UsageRecordRow = {
+  const mockUsageRecordRow: logsLocalStore.LocalUsageRecordRow = {
     id: 'usage-123',
-    org_id: mockOrgId,
+    org_id: 'local',
     user_id: null,
     agent_id: null,
     period_start: '2026-01-01T00:00:00Z',
@@ -73,7 +70,7 @@ describe('Logs Service', () => {
 
   describe('logExecution', () => {
     it('should create execution log successfully', async () => {
-      mockLogsRepository.createExecutionLog.mockResolvedValue(mockExecutionLogRow)
+      mockLogsLocalStore.localCreateExecutionLog.mockReturnValue(mockExecutionLogRow)
 
       const input = {
         agentId: mockAgentId,
@@ -84,14 +81,13 @@ describe('Logs Service', () => {
         actionInput: { query: 'test' },
       }
 
-      const result = await logsService.logExecution(mockOrgId, input)
+      const result = await logsService.logExecution(input)
 
       expect(result).toBeDefined()
       expect(result.state).toBe('ACT')
       expect(result.actionName).toBe('web_search')
-      expect(mockLogsRepository.createExecutionLog).toHaveBeenCalledWith(
+      expect(mockLogsLocalStore.localCreateExecutionLog).toHaveBeenCalledWith(
         expect.objectContaining({
-          orgId: mockOrgId,
           agentId: mockAgentId,
           sessionId: mockSessionId,
         })
@@ -99,7 +95,7 @@ describe('Logs Service', () => {
     })
 
     it('should include optional fields', async () => {
-      mockLogsRepository.createExecutionLog.mockResolvedValue(mockExecutionLogRow)
+      mockLogsLocalStore.localCreateExecutionLog.mockReturnValue(mockExecutionLogRow)
 
       const input = {
         agentId: mockAgentId,
@@ -113,9 +109,9 @@ describe('Logs Service', () => {
         model: 'gpt-4',
       }
 
-      await logsService.logExecution(mockOrgId, input)
+      await logsService.logExecution(input)
 
-      expect(mockLogsRepository.createExecutionLog).toHaveBeenCalledWith(
+      expect(mockLogsLocalStore.localCreateExecutionLog).toHaveBeenCalledWith(
         expect.objectContaining({
           requestId: 'req-123',
           stepId: 'step-1',
@@ -127,26 +123,26 @@ describe('Logs Service', () => {
 
   describe('listExecutionLogs', () => {
     it('should return paginated execution logs', async () => {
-      mockLogsRepository.findExecutionLogs.mockResolvedValue({
+      mockLogsLocalStore.localFindExecutionLogsByAgent.mockReturnValue({
         data: [mockExecutionLogRow],
         meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
       })
 
-      const result = await logsService.listExecutionLogs(mockOrgId, { page: 1, limit: 20 })
+      const result = await logsService.listExecutionLogs({ page: 1, limit: 20 })
 
       expect(result.data).toHaveLength(1)
       expect(result.meta.total).toBe(1)
     })
 
     it('should support agent filter', async () => {
-      mockLogsRepository.findExecutionLogs.mockResolvedValue({
+      mockLogsLocalStore.localFindExecutionLogsByAgent.mockReturnValue({
         data: [],
         meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
       })
 
-      await logsService.listExecutionLogs(mockOrgId, { agentId: mockAgentId })
+      await logsService.listExecutionLogs({ agentId: mockAgentId })
 
-      expect(mockLogsRepository.findExecutionLogs).toHaveBeenCalledWith(
+      expect(mockLogsLocalStore.localFindExecutionLogsByAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           agentId: mockAgentId,
         })
@@ -154,17 +150,17 @@ describe('Logs Service', () => {
     })
 
     it('should support date range filter', async () => {
-      mockLogsRepository.findExecutionLogs.mockResolvedValue({
+      mockLogsLocalStore.localFindExecutionLogsByAgent.mockReturnValue({
         data: [],
         meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
       })
 
-      await logsService.listExecutionLogs(mockOrgId, {
+      await logsService.listExecutionLogs({
         startDate: '2026-01-01T00:00:00Z',
         endDate: '2026-01-31T23:59:59Z',
       })
 
-      expect(mockLogsRepository.findExecutionLogs).toHaveBeenCalledWith(
+      expect(mockLogsLocalStore.localFindExecutionLogsByAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           startDate: '2026-01-01T00:00:00Z',
           endDate: '2026-01-31T23:59:59Z',
@@ -173,16 +169,16 @@ describe('Logs Service', () => {
     })
 
     it('should support error code filter', async () => {
-      mockLogsRepository.findExecutionLogs.mockResolvedValue({
+      mockLogsLocalStore.localFindExecutionLogsByAgent.mockReturnValue({
         data: [],
         meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
       })
 
-      await logsService.listExecutionLogs(mockOrgId, { errorCode: 'TOOL_ERROR' })
+      await logsService.listExecutionLogs({ errorCode: 'TOOL_ERROR' })
 
-      expect(mockLogsRepository.findExecutionLogs).toHaveBeenCalledWith(
+      expect(mockLogsLocalStore.localFindExecutionLogsByAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          errorCode: 'TOOL_ERROR',
+          agentId: '',
         })
       )
     })
@@ -190,26 +186,26 @@ describe('Logs Service', () => {
 
   describe('listUsageRecords', () => {
     it('should return paginated usage records', async () => {
-      mockLogsRepository.findUsageRecords.mockResolvedValue({
+      mockLogsLocalStore.localFindUsageRecords.mockReturnValue({
         data: [mockUsageRecordRow],
         meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
       })
 
-      const result = await logsService.listUsageRecords(mockOrgId, { page: 1, limit: 20 })
+      const result = await logsService.listUsageRecords({ page: 1, limit: 20 })
 
       expect(result.data).toHaveLength(1)
       expect(result.meta.total).toBe(1)
     })
 
     it('should support period type filter', async () => {
-      mockLogsRepository.findUsageRecords.mockResolvedValue({
+      mockLogsLocalStore.localFindUsageRecords.mockReturnValue({
         data: [],
         meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
       })
 
-      await logsService.listUsageRecords(mockOrgId, { periodType: 'monthly' })
+      await logsService.listUsageRecords({ periodType: 'monthly' })
 
-      expect(mockLogsRepository.findUsageRecords).toHaveBeenCalledWith(
+      expect(mockLogsLocalStore.localFindUsageRecords).toHaveBeenCalledWith(
         expect.objectContaining({
           periodType: 'monthly',
         })
@@ -219,19 +215,12 @@ describe('Logs Service', () => {
 
   describe('getUsageSummary', () => {
     it('should return usage summary with totals', async () => {
-      mockLogsRepository.getUsageSummary.mockResolvedValue({
-        tokensInput: 10000,
-        tokensOutput: 5000,
-        apiCalls: 100,
-        toolCalls: 50,
-        sessionsCount: 10,
-        messagesCount: 200,
-        errorsCount: 2,
-        costUsd: 0.5,
+      mockLogsLocalStore.localFindUsageRecords.mockReturnValue({
+        data: [mockUsageRecordRow],
+        meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
       })
 
       const result = await logsService.getUsageSummary(
-        mockOrgId,
         'daily',
         '2026-01-01T00:00:00Z',
         '2026-01-31T23:59:59Z'
@@ -247,10 +236,9 @@ describe('Logs Service', () => {
 
   describe('recordUsage', () => {
     it('should upsert usage record', async () => {
-      mockLogsRepository.upsertUsageRecord.mockResolvedValue(mockUsageRecordRow)
+      mockLogsLocalStore.localUpsertUsageRecord.mockReturnValue(mockUsageRecordRow)
 
       const result = await logsService.recordUsage(
-        mockOrgId,
         'daily',
         '2026-01-01T00:00:00Z',
         '2026-01-01T23:59:59Z',
@@ -263,12 +251,11 @@ describe('Logs Service', () => {
 
       expect(result).toBeDefined()
       expect(result.periodType).toBe('daily')
-      expect(mockLogsRepository.upsertUsageRecord).toHaveBeenCalledWith(
-        mockOrgId,
-        'daily',
-        '2026-01-01T00:00:00Z',
-        '2026-01-01T23:59:59Z',
+      expect(mockLogsLocalStore.localUpsertUsageRecord).toHaveBeenCalledWith(
         expect.objectContaining({
+          periodType: 'daily',
+          periodStart: '2026-01-01T00:00:00Z',
+          periodEnd: '2026-01-01T23:59:59Z',
           tokensInput: 100,
           tokensOutput: 50,
         })

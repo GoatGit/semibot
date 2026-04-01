@@ -7,6 +7,7 @@ import type { EventPresentationDictionary } from '@/types/events'
 
 interface EventsQuery {
   type?: string
+  capability?: string
   limit?: number
 }
 
@@ -126,6 +127,7 @@ export function useEvents() {
       const response = await apiClient.get<unknown>('/events', {
         params: {
           type: query.type,
+          capability: query.capability,
           limit: query.limit ?? 50,
         },
       })

@@ -14,7 +14,7 @@ from src.gateway.adapters.feishu_adapter import (
 )
 from src.gateway.channels.feishu.helpers import resolve_instance_for_ingest
 from src.gateway.channels.feishu.helpers import handle_approval_followup
-from src.gateway.channels.shared import build_ingress_result
+from src.gateway.channels.shared import ChannelAnchorAdapter, build_ingress_result
 from src.gateway.parsers.approval_text import extract_message_text
 
 if TYPE_CHECKING:
@@ -89,6 +89,20 @@ async def ingest_events(
     if text:
         approval_trace_payload: dict[str, Any] = dict(data)
         approval_trace_payload["provider"] = "feishu"
+        approval_scope_ids: list[str] = []
+        if event.event_type == "chat.message.received" and isinstance(event.payload, dict):
+            chat_id = str(event.payload.get("chat_id") or "").strip()
+            instance_id = str(event.payload.get("instance_id") or (target_instance or {}).get("id") or "").strip()
+            if chat_id and instance_id:
+                scope_id = manager._latest_gateway_user_scope_id(  # noqa: SLF001
+                    provider="feishu",
+                    instance_id=instance_id,
+                    chat_id=chat_id,
+                )
+                if scope_id:
+                    approval_scope_ids.append(scope_id)
+        if approval_scope_ids:
+            approval_trace_payload["approval_scope_ids"] = approval_scope_ids
         approval_command = await manager.handle_text_approval_command(
             text=text,
             source="feishu.gateway",
@@ -111,7 +125,8 @@ async def ingest_events(
             context_map = context if isinstance(context, dict) else {}
             files = context_map.get("files")
             chat_id = str(event.payload.get("chat_id") or "").strip()
-            sent = await notifier.send_notify_payload(
+            adapter = ChannelAnchorAdapter(manager=manager, notifier=notifier)
+            return await adapter.deliver(
                 {
                     "title": "Semibot",
                     "content": reply_text,
@@ -119,16 +134,9 @@ async def ingest_events(
                     "receive_id_type": "chat_id" if chat_id else None,
                     "receive_id": chat_id or None,
                     "files": files if isinstance(files, list) else [],
-                }
+                },
+                anchor_id=str(context_map.get("anchor_id") or "").strip() or None,
             )
-            if sent:
-                metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
-                await manager.gateway_context.bind_anchor_delivery(
-                    anchor_id=str(context_map.get("anchor_id") or "").strip() or None,
-                    channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
-                    channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
-                )
-            return sent
 
         gateway_result = await manager.gateway_context.ingest_message(
             provider="feishu",
@@ -178,7 +186,6 @@ async def ingest_card_actions(
         raise GatewayManagerError("invalid_feishu_token", status_code=401)
 
     parsed = parse_card_action(data)
-    approval = None
     action_idempotency_key: str | None = None
     duplicate_action = False
     if parsed["approval_id"] and parsed["decision"] in {"approved", "rejected"}:
@@ -231,34 +238,30 @@ async def ingest_card_actions(
                 "resume": resume_result,
                 "approval_command": duplicate_command,
             }
-        approval = await manager.engine.resolve_approval(parsed["approval_id"], parsed["decision"])
-
     approval_action_event_id: str | None = None
     if (
         parsed["approval_id"]
         and parsed["decision"] in {"approved", "rejected"}
         and not duplicate_action
     ):
-        approval_action_event = Event(
-            event_id=f"evt_approval_action_{uuid4().hex}",
-            event_type="approval.action",
+        approval_command = await manager.resolve_gateway_approval_command(
+            engine=manager.engine,
+            target_ids=[str(parsed["approval_id"])],
+            decision=str(parsed["decision"]),
             source="feishu.gateway",
-            subject=parsed["approval_id"],
-            idempotency_key=action_idempotency_key,
-            payload={
-                "approval_id": parsed["approval_id"],
-                "decision": parsed["decision"],
+            subject=str(parsed["approval_id"]),
+            trace_payload={
                 "trace_id": parsed["trace_id"],
                 "execution_id": parsed["execution_id"],
                 "anchor_id": parsed["anchor_id"],
-                "resolved": approval is not None,
                 "raw": data,
             },
-            risk_hint="low",
-            timestamp=datetime.now(UTC),
+            action_idempotency_key=action_idempotency_key,
+            execution_id=str(parsed["execution_id"] or "").strip() or None,
         )
-        await manager.engine.emit(approval_action_event)
-        approval_action_event_id = approval_action_event.event_id
+        approval_action_event_id = str(approval_command.get("event_id") or "").strip() or None
+    else:
+        approval_command = None
 
     event = Event(
         event_id=f"evt_feishu_action_{uuid4().hex}",
@@ -269,110 +272,35 @@ async def ingest_card_actions(
             "approval_id": parsed["approval_id"],
             "decision": parsed["decision"] or parsed["raw_decision"],
             "trace_id": parsed["trace_id"],
-            "resolved": approval is not None,
+            "resolved": bool(approval_command and approval_command.get("resolved")),
             "raw": data,
         },
         risk_hint="low",
         timestamp=datetime.now(UTC),
     )
     outcomes = await manager.engine.emit(event)
+    chat_id = str(
+        data.get("chat_id")
+        or ((data.get("action") if isinstance(data.get("action"), dict) else {}).get("value") if isinstance((data.get("action") if isinstance(data.get("action"), dict) else {}).get("value"), dict) else {}).get("chat_id")
+        or ""
+    ).strip()
     resume_result = None
-    if parsed["approval_id"] and parsed["decision"] == "approved" and approval is not None:
-        chat_id = str(
-            data.get("chat_id")
-            or ((data.get("action") if isinstance(data.get("action"), dict) else {}).get("value") if isinstance((data.get("action") if isinstance(data.get("action"), dict) else {}).get("value"), dict) else {}).get("chat_id")
-            or ""
-        ).strip()
-        conversation_id: str | None = None
-        if chat_id:
-            instance_id = str(target_instance.get("id") or "").strip() if isinstance(target_instance, dict) else "feishu"
-            gateway_key = manager.gateway_context._gateway_key(  # noqa: SLF001
-                provider="feishu",
-                instance_id=instance_id,
-                chat_id=chat_id,
-            )
-            conversation = await manager.gateway_context.store.aget_or_create_conversation(
-                provider="feishu",
-                gateway_key=gateway_key,
-                instance_id=instance_id,
-                bot_id=str(feishu_cfg.get("appId") or "").strip() or str(getattr(manager, "feishu_app_id", "") or "").strip() or "feishu-app",
-                chat_id=chat_id,
-            )
-            conversation_id = conversation["id"]
-        matched_runs = await manager.gateway_context.find_executions_for_approval_ids(
-            approval_ids=[parsed["approval_id"]],
-            conversation_id=conversation_id,
-            statuses=["awaiting_approval"],
+    if approval_command:
+        resume_result = await handle_approval_followup(
+            manager,
+            target_instance=target_instance,
+            event_payload={
+                "chat_id": chat_id,
+                "instance_id": str(target_instance.get("id") or "").strip() if isinstance(target_instance, dict) else "",
+            },
+            approval_command=approval_command,
         )
-        if matched_runs:
-            notifier = manager.build_feishu_notifier(target_instance)
-
-            async def _feishu_result_sender(reply_text: str, context: dict[str, Any]) -> bool:
-                if not notifier:
-                    return False
-                context_map = context if isinstance(context, dict) else {}
-                files = context_map.get("files")
-                target_chat_id = str(context_map.get("chat_id") or chat_id).strip()
-                sent = await notifier.send_notify_payload(
-                    {
-                        "title": "Semibot",
-                        "content": reply_text,
-                        "channel": target_chat_id or "default",
-                        "receive_id_type": "chat_id" if target_chat_id else None,
-                        "receive_id": target_chat_id or None,
-                        "files": files if isinstance(files, list) else [],
-                    }
-                )
-                if sent:
-                    metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
-                    await manager.gateway_context.bind_anchor_delivery(
-                        anchor_id=str(context_map.get("anchor_id") or "").strip() or None,
-                        channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
-                        channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
-                    )
-                return sent
-
-            resumed: list[dict[str, Any]] = []
-            seen_execution_ids: set[str] = set()
-            for run in matched_runs:
-                execution_id = str(run.get("id") or "").strip()
-                if not execution_id or execution_id in seen_execution_ids:
-                    continue
-                seen_execution_ids.add(execution_id)
-                execution_chat_id = chat_id
-                if not execution_chat_id:
-                    conversation = await manager.gateway_context.store.aget_conversation(
-                        str(run.get("conversation_id") or "").strip()
-                    )
-                    execution_chat_id = str((conversation or {}).get("chat_id") or "").strip()
-                agent_id = manager._gateway_agent_id(
-                    "feishu",
-                    target_instance,
-                    event_payload={"chat_id": execution_chat_id},
-                )  # noqa: SLF001
-                item = await manager.gateway_context.resume_execution(
-                    provider="feishu",
-                    execution_id=execution_id,
-                    chat_id=execution_chat_id,
-                    agent_id=agent_id,
-                    on_result=_feishu_result_sender,
-                )
-                if item.get("resumed"):
-                    resumed.append(item)
-            if resumed:
-                resume_result = {
-                    "resumed": True,
-                    "conversation_id": conversation_id,
-                    "execution_ids": [item.get("task_run_id") for item in resumed],
-                    "runtime_session_ids": [item.get("runtime_session_id") for item in resumed],
-                    "agent_id": agent_id,
-                }
     return {
         "accepted": True,
         "approval_id": parsed["approval_id"],
         "decision": parsed["decision"] or parsed["raw_decision"],
-        "resolved": approval is not None,
-        "status": approval.status if approval else None,
+        "resolved": bool(approval_command and approval_command.get("resolved")),
+        "status": approval_command.get("status") if approval_command else None,
         "approval_action_event_id": approval_action_event_id,
         "event_id": event.event_id,
         "matched_rules": len(outcomes),

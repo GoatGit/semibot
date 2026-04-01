@@ -176,6 +176,7 @@ class PlannerAgent(BaseAgent):
             "memory": state.get("memory_context", ""),
             "memory_snapshot": state.get("memory_snapshot", {}),
             "available_skills": [],
+            "available_sub_agents": [],
         }
         memory_system = None
         runtime_context = state.get("context")
@@ -196,6 +197,9 @@ class PlannerAgent(BaseAgent):
 
             capability_graph = CapabilityGraph(runtime_context)
             context["available_skills"] = capability_graph.get_schemas_for_planner()
+            get_sub_agent_summaries = getattr(runtime_context, "get_sub_agent_summaries", None)
+            if callable(get_sub_agent_summaries):
+                context["available_sub_agents"] = list(get_sub_agent_summaries())
 
             logger.info(
                 "Using CapabilityGraph for planning",
@@ -226,6 +230,7 @@ class PlannerAgent(BaseAgent):
 
         # Build the prompt
         skills_text = self._format_skills(context.get("available_skills", []))
+        sub_agents_text = self._format_skills(context.get("available_sub_agents", []))
         memory_text = context.get("memory", "")
 
         messages = [
@@ -237,6 +242,9 @@ User Request: {user_message}
 
 Available Tools/Skills:
 {skills_text}
+
+Available Sub-Agents:
+{sub_agents_text}
 
 Relevant Context:
 {memory_text}

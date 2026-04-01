@@ -79,6 +79,37 @@ def build_approval_action_event(*, approval_id: str, command: str, decision: str
     )
 
 
+def build_gateway_approval_action_event(
+    *,
+    target_ids: list[str],
+    source: str,
+    subject: str | None,
+    decision: str,
+    command: str,
+    trace_payload: dict[str, Any] | None = None,
+    action_idempotency_key: str | None = None,
+    execution_id: str | None = None,
+) -> Event:
+    return Event(
+        event_id=f"evt_approval_action_{uuid4().hex}",
+        event_type="approval.action",
+        source=source,
+        subject=subject or (target_ids[0] if target_ids else None),
+        idempotency_key=action_idempotency_key,
+        payload={
+            "command": command,
+            "decision": decision,
+            "approval_ids": target_ids,
+            "resolved_count": 0,
+            "scope": "gateway",
+            "execution_id": execution_id,
+            "raw": trace_payload or {},
+        },
+        risk_hint="low",
+        timestamp=datetime.now(UTC),
+    )
+
+
 def extract_approval_resume_context(approval: ApprovalRequest) -> ApprovalResumeContext:
     context = approval.context if isinstance(getattr(approval, "context", None), dict) else {}
     runtime_session_id = str(context.get("runtime_session_id") or context.get("session_id") or "").strip() or None
@@ -188,6 +219,7 @@ async def approve_and_maybe_resume(
     db_path: str,
     rules_path: str,
     task_runner: Any,
+    gateway_context: Any | None = None,
     auto_resume: bool = True,
 ) -> ApprovalActionResult | None:
     approval = await engine.resolve_approval(approval_id, "approved")
@@ -213,6 +245,71 @@ async def approve_and_maybe_resume(
                 resumed=False,
                 session_id=context.runtime_session_id,
                 reason="resume_deferred",
+            ),
+        )
+
+    if gateway_context is not None:
+        matched_runs = await gateway_context.find_executions_for_approval_ids(
+            approval_ids=[approval.approval_id],
+            conversation_id=None,
+            statuses=["awaiting_approval"],
+        )
+        if not matched_runs:
+            return ApprovalActionResult(
+                approval_id=approval.approval_id,
+                status=approval.status,
+                approval_action_event_id=approval_action_event.event_id,
+                attempt_id=context.attempt_id,
+                user_message_id=context.user_message_id,
+                resume=_normalize_resume_outcome(
+                    resumed=False,
+                    session_id=context.runtime_session_id,
+                    reason="gateway_execution_not_found",
+                ),
+            )
+        for run in matched_runs:
+            execution_id = str(run.get("id") or "").strip()
+            conversation_id = str(run.get("conversation_id") or "").strip()
+            if not execution_id or not conversation_id:
+                continue
+            conversation = await gateway_context.store.aget_conversation(conversation_id)
+            if not conversation:
+                continue
+            provider = str(conversation.get("provider") or "").strip()
+            chat_id = str(conversation.get("chat_id") or "").strip()
+            if not provider or not chat_id:
+                continue
+            resumed = await gateway_context.resume_execution(
+                provider=provider,
+                execution_id=execution_id,
+                chat_id=chat_id,
+                agent_id=context.agent_id or "semibot",
+                on_result=None,
+            )
+            if resumed.get("resumed"):
+                return ApprovalActionResult(
+                    approval_id=approval.approval_id,
+                    status=approval.status,
+                    approval_action_event_id=approval_action_event.event_id,
+                    attempt_id=context.attempt_id,
+                    user_message_id=context.user_message_id,
+                    resume=_normalize_resume_outcome(
+                        resumed=True,
+                        session_id=str(resumed.get("runtime_session_id") or "") or None,
+                        status="queued",
+                        reason=None,
+                    ),
+                )
+        return ApprovalActionResult(
+            approval_id=approval.approval_id,
+            status=approval.status,
+            approval_action_event_id=approval_action_event.event_id,
+            attempt_id=context.attempt_id,
+            user_message_id=context.user_message_id,
+            resume=_normalize_resume_outcome(
+                resumed=False,
+                session_id=context.runtime_session_id,
+                reason="gateway_execution_resume_failed",
             ),
         )
 
@@ -293,6 +390,49 @@ async def approve_and_maybe_resume(
             reason=None,
         ),
     )
+
+
+async def gateway_resolve_approval_command(
+    *,
+    engine: EventEngine,
+    target_ids: list[str],
+    decision: str,
+    source: str,
+    subject: str | None,
+    trace_payload: dict[str, Any] | None = None,
+    action_idempotency_key: str | None = None,
+    execution_id: str | None = None,
+) -> dict[str, Any]:
+    resolved_items: list[Any] = []
+    for approval_id in target_ids:
+        resolved = await engine.resolve_approval(approval_id, decision)
+        if resolved:
+            resolved_items.append(resolved)
+
+    approval_action_event = build_gateway_approval_action_event(
+        target_ids=target_ids,
+        source=source,
+        subject=subject,
+        decision=decision,
+        command="approve_all" if len(target_ids) > 1 and decision == "approved" else "reject_all" if len(target_ids) > 1 else "approve" if decision == "approved" else "reject",
+        trace_payload=trace_payload,
+        action_idempotency_key=action_idempotency_key,
+        execution_id=execution_id,
+    )
+    payload = approval_action_event.payload if isinstance(approval_action_event.payload, dict) else {}
+    payload["resolved_count"] = len(resolved_items)
+    approval_action_event.payload = payload
+    await engine.emit(approval_action_event)
+
+    return {
+        "recognized": True,
+        "resolved": len(resolved_items) > 0,
+        "resolved_count": len(resolved_items),
+        "approval_ids": [item.approval_id for item in resolved_items],
+        "status": decision,
+        "execution_id": execution_id,
+        "event_id": approval_action_event.event_id,
+    }
 
 
 async def reject_and_finalize(

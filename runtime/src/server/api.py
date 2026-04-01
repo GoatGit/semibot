@@ -24,36 +24,35 @@ from src.events.event_router import EventRouter
 from src.events.event_store import EventStore
 from src.events.models import Event
 from src.events.runtime_action_executor import RuntimeActionExecutor
-from src.gateway.context_service import GatewayContextService
-from src.gateway.manager import GatewayManager
 from src.execution.runtime_approval_resume import (
     approve_and_maybe_resume,
     reject_and_finalize,
 )
-from src.orchestrator.missing_capability import (
-    build_missing_capability_query,
-    build_missing_capability_recommendation,
-)
+from src.gateway.channels.discord.notifier import SendFn as DiscordSendFn
+from src.gateway.channels.feishu.notifier import SendFn
+from src.gateway.channels.imessage.notifier import SendFn as IMessageSendFn
+from src.gateway.channels.telegram.notifier import SendFn as TelegramSendFn
+from src.gateway.context_service import GatewayContextService
+from src.gateway.manager import GatewayManager
+from src.gateway.parsers.approval_text import extract_message_text
 from src.orchestrator.capability_install_service import (
     approve_capability_install_request,
     normalize_missing_capability,
     resolve_missing_capability_request,
     retry_capability_install_request_task,
 )
+from src.orchestrator.missing_capability import (
+    build_missing_capability_query,
+)
 from src.orchestrator.tool_catalog import build_registry_tool_catalog
-from src.gateway.channels.discord.notifier import SendFn as DiscordSendFn
-from src.gateway.channels.imessage.notifier import SendFn as IMessageSendFn
-from src.services.rule_service import RuleService, RuleServiceError
-from src.gateway.channels.feishu.notifier import SendFn
-from src.gateway.channels.telegram.notifier import SendFn as TelegramSendFn
-from src.gateway.parsers.approval_text import extract_message_text
 from src.runtime_service import run_task_once
 from src.server.cli_import_service import approve_cli_import_request, create_cli_import_request
 from src.server.config_store import RuntimeConfigStore
 from src.server.feature_flags import channels_enabled
 from src.server.routes.gateway import register_gateway_routes
-from src.skills.index_manager import SkillsIndexManager
+from src.services.rule_service import RuleService, RuleServiceError
 from src.skills.bootstrap import create_default_registry
+from src.skills.index_manager import SkillsIndexManager
 from src.skills.skill_installer import install_or_refresh_skill
 
 TaskRunner = Callable[..., Awaitable[dict[str, Any]]]
@@ -188,6 +187,8 @@ class ChatStartRequest(BaseModel):
     fallback_provider_key: str | None = None
     system_prompt: str | None = None
     skill_index: list[dict[str, Any]] = Field(default_factory=list)
+    user_invoked: bool = False
+    user_invoked_skill_ids: list[str] = Field(default_factory=list)
     model_roles: dict[str, Any] | None = None
     stream: bool = False
 
@@ -219,6 +220,8 @@ class ChatSessionRequest(BaseModel):
     fallback_provider_key: str | None = None
     system_prompt: str | None = None
     skill_index: list[dict[str, Any]] = Field(default_factory=list)
+    user_invoked: bool = False
+    user_invoked_skill_ids: list[str] = Field(default_factory=list)
     model_roles: dict[str, Any] | None = None
     stream: bool = False
 
@@ -275,6 +278,11 @@ def create_app(
         return bool(value)
 
     gateway_manager: GatewayManager | None = None
+    bootstrap_cron_jobs = [
+        {str(key): value for key, value in item.items()}
+        for item in (cron_jobs or [])
+        if isinstance(item, dict)
+    ]
 
     async def _runtime_event_sink(runtime_event: dict[str, Any]) -> None:
         event_name = str(runtime_event.get("event") or "")
@@ -358,9 +366,13 @@ def create_app(
     def _sync_cron_scheduler_from_store() -> None:
         """Keep in-memory scheduler aligned with persisted cron jobs."""
         persisted = config_store.list_cron_jobs(active_only=True)
+        desired_jobs = [
+            *persisted,
+            *bootstrap_cron_jobs,
+        ]
         persisted_map = {
             str(item.get("name") or "").strip(): item
-            for item in persisted
+            for item in desired_jobs
             if str(item.get("name") or "").strip()
         }
 
@@ -410,14 +422,8 @@ def create_app(
         persisted_cron_jobs = config_store.list_cron_jobs(active_only=True)
         if persisted_cron_jobs:
             engine.start_cron_jobs(persisted_cron_jobs)
-        if cron_jobs:
-            normalized_jobs = [
-                {str(key): value for key, value in item.items()}
-                for item in cron_jobs
-                if isinstance(item, dict)
-            ]
-            if normalized_jobs:
-                engine.start_cron_jobs(normalized_jobs)
+        if bootstrap_cron_jobs:
+            engine.start_cron_jobs(bootstrap_cron_jobs)
         try:
             yield
         finally:
@@ -473,6 +479,7 @@ def create_app(
             "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
             "context": context,
             "tool_name": context.get("tool_name"),
+            "capability_id": context.get("capability_id") or context.get("capabilityId"),
             "action": context.get("action"),
             "target": context.get("target"),
             "summary": context.get("summary"),
@@ -508,6 +515,7 @@ def create_app(
         cursor: str | None,
         event_type: str | None,
         event_types: list[str] | None,
+        capability_id: str | None,
         limit: int,
     ) -> tuple[list[dict[str, Any]], str | None]:
         cursor_created_at, cursor_event_id = _decode_cursor(cursor)
@@ -516,6 +524,7 @@ def create_app(
             cursor_event_id=cursor_event_id,
             event_type=event_type,
             event_types=event_types,
+            capability_id=capability_id,
             limit=limit,
         )
         items = [_event_to_item(event) for event in events]
@@ -936,7 +945,7 @@ def create_app(
             return_exceptions=True,
         )
         items = []
-        for (session_id, last_seen_at), summary in zip(sessions.items(), summaries):
+        for (session_id, last_seen_at), summary in zip(sessions.items(), summaries, strict=False):
             item: dict[str, Any] = {
                 "session_id": session_id,
                 "last_seen_at": last_seen_at,
@@ -1230,8 +1239,8 @@ def create_app(
         approve_result = await approve_missing_capability_install(
             CapabilityApproveRequest(installRequestId=install_request_id, approved=True)
         )
-        approved_data = dict((approve_result.get("data") or {}))
-        resolve_data = dict((resolve_result.get("data") or {}))
+        approved_data = dict(approve_result.get("data") or {})
+        resolve_data = dict(resolve_result.get("data") or {})
         return {
             "ok": True,
             "data": {
@@ -1251,12 +1260,14 @@ def create_app(
         event_type: str | None = Query(default=None),
         event_types: str | None = Query(default=None, description="Comma-separated event types"),
         session_id: str | None = Query(default=None, description="Filter by session_id in payload"),
+        capability_id: str | None = Query(default=None, description="Filter by capability_id in payload"),
         limit: int = Query(default=50, ge=1, le=500),
     ) -> dict[str, Any]:
         if session_id:
             events = await asyncio.to_thread(
                 engine.store.list_events_by_session,
                 session_id,
+                capability_id=capability_id,
                 limit=limit,
             )
             return {"items": [_event_to_item(event) for event in events]}
@@ -1266,6 +1277,7 @@ def create_app(
             limit=limit,
             event_type=resolved_event_type,
             event_types=resolved_event_types,
+            capability_id=capability_id,
         )
         return {"items": [_event_to_item(event) for event in events]}
 
@@ -1331,6 +1343,8 @@ def create_app(
         fallback_provider_key: str | None,
         system_prompt: str | None,
         skill_index: list[dict[str, Any]] | None,
+        user_invoked: bool,
+        user_invoked_skill_ids: list[str] | None,
         model_roles: dict[str, Any] | None,
         stream: bool,
     ):
@@ -1349,6 +1363,8 @@ def create_app(
                 fallback_provider_key=fallback_provider_key,
                 system_prompt=system_prompt,
                 skill_index=skill_index,
+                user_invoked=user_invoked,
+                user_invoked_skill_ids=user_invoked_skill_ids,
                 model_roles=model_roles,
             )
             return {
@@ -1378,6 +1394,8 @@ def create_app(
                         fallback_provider_key=fallback_provider_key,
                         system_prompt=system_prompt,
                         skill_index=skill_index,
+                        user_invoked=user_invoked,
+                        user_invoked_skill_ids=user_invoked_skill_ids,
                         model_roles=model_roles,
                         runtime_event_callback=_runtime_event_callback,
                     )
@@ -1462,6 +1480,8 @@ def create_app(
             fallback_provider_key=req.fallback_provider_key,
             system_prompt=req.system_prompt,
             skill_index=req.skill_index,
+            user_invoked=req.user_invoked,
+            user_invoked_skill_ids=req.user_invoked_skill_ids,
             model_roles=req.model_roles,
             stream=req.stream,
         )
@@ -1480,6 +1500,8 @@ def create_app(
             fallback_provider_key=req.fallback_provider_key,
             system_prompt=req.system_prompt,
             skill_index=req.skill_index,
+            user_invoked=req.user_invoked,
+            user_invoked_skill_ids=req.user_invoked_skill_ids,
             model_roles=req.model_roles,
             stream=req.stream,
         )
@@ -1677,9 +1699,15 @@ def create_app(
     @app.get("/v1/approvals")
     async def list_approvals(
         status: str | None = Query(default=None),
+        capability_id: str | None = Query(default=None),
         limit: int = Query(default=50, ge=1, le=500),
     ) -> dict[str, Any]:
-        items = await asyncio.to_thread(engine.list_approvals, status=status, limit=limit)
+        items = await asyncio.to_thread(
+            engine.list_approvals,
+            status=status,
+            capability_id=capability_id,
+            limit=limit,
+        )
         return {"items": [_serialize_approval(item) for item in items]}
 
     @app.get("/v1/metrics/events")
@@ -1714,13 +1742,13 @@ def create_app(
                 raise HTTPException(status_code=400, detail=f"invalid until: {exc}") from exc
         valid_group_by = {"node", "model", "session", "agent", None}
         if group_by not in valid_group_by:
-            raise HTTPException(status_code=400, detail=f"group_by must be one of: node, model, session, agent")
+            raise HTTPException(status_code=400, detail="group_by must be one of: node, model, session, agent")
         valid_granularity = {"hour", "day", None}
         if granularity not in valid_granularity:
-            raise HTTPException(status_code=400, detail=f"granularity must be one of: hour, day")
+            raise HTTPException(status_code=400, detail="granularity must be one of: hour, day")
         return engine.store.aggregate_token_usage(since=since_dt, until=until_dt, group_by=group_by, granularity=granularity)
 
-
+    @app.get("/v1/dashboard/summary")
     async def dashboard_summary() -> dict[str, Any]:
         metrics = engine.metrics()
         return {
@@ -1768,6 +1796,7 @@ def create_app(
         resume_from: str | None = Query(default=None),
         event_type: str | None = Query(default=None),
         event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        capability_id: str | None = Query(default=None, description="Filter by capability_id in payload"),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
         resolved_event_type, resolved_event_types = _resolve_event_filters(event_type, event_types)
@@ -1776,6 +1805,7 @@ def create_app(
             cursor=effective_cursor,
             event_type=resolved_event_type,
             event_types=resolved_event_types,
+            capability_id=capability_id,
             limit=limit,
         )
         return {"items": items, "next_cursor": next_cursor}
@@ -1794,6 +1824,7 @@ def create_app(
         resume_from: str | None = Query(default=None),
         event_type: str | None = Query(default=None),
         event_types: str | None = Query(default=None, description="Comma-separated event types"),
+        capability_id: str | None = Query(default=None, description="Filter by capability_id in payload"),
         event_limit: int = Query(default=100, ge=1, le=500),
     ) -> StreamingResponse:
         selected_channels = _normalize_channels(channels)
@@ -1893,6 +1924,7 @@ def create_app(
                         cursor=current_cursor,
                         event_type=resolved_event_type,
                         event_types=resolved_event_types,
+                        capability_id=capability_id,
                         limit=event_limit,
                     )
                     current_cursor = next_cursor
@@ -1928,6 +1960,7 @@ def create_app(
             db_path=db,
             rules_path=rules,
             task_runner=_task_runner,
+            gateway_context=gateway_context,
             auto_resume=True if req is None else bool(req.resume),
         )
         if not result:

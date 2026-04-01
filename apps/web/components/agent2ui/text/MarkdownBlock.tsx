@@ -82,6 +82,8 @@ export interface MarkdownHeadingItem {
   id: string
 }
 
+const RESULT_META_PREFIX_RE = /^(摘要|总结|来源|链接|发布时间|作者|机构|要点)\s*[：:]/
+
 export function extractMarkdownHeadings(markdown: string): MarkdownHeadingItem[] {
   return markdown
     .split('\n')
@@ -97,16 +99,21 @@ export function extractMarkdownHeadings(markdown: string): MarkdownHeadingItem[]
     })
 }
 
+function isResultMetaParagraph(text: string): boolean {
+  return RESULT_META_PREFIX_RE.test(text.trim())
+}
+
 export function MarkdownBlock({ data, className, variant = 'chat', onEvidenceClick }: MarkdownBlockProps) {
   const isReport = variant === 'report'
   const renderedContent = renderChunkEvidenceLinks(data.content)
   return (
     <div
       className={clsx(
-        'prose prose-invert prose-sm max-w-none',
+        'prose prose-invert prose-sm max-w-none overflow-x-hidden [overflow-wrap:anywhere]',
+        '[&_p]:break-words [&_li]:break-words [&_td]:break-words [&_th]:break-words',
         isReport
           ? 'prose-headings:tracking-tight prose-p:text-[15px] prose-p:leading-7 prose-li:leading-7 prose-p:max-w-[72ch]'
-          : 'prose-p:text-sm prose-p:leading-7 prose-li:text-sm',
+          : 'prose-p:text-[15px] prose-p:leading-8 prose-li:text-[15px] prose-li:leading-8 prose-p:max-w-[66ch] prose-li:max-w-[66ch]',
         // 标题样式
         'prose-headings:text-text-primary prose-headings:font-semibold',
         'prose-h1:text-2xl prose-h1:mb-6 prose-h1:mt-2',
@@ -115,10 +122,10 @@ export function MarkdownBlock({ data, className, variant = 'chat', onEvidenceCli
         // 段落样式
         'prose-p:text-text-primary prose-p:leading-relaxed prose-p:my-4',
         // 链接样式
-        'prose-a:text-primary-500 prose-a:no-underline hover:prose-a:underline',
+        'prose-a:font-medium prose-a:text-primary-400 prose-a:no-underline hover:prose-a:text-primary-300 hover:prose-a:underline',
         // 列表样式
-        'prose-ul:my-4 prose-ol:my-4 prose-ul:pl-5 prose-ol:pl-5',
-        'prose-li:text-text-primary prose-li:my-1.5',
+        'prose-ul:my-4 prose-ol:my-5 prose-ul:pl-5 prose-ol:pl-0',
+        'prose-li:text-text-primary prose-li:my-1.5 marker:text-text-tertiary',
         // 代码样式
         'prose-code:text-primary-300 prose-code:bg-[rgba(255,255,255,0.06)]',
         'prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded',
@@ -137,6 +144,27 @@ export function MarkdownBlock({ data, className, variant = 'chat', onEvidenceCli
         // 加粗和斜体
         'prose-strong:text-text-primary prose-strong:font-semibold',
         'prose-em:text-text-secondary',
+        !isReport &&
+          [
+            '[&_.chat-markdown-ol>li]:relative',
+            '[&_.chat-markdown-ol>li]:my-4',
+            '[&_.chat-markdown-ol>li]:list-none',
+            '[&_.chat-markdown-ol>li]:rounded-2xl',
+            '[&_.chat-markdown-ol>li]:border',
+            '[&_.chat-markdown-ol>li]:border-border-subtle',
+            '[&_.chat-markdown-ol>li]:bg-[rgba(255,255,255,0.02)]',
+            '[&_.chat-markdown-ol>li]:px-4',
+            '[&_.chat-markdown-ol>li]:py-3',
+            '[&_.chat-markdown-ol>li]:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]',
+            '[&_.chat-markdown-ol>li>p:first-of-type]:mt-0',
+            '[&_.chat-markdown-ol>li>p:first-of-type]:mb-2',
+            '[&_.chat-markdown-ol>li>p:first-of-type]:text-[15px]',
+            '[&_.chat-markdown-ol>li>p:first-of-type]:font-semibold',
+            '[&_.chat-markdown-ol>li>p:first-of-type]:text-text-primary',
+            '[&_.chat-markdown-ol>li>p:not(:first-of-type)]:text-sm',
+            '[&_.chat-markdown-ol>li>p:not(:first-of-type)]:leading-7',
+            '[&_.chat-markdown-ol>li>p:not(:first-of-type)]:text-text-secondary',
+          ],
         className
       )}
     >
@@ -149,8 +177,10 @@ export function MarkdownBlock({ data, className, variant = 'chat', onEvidenceCli
               <h1
                 id={slugifyHeading(text)}
                 className={clsx(
-                  'scroll-mt-24 border-l-4 border-primary-500 pl-4',
-                  isReport && 'pb-2 text-[2rem] leading-tight'
+                  'scroll-mt-24',
+                  isReport
+                    ? 'pb-1 text-[1.75rem] font-semibold leading-[1.2] tracking-tight text-text-primary'
+                    : 'text-[1.85rem] font-semibold leading-[1.2] tracking-tight text-text-primary'
                 )}
               >
                 {children}
@@ -163,8 +193,10 @@ export function MarkdownBlock({ data, className, variant = 'chat', onEvidenceCli
               <h2
                 id={slugifyHeading(text)}
                 className={clsx(
-                  'scroll-mt-24 border-t border-border-subtle pt-5',
-                  isReport && 'rounded-xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.035)] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]'
+                  'scroll-mt-24 pt-5',
+                  isReport
+                    ? 'border-t border-border-subtle/70 px-0 pb-0 text-[1.12rem] font-semibold tracking-[0.01em] text-text-primary'
+                    : 'border-t border-border-subtle/80 text-[1.05rem] tracking-[0.01em] text-text-primary/95',
                 )}
               >
                 {children}
@@ -223,6 +255,39 @@ export function MarkdownBlock({ data, className, variant = 'chat', onEvidenceCli
               </a>
             )
           },
+          p: ({ children }) => {
+            const text = flattenChildren(children)
+            return (
+              <p
+                className={clsx(
+                  !isReport && 'text-text-primary/92',
+                  !isReport && isResultMetaParagraph(text) && 'text-sm leading-7 text-text-secondary'
+                )}
+              >
+                {children}
+              </p>
+            )
+          },
+          ol: ({ children }) => (
+            <ol
+              className={clsx(
+                'my-5',
+                isReport ? 'pl-5' : 'chat-markdown-ol list-none space-y-1 pl-0'
+              )}
+            >
+              {children}
+            </ol>
+          ),
+          ul: ({ children }) => (
+            <ul className={clsx('my-4 pl-5', !isReport && 'space-y-2')}>
+              {children}
+            </ul>
+          ),
+          li: ({ children }) => (
+            <li className={clsx(!isReport && 'text-text-primary/95')}>
+              {children}
+            </li>
+          ),
           pre: ({ children }) => <>{children}</>,
           code: ({ className: codeClassName, children, ...props }) => {
             const language = /language-(\w+)/.exec(codeClassName || '')?.[1] || 'text'

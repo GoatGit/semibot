@@ -19,7 +19,6 @@ from urllib.request import urlopen
 from src.bootstrap import default_skills_path
 from src.constants.config import (
     GH_AUTH_LOGIN_TIMEOUT_SECONDS,
-    GH_AUTH_POLL_INTERVAL_SECONDS,
     REGISTRY_NAME_PATTERN,
     SKILLS_CLI_AUTO_CONFIRM_INTERVAL,
     SKILLS_CLI_TIMEOUT_SECONDS,

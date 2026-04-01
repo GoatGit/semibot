@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,86 @@ from src.sandbox.models import AuditLogEntry, ExecutionResult
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class AuditEventType(StrEnum):
+    """Legacy sandbox audit event types kept for test compatibility."""
+
+    SANDBOX_CREATED = "sandbox_created"
+    SANDBOX_DESTROYED = "sandbox_destroyed"
+    CODE_EXECUTED = "code_executed"
+    POLICY_VIOLATION = "policy_violation"
+    EXECUTION_TIMEOUT = "execution_timeout"
+    RESOURCE_LIMIT_EXCEEDED = "resource_limit_exceeded"
+
+
+class SandboxAuditEvent:
+    """Lightweight event record used by the legacy async sandbox audit API."""
+
+    def __init__(
+        self,
+        *,
+        event_type: AuditEventType,
+        sandbox_id: str,
+        user_id: str | None = None,
+        severity: str = "INFO",
+        details: dict[str, Any] | None = None,
+        timestamp: datetime | None = None,
+    ) -> None:
+        self.event_type = event_type
+        self.sandbox_id = sandbox_id
+        self.user_id = user_id
+        self.severity = severity
+        self.details = details or {}
+        self.timestamp = timestamp or datetime.now()
+
+
+class SandboxAuditLogger:
+    """Compatibility async audit logger used by older sandbox tests."""
+
+    def __init__(self) -> None:
+        self._events: list[SandboxAuditEvent] = []
+
+    async def log_event(
+        self,
+        *,
+        event_type: AuditEventType,
+        sandbox_id: str,
+        user_id: str | None = None,
+        severity: str = "INFO",
+        details: dict[str, Any] | None = None,
+    ) -> SandboxAuditEvent:
+        event = SandboxAuditEvent(
+            event_type=event_type,
+            sandbox_id=sandbox_id,
+            user_id=user_id,
+            severity=severity,
+            details=details,
+        )
+        self._events.append(event)
+        return event
+
+    async def get_events(
+        self,
+        *,
+        sandbox_id: str | None = None,
+        user_id: str | None = None,
+        event_type: AuditEventType | None = None,
+        limit: int | None = None,
+    ) -> list[SandboxAuditEvent]:
+        events = list(self._events)
+        if sandbox_id is not None:
+            events = [event for event in events if event.sandbox_id == sandbox_id]
+        if user_id is not None:
+            events = [event for event in events if event.user_id == user_id]
+        if event_type is not None:
+            events = [event for event in events if event.event_type == event_type]
+        if limit is not None:
+            events = events[-limit:]
+        return events
+
+    async def clear_events(self) -> None:
+        self._events.clear()
 
 
 class AuditLogger:

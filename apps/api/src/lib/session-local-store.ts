@@ -282,6 +282,30 @@ export function localFindSessionsByUserAndOrg(params: {
   const limit = Math.min(params.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
   const offset = (page - 1) * limit
 
+  let where = 'WHERE deleted_at IS NULL AND user_id = ?'
+  const binds: unknown[] = [params.userId]
+  if (params.agentId) { where += ' AND agent_id = ?'; binds.push(params.agentId) }
+  if (params.status) { where += ' AND status = ?'; binds.push(params.status) }
+
+  const total = (db.prepare(`SELECT COUNT(*) as c FROM sessions ${where}`).get(...binds) as { c: number }).c
+  const rows = db.prepare(`SELECT * FROM sessions ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...binds, limit, offset)
+  return {
+    data: rows.map((r) => rowToSession(r as Record<string, unknown>)),
+    meta: { total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) },
+  }
+}
+
+export function localFindSessionsByOrg(params: {
+  page?: number
+  limit?: number
+  agentId?: string
+  status?: SessionStatus
+}): { data: LocalSessionRow[]; meta: { total: number; page: number; limit: number; totalPages: number } } {
+  const db = getLocalDb()
+  const page = params.page ?? 1
+  const limit = Math.min(params.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
+  const offset = (page - 1) * limit
+
   let where = 'WHERE deleted_at IS NULL'
   const binds: unknown[] = []
   if (params.agentId) { where += ' AND agent_id = ?'; binds.push(params.agentId) }

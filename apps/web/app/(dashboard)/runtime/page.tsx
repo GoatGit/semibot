@@ -82,6 +82,14 @@ function getEventToolName(event: EventRecord): string {
   return readPayloadString(event.payload, 'tool_name', 'tool')
 }
 
+function getEventCapabilityId(event: EventRecord): string {
+  return readPayloadString(event.payload, 'capability_id', 'capabilityId')
+}
+
+function getEventExecutionLabel(event: EventRecord): string {
+  return getEventCapabilityId(event) || getEventToolName(event)
+}
+
 function getEventReason(event: EventRecord): string {
   return (
     humanizeReason(readPayloadString(event.payload, 'reason', 'message', 'summary', 'kind', 'failure_kind', 'family'))
@@ -173,6 +181,7 @@ type RuntimeRow = {
   detail: string
   sessionId: string
   toolName: string
+  capabilityId: string
   createdAt: string
 }
 
@@ -192,6 +201,7 @@ type SessionDiagnostic = {
   drUpgrades: number
   totalTokens: number
   toolName: string
+  capabilityId: string
 }
 
 type GroupFilter = 'all' | 'stale' | 'loop' | 'drUpgrades' | 'retryable' | 'timeouts' | 'toolFailures'
@@ -215,11 +225,13 @@ type IncidentGroup = {
 
 function buildRuntimeRow(event: EventRecord, t: (key: string, params?: Record<string, string | number>) => string): RuntimeRow {
   const toolName = getEventToolName(event)
+  const capabilityId = getEventCapabilityId(event)
   const sessionId = getEventSessionId(event)
   const attemptId = getEventAttemptId(event)
   const detailParts = [
     runtimeEventLabel(event.eventType, t),
     toolName ? `${t('runtimeMonitor.labels.toolName')}: ${toolName}` : '',
+    capabilityId ? `Capability: ${capabilityId}` : '',
     sessionId ? `${t('runtimeMonitor.labels.sessionId')}: ${tailId(sessionId, 8)}` : '',
     attemptId ? `Attempt: ${tailId(attemptId, 8)}` : '',
   ].filter(Boolean)
@@ -232,6 +244,7 @@ function buildRuntimeRow(event: EventRecord, t: (key: string, params?: Record<st
     detail: detailParts.join(' · '),
     sessionId,
     toolName,
+    capabilityId,
     createdAt: event.createdAt,
   }
 }
@@ -306,7 +319,7 @@ function pickFocusEventIdForGroup(
       return event.eventType === 'runtime.failure' && /retry|timeout|rate limit|overflow|temporary/i.test(getEventReason(event))
     }
     if (group === 'timeouts') return event.eventType === 'runtime.failure' && /timeout/i.test(getEventReason(event))
-    if (group === 'toolFailures') return event.eventType === 'runtime.failure' && !!getEventToolName(event)
+    if (group === 'toolFailures') return event.eventType === 'runtime.failure' && !!getEventExecutionLabel(event)
     if (group === 'stale') return event.eventType === 'act.heartbeat'
     return isDrUpgrade(event) || event.eventType === 'dr.failed' || event.eventType === 'runtime.failure' || isLoopAlert(event) || event.eventType === 'route.mode_selected'
   })
@@ -403,6 +416,7 @@ function buildSessionDiagnostics(snapshot: ReturnType<typeof useRuntimeMonitor>[
                 : t('runtimeMonitor.actions.monitorOnly')
 
       const toolName = getEventToolName(lastEvent)
+      const capabilityId = getEventCapabilityId(lastEvent)
       const summary =
         status === 'stale'
           ? t('runtimeMonitor.diagnostics.staleSummary')
@@ -430,6 +444,7 @@ function buildSessionDiagnostics(snapshot: ReturnType<typeof useRuntimeMonitor>[
         drUpgrades,
         totalTokens,
         toolName,
+        capabilityId,
       }
     })
     .sort((a, b) => {
@@ -440,7 +455,7 @@ function buildSessionDiagnostics(snapshot: ReturnType<typeof useRuntimeMonitor>[
 
 function buildIncidentGroups(snapshot: ReturnType<typeof useRuntimeMonitor>['snapshot'], t: (key: string, params?: Record<string, string | number>) => string): IncidentGroup[] {
   const timeoutFailures = snapshot.failures.filter((event) => /timeout/i.test(getEventReason(event))).length
-  const toolFailures = snapshot.failures.filter((event) => !!getEventToolName(event)).length
+  const toolFailures = snapshot.failures.filter((event) => !!getEventExecutionLabel(event)).length
   return [
     {
       key: 'stale',
@@ -594,9 +609,11 @@ export default function RuntimePage() {
   const { snapshot, isLoading, error, loadRuntimeMonitor } = useRuntimeMonitor()
   const { openDetailContent } = useLayoutStore()
   const queryGroup = searchParams.get('group')
+  const queryCapability = searchParams.get('capability')
   const isValidGroup = (value: string | null): value is GroupFilter =>
     value === 'all' || value === 'stale' || value === 'loop' || value === 'drUpgrades' || value === 'retryable' || value === 'timeouts' || value === 'toolFailures'
   const [sessionId, setSessionId] = useState('')
+  const [capabilityQuery, setCapabilityQuery] = useState(queryCapability ?? '')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [eventsDrawerLoading, setEventsDrawerLoading] = useState(false)
   const [activeGroup, setActiveGroup] = useState<GroupFilter>(isValidGroup(queryGroup) ? queryGroup : 'all')
@@ -606,48 +623,71 @@ export default function RuntimePage() {
     setActiveGroup((current) => (current === next ? current : next))
   }, [queryGroup])
 
+  useEffect(() => {
+    const next = queryCapability ?? ''
+    setCapabilityQuery((current) => (current === next ? current : next))
+  }, [queryCapability])
+
   const updateActiveGroup = useCallback((next: GroupFilter) => {
     setActiveGroup(next)
     const params = new URLSearchParams(searchParams.toString())
     if (next === 'all') params.delete('group')
     else params.set('group', next)
+    if (capabilityQuery.trim()) params.set('capability', capabilityQuery.trim())
+    else params.delete('capability')
     const query = params.toString()
     router.replace(query ? `/runtime?${query}` : '/runtime', { scroll: false })
-  }, [router, searchParams])
+  }, [capabilityQuery, router, searchParams])
+
+  const updateCapabilityQuery = useCallback((next: string) => {
+    setCapabilityQuery(next)
+    const params = new URLSearchParams(searchParams.toString())
+    if (activeGroup === 'all') params.delete('group')
+    else params.set('group', activeGroup)
+    if (next.trim()) params.set('capability', next.trim())
+    else params.delete('capability')
+    const query = params.toString()
+    router.replace(query ? `/runtime?${query}` : '/runtime', { scroll: false })
+  }, [activeGroup, router, searchParams])
 
   const refresh = useCallback(async () => {
     await loadRuntimeMonitor({
       limit: 200,
       sessionId: sessionId.trim() || undefined,
+      capability: capabilityQuery.trim() || undefined,
     })
-  }, [loadRuntimeMonitor, sessionId])
+  }, [capabilityQuery, loadRuntimeMonitor, sessionId])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
   const diagnostics = useMemo(() => buildSessionDiagnostics(snapshot, t), [snapshot, t])
-  const insightCards = useMemo(() => buildInsightCards(snapshot, diagnostics, t), [snapshot, diagnostics, t])
-  const incidentGroups = useMemo(() => buildIncidentGroups(snapshot, t), [snapshot, t])
+  const filteredDiagnostics = diagnostics
+  const filteredTimeline = snapshot.timeline
+  const filteredStaleSessions = snapshot.staleSessions
+  const filteredSnapshot = snapshot
+  const insightCards = useMemo(() => buildInsightCards(filteredSnapshot, filteredDiagnostics, t), [filteredSnapshot, filteredDiagnostics, t])
+  const incidentGroups = useMemo(() => buildIncidentGroups(filteredSnapshot, t), [filteredSnapshot, t])
   const incidentRows = useMemo(() => {
-    const base = snapshot.timeline.filter((event) => event.eventType === 'runtime.failure' || isLoopAlert(event) || isHighCostUsage(event) || isDrUpgrade(event))
+    const base = filteredTimeline.filter((event) => event.eventType === 'runtime.failure' || isLoopAlert(event) || isHighCostUsage(event) || isDrUpgrade(event))
     const filtered = base.filter((event) => {
       if (activeGroup === 'all') return true
       if (activeGroup === 'stale') {
         const id = getEventSessionId(event)
-        return !!id && snapshot.staleSessions.some((session) => session.sessionId === id)
+        return !!id && filteredStaleSessions.some((session) => session.sessionId === id)
       }
       if (activeGroup === 'loop') return isLoopAlert(event)
       if (activeGroup === 'drUpgrades') return isDrUpgrade(event)
       if (activeGroup === 'retryable') return event.eventType === 'runtime.failure' && /retry|timeout|rate limit|overflow|temporary/i.test(getEventReason(event))
       if (activeGroup === 'timeouts') return event.eventType === 'runtime.failure' && /timeout/i.test(getEventReason(event))
-      if (activeGroup === 'toolFailures') return event.eventType === 'runtime.failure' && !!getEventToolName(event)
+      if (activeGroup === 'toolFailures') return event.eventType === 'runtime.failure' && !!getEventExecutionLabel(event)
       return true
     })
     return filtered.slice(0, 10).map((event) => buildRuntimeRow(event, t))
-  }, [activeGroup, snapshot.timeline, snapshot.staleSessions, t])
+  }, [activeGroup, filteredStaleSessions, filteredTimeline, t])
   const actionableSessions = useMemo(() => {
-    const base = diagnostics.filter((item) => item.status !== 'healthy')
+    const base = filteredDiagnostics.filter((item) => item.status !== 'healthy')
     const filtered = base.filter((item) => {
       if (activeGroup === 'all') return true
       if (activeGroup === 'stale') return item.status === 'stale'
@@ -657,7 +697,7 @@ export default function RuntimePage() {
       return true
     })
     return filtered.slice(0, 8)
-  }, [activeGroup, diagnostics])
+  }, [activeGroup, filteredDiagnostics])
 
   const handleCopyEvent = useCallback(async (event: EventRecord) => {
     const ok = await copyToClipboard(JSON.stringify(event, null, 2))
@@ -747,12 +787,14 @@ export default function RuntimePage() {
     const related = incidentEvents
       .map((event) => {
         const toolName = getEventToolName(event)
+        const capabilityId = getEventCapabilityId(event)
         return {
           id: event.id,
           type: event.eventType,
           title: getEventReason(event),
           detail: [
             toolName ? `${t('runtimeMonitor.labels.toolName')}: ${toolName}` : '',
+            capabilityId ? `Capability: ${capabilityId}` : '',
             `${t('runtimeMonitor.labels.sessionId')}: ${tailId(value, 8)}`,
             latestAttemptId ? `Attempt: ${tailId(getEventAttemptId(event) || latestAttemptId, 8)}` : '',
           ]
@@ -806,6 +848,7 @@ export default function RuntimePage() {
       drUpgrades: diagnostic?.drUpgrades || 0,
       totalTokens: numberCompact(diagnostic?.totalTokens || 0),
       toolName: diagnostic?.toolName || '',
+      capabilityId: diagnostic?.capabilityId || '',
       routeMode: routeMode ? getRouteModeLabel(routeMode, t) : '--',
       routeReason: routeReason || '--',
       routeAt: routeEvent ? formatTime(routeEvent.createdAt, locale) : '--',
@@ -840,6 +883,7 @@ export default function RuntimePage() {
         const blocks = events.map((event) => {
           const summary = humanizeReason(readPayloadString(event.payload, 'message', 'summary', 'reason', 'status')) || humanizeReason(event.eventType)
           const toolName = readPayloadString(event.payload, 'tool_name', 'tool')
+          const capabilityId = readPayloadString(event.payload, 'capability_id', 'capabilityId')
           const session = readPayloadString(event.payload, 'session_id', 'sessionId')
           return [
             `## ${summary}`,
@@ -849,6 +893,7 @@ export default function RuntimePage() {
             event.subject ? `- ${t('runtimeMonitor.drawer.fields.subject')}: \`${tailId(event.subject, 8)}\`` : '',
             session ? `- ${t('runtimeMonitor.drawer.fields.session')}: \`${tailId(session, 8)}\`` : '',
             toolName ? `- ${t('runtimeMonitor.drawer.fields.tool')}: \`${toolName}\`` : '',
+            capabilityId ? `- Capability: \`${capabilityId}\`` : '',
           ]
             .filter(Boolean)
             .join('\n')
@@ -893,6 +938,13 @@ export default function RuntimePage() {
                 <div className="relative flex-1 min-w-[280px]">
                   <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
                   <Input value={sessionId} onChange={(event) => setSessionId(event.target.value)} placeholder={t('runtimeMonitor.searchPlaceholder')} className="pl-9" />
+                </div>
+                <div className="min-w-[240px] flex-1">
+                  <Input
+                    value={capabilityQuery}
+                    onChange={(event) => updateCapabilityQuery(event.target.value)}
+                    placeholder="Filter by capability ID"
+                  />
                 </div>
                 <button
                   type="button"
@@ -984,6 +1036,7 @@ export default function RuntimePage() {
                             <div className="flex flex-wrap items-center gap-2">
                               <Badge variant={item.status === 'failure' ? 'error' : item.status === 'healthy' ? 'success' : 'warning'}>{item.statusLabel}</Badge>
                               {item.toolName ? <Badge variant="outline">{item.toolName}</Badge> : null}
+                              {item.capabilityId ? <Badge variant="outline">{item.capabilityId}</Badge> : null}
                             </div>
                             <div className="mt-3 text-base font-medium text-text-primary">{tailId(item.sessionId)}</div>
                             {item.attemptId ? (
@@ -1077,6 +1130,7 @@ export default function RuntimePage() {
                             <div className="flex flex-wrap items-center gap-2">
                               <Badge variant={row.badgeVariant}>{row.badge}</Badge>
                               {row.toolName ? <Badge variant="outline">{row.toolName}</Badge> : null}
+                              {row.capabilityId ? <Badge variant="outline">{row.capabilityId}</Badge> : null}
                             </div>
                             <div className="mt-3 text-base font-medium text-text-primary">{row.title}</div>
                             <div className="mt-1 text-sm text-text-secondary">{row.detail}</div>
@@ -1126,11 +1180,11 @@ export default function RuntimePage() {
                   <h2 className="text-lg font-semibold text-text-primary">{t('runtimeMonitor.sections.healthySessions')}</h2>
                   <p className="mt-1 text-sm text-text-secondary">{t('runtimeMonitor.sections.healthySessionsHint')}</p>
                 </div>
-                {diagnostics.filter((item) => item.status === 'healthy').length === 0 ? (
+                {filteredDiagnostics.filter((item) => item.status === 'healthy').length === 0 ? (
                   <div className="mt-4 rounded-xl border border-border-subtle bg-bg-base px-4 py-4 text-sm text-text-secondary">{t('runtimeMonitor.noStaleSessions')}</div>
                 ) : (
                   <div className="mt-4 space-y-3">
-                    {diagnostics
+                    {filteredDiagnostics
                       .filter((item) => item.status === 'healthy')
                       .slice(0, 4)
                       .map((item) => (

@@ -33,7 +33,7 @@ const userLimits = new Map<string, RateLimitInfo>()
 const orgLimits = new Map<string, RateLimitInfo>()
 
 // 每分钟清理过期记录
-setInterval(() => {
+const rateLimitCleanupTimer = setInterval(() => {
   const now = new Date()
   for (const [key, info] of userLimits) {
     if (info.resetTime <= now) userLimits.delete(key)
@@ -42,6 +42,9 @@ setInterval(() => {
     if (info.resetTime <= now) orgLimits.delete(key)
   }
 }, 60_000)
+if (typeof rateLimitCleanupTimer.unref === 'function') {
+  rateLimitCleanupTimer.unref()
+}
 
 // ─── 内存滑动窗口 ─────────────────────────────────────────────────────────────
 
@@ -120,7 +123,6 @@ export async function orgRateLimit(
   _res: Response,
   next: NextFunction
 ): Promise<void> {
-  // Single-user mode: org-level rate limiting not needed
   next()
 }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,6 +34,8 @@ class PlanningContext:
     runtime_event_emitter: Any | None
     memory_system: Any | None
     available_tool_schemas: list[dict[str, Any]]
+    planner_core_tool_schemas: list[dict[str, Any]]
+    planner_tool_catalog_cards: list[dict[str, Any]]
     available_execution_capability_names: dict[str, str]
     messages: list[dict[str, Any]]
     effective_memory: str
@@ -84,6 +87,7 @@ async def build_planning_context(
         _PLANNER_MEMORY_MAX_CHARS,
         _PLANNER_SKILL_MD_MAX_CHARS,
     )
+    from src.orchestrator.tool_catalog import build_catalog_cards
 
     event_emitter = context.get("event_emitter")
     llm_provider = context.get("llm_provider")
@@ -105,6 +109,8 @@ async def build_planning_context(
 
     # --- Resolve available skills ---
     available_tool_schemas: list[dict[str, Any]] = []
+    planner_core_tool_schemas: list[dict[str, Any]] = []
+    planner_tool_catalog_cards: list[dict[str, Any]] = []
     if runtime_context and (skill_registry is None):
         metadata = getattr(runtime_context, "metadata", None)
         if isinstance(metadata, dict):
@@ -117,10 +123,23 @@ async def build_planning_context(
 
         capability_graph = CapabilityGraph(runtime_context)
         available_tool_schemas = capability_graph.get_schemas_for_planner()
+        get_core_schemas = getattr(capability_graph, "get_core_schemas_for_planner", None)
+        if callable(get_core_schemas):
+            planner_core_tool_schemas = get_core_schemas()
+        else:
+            planner_core_tool_schemas = []
         available_tool_schemas = _merge_dynamic_registry_schemas(available_tool_schemas, runtime_context)
+        planner_core_tool_schemas = _merge_dynamic_registry_schemas(planner_core_tool_schemas, runtime_context)
+        with suppress(Exception):
+            planner_tool_catalog_cards = build_catalog_cards(runtime_context)
         logger.info(
             "Capability graph built for planning",
-            extra={"session_id": state["session_id"], "capability_count": len(available_tool_schemas)},
+            extra={
+                "session_id": state["session_id"],
+                "capability_count": len(available_tool_schemas),
+                "planner_core_schema_count": len(planner_core_tool_schemas),
+                "planner_catalog_card_count": len(planner_tool_catalog_cards),
+            },
         )
     elif skill_registry:
         tool_schemas: list[dict[str, Any]] = []
@@ -206,8 +225,10 @@ async def build_planning_context(
 
     # --- Sub-agents ---
     sub_agents_for_planner: list[dict[str, Any]] = []
-    if runtime_context and hasattr(runtime_context, "available_sub_agents") and runtime_context.available_sub_agents:
-        sub_agents_for_planner = [{"id": sa.id, "name": sa.name, "description": sa.description} for sa in runtime_context.available_sub_agents]
+    if runtime_context:
+        get_sub_agent_summaries = getattr(runtime_context, "get_sub_agent_summaries", None)
+        if callable(get_sub_agent_summaries):
+            sub_agents_for_planner = list(get_sub_agent_summaries())
 
     # --- Evolved skills ---
     evolved_skills_context = ""
@@ -299,6 +320,8 @@ async def build_planning_context(
         runtime_event_emitter=runtime_event_emitter,
         memory_system=memory_system,
         available_tool_schemas=available_tool_schemas,
+        planner_core_tool_schemas=planner_core_tool_schemas,
+        planner_tool_catalog_cards=planner_tool_catalog_cards,
         available_execution_capability_names=available_execution_capability_names,
         messages=messages,
         effective_memory=effective_memory,
@@ -424,8 +447,17 @@ async def finalize_plan_result(
     if plan.plan_type == "delegate":
         runtime_context = ctx.runtime_context
         policy = getattr(runtime_context, "runtime_policy", None) if runtime_context else None
-        sub_agents = getattr(runtime_context, "available_sub_agents", None) or [] if runtime_context else []
-        can_delegate = bool(runtime_context and plan.sub_agent_id and (policy is None or getattr(policy, "enable_delegation", True) is not False) and any(getattr(sa, "id", None) == str(plan.sub_agent_id) for sa in sub_agents))
+        has_sub_agent = getattr(runtime_context, "has_sub_agent", None) if runtime_context else None
+        can_delegate = bool(
+            runtime_context
+            and plan.sub_agent_id
+            and (policy is None or getattr(policy, "enable_delegation", True) is not False)
+            and (
+                has_sub_agent(str(plan.sub_agent_id))
+                if callable(has_sub_agent)
+                else False
+            )
+        )
         if not can_delegate:
             logger.warning("Delegation requested by planner but unavailable", extra={"session_id": state["session_id"], "sub_agent_id": plan.sub_agent_id})
             return {
@@ -522,7 +554,11 @@ async def process_plan_tool_calls(
             loaded_skill_content = str(tool_result_payload.get("content") or "")
         tool_call_id = str(entry["call"].get("id") or "")
         tool_backfeed_purpose = (
-            "planning_methodology_scaffold"
+            "tool_catalog_discovery"
+            if tool_name == "tool_search"
+            else "tool_schema_expand"
+            if tool_name == "read_tool_schema"
+            else "planning_methodology_scaffold"
             if tool_name == "read_skill"
             else "delegation_capability_context"
             if tool_name == "inspect_sub_agent"

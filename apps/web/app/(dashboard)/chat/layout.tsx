@@ -56,6 +56,11 @@ interface ConversationListItem {
   kind: 'web' | 'channel'
 }
 
+interface ChannelFilterMeta {
+  key: `channel:${string}`
+  label: string
+}
+
 function formatTime(dateString: string, locale: string) {
   const date = new Date(dateString)
   if (Number.isNaN(date.getTime())) return '--'
@@ -96,16 +101,42 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
   const loadSessions = useCallback(async () => {
     try {
       setIsLoading(true)
-      const [sessionsResponse, conversationsResponse, channelsResponse] = await Promise.allSettled([
-        apiClient.get<ApiResponse<Session[]>>('/sessions'),
+      const fetchWebSessions = async () => {
+        const desiredCount = 50
+        const hardMaxPages = 100
+        const pageSize = 50
+        let page = 1
+        let totalPages = 1
+        const collected: Session[] = []
+
+        while (page <= totalPages && page <= hardMaxPages && collected.length < desiredCount) {
+          const response = await apiClient.get<ApiResponse<Session[]>>('/sessions', {
+            params: { page, limit: pageSize },
+          })
+          if (!response.success || !response.data) break
+
+          const pageWebSessions = response.data.filter((session) => !isChannelBackedSession(session.id))
+          collected.push(...pageWebSessions)
+
+          const resolvedTotalPages = Number(response.meta?.totalPages ?? page)
+          totalPages = Number.isFinite(resolvedTotalPages) && resolvedTotalPages > 0 ? resolvedTotalPages : page
+          if (page >= totalPages) break
+          page += 1
+        }
+
+        return collected
+      }
+
+      const [webSessionsResult, conversationsResponse, channelsResponse] = await Promise.allSettled([
+        fetchWebSessions(),
         apiClient.get<RuntimeGatewayConversationsResponse>('/runtime/channels/conversations', {
-          params: { limit: 100 },
+          params: { limit: 20 },
         }),
         apiClient.get<ApiResponse<ChannelInstance[]>>('/channels'),
       ])
 
-      if (sessionsResponse.status === 'fulfilled' && sessionsResponse.value.success && sessionsResponse.value.data) {
-        setSessions(sessionsResponse.value.data.filter((session) => !isChannelBackedSession(session.id)))
+      if (webSessionsResult.status === 'fulfilled') {
+        setSessions(webSessionsResult.value)
       }
 
       if (
@@ -141,25 +172,34 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
     return new Map(channelInstances.map((instance) => [instance.id, instance.displayName || instance.provider]))
   }, [channelInstances])
 
+  const channelFilterMeta = useMemo<ChannelFilterMeta[]>(() => {
+    const map = new Map<string, string>()
+
+    for (const instance of channelInstances) {
+      const instanceId = String(instance.id || '').trim()
+      if (!instanceId) continue
+      const label = String(instance.displayName || instance.provider || instanceId).trim() || instanceId
+      map.set(instanceId, label)
+    }
+
+    for (const conversation of channelConversations) {
+      const instanceId = String(conversation.instanceId || '').trim() || 'unknown'
+      if (map.has(instanceId)) continue
+      const label =
+        String(channelNameMap.get(instanceId) || conversation.botId || conversation.provider || instanceId).trim() ||
+        instanceId
+      map.set(instanceId, label)
+    }
+
+    return Array.from(map.entries())
+      .map(([instanceId, label]) => ({ key: `channel:${instanceId}` as const, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, locale))
+  }, [channelConversations, channelInstances, channelNameMap, locale])
+
   const filters = useMemo(() => {
     const base = [{ key: 'web' as const, label: t('dashboard.recentSessions.sources.web') }]
-    const seen = new Set<string>()
-    const channelFilters = channelInstances
-      .map((instance) => {
-        const instanceId = String(instance.id || '').trim()
-        if (!instanceId || seen.has(instanceId)) return null
-        seen.add(instanceId)
-        const label = instance.displayName || channelNameMap.get(instanceId) || instance.provider || instanceId
-        return {
-          key: `channel:${instanceId}` as const,
-          label,
-        }
-      })
-      .filter((item): item is { key: `channel:${string}`; label: string } => item !== null)
-      .sort((a, b) => a.label.localeCompare(b.label, locale))
-
-    return [...base, ...channelFilters]
-  }, [channelInstances, channelNameMap, locale, t])
+    return [...base, ...channelFilterMeta]
+  }, [channelFilterMeta, t])
 
   useEffect(() => {
     if (!filters.some((item) => item.key === selectedFilter)) {
@@ -178,7 +218,7 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
     }))
 
     const channelItems = channelConversations.map((conversation) => {
-      const instanceId = String(conversation.instanceId || '').trim()
+      const instanceId = String(conversation.instanceId || '').trim() || 'unknown'
       const filterKey = `channel:${instanceId}` as const
       const instanceLabel = channelNameMap.get(instanceId) || conversation.botId || instanceId
       const fallbackTitle = conversation.chatId

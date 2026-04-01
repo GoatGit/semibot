@@ -109,8 +109,14 @@ class EventEngine:
         limit: int = 100,
         event_type: str | None = None,
         event_types: list[str] | None = None,
+        capability_id: str | None = None,
     ) -> list[Event]:
-        return self.store.list_events(limit=limit, event_type=event_type, event_types=event_types)
+        return self.store.list_events(
+            limit=limit,
+            event_type=event_type,
+            event_types=event_types,
+            capability_id=capability_id,
+        )
 
     def list_events_after(
         self,
@@ -120,6 +126,7 @@ class EventEngine:
         limit: int = 100,
         event_type: str | None = None,
         event_types: list[str] | None = None,
+        capability_id: str | None = None,
     ) -> list[Event]:
         return self.store.list_events_after(
             cursor_created_at=cursor_created_at,
@@ -127,13 +134,20 @@ class EventEngine:
             limit=limit,
             event_type=event_type,
             event_types=event_types,
+            capability_id=capability_id,
         )
 
     def list_pending_approvals(self) -> list[ApprovalRequest]:
         return self.approval_manager.list_pending()
 
-    def list_approvals(self, *, status: str | None = None, limit: int = 100) -> list[ApprovalRequest]:
-        return self.store.list_approvals(status=status, limit=limit)
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        capability_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ApprovalRequest]:
+        return self.store.list_approvals(status=status, capability_id=capability_id, limit=limit)
 
     def list_rule_runs(
         self,

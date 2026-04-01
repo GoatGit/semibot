@@ -7,6 +7,7 @@ import os
 import re
 from typing import Any
 
+from src.llm.provider_capabilities import resolve_provider_capabilities
 from src.skills.base import BaseTool, ToolResult
 
 try:
@@ -156,6 +157,22 @@ def _get_text_processing_model_config(runtime_context: Any) -> tuple[str | None,
     return model, temperature
 
 
+def _get_effective_response_format(
+    runtime_context: Any,
+    llm_provider: Any,
+    response_format: dict[str, Any],
+    model: str | None,
+) -> dict[str, Any] | None:
+    caps = resolve_provider_capabilities(llm_provider=llm_provider, model=model)
+    if not caps.supports_response_format_param:
+        return None
+    if caps.supports_json_schema_response_format:
+        return response_format
+    if response_format.get("type") == "json_schema":
+        return {"type": "json_object"}
+    return response_format
+
+
 def _validate_extracted_data(data: Any, schema: dict[str, Any]) -> tuple[bool, str | None]:
     if jsonschema_validate is None:
         if isinstance(schema, dict) and schema.get("type") == "object" and not isinstance(data, dict):
@@ -227,7 +244,33 @@ def _compact_wrapper_schema() -> dict[str, Any]:
     }
 
 
+def _brief_wrapper_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "text_processing_brief_response",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "warnings": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": [],
+                    },
+                },
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
 class TextProcessingTool(BaseTool):
+    @property
+    def search_hint(self) -> str:
+        return "summarize long text, extract key points, compress text, transform structured data"
+
     @property
     def name(self) -> str:
         return "text_processing"
@@ -237,6 +280,7 @@ class TextProcessingTool(BaseTool):
         return (
             "Process text with one builtin tool. "
             "operation=compact returns a short factual summary as text. "
+            "operation=brief returns summary, brief, key_points, or compress output with explicit mode/style metadata. "
             "operation=extract returns structured data that matches a provided JSON schema. "
             "operation=slice returns a deterministic slice wrapped in a slices array with offsets. "
             "operation=transform applies JSON selectors, field mappings, or templates to structured data. "
@@ -250,8 +294,8 @@ class TextProcessingTool(BaseTool):
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["compact", "extract", "slice", "transform"],
-                    "description": "Text processing operation to run: compact, extract, slice, or transform.",
+                    "enum": ["brief", "compact", "extract", "slice", "transform"],
+                    "description": "Text processing operation to run: brief, compact, extract, slice, or transform.",
                 },
                 "text": {
                     "type": "string",
@@ -259,7 +303,19 @@ class TextProcessingTool(BaseTool):
                 },
                 "instructions": {
                     "type": "string",
-                    "description": "Optional processing guidance. Used only for operation=compact or operation=extract.",
+                    "description": "Optional processing guidance. Used only for operation=brief, operation=compact, or operation=extract.",
+                },
+                "brief_mode": {
+                    "type": "string",
+                    "enum": ["summary", "brief", "key_points", "compress"],
+                    "default": "brief",
+                    "description": "Briefing mode for operation=brief.",
+                },
+                "style": {
+                    "type": "string",
+                    "enum": ["neutral", "executive", "bullet"],
+                    "default": "neutral",
+                    "description": "Output style for operation=brief.",
                 },
                 "schema": {
                     "type": "object",
@@ -282,7 +338,7 @@ class TextProcessingTool(BaseTool):
                 },
                 "max_chars": {
                     "type": "integer",
-                    "description": "Character budget for operation=compact, or fallback slice window size for operation=slice.",
+                    "description": "Character budget for operation=brief or operation=compact, or fallback slice window size for operation=slice.",
                 },
                 "query": {
                     "type": "string",
@@ -332,6 +388,8 @@ class TextProcessingTool(BaseTool):
         operation: str,
         text: str | None = None,
         instructions: str | None = None,
+        brief_mode: str = "brief",
+        style: str = "neutral",
         schema: dict[str, Any] | None = None,
         extract_mode: str = "single_object",
         max_items: int | None = None,
@@ -362,7 +420,16 @@ class TextProcessingTool(BaseTool):
                 keep_nulls=keep_nulls,
             )
         if not isinstance(text, str) or not text:
-            return ToolResult.error_result("text is required for compact, extract, and slice operations")
+            return ToolResult.error_result("text is required for brief, compact, extract, and slice operations")
+        if normalized_operation == "brief":
+            return await self._brief(
+                text=text,
+                instructions=instructions,
+                brief_mode=brief_mode,
+                style=style,
+                max_chars=max_chars,
+                runtime_context=kwargs.get("_runtime_context"),
+            )
         if normalized_operation == "compact":
             return await self._compact(
                 text=text,
@@ -389,7 +456,108 @@ class TextProcessingTool(BaseTool):
                 end_char=end_char,
                 window_chars=window_chars,
             )
-        return ToolResult.error_result("operation must be one of compact, extract, slice, or transform")
+        return ToolResult.error_result("operation must be one of brief, compact, extract, slice, or transform")
+
+    async def _brief(
+        self,
+        *,
+        text: str,
+        instructions: str | None,
+        brief_mode: str,
+        style: str,
+        max_chars: int | None,
+        runtime_context: Any,
+    ) -> ToolResult:
+        llm_provider = _get_llm_provider(runtime_context)
+        if llm_provider is None:
+            return ToolResult.error_result("text_processing brief requires a configured llm_provider")
+        tp_model, tp_temperature = _get_text_processing_model_config(runtime_context)
+
+        normalized_mode = str(brief_mode or "brief").strip().lower() or "brief"
+        if normalized_mode not in {"summary", "brief", "key_points", "compress"}:
+            return ToolResult.error_result("brief_mode must be one of summary, brief, key_points, or compress")
+        normalized_style = str(style or "neutral").strip().lower() or "neutral"
+        if normalized_style not in {"neutral", "executive", "bullet"}:
+            return ToolResult.error_result("style must be one of neutral, executive, or bullet")
+
+        source_limit = int(os.getenv("SEMIBOT_TEXT_PROCESSING_MAX_TEXT_CHARS") or str(_DEFAULT_MAX_SOURCE_TEXT_CHARS))
+        bounded_text, truncated = _truncate_text(text, source_limit)
+        target_chars = max(120, int(max_chars or _DEFAULT_COMPACT_MAX_CHARS))
+
+        mode_instruction = {
+            "summary": "Produce a concise summary that preserves the main facts.",
+            "brief": "Produce a tight briefing for a downstream agent or API consumer.",
+            "key_points": "Produce the key points only, in dense bullet-style wording.",
+            "compress": "Compress the text aggressively while preserving essential facts.",
+        }[normalized_mode]
+        style_instruction = {
+            "neutral": "Use a neutral factual tone.",
+            "executive": "Use an executive concise tone focused on decisions and risks.",
+            "bullet": "Prefer bullet-style lines, but still return a single text field.",
+        }[normalized_style]
+
+        response = await llm_provider.chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a briefing engine.\n"
+                        f"{mode_instruction}\n"
+                        f"{style_instruction}\n"
+                        f"Keep the output within about {target_chars} characters.\n"
+                        "Return only JSON matching the required schema.\n"
+                        "Do not wrap the response in markdown fences."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "mode": normalized_mode,
+                            "style": normalized_style,
+                            "instructions": instructions or "",
+                            "max_chars": target_chars,
+                            "text": bounded_text,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=tp_temperature,
+            model=tp_model,
+            response_format=_get_effective_response_format(
+                runtime_context=runtime_context,
+                llm_provider=llm_provider,
+                response_format=_brief_wrapper_schema(),
+                model=tp_model,
+            ),
+        )
+        try:
+            payload = json.loads(str(response.content or "").strip())
+        except Exception as exc:
+            return ToolResult.error_result(f"text_processing brief returned invalid JSON: {exc}")
+        brief_text = str(payload.get("text") or "").strip()
+        warnings = payload.get("warnings")
+        if not brief_text:
+            return ToolResult.error_result("text_processing brief returned empty text")
+        if not isinstance(warnings, list):
+            warnings = []
+        return ToolResult.success_result(
+            {
+                "text": brief_text,
+                "mode": normalized_mode,
+                "style": normalized_style,
+                "truncated": truncated,
+                "warnings": [str(item) for item in warnings if str(item).strip()],
+                "metadata": {
+                    "source_chars": len(text),
+                    "output_chars": len(brief_text),
+                },
+            },
+            source="llm_text_processing_brief",
+            model=getattr(response, "model", None),
+            finish_reason=getattr(response, "finish_reason", "stop"),
+        )
 
     async def _compact(
         self,

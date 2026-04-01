@@ -99,6 +99,15 @@ def _build_skill_definitions(
     return build_runtime_skill_definitions(registry, skill_index)
 
 
+def _materialize_runtime_contract(runtime_context: RuntimeSessionContext) -> RuntimeSessionContext:
+    """Freeze derived capability/skill-context fields as explicit session contract."""
+    runtime_context.skill_context = list(runtime_context._derive_skill_context())
+    runtime_context.capabilities = list(runtime_context._derive_capabilities())
+    runtime_context._explicit_skill_context_provided = True
+    runtime_context._explicit_capabilities_provided = True
+    return runtime_context
+
+
 def _short_text(value: Any, *, max_len: int = 120) -> str:
     return short_text(value, max_len=max_len)
 
@@ -116,6 +125,7 @@ def _provider_cfg_base_url(raw_cfg: Any) -> str | None:
 
 
 def _build_approval_policy(
+    capability_id: str,
     tool_name: str,
     params: dict[str, Any],
     risk_level: str,
@@ -123,6 +133,7 @@ def _build_approval_policy(
     metadata_additional: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     return build_approval_policy(
+        capability_id,
         tool_name,
         params,
         risk_level,
@@ -651,6 +662,7 @@ async def run_task_once(
             enable_delegation=False,
         ),
     )
+    runtime_context = _materialize_runtime_contract(runtime_context)
 
     unified_executor = build_unified_action_executor(
         runtime_context=runtime_context,

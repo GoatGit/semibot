@@ -98,6 +98,7 @@ def summarize_params(params: dict[str, Any], *, max_items: int = 3) -> dict[str,
 
 
 def build_approval_policy(
+    capability_id: str,
     tool_name: str,
     params: dict[str, Any],
     risk_level: str,
@@ -105,6 +106,9 @@ def build_approval_policy(
     metadata_additional: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     metadata_additional = metadata_additional or {}
+    resolved_capability_id = str(
+        capability_id or metadata_additional.get("capability_id") or metadata_additional.get("tool_id") or tool_name
+    ).strip() or tool_name
     action = extract_first_string(params, APPROVAL_ACTION_KEYS).lower()
     target = short_text(extract_first_string(params, APPROVAL_TARGET_KEYS), max_len=120)
     params_preview = summarize_params(params)
@@ -114,6 +118,7 @@ def build_approval_policy(
     dedupe_keys = normalize_dedupe_keys(metadata_additional.get("approval_dedupe_keys"))
 
     context: dict[str, Any] = {
+        "capability_id": resolved_capability_id,
         "tool_name": tool_name,
         "action": action or None,
         "target": target or None,
@@ -146,25 +151,25 @@ def build_approval_policy(
                 continue
             grouped_values.append(f"{key}={short_text(value, max_len=80)}")
         grouped = "|".join(grouped_values) if grouped_values else "none"
-        return f"{tool_name}|risk:{risk_level}|custom:{grouped}", context
+        return f"{resolved_capability_id}|risk:{risk_level}|custom:{grouped}", context
 
     if approval_scope == "tool":
-        return f"{tool_name}|risk:{risk_level}", context
+        return f"{resolved_capability_id}|risk:{risk_level}", context
     if approval_scope == "session":
-        return f"{tool_name}|risk:{risk_level}|session:{session_id}", context
+        return f"{resolved_capability_id}|risk:{risk_level}|session:{session_id}", context
     if approval_scope == "action":
-        return f"{tool_name}|risk:{risk_level}|action:{action or 'none'}", context
+        return f"{resolved_capability_id}|risk:{risk_level}|action:{action or 'none'}", context
     if approval_scope == "target":
-        return f"{tool_name}|risk:{risk_level}|action:{action or 'none'}|target:{target or 'none'}", context
+        return f"{resolved_capability_id}|risk:{risk_level}|action:{action or 'none'}|target:{target or 'none'}", context
     if approval_scope == "call":
         try:
             serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         except Exception:
             serialized = str(params)
         call_hash = hashlib.sha256(serialized.encode()).hexdigest()[:16]
-        return f"{tool_name}|risk:{risk_level}|call:{call_hash}", context
+        return f"{resolved_capability_id}|risk:{risk_level}|call:{call_hash}", context
 
-    return f"{tool_name}|risk:{risk_level}|session:{session_id}|action:{action or 'none'}", context
+    return f"{resolved_capability_id}|risk:{risk_level}|session:{session_id}|action:{action or 'none'}", context
 
 
 def build_event_engine_approval_hook(
@@ -176,19 +181,25 @@ def build_event_engine_approval_hook(
     user_message_id: str | None = None,
 ):
     async def _approval_hook(
-        tool_name: str,
+        capability_id: str,
         params: dict[str, Any],
         metadata: Any,
     ) -> dict[str, Any]:
         metadata_additional = (
             metadata.additional if isinstance(getattr(metadata, "additional", None), dict) else {}
         )
+        tool_name = str(
+            metadata_additional.get("display_name")
+            or metadata_additional.get("actual_tool_name")
+            or capability_id
+        ).strip() or capability_id
         risk_level = str(metadata_additional.get("risk_level") or "high")
         runtime_session_id = (
             str(approval_scope_id or default_session_id).strip()
             or default_session_id
         )[:80]
         scope_key, approval_context = build_approval_policy(
+            capability_id,
             tool_name,
             params,
             risk_level,
@@ -251,7 +262,7 @@ def build_event_engine_approval_hook(
                 }
 
         approval = await event_engine.approval_manager.request(
-            rule_id=f"tool.{tool_name}",
+            rule_id=f"capability.{capability_id}",
             event_id=event_id,
             risk_level=risk_level,
             context=approval_context,

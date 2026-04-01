@@ -12,7 +12,7 @@ from src.gateway.channels.discord.helpers import (
     handle_approval_followup,
     resolve_instance_for_ingest,
 )
-from src.gateway.channels.shared import build_ingress_result
+from src.gateway.channels.shared import ChannelAnchorAdapter, build_ingress_result
 from src.gateway.parsers.approval_text import extract_message_text
 
 if TYPE_CHECKING:
@@ -152,21 +152,15 @@ async def ingest_events(
             if not notifier:
                 return False
             target_channel_id = str(ctx.get("chat_id") or "").strip() or channel_id
-            sent = await notifier.send_notify_payload(
+            adapter = ChannelAnchorAdapter(manager=manager, notifier=notifier)
+            return await adapter.deliver(
                 {
                     "content": reply_text,
                     "channel_id": target_channel_id,
                     "files": ctx.get("files") if isinstance(ctx, dict) else [],
-                }
+                },
+                anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
             )
-            if sent:
-                metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
-                await manager.gateway_context.bind_anchor_delivery(
-                    anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
-                    channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
-                    channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
-                )
-            return sent
 
         gateway_result = await manager.gateway_context.ingest_message(
             provider="discord",

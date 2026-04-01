@@ -6,18 +6,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock 依赖模块
 const mockFindByIdAndOrg = vi.fn()
-const mockSqlBegin = vi.fn()
-const mockSqlJson = vi.fn((val: unknown) => val)
+const mockUpdateStatus = vi.fn()
+const mockExistsBySkillId = vi.fn()
+const mockCreateSkillDefinition = vi.fn()
 
 vi.mock('../repositories/evolved-skill.repository', () => ({
   findByIdAndOrg: (...args: unknown[]) => mockFindByIdAndOrg(...args),
+  updateStatus: (...args: unknown[]) => mockUpdateStatus(...args),
 }))
 
-vi.mock('../lib/db', () => ({
-  sql: {
-    begin: (...args: unknown[]) => mockSqlBegin(...args),
-    json: (...args: unknown[]) => mockSqlJson(...args),
-  },
+vi.mock('../repositories/skill-definition.repository', () => ({
+  existsBySkillId: (...args: unknown[]) => mockExistsBySkillId(...args),
+  create: (...args: unknown[]) => mockCreateSkillDefinition(...args),
 }))
 
 vi.mock('../lib/logger', () => ({
@@ -61,26 +61,27 @@ function makeEvolvedSkill(overrides: Record<string, unknown> = {}) {
 describe('evolved-skill.service.promote', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockExistsBySkillId.mockResolvedValue(false)
   })
 
   it('should throw EVOLVED_SKILL_NOT_FOUND when skill does not exist', async () => {
     mockFindByIdAndOrg.mockResolvedValue(null)
 
-    await expect(promote('es-999', 'org-001', 'user-001'))
+    await expect(promote('es-999', 'user-001'))
       .rejects.toMatchObject({ code: EVOLVED_SKILL_NOT_FOUND })
   })
 
   it('should throw EVOLVED_SKILL_INVALID_STATUS when status is pending_review', async () => {
     mockFindByIdAndOrg.mockResolvedValue(makeEvolvedSkill({ status: 'pending_review' }))
 
-    await expect(promote('es-001', 'org-001', 'user-001'))
+    await expect(promote('es-001', 'user-001'))
       .rejects.toMatchObject({ code: EVOLVED_SKILL_INVALID_STATUS })
   })
 
   it('should throw EVOLVED_SKILL_INVALID_STATUS when status is rejected', async () => {
     mockFindByIdAndOrg.mockResolvedValue(makeEvolvedSkill({ status: 'rejected' }))
 
-    await expect(promote('es-001', 'org-001', 'user-001'))
+    await expect(promote('es-001', 'user-001'))
       .rejects.toMatchObject({ code: EVOLVED_SKILL_INVALID_STATUS })
   })
 
@@ -89,21 +90,15 @@ describe('evolved-skill.service.promote', () => {
     mockFindByIdAndOrg.mockResolvedValue(evolvedSkill)
 
     const newSkill = { id: 'skill-001', name: '测试技能' }
-    // sql.begin receives a callback; we invoke it with a mock tx
-    mockSqlBegin.mockImplementation(async (cb: (tx: unknown) => unknown) => {
-      const mockTx = Object.assign(
-        // tagged template function
-        () => [newSkill],
-        { json: (v: unknown) => v },
-      )
-      return cb(mockTx)
-    })
+    mockCreateSkillDefinition.mockResolvedValue(newSkill)
+    mockUpdateStatus.mockResolvedValue(true)
 
-    const result = await promote('es-001', 'org-001', 'user-001')
+    const result = await promote('es-001', 'user-001')
 
     expect(result.skill).toEqual(newSkill)
     expect(result.evolvedSkill.status).toBe('promoted')
-    expect(mockSqlBegin).toHaveBeenCalledOnce()
+    expect(mockCreateSkillDefinition).toHaveBeenCalledOnce()
+    expect(mockUpdateStatus).toHaveBeenCalledWith('es-001', 'promoted')
   })
 
   it('should promote auto_approved skill', async () => {
@@ -111,25 +106,20 @@ describe('evolved-skill.service.promote', () => {
     mockFindByIdAndOrg.mockResolvedValue(evolvedSkill)
 
     const newSkill = { id: 'skill-002', name: '自动审批技能' }
-    mockSqlBegin.mockImplementation(async (cb: (tx: unknown) => unknown) => {
-      const mockTx = Object.assign(
-        () => [newSkill],
-        { json: (v: unknown) => v },
-      )
-      return cb(mockTx)
-    })
+    mockCreateSkillDefinition.mockResolvedValue(newSkill)
+    mockUpdateStatus.mockResolvedValue(true)
 
-    const result = await promote('es-001', 'org-001', 'user-001')
+    const result = await promote('es-001', 'user-001')
 
     expect(result.skill).toEqual(newSkill)
     expect(result.evolvedSkill.status).toBe('promoted')
   })
 
-  it('should pass correct orgId to findByIdAndOrg', async () => {
+  it('should query evolved skill by id only', async () => {
     mockFindByIdAndOrg.mockResolvedValue(null)
 
-    await expect(promote('es-001', 'org-xyz', 'user-001')).rejects.toThrow()
+    await expect(promote('es-001', 'user-001')).rejects.toThrow()
 
-    expect(mockFindByIdAndOrg).toHaveBeenCalledWith('es-001', 'org-xyz')
+    expect(mockFindByIdAndOrg).toHaveBeenCalledWith('es-001')
   })
 })

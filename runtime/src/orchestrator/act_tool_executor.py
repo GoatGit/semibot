@@ -16,6 +16,7 @@ from src.orchestrator.nodes_respond import (
     _build_inline_delivery_fallback,
     _infer_delivery_language,
 )
+from src.orchestrator.text_cleanup import clean_user_facing_snippet
 from src.orchestrator.nodes_shared import (
     _build_assistant_transcript_message,
     _is_transient_readonly_network_failure,
@@ -219,6 +220,62 @@ def _build_tool_transcript_message(
     }
 
 
+def _lookup_selected_skill_item(runtime_context: Any | None, skill_id: str) -> dict[str, Any] | None:
+    if runtime_context is None or not skill_id:
+        return None
+    metadata = getattr(runtime_context, "metadata", None)
+    raw = metadata.get("skill_index") if isinstance(metadata, dict) else None
+    if not isinstance(raw, list):
+        return None
+    normalized = str(skill_id).strip().lower()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        candidate = str(item.get("skill_id") or item.get("id") or item.get("name") or "").strip().lower()
+        if candidate == normalized:
+            return item
+    return None
+
+
+def _validate_skill_allowed_tool(
+    *,
+    runtime_context: Any | None,
+    skill_id: str,
+    tool_name: str,
+    params: dict[str, Any],
+) -> ToolCallResult | None:
+    skill_item = _lookup_selected_skill_item(runtime_context, skill_id)
+    if not isinstance(skill_item, dict):
+        return None
+    allowed_tools = skill_item.get("allowed_tools")
+    if not isinstance(allowed_tools, list):
+        return None
+    normalized_allowlist = {
+        str(item).strip().lower()
+        for item in allowed_tools
+        if str(item).strip()
+    }
+    if not normalized_allowlist:
+        return None
+    normalized_tool_name = str(tool_name or "").strip().lower()
+    if normalized_tool_name in normalized_allowlist:
+        return None
+    return ToolCallResult(
+        tool_name=tool_name,
+        params=params,
+        error=(
+            f"Tool '{tool_name}' is not allowed by selected skill '{skill_id}'. "
+            f"Allowed tools: {', '.join(sorted(normalized_allowlist))}"
+        ),
+        success=False,
+        metadata={
+            "guard": "skill_allowed_tools",
+            "selected_skill": skill_id,
+            "allowed_tools": sorted(normalized_allowlist),
+        },
+    )
+
+
 def _tool_call_is_readonly_parallel_safe(call: dict[str, Any]) -> bool:
     function = call.get("function") or {}
     tool_name = str(function.get("name") or "").strip().lower()
@@ -233,9 +290,14 @@ def _tool_call_is_readonly_parallel_safe(call: dict[str, Any]) -> bool:
     return method in _READONLY_PARALLEL_HTTP_METHODS
 
 
-def _build_act_tool_schemas(runtime_context: Any | None, skill_registry: Any | None) -> list[dict[str, Any]]:
+def _build_act_tool_schemas(
+    runtime_context: Any | None,
+    skill_registry: Any | None,
+    current_skill_id: str = "",
+) -> list[dict[str, Any]]:
     tool_schemas: list[dict[str, Any]] = []
-    if runtime_context is not None:
+    resolved_skill_id = str(current_skill_id or "").strip()
+    if runtime_context is not None and hasattr(runtime_context, "get_tool_catalog"):
         from src.orchestrator.tool_retrieval import select_tool_shortlist
         from src.orchestrator.tool_catalog import expand_catalog_entry_for_llm
 
@@ -244,6 +306,8 @@ def _build_act_tool_schemas(runtime_context: Any | None, skill_registry: Any | N
             query = ""
             if isinstance(metadata, dict):
                 query = str(metadata.get("_current_act_tool_query") or "").strip()
+                if not resolved_skill_id:
+                    resolved_skill_id = str(metadata.get("_current_selected_skill") or "").strip()
             shortlist = select_tool_shortlist(runtime_context, query=query, limit=12)
             if isinstance(metadata, dict):
                 metadata["_current_act_tool_shortlist_ids"] = [entry.tool_id for entry in shortlist]
@@ -270,6 +334,25 @@ def _build_act_tool_schemas(runtime_context: Any | None, skill_registry: Any | N
         except Exception:
             logger.warning("_build_act_tool_schemas: skill_registry.get_tool_schemas failed", exc_info=True)
             tool_schemas = []
+    if not resolved_skill_id and runtime_context is not None:
+        metadata = getattr(runtime_context, "metadata", None)
+        if isinstance(metadata, dict):
+            resolved_skill_id = str(metadata.get("_current_selected_skill") or "").strip()
+    skill_item = _lookup_selected_skill_item(runtime_context, resolved_skill_id)
+    allowed_tools = skill_item.get("allowed_tools") if isinstance(skill_item, dict) else None
+    if isinstance(allowed_tools, list) and allowed_tools:
+        normalized = {
+            str(item).strip().lower()
+            for item in allowed_tools
+            if str(item).strip()
+        }
+        filtered: list[dict[str, Any]] = []
+        for item in tool_schemas:
+            function = item.get("function") if isinstance(item, dict) else None
+            tool_name = str((function or {}).get("name") or "").strip().lower()
+            if not tool_name or tool_name in normalized:
+                filtered.append(item)
+        tool_schemas = filtered
     return tool_schemas
 
 
@@ -319,16 +402,23 @@ def _summarize_generic_result_for_handoff(result: ToolCallResult) -> str:
                 title=title,
                 source_items=[
                     {
-                        "title": str(item.get("title") or item.get("name") or "").strip() or f"Result {index}",
+                        "title": clean_user_facing_snippet(
+                            str(item.get("title") or item.get("name") or "").strip(),
+                            max_chars=160,
+                        )
+                        or f"Result {index}",
                         "url": str(item.get("url") or "").strip(),
-                        "summary": str(item.get("snippet") or item.get("content") or item.get("summary") or "").strip(),
+                        "summary": clean_user_facing_snippet(
+                            str(item.get("snippet") or item.get("content") or item.get("summary") or "").strip(),
+                            max_chars=600,
+                        ),
                     }
                     for index, item in enumerate(source_rows[:6], start=1)
                 ],
                 language=_infer_delivery_language(title),
             )
         for key in ("artifact_result_text", "summary", "preview", "content"):
-            text = str(payload.get(key) or "").strip()
+            text = clean_user_facing_snippet(str(payload.get(key) or "").strip(), max_chars=2000)
             if text:
                 return text[:2000]
         with suppress(Exception):
@@ -564,6 +654,33 @@ async def execute_single_act_tool_call(
             error=tool_params_error,
             success=False,
         )
+    if runtime_context is not None and hasattr(runtime_context, "get_tool_catalog_entry"):
+        try:
+            selected_entry = runtime_context.get_tool_catalog_entry(tool_name)
+        except Exception:
+            selected_entry = None
+        if selected_entry is not None:
+            source_type = str(getattr(selected_entry, "source_type", "") or "").strip().lower()
+            metadata_map = dict(getattr(selected_entry, "metadata", {}) or {})
+            shape = str(metadata_map.get("shape") or "").strip().lower()
+            if source_type == "cli" and shape == "group" and not str(tool_params.get("command") or "").strip():
+                return ToolCallResult(
+                    tool_name=tool_name,
+                    params=tool_params,
+                    error=(
+                        f"Grouped CLI parent tool '{tool_name}' requires a command. "
+                        f"Use a projected leaf tool such as '{tool_name}_search' or provide the 'command' parameter."
+                    ),
+                    success=False,
+                )
+    skill_tool_failure = _validate_skill_allowed_tool(
+        runtime_context=runtime_context,
+        skill_id=current_skill_id,
+        tool_name=tool_name,
+        params=tool_params,
+    )
+    if skill_tool_failure is not None:
+        return attach_runtime_failure(skill_tool_failure, runtime_failure_from_tool_result(skill_tool_failure))
 
     delegated_action = PlanStep(
         id=action.id,
@@ -573,6 +690,14 @@ async def execute_single_act_tool_call(
         parallel=False,
         skill_source=action.skill_source,
     )
+    capability_graph = getattr(unified_executor, "capability_graph", None)
+    if capability_graph is not None and hasattr(capability_graph, "get_capability"):
+        try:
+            delegated_capability = capability_graph.get_capability(tool_name)
+        except Exception:
+            delegated_capability = None
+        if delegated_capability is not None and isinstance(getattr(delegated_capability, "metadata", None), dict):
+            delegated_action.capability_id = str(delegated_capability.metadata.get("tool_id") or "").strip() or None
     combined_prior_results = [*state.get("tool_results", []), *(prior_results or []), *step_results]
     _prepare_artifact_aware_action(
         delegated_action,

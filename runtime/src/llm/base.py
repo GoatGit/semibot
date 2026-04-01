@@ -280,7 +280,6 @@ class LLMProvider(ABC):
         dump_dir = Path(
             os.getenv("SEMIBOT_PLAN_PROMPT_DUMP_DIR", "~/.semibot/debug/plan-prompts")
         ).expanduser()
-        dump_dir.mkdir(parents=True, exist_ok=True)
 
         meta = dict(debug_meta or {})
         session_id = str(meta.get("session_id") or "unknown")
@@ -300,7 +299,12 @@ class LLMProvider(ABC):
             "available_tools": available_tools or [],
             "available_sub_agents": available_sub_agents or [],
         }
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("plan_prompt_snapshot_dump_failed", extra={"path": str(target), "error": str(exc)})
+            return ""
         return str(target)
 
     @abstractmethod
@@ -377,16 +381,7 @@ class LLMProvider(ABC):
             Plan dictionary with goal and steps
         """
         # Build planning prompt
-        tools_text = ""
-        if available_tools:
-            tool_lines = []
-            for t in available_tools:
-                # Support both flat {"name": ...} and nested {"function": {"name": ...}} formats
-                func = t.get("function", {})
-                name = func.get("name") or t.get("name", "unknown")
-                desc = func.get("description") or t.get("description", "")
-                tool_lines.append(f"- {name}: {desc}")
-            tools_text = "\n".join(tool_lines)
+        tools_text = self._format_planner_tools(available_tools or [])
 
         from datetime import datetime
         today_str = datetime.now().strftime("%Y年%m月%d日")
@@ -506,7 +501,10 @@ Example — user asks "生成一份关于AI趋势的研究报告":
         if available_sub_agents:
             sa_lines = []
             for sa in available_sub_agents:
-                sa_lines.append(f"- {sa['name']} (id: {sa['id']}): {sa['description']}")
+                agent_id = str(sa.get("id") or "").strip()
+                agent_name = str(sa.get("name") or agent_id or "unknown").strip()
+                description = str(sa.get("description") or sa.get("summary") or "").strip()
+                sa_lines.append(f"- {agent_name} (id: {agent_id or agent_name}): {description}")
             sub_agents_text = "\n".join(sa_lines)
             planning_prompt += f"""
 Available specialized agents for delegation:
@@ -676,6 +674,42 @@ Memory context:
             "_thinking": "",
             "_prompt_dump_path": prompt_dump_path,
         }
+
+    def _format_planner_tools(self, tools: list[dict[str, Any]]) -> str:
+        """Format planner-visible execution capability summaries."""
+        if not tools:
+            return ""
+
+        lines: list[str] = []
+        for item in tools:
+            if not isinstance(item, dict):
+                continue
+            func = item.get("function", {})
+            metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+            name = (
+                func.get("name")
+                or item.get("toolName")
+                or item.get("display_name")
+                or item.get("displayName")
+                or item.get("name")
+                or "unknown"
+            )
+            description = (
+                func.get("description")
+                or item.get("summary")
+                or item.get("description")
+                or ""
+            )
+            source_type = str(
+                item.get("source_type")
+                or item.get("sourceType")
+                or metadata.get("source_type")
+                or metadata.get("sourceType")
+                or ""
+            ).strip()
+            suffix = f" [{source_type}]" if source_type else ""
+            lines.append(f"- {name}{suffix}: {description}")
+        return "\n".join(lines)
 
     async def generate_response(
         self,

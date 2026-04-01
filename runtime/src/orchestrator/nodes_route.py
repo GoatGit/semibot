@@ -99,11 +99,12 @@ def _contains_document_context(text: str) -> bool:
 
 def _match_sub_agent(text: str, state: AgentState) -> str | None:
     runtime_context = state.get("context")
-    available = getattr(runtime_context, "available_sub_agents", None) or []
+    get_sub_agent_summaries = getattr(runtime_context, "get_sub_agent_summaries", None)
+    available = get_sub_agent_summaries() if callable(get_sub_agent_summaries) else []
     lowered = text.lower()
     for item in available:
-        agent_id = str(getattr(item, "id", "") or "").strip()
-        agent_name = str(getattr(item, "name", "") or "").strip()
+        agent_id = str(item.get("id") or "").strip() if isinstance(item, dict) else str(getattr(item, "id", "") or "").strip()
+        agent_name = str(item.get("name") or "").strip() if isinstance(item, dict) else str(getattr(item, "name", "") or "").strip()
         normalized_agent_id = agent_id.lower()
         if agent_id and len(normalized_agent_id) >= 3 and re.search(rf"\b{re.escape(normalized_agent_id)}\b", lowered):
             return agent_id
@@ -204,15 +205,8 @@ def _normalize_routing_decision(raw: dict[str, Any] | None, state: AgentState) -
 def _route_model_prompt(state: AgentState) -> str:
     latest_user_text = _route_surface_text(_latest_user_text(state))
     runtime_context = state.get("context")
-    available = getattr(runtime_context, "available_sub_agents", None) or []
-    available_agents = [
-        {
-            "id": str(getattr(item, "id", "") or "").strip(),
-            "name": str(getattr(item, "name", "") or "").strip(),
-        }
-        for item in available
-        if str(getattr(item, "id", "") or "").strip() or str(getattr(item, "name", "") or "").strip()
-    ]
+    get_sub_agent_summaries = getattr(runtime_context, "get_sub_agent_summaries", None)
+    available_agents = get_sub_agent_summaries() if callable(get_sub_agent_summaries) else []
     available_skills = _available_skill_summaries(state)
     return route_system_prompt(
         available_skills_json=json.dumps(available_skills, ensure_ascii=False),

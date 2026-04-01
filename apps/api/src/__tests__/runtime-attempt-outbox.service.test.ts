@@ -8,11 +8,13 @@ describe('runtime-attempt-outbox.service', () => {
     const { closeLocalDb } = await import('../lib/db-local')
     closeLocalDb()
     delete process.env.SEMIBOT_DB_PATH
+    delete process.env.SEMIBOT_RUNTIME_ATTEMPT_OUTBOX_DIR
     vi.resetModules()
   })
 
   it('sweeps pending event_outbox and checkpoint_outbox to local projection files', async () => {
     process.env.SEMIBOT_DB_PATH = `/tmp/semibot-attempt-outbox-${Date.now()}.sqlite`
+    process.env.SEMIBOT_RUNTIME_ATTEMPT_OUTBOX_DIR = `/tmp/semibot-attempt-outbox-files-${Date.now()}`
     vi.resetModules()
 
     const store = await import('../lib/session-local-store')
@@ -35,7 +37,7 @@ describe('runtime-attempt-outbox.service', () => {
       agentId: 'agent-1',
       status: 'running',
     })
-    const root = path.join(os.homedir(), '.semibot', 'attempt-outbox')
+    const root = process.env.SEMIBOT_RUNTIME_ATTEMPT_OUTBOX_DIR!
     await fs.rm(path.join(root, 'events', attempt.id), { recursive: true, force: true })
     await fs.rm(path.join(root, 'checkpoints', attempt.id), { recursive: true, force: true })
 

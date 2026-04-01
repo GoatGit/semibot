@@ -9,10 +9,8 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import httpx
 
@@ -34,6 +32,12 @@ from src.gateway.channels.telegram.notifier import (
 from src.gateway.channels.telegram.notifier import SendFn as TelegramSendFn
 from src.gateway.channels.telegram.notifier import TelegramNotifier
 from src.gateway.context_service import GatewayContextService
+from src.gateway.gateway_approval_targeting import (
+    build_approval_targeting_state,
+    duplicate_approval_ids_for_state,
+    resolve_target_ids_for_text_command,
+)
+from src.execution.runtime_approval_resume import gateway_resolve_approval_command
 from src.gateway.parsers.approval_text import parse_approval_text_command
 from src.server.config_store import RuntimeConfigStore
 
@@ -867,7 +871,21 @@ class GatewayManager:
             raise GatewayManagerError("unsupported_gateway_provider")
         return await plugin.test_connection(self, target_instance, payload)
 
-    def list_gateway_conversations(self, *, provider: str | None = None, limit: int = 100) -> dict[str, Any]:
+    @staticmethod
+    def _legacy_debug_payload(item: dict[str, Any]) -> dict[str, Any] | None:
+        if not (
+            item.get("active_runtime_session_id")
+            or item.get("active_runtime_forked_from_session_id")
+        ):
+            return None
+        return {
+            "active_runtime_session_id": item.get("active_runtime_session_id"),
+            "active_runtime_session_status": item.get("active_runtime_session_status") or "idle",
+            "active_runtime_forked_from_session_id": item.get("active_runtime_forked_from_session_id"),
+        }
+
+    def list_gateway_conversations(self, *, provider: str | None = None, limit: int = 20) -> dict[str, Any]:
+        self.gateway_context.store.archive_old_task_runs(retention_days=7)
         items = self.gateway_context.list_conversations(provider=provider, limit=limit)
         data = []
         for item in items:
@@ -884,9 +902,7 @@ class GatewayManager:
                 "bot_id": item.get("bot_id") or "",
                 "chat_id": item.get("chat_id") or "",
                 "main_context_id": item["main_context_id"],
-                "active_runtime_session_id": item.get("active_runtime_session_id"),
-                "active_runtime_session_status": item.get("active_runtime_session_status") or "idle",
-                "active_runtime_forked_from_session_id": item.get("active_runtime_forked_from_session_id"),
+                "legacy_debug": self._legacy_debug_payload(item),
                 "latest_context_version": item["latest_context_version"],
                 "status": item["status"],
                 "updated_at": item["updated_at"],
@@ -895,6 +911,7 @@ class GatewayManager:
         return {"data": data}
 
     def get_gateway_conversation(self, conversation_id: str) -> dict[str, Any]:
+        self.gateway_context.store.archive_old_task_runs(retention_days=7)
         item = self.gateway_context.store.get_conversation(conversation_id)
         if not item:
             raise GatewayManagerError("gateway_conversation_not_found", status_code=404)
@@ -912,9 +929,7 @@ class GatewayManager:
                 "bot_id": item.get("bot_id") or "",
                 "chat_id": item.get("chat_id") or "",
                 "main_context_id": item["main_context_id"],
-                "active_runtime_session_id": item.get("active_runtime_session_id"),
-                "active_runtime_session_status": item.get("active_runtime_session_status") or "idle",
-                "active_runtime_forked_from_session_id": item.get("active_runtime_forked_from_session_id"),
+                "legacy_debug": self._legacy_debug_payload(item),
                 "latest_context_version": item["latest_context_version"],
                 "status": item["status"],
                 "updated_at": item["updated_at"],
@@ -923,10 +938,12 @@ class GatewayManager:
         }
 
     def list_gateway_conversation_runs(self, conversation_id: str, *, limit: int = 100) -> dict[str, Any]:
+        self.gateway_context.store.archive_old_task_runs(retention_days=7)
         rows = self.gateway_context.list_task_runs(conversation_id, limit=limit)
         return {"data": [self._project_gateway_run(row) for row in rows]}
 
-    async def alist_gateway_conversations(self, *, provider: str | None = None, limit: int = 100) -> dict[str, Any]:
+    async def alist_gateway_conversations(self, *, provider: str | None = None, limit: int = 20) -> dict[str, Any]:
+        await self.gateway_context.archive_old_executions(retention_days=7)
         items = await self.gateway_context.store.alist_conversations(provider=provider, limit=limit)
         conversation_ids = [item["id"] for item in items]
         latest_runs_map = await self.gateway_context.store.abatch_latest_task_run(conversation_ids)
@@ -944,9 +961,7 @@ class GatewayManager:
                 "bot_id": item.get("bot_id") or "",
                 "chat_id": item.get("chat_id") or "",
                 "main_context_id": item["main_context_id"],
-                "active_runtime_session_id": item.get("active_runtime_session_id"),
-                "active_runtime_session_status": item.get("active_runtime_session_status") or "idle",
-                "active_runtime_forked_from_session_id": item.get("active_runtime_forked_from_session_id"),
+                "legacy_debug": self._legacy_debug_payload(item),
                 "latest_context_version": item["latest_context_version"],
                 "status": item["status"],
                 "updated_at": item["updated_at"],
@@ -955,6 +970,7 @@ class GatewayManager:
         return {"data": data}
 
     async def aget_gateway_conversation(self, conversation_id: str) -> dict[str, Any]:
+        await self.gateway_context.archive_old_executions(retention_days=7)
         item = await self.gateway_context.store.aget_conversation(conversation_id)
         if not item:
             raise GatewayManagerError("gateway_conversation_not_found", status_code=404)
@@ -971,9 +987,7 @@ class GatewayManager:
             "bot_id": item.get("bot_id") or "",
             "chat_id": item.get("chat_id") or "",
             "main_context_id": item["main_context_id"],
-            "active_runtime_session_id": item.get("active_runtime_session_id"),
-            "active_runtime_session_status": item.get("active_runtime_session_status") or "idle",
-            "active_runtime_forked_from_session_id": item.get("active_runtime_forked_from_session_id"),
+            "legacy_debug": self._legacy_debug_payload(item),
             "latest_context_version": item["latest_context_version"],
             "status": item["status"],
             "updated_at": item["updated_at"],
@@ -981,6 +995,7 @@ class GatewayManager:
         }}
 
     async def alist_gateway_conversation_runs(self, conversation_id: str, *, limit: int = 100) -> dict[str, Any]:
+        await self.gateway_context.archive_old_executions(retention_days=7)
         rows = await self.gateway_context.store.alist_task_runs(conversation_id, limit=limit)
         return {"data": [self._project_gateway_run(row) for row in rows]}
 
@@ -1023,6 +1038,8 @@ class GatewayManager:
         subject: str | None,
         *,
         scope_ids: set[str] | None = None,
+        provider: str | None = None,
+        instance_id: str | None = None,
     ) -> bool:
         scope_ids = scope_ids or set()
         if not subject:
@@ -1032,6 +1049,14 @@ class GatewayManager:
         approval_scope_id = str(context.get("approval_scope_id") or "").strip()
         if approval_scope_id and approval_scope_id in scope_ids:
             return True
+        expected_provider = str(provider or "").strip()
+        expected_instance_id = str(instance_id or "").strip()
+        context_provider = str(context.get("provider") or "").strip()
+        context_instance_id = str(context.get("instance_id") or "").strip()
+        if expected_provider and context_provider and context_provider != expected_provider:
+            return False
+        if expected_instance_id and context_instance_id and context_instance_id != expected_instance_id:
+            return False
         candidates = {
             str(context.get("session_id") or ""),
             str(context.get("subject") or ""),
@@ -1123,12 +1148,17 @@ class GatewayManager:
         execution_id = str(trace_payload.get("execution_id") or "").strip() or None
         anchor_id = str(trace_payload.get("anchor_id") or "").strip() or None
         channel_message_id = str(trace_payload.get("reply_to_message_id") or "").strip() or None
+        channel_target_id = (
+            str(trace_payload.get("chat_id") or trace_payload.get("channel_id") or trace_payload.get("handle") or "").strip()
+            or None
+        )
         approval_id = str(trace_payload.get("approval_id") or "").strip() or None
         return await self.gateway_context.resolve_execution_target(
             provider=provider,
             execution_id=execution_id,
             anchor_id=anchor_id,
             channel_message_id=channel_message_id,
+            channel_target_id=channel_target_id,
             approval_id=approval_id,
             conversation_id=str(subject or "").strip() or None,
         )
@@ -1184,27 +1214,29 @@ class GatewayManager:
             return None
 
         pending = self.engine.list_approvals(status="pending", limit=500)
+        history = self.engine.list_approvals(limit=500)
         scope_ids = self._approval_scope_ids_from_trace_payload(trace_payload)
+        trace_provider = self._trace_string(trace_payload, "provider")
+        trace_instance_id = self._trace_string(trace_payload, "instance_id")
         bound_execution = await self._bound_execution_from_trace_payload(
             trace_payload=trace_payload,
             subject=subject,
         )
-        scoped_pending = [
-            item
-            for item in pending
-            if self._approval_matches_subject(item, subject, scope_ids=scope_ids)
-        ]
-        bound_approval_ids: list[str] = []
-        if isinstance(bound_execution, dict):
-            binding = bound_execution.get("approval_binding") if isinstance(bound_execution.get("approval_binding"), dict) else {}
-            raw_ids = binding.get("approval_ids")
-            if isinstance(raw_ids, list):
-                bound_approval_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
-        candidate_pool = scoped_pending
-        if bound_approval_ids:
-            bound_pending = [item for item in pending if item.approval_id in set(bound_approval_ids)]
-            if bound_pending:
-                candidate_pool = bound_pending
+        def _matches(item: Any) -> bool:
+            return self._approval_matches_subject(
+                item,
+                subject,
+                scope_ids=scope_ids,
+                provider=trace_provider,
+                instance_id=trace_instance_id,
+            )
+
+        targeting = build_approval_targeting_state(
+            pending=pending,
+            history=history,
+            bound_execution=bound_execution,
+            matcher=_matches,
+        )
 
         if kind == "list":
             return {
@@ -1212,12 +1244,12 @@ class GatewayManager:
                 "recognized": True,
                 "resolved": False,
                 "resolved_count": 0,
-                "pending_count": len(candidate_pool),
-                "scope": "subject" if scoped_pending else "global",
+                "pending_count": len(targeting.candidate_pool),
+                "scope": targeting.scope_label,
             }
 
         decision = "approved" if kind in {"approve", "approve_all"} else "rejected"
-        execution_id = bound_execution.get("id") if isinstance(bound_execution, dict) else None
+        execution_id = targeting.execution_id
         requested_id = parsed.get("approval_id")
         requested_ids = [requested_id] if isinstance(requested_id, str) and requested_id else []
         action_idempotency_key = self._approval_action_idempotency_key(
@@ -1225,98 +1257,99 @@ class GatewayManager:
             action=decision,
             subject=subject,
             trace_payload=trace_payload,
-            approval_ids=requested_ids or bound_approval_ids,
+            approval_ids=requested_ids or targeting.bound_approval_ids,
             execution_id=str(execution_id or "").strip() or None,
             scope_ids=scope_ids,
         )
         if action_idempotency_key and self.engine.store.exists_idempotency(action_idempotency_key):
+            duplicate_approval_ids = duplicate_approval_ids_for_state(
+                requested_ids=requested_ids,
+                decision=decision,
+                state=targeting,
+            )
             return {
                 "command": kind,
                 "recognized": True,
                 "resolved": True,
                 "resolved_count": 0,
-                "approval_ids": requested_ids or bound_approval_ids,
+                "approval_ids": duplicate_approval_ids,
                 "status": decision,
-                "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
+                "scope": targeting.scope_label,
                 "execution_id": execution_id,
                 "duplicate": True,
                 "reason": "idempotency_hit",
             }
 
-        target_ids: list[str] = []
-        if isinstance(requested_id, str) and requested_id:
-            requested = next((item for item in pending if item.approval_id == requested_id), None)
-            if requested is None:
-                return {
-                    "command": kind,
-                    "recognized": True,
-                    "resolved": False,
-                    "resolved_count": 0,
-                    "pending_count": len(candidate_pool),
-                    "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
-                    "reason": "approval_not_in_scope_or_not_pending",
-                }
-            target_ids = [requested_id]
-        elif kind in {"approve_all", "reject_all"}:
-            target_ids = [item.approval_id for item in candidate_pool]
-        elif kind in {"approve", "reject"} and bound_approval_ids:
-            target_ids = bound_approval_ids
-        elif kind in {"approve", "reject"} and scoped_pending:
-            # Gateway conversational ergonomics:
-            # in same subject scope, plain "同意/拒绝" approves/rejects all pending items once.
-            target_ids = [item.approval_id for item in scoped_pending]
-        elif candidate_pool:
-            target_ids = [candidate_pool[-1].approval_id]
+        def _requested_in_scope(item: Any) -> bool:
+            if not targeting.bound_approval_ids and not scope_ids and not subject:
+                return True
+            if (
+                requested_id
+                and not targeting.bound_approval_ids
+                and not targeting.scoped_pending
+            ):
+                return True
+            return item.approval_id in set(targeting.bound_approval_ids) or _matches(item)
 
-        if not target_ids:
+        target_ids, target_error = resolve_target_ids_for_text_command(
+            kind=kind,
+            requested_id=requested_id if isinstance(requested_id, str) else None,
+            pending=pending,
+            state=targeting,
+            requested_in_scope=_requested_in_scope,
+        )
+
+        if target_error:
             return {
                 "command": kind,
                 "recognized": True,
                 "resolved": False,
                 "resolved_count": 0,
-                "pending_count": len(candidate_pool),
-                "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
-                "reason": "no_pending_approval_found",
+                "pending_count": len(targeting.candidate_pool),
+                "scope": targeting.scope_label,
+                "reason": target_error,
             }
 
-        resolved_items: list[Any] = []
-        for approval_id in target_ids:
-            resolved = await self.engine.resolve_approval(approval_id, decision)
-            if resolved:
-                resolved_items.append(resolved)
-
-        approval_action_event = Event(
-            event_id=f"evt_approval_action_{uuid4().hex}",
-            event_type="approval.action",
+        resolution = await self.resolve_gateway_approval_command(
+            engine=self.engine,
+            target_ids=target_ids,
+            decision=decision,
             source=source,
             subject=subject or (target_ids[0] if target_ids else None),
-            idempotency_key=action_idempotency_key,
-            payload={
-                "command": kind,
-                "decision": decision,
-                "approval_ids": target_ids,
-                "resolved_count": len(resolved_items),
-                "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
-                "execution_id": execution_id,
-                "text": text,
-                "raw": trace_payload or {},
-            },
-            risk_hint="low",
-            timestamp=datetime.now(UTC),
+            trace_payload={"text": text, **(trace_payload or {})},
+            action_idempotency_key=action_idempotency_key,
+            execution_id=str(execution_id or "").strip() or None,
         )
-        await self.engine.emit(approval_action_event)
 
         return {
             "command": kind,
-            "recognized": True,
-            "resolved": len(resolved_items) > 0,
-            "resolved_count": len(resolved_items),
-            "approval_ids": [item.approval_id for item in resolved_items],
-            "status": decision,
-            "scope": "subject" if scoped_pending else "bound" if bound_approval_ids else "none",
+            **resolution,
+            "scope": targeting.scope_label,
             "execution_id": execution_id,
-            "event_id": approval_action_event.event_id,
         }
+
+    async def resolve_gateway_approval_command(
+        self,
+        *,
+        engine: EventEngine,
+        target_ids: list[str],
+        decision: str,
+        source: str,
+        subject: str | None,
+        trace_payload: dict[str, Any] | None = None,
+        action_idempotency_key: str | None = None,
+        execution_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await gateway_resolve_approval_command(
+            engine=engine,
+            target_ids=target_ids,
+            decision=decision,
+            source=source,
+            subject=subject,
+            trace_payload=trace_payload,
+            action_idempotency_key=action_idempotency_key,
+            execution_id=execution_id,
+        )
 
     async def ingest_feishu_events(
         self,

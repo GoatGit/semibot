@@ -1,151 +1,69 @@
-/**
- * 软删除测试
- *
- * 验证所有 Repository 的软删除逻辑是否正确实现
- */
-
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { v4 as uuid } from 'uuid'
-
-// Mock sql
-vi.mock('../../lib/db', () => ({
-  sql: vi.fn(),
-}))
-
-// Mock logger
-vi.mock('../../lib/logger', () => ({
-  logPaginationLimit: vi.fn(),
-  createLogger: vi.fn().mockReturnValue({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-  repositoryLogger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}))
-
-import { sql } from '../../lib/db'
-import * as agentRepository from '../../repositories/agent.repository'
-import * as sessionRepository from '../../repositories/session.repository'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('软删除测试', () => {
-  const mockSql = sql as unknown as ReturnType<typeof vi.fn>
-  const testOrgId = uuid()
-  const testUserId = uuid()
+  let dbPath = ''
 
-  beforeEach(() => {
-    vi.clearAllMocks()
+  beforeEach(async () => {
+    dbPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'semibot-soft-delete-')), 'semibot.db')
+    process.env.SEMIBOT_DB_PATH = dbPath
+    vi.resetModules()
   })
 
-  describe('Agent 软删除', () => {
-    it('softDelete 应该设置 deleted_at 和 deleted_by', async () => {
-      const agentId = uuid()
-
-      mockSql.mockResolvedValueOnce([{ id: agentId }])
-
-      const result = await agentRepository.softDelete(agentId, testOrgId, testUserId)
-
-      expect(result).toBe(true)
-      // 验证 SQL 调用包含 deleted_at 和 deleted_by
-      expect(mockSql).toHaveBeenCalled()
-    })
-
-    it('softDelete 应该设置 is_active = false', async () => {
-      const agentId = uuid()
-
-      mockSql.mockResolvedValueOnce([{ id: agentId }])
-
-      const result = await agentRepository.softDelete(agentId, testOrgId)
-
-      expect(result).toBe(true)
-    })
-
-    it('findById 应该过滤已软删除的记录', async () => {
-      // 模拟返回空（因为记录已被软删除）
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await agentRepository.findById(uuid())
-
-      expect(result).toBeNull()
-    })
-
-    it('findByOrg 应该过滤已软删除的记录', async () => {
-      const mockAgents = [
-        { id: uuid(), org_id: testOrgId, name: 'Active Agent', deleted_at: null },
-      ]
-
-      mockSql.mockResolvedValueOnce([{ total: '1' }])
-      mockSql.mockResolvedValueOnce(mockAgents)
-
-      const result = await agentRepository.findByOrg({ orgId: testOrgId })
-
-      expect(result.data).toHaveLength(1)
-      // 所有返回的记录应该没有 deleted_at
-      expect(result.data.every((a: { deleted_at: string | null }) => a.deleted_at === null)).toBe(true)
-    })
+  afterEach(async () => {
+    const { closeLocalDb } = await import('../../lib/db-local')
+    closeLocalDb()
+    await fs.rm(path.dirname(dbPath), { recursive: true, force: true })
+    delete process.env.SEMIBOT_DB_PATH
+    vi.resetModules()
   })
 
-  describe('Session 软删除', () => {
-    it('softDelete 应该成功', async () => {
-      const sessionId = uuid()
+  it('Agent softDelete 应设置 deleted_at / deleted_by 并从列表中过滤', async () => {
+    const agentRepository = await import('../../repositories/agent.repository')
 
-      mockSql.mockResolvedValueOnce([{ id: sessionId }])
+    const kept = await agentRepository.create({ name: 'Keep', systemPrompt: 'a', config: {} })
+    const removed = await agentRepository.create({ name: 'Remove', systemPrompt: 'b', config: {} })
 
-      const result = await sessionRepository.softDelete(sessionId, testOrgId, testUserId)
+    expect(await agentRepository.softDelete(removed.id, 'user-1')).toBe(true)
+    expect(await agentRepository.findById(removed.id)).toBeNull()
 
-      expect(result).toBe(true)
-    })
+    const list = await agentRepository.findByOrg({})
+    expect(list.data.map((item) => item.id)).toEqual([kept.id])
 
-    it('findById 应该过滤已软删除的记录', async () => {
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await sessionRepository.findById(uuid())
-
-      expect(result).toBeNull()
-    })
+    const { getLocalDb } = await import('../../lib/db-local')
+    const raw = getLocalDb().prepare('SELECT deleted_at, deleted_by, is_active FROM agents WHERE id = ?').get(removed.id) as {
+      deleted_at: string | null
+      deleted_by: string | null
+      is_active: number
+    }
+    expect(raw.deleted_at).toBeTruthy()
+    expect(raw.deleted_by).toBe('user-1')
+    expect(raw.is_active).toBe(0)
   })
 
-  describe('软删除后的数据完整性', () => {
-    it('软删除不应该物理删除数据', async () => {
-      const agentId = uuid()
+  it('Session softDelete 应保留数据但在查询接口中隐藏', async () => {
+    const sessionRepository = await import('../../repositories/session.repository')
 
-      // 软删除
-      mockSql.mockResolvedValueOnce([{ id: agentId }])
-      await agentRepository.softDelete(agentId, testOrgId, testUserId)
-
-      // 验证 SQL 使用 UPDATE 而非 DELETE
-      const lastCall = mockSql.mock.calls[mockSql.mock.calls.length - 1]
-      // 确保没有使用 DELETE 语句
-      expect(mockSql).toHaveBeenCalled()
+    const created = await sessionRepository.create({
+      userId: 'user-1',
+      agentId: 'agent-1',
+      title: 'Session To Delete',
     })
 
-    it('软删除应该记录删除时间', async () => {
-      const sessionId = uuid()
+    expect(await sessionRepository.softDelete(created.id, 'user-1')).toBe(true)
+    expect(await sessionRepository.findById(created.id)).toBeNull()
 
-      mockSql.mockResolvedValueOnce([{ id: sessionId }])
+    const list = await sessionRepository.findByUserAndOrg({ userId: 'user-1' })
+    expect(list.data).toHaveLength(0)
 
-      const result = await sessionRepository.softDelete(sessionId, testOrgId, testUserId)
-
-      expect(result).toBe(true)
-      // SQL 应该包含 deleted_at = NOW()
-      expect(mockSql).toHaveBeenCalled()
-    })
-
-    it('软删除应该记录删除者', async () => {
-      const agentId = uuid()
-
-      mockSql.mockResolvedValueOnce([{ id: agentId }])
-
-      const result = await agentRepository.softDelete(agentId, testOrgId, testUserId)
-
-      expect(result).toBe(true)
-      // SQL 应该包含 deleted_by
-      expect(mockSql).toHaveBeenCalled()
-    })
+    const { getLocalDb } = await import('../../lib/db-local')
+    const raw = getLocalDb().prepare('SELECT deleted_at, deleted_by FROM sessions WHERE id = ?').get(created.id) as {
+      deleted_at: string | null
+      deleted_by: string | null
+    }
+    expect(raw.deleted_at).toBeTruthy()
+    expect(raw.deleted_by).toBe('user-1')
   })
 })

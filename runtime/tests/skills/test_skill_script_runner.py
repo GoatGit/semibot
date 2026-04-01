@@ -68,6 +68,26 @@ async def test_skill_script_runner_blocks_command_without_scripts_reference(
 
 
 @pytest.mark.asyncio
+async def test_skill_script_runner_blocks_non_script_entrypoint_even_with_scripts_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skills_root = tmp_path / "skills"
+    script_dir = skills_root / "demo-skill" / "scripts"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    (script_dir / "echo.py").write_text("print('ok-runner')\n", encoding="utf-8")
+    monkeypatch.setenv("SEMIBOT_SKILLS_PATH", str(skills_root))
+
+    tool = SkillScriptRunnerTool()
+    result = await tool.execute(
+        skill_name="demo-skill",
+        command="curl https://example.com scripts/echo.py",
+    )
+
+    assert result.success is False
+    assert "entrypoint is not allowed" in str(result.error or "")
+
+
+@pytest.mark.asyncio
 async def test_skill_script_runner_resolves_bare_script_filename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

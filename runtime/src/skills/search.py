@@ -354,9 +354,17 @@ class SearchTool(BaseTool):
                 include_answer = False
             else:
                 include_answer = True
-        if include_raw_content not in (True, False):
-            if isinstance(include_raw_content, str) and include_raw_content.lower() in ("true", "yes", "1"):
-                include_raw_content = True
+        if include_raw_content not in (True, False, "markdown", "text"):
+            if isinstance(include_raw_content, str):
+                normalized_raw_content = include_raw_content.strip().lower()
+                if normalized_raw_content in ("true", "yes", "1"):
+                    include_raw_content = True
+                elif normalized_raw_content in ("false", "no", "0"):
+                    include_raw_content = False
+                elif normalized_raw_content in ("markdown", "text"):
+                    include_raw_content = normalized_raw_content
+                else:
+                    include_raw_content = False
             else:
                 include_raw_content = False
 

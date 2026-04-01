@@ -1,32 +1,14 @@
-import express from 'express'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-async function startTestServer(): Promise<{
-  baseUrl: string
-  close: () => Promise<void>
-}> {
+async function getSkillsRouteHandler() {
   const { default: skillsRouter } = await import('../routes/v1/skills')
-  const app = express()
-  app.use(express.json())
-  app.use(skillsRouter)
-  const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
-    const listening = app.listen(0, '127.0.0.1', () => resolve(listening))
-  })
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('failed to bind test server')
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    close: async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()))
-      })
-    },
-  }
+  const layer = skillsRouter.stack.find((item) => item.route?.path === '/' && item.route?.methods?.get)
+  if (!layer?.route?.stack?.length) throw new Error('skills route handler not found')
+  return layer.route.stack[layer.route.stack.length - 1]?.handle
 }
 
 describe('skills route', () => {
   const originalEnv = { ...process.env }
-  const realFetch = globalThis.fetch
 
   beforeEach(() => {
     process.env = { ...originalEnv, SEMIBOT_ENABLE_AUTH: 'false', RUNTIME_URL: 'http://runtime.test' }
@@ -49,19 +31,40 @@ describe('skills route', () => {
       })
     )
 
-    const server = await startTestServer()
-    try {
-      const response = await realFetch(`${server.baseUrl}/`)
-      expect(response.status).toBe(200)
-      const payload = (await response.json()) as {
-        success: boolean
-        data?: { skills?: string[]; metadata?: Array<{ skill_id?: string }> }
-      }
-      expect(payload.success).toBe(true)
-      expect(payload.data?.skills).toEqual(['browser-helper'])
-      expect(payload.data?.metadata?.[0]?.skill_id).toBe('browser-helper')
-    } finally {
-      await server.close()
+    const handler = await getSkillsRouteHandler()
+    const req = {} as never
+    const responseState: { statusCode: number; payload: unknown } = {
+      statusCode: 200,
+      payload: undefined,
     }
+    let settle: (() => void) | null = null
+    const completed = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    const res = {
+      status(code: number) {
+        responseState.statusCode = code
+        return this
+      },
+      json(payload: unknown) {
+        responseState.payload = payload
+        settle?.()
+        return this
+      },
+    } as never
+
+    handler(req, res, (error?: unknown) => {
+      if (error) throw error
+    })
+    await completed
+
+    expect(responseState.statusCode).toBe(200)
+    const payload = responseState.payload as {
+      success: boolean
+      data?: { skills?: string[]; metadata?: Array<{ skill_id?: string }> }
+    }
+    expect(payload.success).toBe(true)
+    expect(payload.data?.skills).toEqual(['browser-helper'])
+    expect(payload.data?.metadata?.[0]?.skill_id).toBe('browser-helper')
   })
 })

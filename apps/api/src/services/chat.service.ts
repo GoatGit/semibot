@@ -43,7 +43,13 @@ import {
 import { pushMessage, getMessagesSince } from '../lib/sse-buffer'
 import { chatLogger } from '../lib/logger'
 import { runtimeRequest } from '../lib/runtime-client'
-import type { Agent2UIMessage, Agent2UIType, Agent2UIData } from '@semibot/shared-types'
+import type {
+  Agent2UIMessage,
+  Agent2UIType,
+  Agent2UIData,
+  CapabilityDescriptor,
+  SkillContextBinding,
+} from '@semibot/shared-types'
 import type { Agent } from './agent.service'
 import type { Session } from './session.service'
 import { getWSServer } from '../ws/ws-server'
@@ -64,6 +70,8 @@ export interface ChatAttachment {
 export interface ChatInput {
   message: string
   parentMessageId?: string
+  userInvoked?: boolean
+  userInvokedSkillIds?: string[]
   attachments?: ChatAttachment[]
 }
 
@@ -155,6 +163,14 @@ type SkillRequires = {
   env_vars: string[]
 }
 
+type SkillFrontmatterSummary = {
+  when_to_use: string
+  execution_context?: string
+  effort?: string
+  allowed_tools: string[]
+  paths: string[]
+}
+
 type RuntimeSkillMetadata = {
   skill_id?: string
   name?: string
@@ -173,6 +189,7 @@ type RuntimeSkillMetadata = {
 }
 
 type SkillIndexEntry = Record<string, unknown>
+type CapabilitySideEffectLevel = NonNullable<NonNullable<CapabilityDescriptor['constraints']>['sideEffectLevel']>
 
 const RUNTIME_SKILL_METADATA_TIMEOUT_MS = Math.max(1500, Number(process.env.RUNTIME_SKILL_METADATA_TIMEOUT_MS ?? 4000))
 
@@ -200,6 +217,262 @@ const RUNTIME_SKILL_METADATA_CACHE_TTL_MS = Math.max(5000, Number(process.env.RU
 
 const pendingApprovalResumes = new Map<string, PendingApprovalResumeContext>()
 const APPROVAL_RESUME_TTL_MS = 24 * 60 * 60 * 1000
+
+async function fetchRuntimeToolCatalog(baseUrls: string[]): Promise<Array<Record<string, unknown>>> {
+  const errors: string[] = []
+  for (const baseUrl of baseUrls) {
+    try {
+      const response = await fetch(`${baseUrl}/v1/tools/catalog`, { method: 'GET' })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        errors.push(`${baseUrl}: ${(payload as { detail?: string }).detail || response.status}`)
+        continue
+      }
+      const items = Array.isArray((payload as { items?: unknown[] }).items)
+        ? (payload as { items: unknown[] }).items
+        : []
+      return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    } catch (error) {
+      errors.push(`${baseUrl}: ${(error as Error).message}`)
+    }
+  }
+  if (errors.length > 0) {
+    chatLogger.warn('加载 runtime tool catalog 失败，继续无 catalog 模式', { errors })
+  }
+  return []
+}
+
+async function buildRuntimeSubAgentPayload(agentIds: string[]): Promise<Array<Record<string, unknown>>> {
+  const ids = agentIds
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+  const subAgents = await Promise.all(ids.map(async (agentId): Promise<Record<string, unknown> | null> => {
+    try {
+      const subAgent = await agentService.getAgent(agentId)
+      const runtimeConfig = await resolveRuntimeAgentConfigSafe(subAgent.config)
+      return {
+        id: subAgent.id,
+        name: subAgent.name,
+        description: subAgent.description || '',
+        system_prompt: subAgent.systemPrompt || '',
+        model: runtimeConfig.model,
+        temperature: runtimeConfig.temperature ?? 0.7,
+        max_tokens: runtimeConfig.maxTokens ?? 4096,
+        skills: Array.isArray(subAgent.skills) ? subAgent.skills : [],
+      }
+    } catch (error) {
+      chatLogger.warn('加载 sub-agent 失败，继续忽略该候选项', {
+        subAgentId: agentId,
+        error: (error as Error).message,
+      })
+      return null
+    }
+  }))
+  return subAgents.filter((item): item is Record<string, unknown> => item !== null)
+}
+
+async function resolveRuntimeAgentConfigSafe(config: unknown): Promise<any> {
+  try {
+    return await agentService.resolveRuntimeAgentConfig(config as never)
+  } catch (error) {
+    const message = String((error as Error)?.message || '')
+    if (message.includes('No "resolveRuntimeAgentConfig" export is defined')) {
+      return (config && typeof config === 'object') ? { ...(config as Record<string, unknown>) } : {}
+    }
+    throw error
+  }
+}
+
+function buildRuntimeCapabilityPayload(input: {
+  orgId?: string
+  toolCatalog?: Array<Record<string, unknown>>
+  mcpServers: Array<Record<string, unknown>>
+  subAgents: Array<Record<string, unknown>>
+}): CapabilityDescriptor[] {
+  const capabilities: CapabilityDescriptor[] = []
+  const seen = new Set<string>()
+  for (const entry of input.toolCatalog || []) {
+    const toolId = String(entry.tool_id || entry.toolId || '').trim()
+    const toolName = String(entry.tool_name || entry.toolName || '').trim()
+    const actualToolName = String(entry.actual_tool_name || entry.actualToolName || toolName).trim()
+    const sourceType = String(entry.source_type || entry.sourceType || 'builtin').trim().toLowerCase()
+    if (!toolId || !toolName || seen.has(toolId)) continue
+    const metadata = entry.metadata && typeof entry.metadata === 'object'
+      ? (entry.metadata as Record<string, unknown>)
+      : {}
+    const riskLevel = String(metadata.risk_level || metadata.riskLevel || 'low').trim().toLowerCase() || 'low'
+    const sideEffectLevelRaw = String(metadata.side_effect_level || metadata.sideEffectLevel || '').trim().toLowerCase()
+    const sideEffectLevel = (
+      sideEffectLevelRaw === 'read' ||
+      sideEffectLevelRaw === 'write' ||
+      sideEffectLevelRaw === 'external_write'
+    ) ? sideEffectLevelRaw as CapabilitySideEffectLevel : undefined
+    const executionPolicy = {
+      risk_level: riskLevel,
+      requires_approval: Boolean(metadata.requires_approval ?? metadata.requiresApproval),
+      approval_scope: String(metadata.approval_scope || metadata.approvalScope || '').trim() || undefined,
+      approval_dedupe_keys: Array.isArray(metadata.approval_dedupe_keys || metadata.approvalDedupeKeys)
+        ? (metadata.approval_dedupe_keys || metadata.approvalDedupeKeys)
+        : undefined,
+      approval_policy_key: String(metadata.approval_policy_key || metadata.approvalPolicyKey || '').trim() || undefined,
+      timeout_ms: typeof metadata.timeout_ms === 'number' ? metadata.timeout_ms : undefined,
+      max_retries: typeof metadata.max_retries === 'number' ? metadata.max_retries : undefined,
+      concurrency_key: String(metadata.concurrency_key || '').trim() || undefined,
+      side_effect_level: sideEffectLevel,
+    }
+    const source: CapabilityDescriptor['source'] = sourceType === 'mcp'
+      ? {
+          type: 'mcp',
+          serverId: String(metadata.mcp_server_id || metadata.mcpServerId || entry.provider_id || entry.providerId || '').trim(),
+          serverName: String(metadata.mcp_server_name || metadata.mcpServerName || entry.provider_id || entry.providerId || '').trim(),
+          toolName: actualToolName,
+        }
+      : sourceType === 'cli'
+        ? {
+            type: 'cli',
+            providerId: String(entry.provider_id || entry.providerId || '').trim(),
+            packageId: String(metadata.package_id || metadata.packageId || '').trim() || null,
+            actualToolName,
+          }
+        : {
+            type: 'builtin',
+            key: actualToolName,
+          }
+    capabilities.push({
+      id: toolId,
+      kind: 'tool',
+      name: toolName,
+      displayName: String(entry.display_name || entry.displayName || toolName),
+      description: String(entry.description || ''),
+      orgId: input.orgId,
+      source,
+      inputSchema: (entry.parameters as Record<string, unknown>) || {},
+      riskLevel: (riskLevel === 'high' || riskLevel === 'medium' ? riskLevel : 'low') as CapabilityDescriptor['riskLevel'],
+      requiresApproval: Boolean(metadata.requires_approval ?? metadata.requiresApproval),
+      approvalPolicyKey: String(metadata.approval_policy_key || metadata.approvalPolicyKey || '').trim() || undefined,
+      visibility: { planner: true, executor: true, audit: true },
+      constraints: {
+        timeoutMs: typeof metadata.timeout_ms === 'number' ? metadata.timeout_ms : undefined,
+        maxRetries: typeof metadata.max_retries === 'number' ? metadata.max_retries : undefined,
+        concurrencyKey: String(metadata.concurrency_key || '').trim() || undefined,
+        sideEffectLevel,
+      },
+      metadata: {
+        ...metadata,
+        execution_policy: executionPolicy,
+        tool_id: toolId,
+        actual_tool_name: actualToolName,
+        display_name: String(entry.display_name || entry.displayName || toolName),
+      },
+    })
+    seen.add(toolId)
+  }
+  for (const server of input.mcpServers) {
+    const serverId = String(server.id || '').trim()
+    const serverName = String(server.name || serverId || 'mcp').trim()
+    const connected = Boolean(server.is_connected)
+    const availableTools = Array.isArray(server.available_tools) ? server.available_tools : []
+    if (!connected || !serverId) continue
+    for (const tool of availableTools) {
+      if (!tool || typeof tool !== 'object') continue
+      const toolName = String((tool as Record<string, unknown>).name || '').trim()
+      if (!toolName) continue
+      const capabilityId = `mcp:${serverId}:${toolName}`
+      if (seen.has(capabilityId)) continue
+      capabilities.push({
+        id: capabilityId,
+        kind: 'tool',
+        name: toolName,
+        displayName: `${serverName} / ${toolName}`,
+        description: String((tool as Record<string, unknown>).description || ''),
+        orgId: input.orgId,
+        source: {
+          type: 'mcp',
+          serverId,
+          serverName,
+          toolName,
+        },
+        inputSchema:
+          ((tool as Record<string, unknown>).inputSchema as Record<string, unknown>) ||
+          ((tool as Record<string, unknown>).parameters as Record<string, unknown>) ||
+          {},
+        riskLevel: 'medium',
+        requiresApproval: false,
+        visibility: { planner: true, executor: true, audit: true },
+        metadata: {
+          execution_policy: {
+            risk_level: 'medium',
+            requires_approval: false,
+          },
+          mcp_server_id: serverId,
+          mcp_server_name: serverName,
+        },
+      })
+      seen.add(capabilityId)
+    }
+  }
+  for (const subAgent of input.subAgents) {
+    const agentId = String(subAgent.id || '').trim()
+    const capabilityId = `agent:${agentId}`
+    if (!agentId || seen.has(capabilityId)) continue
+    const timeoutMsRaw = Number(subAgent.timeout_ms ?? subAgent.timeoutMs)
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 120000
+    capabilities.push({
+      id: capabilityId,
+      kind: 'sub_agent',
+      name: `subagent:${agentId}`,
+      displayName: String(subAgent.name || agentId),
+      description: String(subAgent.description || ''),
+      orgId: input.orgId,
+      source: { type: 'agent', agentId },
+      riskLevel: 'medium',
+      requiresApproval: false,
+      visibility: { planner: true, executor: true, audit: true },
+      constraints: {
+        timeoutMs,
+      },
+      metadata: {
+        sub_agent_id: agentId,
+        system_prompt: String(subAgent.system_prompt || '').trim(),
+        model: String(subAgent.model || '').trim() || undefined,
+        temperature: typeof subAgent.temperature === 'number' ? subAgent.temperature : undefined,
+        max_tokens: typeof subAgent.max_tokens === 'number' ? subAgent.max_tokens : undefined,
+        skills: Array.isArray(subAgent.skills) ? subAgent.skills : [],
+        execution_policy: {
+          risk_level: 'medium',
+          requires_approval: false,
+        },
+      },
+    })
+    seen.add(capabilityId)
+  }
+  return capabilities
+}
+
+function buildRuntimeSkillContext(skillIndex: SkillIndexEntry[]): SkillContextBinding[] {
+  const result: SkillContextBinding[] = []
+  for (const entry of skillIndex) {
+    const row = entry as Record<string, unknown>
+    const skillId = String(row.id || row.skill_id || row.name || '').trim()
+    if (!skillId) continue
+    const pkg = row.package && typeof row.package === 'object' ? (row.package as Record<string, unknown>) : {}
+    const files = Array.isArray(pkg.files) ? pkg.files : []
+    const packageFiles = files
+      .map((item) => (item && typeof item === 'object' ? String((item as Record<string, unknown>).path || '').trim() : ''))
+      .filter(Boolean)
+    result.push({
+      skillId,
+      skillDefinitionId: String(row.skill_definition_id || '') || undefined,
+      skillPackageId: String(row.skill_package_id || '') || undefined,
+      description: String(row.description || '') || undefined,
+      hasSkillMd: Boolean(row.has_skill_md) || packageFiles.includes('SKILL.md'),
+      scriptFiles: packageFiles.filter((item) => item.startsWith('scripts/')),
+      packageFiles,
+      metadata: { ...row },
+    })
+  }
+  return result
+}
 
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -482,16 +755,16 @@ function toRuntimeSkillPrompt(metadata: RuntimeSkillMetadata[]): string {
   ].join('\n')
 }
 
-async function buildAgentSystemPrompt(agent: Agent): Promise<string> {
+async function buildAgentSystemPrompt(agent: Agent, orgId?: string): Promise<string> {
   const n = new Date()
   const d = `${n.getFullYear()}年${n.getMonth() + 1}月${n.getDate()}日`
   const base = agent.systemPrompt || `你是 ${agent.name}，一个有帮助的 AI 助手。`
   const withDate = `${base}\n\n当前日期: ${d}`
 
   try {
-    const docs = await contextPolicyService.getActivePolicies()
+    const docs = await contextPolicyService.getActivePolicies(orgId)
     const policyBlock = contextPolicyService.buildPolicyInjectionBlock(docs)
-    const evolutionDocs = await evolutionCapabilityService.getActiveCapabilities()
+    const evolutionDocs = await evolutionCapabilityService.getActiveCapabilities(orgId)
     const evolutionBlock = evolutionCapabilityService.buildCapabilityInjectionBlock(evolutionDocs)
     const blocks: string[] = []
     if (policyBlock) {
@@ -514,6 +787,7 @@ async function buildAgentSystemPrompt(agent: Agent): Promise<string> {
 async function resolveSkillMetadata(pkg: skillPackageRepo.SkillPackage): Promise<{
   fileInventory: SkillFileInventory
   requires: SkillRequires
+  frontmatter: SkillFrontmatterSummary
 }> {
   const validationResult = (pkg.validationResult ?? {}) as Record<string, unknown>
   const config = (pkg.config ?? {}) as Record<string, unknown>
@@ -534,11 +808,45 @@ async function resolveSkillMetadata(pkg: skillPackageRepo.SkillPackage): Promise
   let hasSkillMd = Boolean(rawInventory.has_skill_md ?? rawInventory.hasSkillMd)
   let hasScripts = Boolean(rawInventory.has_scripts ?? rawInventory.hasScripts)
   let hasReferences = Boolean(rawInventory.has_references ?? rawInventory.hasReferences)
+  const frontmatter: SkillFrontmatterSummary = {
+    when_to_use: '',
+    allowed_tools: [],
+    paths: [],
+  }
 
   const pkgPath = pkg.packagePath
   if (pkgPath && await fs.pathExists(pkgPath)) {
     const skillMdPath = path.join(pkgPath, 'SKILL.md')
-    hasSkillMd = hasSkillMd || await fs.pathExists(skillMdPath)
+    const skillMdExists = await fs.pathExists(skillMdPath)
+    hasSkillMd = hasSkillMd || skillMdExists
+    if (skillMdExists) {
+      try {
+        const raw = await fs.readFile(skillMdPath, 'utf8')
+        const lines = raw.split(/\r?\n/)
+        if (lines[0]?.trim() === '---') {
+          const end = lines.findIndex((line, idx) => idx > 0 && line.trim() === '---')
+          if (end > 0) {
+            for (const line of lines.slice(1, end)) {
+              const match = line.match(/^\s*([A-Za-z0-9_-]+)\s*:\s*(.+?)\s*$/)
+              if (!match) continue
+              const key = match[1]
+              const value = match[2].replace(/^['"]|['"]$/g, '').trim()
+              if (key === 'when_to_use') frontmatter.when_to_use = value
+              if (key === 'context') frontmatter.execution_context = value
+              if (key === 'effort') frontmatter.effort = value
+              if (key === 'allowed-tools') {
+                frontmatter.allowed_tools = value.split(',').map((item) => item.trim()).filter(Boolean)
+              }
+              if (key === 'paths') {
+                frontmatter.paths = value.split(',').map((item) => item.trim()).filter(Boolean)
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore frontmatter parsing failures and fall back to metadata-only index.
+      }
+    }
 
     const scriptsDir = path.join(pkgPath, 'scripts')
     if (await fs.pathExists(scriptsDir)) {
@@ -577,6 +885,7 @@ async function resolveSkillMetadata(pkg: skillPackageRepo.SkillPackage): Promise
       reference_files: referenceFiles,
     },
     requires,
+    frontmatter,
   }
 }
 
@@ -593,15 +902,27 @@ async function buildAgentSkillIndex(
     if (!def || !def.isActive) continue
     const pkg = await skillPackageRepo.findByDefinition(def.id)
     if (!pkg) continue
-    const { fileInventory, requires } = await resolveSkillMetadata(pkg)
+    const { fileInventory, requires, frontmatter } = await resolveSkillMetadata(pkg)
     skillKeys.add(def.skillId)
     skillIndex.push({
       id: def.skillId,
+      skill_id: def.skillId,
       name: def.name,
       description: def.description ?? '',
+      when_to_use: frontmatter.when_to_use,
       version: 'current',
       source: pkg.sourceType,
+      execution_context: frontmatter.execution_context,
+      effort: frontmatter.effort,
+      allowed_tools: frontmatter.allowed_tools,
+      paths: frontmatter.paths,
       direct_executable: fileInventory.script_files.includes('scripts/main.py'),
+      resources: {
+        has_skill_md: fileInventory.has_skill_md,
+        has_references: fileInventory.has_references,
+        has_templates: false,
+        script_files: fileInventory.script_files,
+      },
       file_inventory: fileInventory,
       requires,
     })
@@ -618,11 +939,23 @@ async function buildAgentSkillIndex(
       skillKeys.add(skillId)
       skillIndex.push({
         id: skillId,
+        skill_id: skillId,
         name: String(item.name || skillId),
         description: String(item.description || ''),
+        when_to_use: '',
         version: String(item.version || 'current'),
         source: String(item.source || 'runtime'),
+        execution_context: undefined,
+        effort: undefined,
+        allowed_tools: [],
+        paths: [],
         direct_executable: entryScript === 'scripts/main.py',
+        resources: {
+          has_skill_md: hasSkillMd,
+          has_references: false,
+          has_templates: false,
+          script_files: entryScript ? [entryScript] : [],
+        },
         file_inventory: {
           has_skill_md: hasSkillMd,
           has_scripts: hasScripts,
@@ -811,22 +1144,31 @@ export function sendSessionAgent2UIMessage(
 }
 
 export async function handleChat(
-  userId: string,
-  sessionId: string,
-  input: ChatInput,
-  res: Response
+  arg1: string,
+  arg2: string,
+  arg3: string | ChatInput,
+  arg4: ChatInput | Response,
+  arg5?: Response
 ): Promise<void> {
-  if (input.message.length > MAX_MESSAGE_LENGTH) {
+  const hasOrgId = typeof arg3 === 'string'
+  const orgId = hasOrgId ? arg1 : undefined
+  const userId = hasOrgId ? arg2 : arg1
+  const sessionId = hasOrgId ? (arg3 as string) : arg2
+  let input = (hasOrgId ? arg4 : arg3) as ChatInput
+  const res = (hasOrgId ? arg5 : arg4) as Response
+  const message = String(input?.message || '')
+
+  if (message.length > MAX_MESSAGE_LENGTH) {
     throw createError(VALIDATION_MESSAGE_TOO_LONG)
   }
 
   const session = await sessionService.getSession(sessionId)
-  const approvalCommand = parseApprovalCommand(input.message)
+  const approvalCommand = parseApprovalCommand(message)
   if (approvalCommand.kind !== 'none') {
     const connection = createSSEConnection(res, sessionId, userId)
     await sessionService.addMessage(sessionId, {
       role: 'user',
-      content: input.message,
+      content: message,
       parentId: input.parentMessageId,
     })
 
@@ -867,13 +1209,16 @@ export async function handleChat(
   }
 
   const agent = await agentService.getAgent(session.agentId)
+  if (input.message !== message) {
+    input = { ...input, message }
+  }
 
   if (CHAT_DIRECT_RUNTIME) {
     await handleChatViaRuntimeHttp(userId, sessionId, input, res, agent)
     return
   }
 
-  await handleChatViaExecutionPlane(userId, sessionId, input, res, agent, session)
+  await handleChatViaExecutionPlane(userId, sessionId, input, res, agent, session, orgId)
 }
 
 export async function subscribeChatStream(
@@ -899,7 +1244,8 @@ async function handleChatViaExecutionPlane(
   input: ChatInput,
   res: Response,
   agent: Agent,
-  _session: Session
+  _session: Session,
+  orgId?: string
 ): Promise<void> {
   const enhanced = await buildEnhancedMessage(sessionId, input)
   const wsServer = getWSServer()
@@ -968,10 +1314,19 @@ async function handleChatViaExecutionPlane(
 
   const runtimeBaseUrls = getRuntimeBaseUrls()
   const { skillIndex, runtimeSkillMetadata } = await buildAgentSkillIndex(agent, runtimeBaseUrls)
-  const runtimeAgentConfig = await agentService.resolveRuntimeAgentConfig(agent.config)
+  const runtimeAgentConfig = await resolveRuntimeAgentConfigSafe(agent.config)
+  const toolCatalog = await fetchRuntimeToolCatalog(runtimeBaseUrls)
+  const runtimeSubAgents = await buildRuntimeSubAgentPayload(agent.subAgents || [])
+  const runtimeCapabilities = buildRuntimeCapabilityPayload({
+    orgId: SINGLE_USER_ORG_ID,
+    toolCatalog,
+    mcpServers,
+    subAgents: runtimeSubAgents,
+  })
+  const runtimeSkillContext = buildRuntimeSkillContext(skillIndex)
 
   const runtimeType = 'semigraph' as const
-  let systemPrompt = await buildAgentSystemPrompt(agent)
+  let systemPrompt = await buildAgentSystemPrompt(agent, orgId)
   if (agent.isSystem && runtimeSkillMetadata.length > 0) {
     const runtimeSkillPrompt = toRuntimeSkillPrompt(runtimeSkillMetadata)
     if (runtimeSkillPrompt) {
@@ -995,7 +1350,11 @@ async function handleChatViaExecutionPlane(
     },
     mcp_servers: mcpServers,
     skill_index: skillIndex,
-    sub_agents: [],
+    user_invoked: Boolean(input.userInvoked),
+    user_invoked_skill_ids: Array.isArray(input.userInvokedSkillIds) ? input.userInvokedSkillIds : [],
+    sub_agents: runtimeSubAgents,
+    capabilities: runtimeCapabilities,
+    skillContext: runtimeSkillContext,
   })
 
   wsServer.sendUserMessage(userId, sessionId, {
@@ -1825,7 +2184,25 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
   const dispatchStartedAt = Date.now()
   const skillIndexStartedAt = Date.now()
   const { skillIndex, runtimeSkillMetadata } = await buildAgentSkillIndex(agent, runtimeBaseUrls)
-  const runtimeAgentConfig = await agentService.resolveRuntimeAgentConfig(agent.config)
+  const runtimeAgentConfig = await resolveRuntimeAgentConfigSafe(agent.config)
+  let mcpServers: Array<Record<string, unknown>> = []
+  try {
+    mcpServers = await mcpService.getMcpServersForRuntime(agent.id)
+  } catch (error) {
+    chatLogger.warn('直接 runtime 模式加载 MCP 配置失败，继续无 MCP 模式', {
+      agentId: agent.id,
+      error: (error as Error).message,
+    })
+  }
+  const toolCatalog = await fetchRuntimeToolCatalog(runtimeBaseUrls)
+  const runtimeSubAgents = await buildRuntimeSubAgentPayload(agent.subAgents || [])
+  const runtimeCapabilities = buildRuntimeCapabilityPayload({
+    orgId: SINGLE_USER_ORG_ID,
+    toolCatalog,
+    mcpServers,
+    subAgents: runtimeSubAgents,
+  })
+  const runtimeSkillContext = buildRuntimeSkillContext(skillIndex)
   const skillIndexDurationMs = Date.now() - skillIndexStartedAt
   const promptStartedAt = Date.now()
   let systemPrompt = await buildAgentSystemPrompt(agent)
@@ -1877,6 +2254,11 @@ async function dispatchRuntimeChatResult(options: RuntimeDispatchOptions): Promi
           model_roles: runtimeAgentConfig.modelRoles,
           system_prompt: systemPrompt,
           skill_index: skillIndex,
+          user_invoked: Boolean(input.userInvoked),
+          user_invoked_skill_ids: Array.isArray(input.userInvokedSkillIds) ? input.userInvokedSkillIds : [],
+          sub_agents: runtimeSubAgents,
+          capabilities: runtimeCapabilities,
+          skillContext: runtimeSkillContext,
           stream: true,
         }),
       })

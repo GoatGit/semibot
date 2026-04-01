@@ -138,11 +138,11 @@ async function validateApiKey(
   if (process.env.NODE_ENV === 'development' && apiKey === 'sk-dev-test-key') {
     return {
       valid: true,
-      user: {
-        userId: 'dev-user-id',
-        role: 'api_service',
-        permissions: ['*'],
-      },
+        user: {
+          userId: 'dev-user-id',
+          role: 'api_service',
+          permissions: ['*'],
+        },
     }
   }
 
@@ -157,11 +157,11 @@ async function validateApiKey(
 
     return {
       valid: true,
-      user: {
-        userId: result.userId,
-        role: 'api_service',
-        permissions: result.permissions,
-      },
+        user: {
+          userId: result.userId,
+          role: 'api_service',
+          permissions: result.permissions,
+        },
     }
   } catch (error) {
     authLogger.error('API Key 验证失败', error as Error)

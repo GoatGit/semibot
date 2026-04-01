@@ -8,13 +8,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 INDEX_FILENAME = ".index.json"
 STATE_FILENAME = ".state.json"
-INDEX_SCHEMA_VERSION = 2
+INDEX_SCHEMA_VERSION = 3
+_DEFAULT_REQUIRES = {"binaries": [], "env_vars": [], "python": []}
+_ALLOWED_EFFORTS = {"low", "medium", "high", "xhigh", "inherit"}
+_ALLOWED_EXECUTION_CONTEXTS = {"inline", "fork"}
 
 
 def _iso_now() -> str:
@@ -29,43 +34,55 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _read_skill_md_text(skill_dir: Path) -> str:
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.exists() or not skill_md.is_file():
+        return ""
+    return skill_md.read_text(encoding="utf-8", errors="ignore")
+
+
+def _read_frontmatter(skill_dir: Path) -> dict[str, Any]:
+    raw = _read_skill_md_text(skill_dir)
+    if not raw:
+        return {}
+    lines = raw.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    end_idx = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            end_idx = idx
+            break
+    if end_idx is None:
+        return {}
+    frontmatter_raw = "\n".join(lines[1:end_idx]).strip()
+    if not frontmatter_raw:
+        return {}
+    try:
+        payload = yaml.safe_load(frontmatter_raw)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _skill_body_start_index(lines: list[str]) -> int:
+    if not lines or lines[0].strip() != "---":
+        return 0
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            return idx + 1
+    return 0
+
+
 def _read_description(skill_dir: Path, fallback_name: str) -> str:
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         return f"Installed skill: {fallback_name}"
     lines = skill_md.read_text(encoding="utf-8", errors="ignore").splitlines()
-    raw_frontmatter: list[str] = []  # original lines (with indentation)
-    body_start = 0
-    if lines and lines[0].strip() == "---":
-        for idx in range(1, len(lines)):
-            if lines[idx].strip() == "---":
-                body_start = idx + 1
-                break
-            raw_frontmatter.append(lines[idx])
-
-    # Prefer explicit YAML frontmatter description when present.
-    for i, row in enumerate(raw_frontmatter):
-        stripped = row.strip()
-        if ":" not in stripped:
-            continue
-        key, value = stripped.split(":", 1)
-        if key.strip().lower() != "description":
-            continue
-        desc = value.strip().strip('"').strip("'")
-        # Handle YAML block scalar (| or >) — collect indented continuation lines
-        if desc in ("|", ">", "|+", "|-", ">+", ">-", ""):
-            block_lines: list[str] = []
-            for cont in raw_frontmatter[i + 1:]:
-                if cont and cont[0] in (" ", "\t"):
-                    block_lines.append(cont.strip())
-                else:
-                    break
-            if block_lines:
-                return " ".join(block_lines)
-            continue
-        if desc:
-            return desc
-
+    frontmatter = _read_frontmatter(skill_dir)
+    if isinstance(frontmatter.get("description"), str) and str(frontmatter["description"]).strip():
+        return str(frontmatter["description"]).strip()
+    body_start = _skill_body_start_index(lines)
     in_code_block = False
     for raw in lines[body_start:]:
         line = raw.strip()
@@ -93,6 +110,93 @@ def _read_manifest(skill_dir: Path) -> dict[str, Any]:
     return {}
 
 
+def _as_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        parts = [
+            item.strip()
+            for item in value.replace("\n", ",").split(",")
+        ]
+        return [item for item in parts if item]
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text:
+                values.append(text)
+        return values
+    return []
+
+
+def _dedupe_str_list(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    values: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        values.append(text)
+    return values
+
+
+def _get_frontmatter_or_manifest(frontmatter: dict[str, Any], manifest: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in frontmatter and frontmatter.get(key) is not None:
+            return frontmatter.get(key)
+    for key in keys:
+        if key in manifest and manifest.get(key) is not None:
+            return manifest.get(key)
+    return None
+
+
+def _normalize_aliases(value: Any) -> list[str]:
+    return _dedupe_str_list(_as_string_list(value))
+
+
+def _normalize_paths(value: Any) -> list[str]:
+    values = _dedupe_str_list(_as_string_list(value))
+    return [item for item in values if item != "**"]
+
+
+def _normalize_allowed_tools(value: Any) -> list[str]:
+    return _dedupe_str_list(_as_string_list(value))
+
+
+def _normalize_effort(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return text if text in _ALLOWED_EFFORTS else None
+
+
+def _normalize_execution_context(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return text if text in _ALLOWED_EXECUTION_CONTEXTS else None
+
+
+def _normalize_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _normalize_requires(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return dict(_DEFAULT_REQUIRES)
+    return {
+        "binaries": _dedupe_str_list(_as_string_list(value.get("binaries"))),
+        "env_vars": _dedupe_str_list(_as_string_list(value.get("env_vars"))),
+        "python": _dedupe_str_list(_as_string_list(value.get("python"))),
+    }
+
+
 def _scan_script_files(skill_dir: Path) -> list[str]:
     scripts_dir = skill_dir / "scripts"
     if not scripts_dir.exists() or not scripts_dir.is_dir():
@@ -104,29 +208,13 @@ def _scan_script_files(skill_dir: Path) -> list[str]:
     )
 
 
-def _parse_requires(manifest: dict[str, Any]) -> dict[str, Any]:
-    requires = manifest.get("requires")
-    if not isinstance(requires, dict):
-        return {"binaries": [], "env_vars": [], "python": []}
-
-    binaries = requires.get("binaries") if isinstance(requires.get("binaries"), list) else []
-    env_vars = requires.get("env_vars") if isinstance(requires.get("env_vars"), list) else []
-    python = requires.get("python") if isinstance(requires.get("python"), list) else []
-
-    def _as_strings(items: list[Any]) -> list[str]:
-        values: list[str] = []
-        for item in items:
-            if not isinstance(item, str):
-                continue
-            text = item.strip()
-            if text:
-                values.append(text)
-        return values
-
+def _build_resources_summary(skill_dir: Path) -> dict[str, Any]:
+    script_files = _scan_script_files(skill_dir)
     return {
-        "binaries": _as_strings(binaries),
-        "env_vars": _as_strings(env_vars),
-        "python": _as_strings(python),
+        "has_skill_md": (skill_dir / "SKILL.md").exists(),
+        "has_references": (skill_dir / "reference").is_dir() or (skill_dir / "references").is_dir(),
+        "has_templates": (skill_dir / "templates").is_dir(),
+        "script_files": script_files,
     }
 
 
@@ -222,7 +310,7 @@ class SkillsIndexManager:
         rows = payload.get("skills")
         if not isinstance(rows, list):
             payload["skills"] = []
-        payload["schema_version"] = int(payload.get("schema_version") or INDEX_SCHEMA_VERSION)
+        payload["schema_version"] = int(payload.get("schema_version") or 2)
         return payload
 
     def write_index(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -256,30 +344,126 @@ class SkillsIndexManager:
         previous = previous or {}
         now = _iso_now()
         manifest = _read_manifest(skill_dir)
+        frontmatter = _read_frontmatter(skill_dir)
         current_hash = _content_hash(skill_dir)
         mtime = int(skill_dir.stat().st_mtime)
-        hash_unchanged = str(previous.get("hash") or "") == current_hash
+        hash_unchanged = str(previous.get("hash") or previous.get("content_hash") or "") == current_hash
         mtime_unchanged = int(previous.get("mtime") or 0) == mtime
         changed = force or not (hash_unchanged and mtime_unchanged)
+        resources = _build_resources_summary(skill_dir)
+        requires = _normalize_requires(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "requires")
+        )
+        aliases = _normalize_aliases(_get_frontmatter_or_manifest(frontmatter, manifest, "aliases"))
+        argument_names = _dedupe_str_list(
+            _as_string_list(_get_frontmatter_or_manifest(frontmatter, manifest, "arguments"))
+        )
+        name = str(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "name")
+            or previous.get("name")
+            or skill_id
+        ).strip() or skill_id
+        description = str(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "description")
+            or previous.get("description")
+            or _read_description(skill_dir, skill_id)
+        ).strip() or _read_description(skill_dir, skill_id)
+        version = str(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "version")
+            or previous.get("version")
+            or "0.0.0-local"
+        ).strip() or "0.0.0-local"
+        source_value = str(source or previous.get("source") or "manual").strip() or "manual"
+        installed_realpath = str(skill_dir.resolve())
+        when_to_use = str(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "when_to_use", "whenToUse")
+            or previous.get("when_to_use")
+            or ""
+        ).strip()
+        argument_hint = str(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "argument-hint", "argument_hint")
+            or previous.get("argument_hint")
+            or ""
+        ).strip()
+        execution_context = (
+            _normalize_execution_context(
+                _get_frontmatter_or_manifest(frontmatter, manifest, "context", "execution_context")
+            )
+            or str(previous.get("execution_context") or "").strip()
+            or None
+        )
+        effort = (
+            _normalize_effort(_get_frontmatter_or_manifest(frontmatter, manifest, "effort"))
+            or str(previous.get("effort") or "").strip()
+            or None
+        )
+        model = str(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "model")
+            or previous.get("model")
+            or ""
+        ).strip()
+        agent = str(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "agent")
+            or previous.get("agent")
+            or ""
+        ).strip()
+        paths = _normalize_paths(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "paths")
+            or previous.get("paths")
+        )
+        allowed_tools = _normalize_allowed_tools(
+            _get_frontmatter_or_manifest(frontmatter, manifest, "allowed-tools", "allowed_tools")
+            or previous.get("allowed_tools")
+        )
+        hooks = _get_frontmatter_or_manifest(frontmatter, manifest, "hooks")
+        if not isinstance(hooks, dict):
+            hooks = previous.get("hooks") if isinstance(previous.get("hooks"), dict) else {}
+        shell = _get_frontmatter_or_manifest(frontmatter, manifest, "shell")
+        if not isinstance(shell, dict):
+            shell = previous.get("shell") if isinstance(previous.get("shell"), dict) else {}
 
         record: dict[str, Any] = {
+            "schema_version": INDEX_SCHEMA_VERSION,
+            "id": skill_id,
             "skill_id": skill_id,
-            "name": str(manifest.get("name") or previous.get("name") or skill_id),
-            "description": str(
-                manifest.get("description")
-                or _read_description(skill_dir, skill_id)
-            ),
-            "version": str(manifest.get("version") or previous.get("version") or "0.0.0-local"),
-            "source": source or str(previous.get("source") or "manual"),
+            "name": name,
+            "aliases": aliases,
+            "description": description,
+            "when_to_use": when_to_use,
+            "argument_hint": argument_hint,
+            "argument_names": argument_names,
+            "version": version,
+            "source": source_value,
+            "loaded_from": str(previous.get("loaded_from") or "skills"),
             "installed_path": str(skill_dir),
-            "tags": manifest.get("tags") if isinstance(manifest.get("tags"), list) else previous.get("tags") or [],
-            "requires": _parse_requires(manifest) if manifest else previous.get("requires") or {"binaries": [], "env_vars": [], "python": []},
-            "script_files": _scan_script_files(skill_dir),
-            "has_skill_md": (skill_dir / "SKILL.md").exists(),
-            "has_references": (skill_dir / "reference").is_dir() or (skill_dir / "references").is_dir(),
-            "has_templates": (skill_dir / "templates").is_dir(),
+            "installed_realpath": installed_realpath,
             "enabled": bool(previous.get("enabled", True)),
             "status": "active",
+            "user_invocable": _normalize_bool(
+                _get_frontmatter_or_manifest(frontmatter, manifest, "user-invocable", "user_invocable"),
+                bool(previous.get("user_invocable", True)),
+            ),
+            "disable_model_invocation": _normalize_bool(
+                _get_frontmatter_or_manifest(frontmatter, manifest, "disable-model-invocation", "disable_model_invocation"),
+                bool(previous.get("disable_model_invocation", False)),
+            ),
+            "paths": paths,
+            "allowed_tools": allowed_tools,
+            "execution_context": execution_context,
+            "agent": agent or None,
+            "effort": effort,
+            "model": model or None,
+            "hooks": hooks,
+            "shell": shell,
+            "tags": manifest.get("tags") if isinstance(manifest.get("tags"), list) else previous.get("tags") or [],
+            "requires": requires,
+            "resources": resources,
+            # Legacy compatibility fields kept for existing consumers/tests.
+            "script_files": resources["script_files"],
+            "has_skill_md": resources["has_skill_md"],
+            "has_references": resources["has_references"],
+            "has_templates": resources["has_templates"],
+            "content_hash": current_hash,
             "hash": current_hash,
             "mtime": mtime,
             "created_at": str(previous.get("created_at") or now),
@@ -294,7 +478,7 @@ class SkillsIndexManager:
         for row in current_rows:
             if not isinstance(row, dict):
                 continue
-            skill_id = str(row.get("skill_id") or "").strip()
+            skill_id = str(row.get("skill_id") or row.get("id") or "").strip()
             if skill_id:
                 current_map[skill_id] = row
 
@@ -302,8 +486,10 @@ class SkillsIndexManager:
         updated = 0
         invalid = 0
         removed = 0
+        duplicate_realpaths = 0
         next_rows: list[dict[str, Any]] = []
         seen: set[str] = set()
+        seen_realpaths: set[str] = set()
 
         for item in sorted(self.skills_root.iterdir(), key=lambda p: p.name):
             if not item.is_dir():
@@ -318,8 +504,16 @@ class SkillsIndexManager:
             skill_root = skill_md_dir or scripts_dir
             if skill_root is None:
                 invalid += 1
-                # Non-skill directories are ignored.
                 continue
+            realpath = str(skill_root.resolve())
+            if realpath in seen_realpaths:
+                duplicate_realpaths += 1
+                logger.info(
+                    "skills_reindex_skip_duplicate_realpath",
+                    extra={"skill_id": skill_id, "path": str(skill_root), "realpath": realpath},
+                )
+                continue
+            seen_realpaths.add(realpath)
             record, changed = self._build_record(
                 skill_id=skill_id,
                 skill_dir=skill_root,
@@ -345,6 +539,7 @@ class SkillsIndexManager:
             "updated": updated,
             "removed": removed,
             "invalid": invalid,
+            "duplicate_realpaths": duplicate_realpaths,
             "total": len(next_rows),
         }
         logger.info("skills_reindex_complete", extra=result)
@@ -360,9 +555,9 @@ class SkillsIndexManager:
 
         current_rows = self.list_records()
         current_map = {
-            str(row.get("skill_id")): row
+            str(row.get("skill_id") or row.get("id")): row
             for row in current_rows
-            if isinstance(row, dict) and str(row.get("skill_id") or "").strip()
+            if isinstance(row, dict) and str(row.get("skill_id") or row.get("id") or "").strip()
         }
         previous = current_map.get(skill_id)
         record, _ = self._build_record(

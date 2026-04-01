@@ -13,7 +13,7 @@ from src.gateway.adapters.telegram_adapter import (
 from src.gateway.adapters.telegram_adapter import (
     verify_webhook_secret as verify_telegram_webhook_secret,
 )
-from src.gateway.channels.shared import build_ingress_result
+from src.gateway.channels.shared import ChannelAnchorAdapter, build_ingress_result
 from src.gateway.channels.telegram.helpers import (
     download_attachments,
     handle_approval_followup,
@@ -157,34 +157,21 @@ async def ingest_webhook(
                     "execution_id": str(parsed["execution_id"] or "").strip() or None,
                 }
             else:
-                approval = await manager.engine.resolve_approval(str(parsed["approval_id"]), str(parsed["decision"]))
-                approval_action_event = Event(
-                    event_id=f"evt_approval_action_{uuid4().hex}",
-                    event_type="approval.action",
+                approval_command = await manager.resolve_gateway_approval_command(
+                    engine=manager.engine,
+                    target_ids=[str(parsed["approval_id"])],
+                    decision=str(parsed["decision"]),
                     source="telegram.gateway",
                     subject=str(parsed["approval_id"]),
-                    idempotency_key=action_idempotency_key,
-                    payload={
-                        "approval_id": parsed["approval_id"],
-                        "decision": parsed["decision"],
+                    trace_payload={
                         "trace_id": parsed["trace_id"],
                         "execution_id": parsed["execution_id"],
                         "anchor_id": parsed["anchor_id"],
-                        "resolved": approval is not None,
                         "raw": data,
                     },
-                    risk_hint="low",
-                    timestamp=datetime.now(UTC),
+                    action_idempotency_key=action_idempotency_key,
+                    execution_id=str(parsed["execution_id"] or "").strip() or None,
                 )
-                await manager.engine.emit(approval_action_event)
-                approval_command = {
-                    "recognized": True,
-                    "resolved": approval is not None,
-                    "resolved_count": 1 if approval else 0,
-                    "approval_ids": [parsed["approval_id"]],
-                    "status": parsed["decision"],
-                    "event_id": approval_action_event.event_id,
-                }
 
     payload_map = event.payload if isinstance(event.payload, dict) else {}
     text = extract_message_text(payload_map)
@@ -212,6 +199,10 @@ async def ingest_webhook(
 
         trace_payload: dict[str, Any] = dict(data)
         trace_payload["provider"] = "telegram"
+        if payload_map.get("chat_id") is not None:
+            trace_payload["chat_id"] = payload_map.get("chat_id")
+        if payload_map.get("instance_id") is not None:
+            trace_payload["instance_id"] = payload_map.get("instance_id")
         if normalized_payload.get("reply_to_message_id") is not None:
             trace_payload["reply_to_message_id"] = normalized_payload.get("reply_to_message_id")
         if approval_scope_ids:
@@ -229,21 +220,15 @@ async def ingest_webhook(
                 if not notifier:
                     return False
                 target_chat_id = str(ctx.get("chat_id") or "").strip() or None
-                sent = await notifier.send_notify_payload(
+                adapter = ChannelAnchorAdapter(manager=manager, notifier=notifier)
+                return await adapter.deliver(
                     {
                         "content": reply_text,
                         "chat_id": target_chat_id,
                         "files": ctx.get("files") if isinstance(ctx, dict) else [],
-                    }
+                    },
+                    anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
                 )
-                if sent:
-                    metadata = notifier.last_delivery_metadata() if hasattr(notifier, "last_delivery_metadata") else {}
-                    await manager.gateway_context.bind_anchor_delivery(
-                        anchor_id=str(ctx.get("anchor_id") or "").strip() or None,
-                        channel_message_id=str(metadata.get("channel_message_id") or "").strip() or None,
-                        channel_thread_id=str(metadata.get("channel_thread_id") or "").strip() or None,
-                    )
-                return sent
 
             gateway_result = await manager.gateway_context.ingest_message(
                 provider="telegram",

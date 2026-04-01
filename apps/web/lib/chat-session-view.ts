@@ -123,10 +123,15 @@ function buildProcessState(messages: Agent2UIMessage[]): {
     }
     if (msg.type === 'tool_result') {
       const data = msg.data as ToolResultData & { status?: ToolCallData['status']; canRetry?: boolean }
-      const idx = toolCalls.findIndex((tc) => tc.toolName === data.toolName && tc.status === 'calling')
+      const idx = toolCalls.findIndex((tc) => {
+        if (tc.status !== 'calling') return false
+        if (data.capabilityId && tc.capabilityId) return data.capabilityId === tc.capabilityId
+        return tc.toolName === data.toolName
+      })
       if (idx >= 0) {
         toolCalls[idx] = {
           ...toolCalls[idx],
+          capabilityId: data.capabilityId ?? toolCalls[idx].capabilityId,
           status: data.status ?? 'success',
           error: data.error,
           result: data.result,

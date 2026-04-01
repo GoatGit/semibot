@@ -13,7 +13,6 @@ vi.mock('../middleware/auth', () => ({
   authenticate: (req: any, _res: any, next: any) => {
     req.user = {
       userId: 'user-1',
-      orgId: 'org-1',
       role: 'member',
       permissions: ['sessions:read', 'sessions:write'],
     }
@@ -88,7 +87,7 @@ describe('vm route behavior', () => {
     })
 
     const handler = getRouteHandler('/rebootstrap', 'post')
-    const req = { user: { userId: 'user-1', orgId: 'org-1' } }
+    const req = { user: { userId: 'user-1' } }
     const res = { json: vi.fn() }
     const next = vi.fn()
 
@@ -103,6 +102,6 @@ describe('vm route behavior', () => {
       },
     })
     expect(next).not.toHaveBeenCalled()
-    expect(mockScheduler.forceRebootstrap).toHaveBeenCalledWith('user-1', 'org-1')
+    expect(mockScheduler.forceRebootstrap).toHaveBeenCalledWith('user-1', 'local')
   })
 })

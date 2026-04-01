@@ -345,6 +345,7 @@ export interface ApprovalRecord {
   riskLevel: RiskLevel
   reason?: string
   toolName?: string
+  capabilityId?: string
   action?: string
   target?: string
   summary?: string

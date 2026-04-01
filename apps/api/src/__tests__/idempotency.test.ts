@@ -1,17 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Request, Response, NextFunction } from 'express'
-import { idempotency } from '../middleware/idempotency'
 
-// Mock redis
-const mockRedis = {
+const memStore = vi.hoisted(() => ({
   get: vi.fn(),
-  set: vi.fn(),
-}
-
-vi.mock('../lib/redis', () => ({
-  getRedisClient: () => mockRedis,
-  isRedisConnected: vi.fn(() => true),
+  setNX: vi.fn(),
+  setWithExpiry: vi.fn(),
 }))
+
+vi.mock('../lib/mem-store', () => memStore)
 
 vi.mock('../lib/logger', () => ({
   createLogger: () => ({
@@ -21,7 +17,7 @@ vi.mock('../lib/logger', () => ({
   }),
 }))
 
-import { isRedisConnected } from '../lib/redis'
+import { idempotency } from '../middleware/idempotency'
 
 function createMockReq(headers: Record<string, string> = {}): Request {
   return { headers } as unknown as Request
@@ -50,7 +46,9 @@ describe('idempotency middleware', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(isRedisConnected).mockReturnValue(true)
+    memStore.get.mockResolvedValue(null)
+    memStore.setNX.mockResolvedValue('OK')
+    memStore.setWithExpiry.mockResolvedValue(undefined)
   })
 
   it('should pass through when no X-Request-ID header', async () => {
@@ -61,12 +59,12 @@ describe('idempotency middleware', () => {
     await middleware(req, res, next)
 
     expect(next).toHaveBeenCalled()
-    expect(mockRedis.get).not.toHaveBeenCalled()
+    expect(memStore.get).not.toHaveBeenCalled()
   })
 
   it('should return cached response for duplicate request', async () => {
     const cached = JSON.stringify({ statusCode: 200, body: { success: true, data: { id: '1' } } })
-    mockRedis.get.mockResolvedValue(cached)
+    memStore.get.mockResolvedValue(cached)
 
     const req = createMockReq({ 'x-request-id': 'req-001' })
     const res = createMockRes()
@@ -80,9 +78,6 @@ describe('idempotency middleware', () => {
   })
 
   it('should execute normally and cache result for first request', async () => {
-    mockRedis.get.mockResolvedValue(null)
-    mockRedis.set.mockResolvedValue('OK')
-
     const req = createMockReq({ 'x-request-id': 'req-002' })
     const res = createMockRes()
     const next = vi.fn()
@@ -90,37 +85,23 @@ describe('idempotency middleware', () => {
     await middleware(req, res, next)
 
     expect(next).toHaveBeenCalled()
-    // SET NX 应该被调用来获取锁
-    expect(mockRedis.set).toHaveBeenCalledWith(
+    expect(memStore.setNX).toHaveBeenCalledWith(
       'idempotency:req-002',
       expect.any(String),
-      'EX',
-      300,
-      'NX'
+      300
     )
 
-    // 模拟业务逻辑调用 res.json
     res.json({ success: true, data: { id: '2' } })
 
-    // 应该缓存响应
-    expect(mockRedis.set).toHaveBeenCalledTimes(2)
+    expect(memStore.setWithExpiry).toHaveBeenCalledWith(
+      'idempotency:req-002',
+      JSON.stringify({ statusCode: 200, body: { success: true, data: { id: '2' } } }),
+      300
+    )
   })
 
-  it('should degrade gracefully when Redis is unavailable', async () => {
-    vi.mocked(isRedisConnected).mockReturnValue(false)
-
-    const req = createMockReq({ 'x-request-id': 'req-003' })
-    const res = createMockRes()
-    const next = vi.fn()
-
-    await middleware(req, res, next)
-
-    expect(next).toHaveBeenCalled()
-    expect(mockRedis.get).not.toHaveBeenCalled()
-  })
-
-  it('should degrade gracefully when Redis throws', async () => {
-    mockRedis.get.mockRejectedValue(new Error('Connection refused'))
+  it('should degrade gracefully when storage throws', async () => {
+    memStore.get.mockRejectedValue(new Error('boom'))
 
     const req = createMockReq({ 'x-request-id': 'req-004' })
     const res = createMockRes()
@@ -132,8 +113,7 @@ describe('idempotency middleware', () => {
   })
 
   it('should return 409 when another request is in progress', async () => {
-    mockRedis.get.mockResolvedValue(null)
-    mockRedis.set.mockResolvedValue(null) // NX 失败
+    memStore.setNX.mockResolvedValue(null)
 
     const req = createMockReq({ 'x-request-id': 'req-005' })
     const res = createMockRes()

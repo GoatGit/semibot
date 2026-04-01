@@ -15,6 +15,7 @@ vi.mock('fs-extra', () => {
   const fns = {
     pathExists: vi.fn(),
     readdir: vi.fn(),
+    readFile: vi.fn(),
   }
   return { default: fns, ...fns }
 })
@@ -37,6 +38,9 @@ describe('Skill Prompt Builder', () => {
         {
           name: 'test-skill',
           description: 'A test skill',
+          whenToUse: 'Use for testing',
+          executionContext: 'fork',
+          effort: 'high',
           packagePath: '/skills/test-skill/current',
           files: ['SKILL.md', 'REFERENCE.md', 'scripts/main.py'],
         },
@@ -49,6 +53,9 @@ describe('Skill Prompt Builder', () => {
       expect(result).toContain('<skill name="test-skill"')
       expect(result).toContain('path="/skills/test-skill/current"')
       expect(result).toContain('A test skill')
+      expect(result).toContain('when_to_use: Use for testing')
+      expect(result).toContain('execution_context: fork')
+      expect(result).toContain('effort: high')
       expect(result).toContain('SKILL.md, REFERENCE.md')
       expect(result).toContain('scripts/(1个脚本)')
       expect(result).toContain('file_io')
@@ -60,6 +67,7 @@ describe('Skill Prompt Builder', () => {
         {
           name: 'skill<with>&"special',
           description: 'desc with <tags> & "quotes"',
+          whenToUse: '',
           packagePath: '/path/to/skill',
           files: [],
         },
@@ -73,9 +81,9 @@ describe('Skill Prompt Builder', () => {
 
     it('应该处理多个 skill 条目', () => {
       const entries: SkillIndexEntry[] = [
-        { name: 'skill-a', description: 'Skill A', packagePath: '/a', files: ['SKILL.md'] },
-        { name: 'skill-b', description: 'Skill B', packagePath: '/b', files: ['SKILL.md'] },
-        { name: 'skill-c', description: '', packagePath: '/c', files: [] },
+        { name: 'skill-a', description: 'Skill A', whenToUse: '', packagePath: '/a', files: ['SKILL.md'] },
+        { name: 'skill-b', description: 'Skill B', whenToUse: '', packagePath: '/b', files: ['SKILL.md'] },
+        { name: 'skill-c', description: '', whenToUse: '', packagePath: '/c', files: [] },
       ]
 
       const result = buildSkillIndexXml(entries)
@@ -90,6 +98,7 @@ describe('Skill Prompt Builder', () => {
         {
           name: 'full-skill',
           description: 'Full skill',
+          whenToUse: '',
           packagePath: '/full',
           files: [
             'SKILL.md',
@@ -114,7 +123,7 @@ describe('Skill Prompt Builder', () => {
 
     it('无描述时不应该输出描述行', () => {
       const entries: SkillIndexEntry[] = [
-        { name: 'no-desc', description: '', packagePath: '/nd', files: ['SKILL.md'] },
+        { name: 'no-desc', description: '', whenToUse: '', packagePath: '/nd', files: ['SKILL.md'] },
       ]
 
       const result = buildSkillIndexXml(entries)
@@ -141,6 +150,9 @@ describe('Skill Prompt Builder', () => {
         }
         return []
       })
+      ;(fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+        ['---', 'when_to_use: Use for testing', 'context: fork', 'effort: high', '---', '# Skill'].join('\n')
+      )
 
       const entry = await buildSkillIndexEntry(
         { id: '1', skillId: 'test', name: 'Test Skill', description: 'A test', protocol: 'skillmd', sourceType: 'local', status: 'active', createdAt: new Date(), updatedAt: new Date() } as any,
@@ -149,6 +161,9 @@ describe('Skill Prompt Builder', () => {
 
       expect(entry.name).toBe('Test Skill')
       expect(entry.description).toBe('A test')
+      expect(entry.whenToUse).toBe('Use for testing')
+      expect(entry.executionContext).toBe('fork')
+      expect(entry.effort).toBe('high')
       expect(entry.packagePath).toBe('/skills/test/current')
       expect(entry.files).toContain('SKILL.md')
       expect(entry.files).toContain('REFERENCE.md')
@@ -164,6 +179,7 @@ describe('Skill Prompt Builder', () => {
       )
 
       expect(entry.files).toEqual([])
+      expect(entry.whenToUse).toBe('')
     })
   })
 

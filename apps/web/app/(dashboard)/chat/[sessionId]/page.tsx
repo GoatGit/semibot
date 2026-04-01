@@ -195,10 +195,15 @@ function buildProcessState(messages: Agent2UIMessage[]): {
     }
     if (msg.type === 'tool_result') {
       const data = msg.data as ToolResultData
-      const idx = toolCalls.findIndex((tc) => tc.toolName === data.toolName && tc.status === 'calling')
+      const idx = toolCalls.findIndex((tc) => {
+        if (tc.status !== 'calling') return false
+        if (data.capabilityId && tc.capabilityId) return data.capabilityId === tc.capabilityId
+        return tc.toolName === data.toolName
+      })
       if (idx >= 0) {
         toolCalls[idx] = {
           ...toolCalls[idx],
+          capabilityId: data.capabilityId ?? toolCalls[idx].capabilityId,
           status: data.success ? 'success' : 'error',
           result: data.result,
           error: data.error,
@@ -207,6 +212,7 @@ function buildProcessState(messages: Agent2UIMessage[]): {
       } else {
         toolCalls.push({
           toolName: data.toolName,
+          capabilityId: data.capabilityId,
           arguments: {},
           status: data.success ? 'success' : 'error',
           result: data.result,
@@ -220,6 +226,7 @@ function buildProcessState(messages: Agent2UIMessage[]): {
       const data = msg.data as McpCallData
       toolCalls.push({
         toolName: data.toolName,
+        capabilityId: data.capabilityId,
         arguments: data.arguments,
         status: data.status as ToolCallData['status'],
         duration: data.duration,
@@ -228,10 +235,15 @@ function buildProcessState(messages: Agent2UIMessage[]): {
     }
     if (msg.type === 'mcp_result') {
       const data = msg.data as McpResultData
-      const idx = toolCalls.findIndex((tc) => tc.toolName === data.toolName && tc.status === 'calling')
+      const idx = toolCalls.findIndex((tc) => {
+        if (tc.status !== 'calling') return false
+        if (data.capabilityId && tc.capabilityId) return data.capabilityId === tc.capabilityId
+        return tc.toolName === data.toolName
+      })
       if (idx >= 0) {
         toolCalls[idx] = {
           ...toolCalls[idx],
+          capabilityId: data.capabilityId ?? toolCalls[idx].capabilityId,
           status: data.success ? 'success' : 'error',
           result: data.result,
           error: data.error,
@@ -240,6 +252,7 @@ function buildProcessState(messages: Agent2UIMessage[]): {
       } else {
         toolCalls.push({
           toolName: data.toolName,
+          capabilityId: data.capabilityId,
           arguments: {},
           status: data.success ? 'success' : 'error',
           result: data.result,
@@ -1648,38 +1661,6 @@ export default function ChatSessionPage() {
               <p className="mt-2 text-[11px] text-text-tertiary">
                 {t('chatSession.approvalHint')}
               </p>
-            </div>
-          )}
-
-          {attemptDiagnostics && (
-            <div className="mb-3 rounded-xl border border-border-subtle bg-bg-elevated px-3 py-3">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                <span className="font-medium text-text-primary">
-                  Attempt #{tailId(attemptDiagnostics.attemptId, 8)}
-                </span>
-                <span className="text-text-secondary">
-                  status: <span className="text-text-primary">{attemptDiagnostics.status}</span>
-                </span>
-                <span className="text-text-secondary">
-                  rev: <span className="text-text-primary">{attemptDiagnostics.latestRevision}</span>
-                </span>
-                {typeof attemptDiagnostics.checkpointRevision === 'number' && (
-                  <span className="text-text-secondary">
-                    checkpoint: <span className="text-text-primary">r{attemptDiagnostics.checkpointRevision}</span>
-                    {attemptDiagnostics.checkpointStatus ? ` / ${attemptDiagnostics.checkpointStatus}` : ''}
-                  </span>
-                )}
-                <span className="text-text-secondary">
-                  outbox: <span className="text-text-primary">event {attemptDiagnostics.eventPending} pending</span>
-                  {' · '}
-                  <span className="text-text-primary">checkpoint {attemptDiagnostics.checkpointPending} pending</span>
-                </span>
-                {attemptDiagnostics.terminalReason && (
-                  <span className="text-text-secondary break-all">
-                    reason: <span className="text-text-primary">{attemptDiagnostics.terminalReason}</span>
-                  </span>
-                )}
-              </div>
             </div>
           )}
 

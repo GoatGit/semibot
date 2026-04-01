@@ -27,11 +27,15 @@ const chatRouteLogger = createLogger('chat-route')
 const chatMessageSchema = z.object({
   message: z.string().min(1).max(100000),
   parentMessageId: z.string().uuid().optional(),
+  userInvoked: z.boolean().optional(),
+  userInvokedSkillIds: z.array(z.string().min(1)).optional(),
 })
 
 const startChatSchema = z.object({
   agentId: z.string().uuid(),
   message: z.string().min(1).max(100000),
+  userInvoked: z.boolean().optional(),
+  userInvokedSkillIds: z.array(z.string().min(1)).optional(),
 })
 
 // ═══════════════════════════════════════════════════════════════
@@ -113,6 +117,10 @@ router.post(
       input = {
         message: message.trim(),
         parentMessageId: fields.parentMessageId || undefined,
+        userInvoked: fields.userInvoked === 'true' ? true : undefined,
+        userInvokedSkillIds: typeof fields.userInvokedSkillIds === 'string'
+          ? fields.userInvokedSkillIds.split(',').map((item) => item.trim()).filter(Boolean)
+          : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
       }
     } else {
@@ -195,6 +203,10 @@ router.post(
 
       input = {
         message: message.trim(),
+        userInvoked: fields.userInvoked === 'true' ? true : undefined,
+        userInvokedSkillIds: typeof fields.userInvokedSkillIds === 'string'
+          ? fields.userInvokedSkillIds.split(',').map((item) => item.trim()).filter(Boolean)
+          : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
       }
     } else {

@@ -2,11 +2,11 @@
 
 import json
 import os
-import re as _re
 from pathlib import Path
 from typing import Any
 
 from src.orchestrator.context_budget import PLAN_BUDGET, _env_int
+from src.skills.skill_resource_locator import locate_skill_md
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -58,21 +58,11 @@ def _latest_user_text_from_messages(messages: list[dict[str, Any]]) -> str:
 def _load_skill_md_for_planner(skill_item: dict[str, Any] | None) -> tuple[str, bool]:
     if not isinstance(skill_item, dict):
         return "", False
-    package = skill_item.get("package")
-    files = package.get("files") if isinstance(package, dict) else None
-    if isinstance(files, list):
-        for file_item in files:
-            if not isinstance(file_item, dict):
-                continue
-            path = str(file_item.get("path") or "").strip()
-            if path != "SKILL.md":
-                continue
-            content = str(file_item.get("content") or "")
-            if not content:
-                return "", False
-            if len(content) <= _PLANNER_SKILL_MD_MAX_CHARS:
-                return content, False
-            return content[:_PLANNER_SKILL_MD_MAX_CHARS], True
+    content, _source = locate_skill_md(skill_item)
+    if content:
+        if len(content) <= _PLANNER_SKILL_MD_MAX_CHARS:
+            return content, False
+        return content[:_PLANNER_SKILL_MD_MAX_CHARS], True
     skill_name = str(skill_item.get("id") or skill_item.get("name") or "").strip()
     if not skill_name:
         return "", False
@@ -144,10 +134,15 @@ def _build_plan_loop_messages(
     current_date: str | None = None,
     current_weekday: str | None = None,
     current_timezone: str | None = None,
+    planner_tool_catalog_cards: list[dict[str, Any]] | None = None,
+    planner_core_tool_schemas: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     from src.orchestrator.nodes_respond import _infer_delivery_language
-    from src.orchestrator.tool_catalog import build_catalog_cards
-    from src.skills.skill_index_prompt import build_skill_index_entries, format_skills_for_prompt
+    from src.skills.skill_index_prompt import (
+        build_skill_index_entries,
+        format_skills_for_prompt,
+        sort_skill_index_entries,
+    )
 
     def _is_planner_safe_history_message(role: str, content: str) -> bool:
         text = str(content or "").strip()
@@ -217,41 +212,44 @@ def _build_plan_loop_messages(
         }
     ]
     metadata = getattr(runtime_context, "metadata", None)
-    if runtime_context is not None:
-        try:
-            catalog_cards = build_catalog_cards(runtime_context)
-        except Exception:
-            logger.warning("planner_tool_catalog_cards_failed", exc_info=True)
-            catalog_cards = []
-        if catalog_cards:
-            planning_messages.append(
-                {
-                    "role": "system",
-                    "content": "== Tool Catalog Cards ==\n" + json.dumps(_compact_planner_value(catalog_cards[:24]), ensure_ascii=False, indent=2),
-                }
-            )
+    catalog_cards = [item for item in (planner_tool_catalog_cards or []) if isinstance(item, dict)]
+    if catalog_cards:
+        planning_messages.append(
+            {
+                "role": "system",
+                "content": "== Tool Catalog Cards ==\n" + json.dumps(_compact_planner_value(catalog_cards[:24]), ensure_ascii=False, indent=2),
+            }
+        )
+    core_tool_schemas = [item for item in (planner_core_tool_schemas or []) if isinstance(item, dict)]
+    if core_tool_schemas:
+        planning_messages.append(
+            {
+                "role": "system",
+                "content": "== Core Tool Schemas ==\n" + json.dumps(_compact_planner_value(core_tool_schemas[:8]), ensure_ascii=False, indent=2),
+            }
+        )
     raw_skill_index = metadata.get("skill_index") if isinstance(metadata, dict) else None
     if isinstance(raw_skill_index, list):
         entries = build_skill_index_entries([row for row in raw_skill_index if isinstance(row, dict)])
         if entries:
-            user_text = _latest_user_text_from_messages(state_messages).strip().lower()
-
-            def _score(entry: Any) -> tuple[int, str]:
-                score = 0
-                if entry.skill_id.lower() in user_text or entry.name.lower() in user_text:
-                    score += 100
-                if entry.description:
-                    score += min(
-                        10,
-                        sum(
-                            1
-                            for token in _re.findall(r"[a-z0-9\u4e00-\u9fff]+", entry.description.lower())
-                            if token and token in user_text
-                        ),
+            explicit_paths: list[str] = []
+            if isinstance(metadata, dict):
+                for key in ("active_paths", "_active_paths", "target_files"):
+                    raw_paths = metadata.get(key)
+                    if not isinstance(raw_paths, list):
+                        continue
+                    explicit_paths.extend(
+                        str(item).strip()
+                        for item in raw_paths
+                        if str(item).strip()
                     )
-                return score, entry.skill_id
-
-            ordered = sorted(entries, key=_score, reverse=True)
+            user_text = _latest_user_text_from_messages(state_messages)
+            ordered = sort_skill_index_entries(
+                entries,
+                user_text=user_text,
+                active_paths=explicit_paths,
+                prior_selected_skill=str(prior_plan_summary.get("selected_skill") or "").strip() or None,
+            )
             _replan_selected_skill = str(prior_plan_summary.get("selected_skill") or "").strip()
             if _replan_selected_skill:
                 _selected_entries = [e for e in ordered if e.skill_id == _replan_selected_skill]

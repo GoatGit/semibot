@@ -57,6 +57,8 @@ async function sendMessageToRuntime(
       model_roles: runtimeAgentConfig.modelRoles,
       system_prompt: agent.systemPrompt || `你是 ${agent.name}，负责执行 APS 任务。`,
       skill_index: [],
+      capabilities: [],
+      skillContext: [],
       stream: true,
     }),
   })

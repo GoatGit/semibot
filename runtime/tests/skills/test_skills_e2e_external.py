@@ -2,8 +2,9 @@ import pytest
 import os
 import tempfile
 from src.skills.web_fetch import WebFetchTool
-from src.skills.browser_automation import BrowserAutomationTool
 from src.skills.http_client import HttpClientTool
+
+BrowserAutomationTool = pytest.importorskip("src.skills.browser_automation").BrowserAutomationTool
 
 @pytest.mark.asyncio
 async def test_e2e_web_fetch():

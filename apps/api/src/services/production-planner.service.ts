@@ -182,6 +182,8 @@ async function sendPlannerPromptToRuntime(sessionId: string, message: string, ag
         agent.systemPrompt ||
         'You are an APS planner. Return only valid JSON matching the PlannerOutput schema.',
       skill_index: [],
+      capabilities: [],
+      skillContext: [],
       stream: true,
     }),
   })

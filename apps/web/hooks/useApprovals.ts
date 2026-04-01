@@ -6,6 +6,7 @@ import type { ApprovalRecord } from '@/types'
 
 interface ApprovalQuery {
   status?: ApprovalRecord['status'] | 'all'
+  capability?: string
   limit?: number
 }
 
@@ -34,6 +35,7 @@ function normalizeApproval(raw: unknown): ApprovalRecord | null {
     riskLevel: (readString(raw.riskLevel) || readString(raw.risk_level) || 'medium') as ApprovalRecord['riskLevel'],
     reason: readString(raw.reason) || undefined,
     toolName: readString(raw.toolName) || readString(raw.tool_name) || undefined,
+    capabilityId: readString(raw.capabilityId) || readString(raw.capability_id) || undefined,
     action: readString(raw.action) || undefined,
     target: readString(raw.target) || undefined,
     summary: readString(raw.summary) || undefined,
@@ -85,6 +87,7 @@ export function useApprovals() {
       const response = await apiClient.get<unknown>('/approvals', {
         params: {
           status: query.status && query.status !== 'all' ? query.status : undefined,
+          capability: query.capability,
           limit: query.limit ?? 50,
         },
       })

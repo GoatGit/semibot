@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import { Activity, RefreshCw, RotateCcw, Search, Plus, Copy } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -121,6 +121,9 @@ function summarizePayload(
   const tool = read('tool_name', 'toolName', 'tool')
   if (tool) items.push({ label: t('events.summary.tool'), value: tool })
 
+  const capabilityId = read('capability_id', 'capabilityId')
+  if (capabilityId) items.push({ label: 'Capability', value: capabilityId })
+
   const action = read('action', 'operation', 'method')
   if (action) items.push({ label: t('events.summary.action'), value: action })
 
@@ -165,8 +168,12 @@ function summarizePayloadText(payload: EventRecord['payload']): string {
 
 export default function EventsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { locale, t } = useLocale()
-  const [eventType, setEventType] = useState('')
+  const queryType = searchParams.get('type')
+  const queryCapability = searchParams.get('capability')
+  const [eventType, setEventType] = useState(queryType ?? '')
+  const [capabilityQuery, setCapabilityQuery] = useState(queryCapability ?? '')
   const [replayingId, setReplayingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
@@ -188,12 +195,32 @@ export default function EventsPage() {
     return Array.from(set).slice(0, 8)
   }, [events])
 
+  const filteredEvents = events
+
   const refresh = useCallback(async () => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (eventType.trim()) params.set('type', eventType.trim())
+    else params.delete('type')
+    if (capabilityQuery.trim()) params.set('capability', capabilityQuery.trim())
+    else params.delete('capability')
+    const query = params.toString()
+    router.replace(query ? `/events?${query}` : '/events', { scroll: false })
     await loadEvents({
       type: eventType.trim() || undefined,
+      capability: capabilityQuery.trim() || undefined,
       limit: 100,
     })
-  }, [eventType, loadEvents])
+  }, [capabilityQuery, eventType, loadEvents, router, searchParams])
+
+  useEffect(() => {
+    const next = queryType ?? ''
+    setEventType((current) => (current === next ? current : next))
+  }, [queryType])
+
+  useEffect(() => {
+    const next = queryCapability ?? ''
+    setCapabilityQuery((current) => (current === next ? current : next))
+  }, [queryCapability])
 
   useEffect(() => {
     void refresh()
@@ -275,44 +302,55 @@ export default function EventsPage() {
 
         <PageHelpStrip text={t('help.nav.events')} ctaLabel={t('nav.helpCenter')} />
 
-        <Card className="border-border-default">
+          <Card className="border-border-default">
           <CardContent className="p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center">
-              <div className="flex-1">
-                <Input
-                  value={eventType}
-                  onChange={(e) => setEventType(e.target.value)}
-                  placeholder={t('events.filterPlaceholder')}
-                />
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="flex-1">
+                  <Input
+                    value={eventType}
+                    onChange={(e) => setEventType(e.target.value)}
+                    placeholder={t('events.filterPlaceholder')}
+                  />
+                </div>
+                <div className="flex-1">
+                  <Input
+                    value={capabilityQuery}
+                    onChange={(e) => setCapabilityQuery(e.target.value)}
+                    placeholder="Filter by capability ID"
+                  />
+                </div>
+                <Button
+                  variant="secondary"
+                  leftIcon={<Search size={14} />}
+                  onClick={() => void refresh()}
+                  disabled={isLoading}
+                >
+                  {t('common.search')}
+                </Button>
               </div>
-              <Button
-                variant="secondary"
-                leftIcon={<Search size={14} />}
-                onClick={() => void refresh()}
-                disabled={isLoading}
-              >
-                {t('common.search')}
-              </Button>
+              {eventTypeOptions.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {eventTypeOptions.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className={clsx(
+                        'rounded-full border px-3 py-1 text-xs',
+                        item === eventType
+                          ? 'border-primary-500 text-primary-300'
+                          : 'border-border-default text-text-secondary hover:border-border-strong'
+                      )}
+                      onClick={() => {
+                        setEventType((prev) => (prev === item ? '' : item))
+                      }}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            {eventTypeOptions.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {eventTypeOptions.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    className={clsx(
-                      'rounded-full border px-3 py-1 text-xs',
-                      item === eventType
-                        ? 'border-primary-500 text-primary-300'
-                        : 'border-border-default text-text-secondary hover:border-border-strong'
-                    )}
-                    onClick={() => setEventType((prev) => (prev === item ? '' : item))}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            )}
           </CardContent>
         </Card>
 
@@ -332,7 +370,7 @@ export default function EventsPage() {
         )}
 
         <div className="space-y-3">
-          {isLoading && events.length === 0 ? (
+          {isLoading && filteredEvents.length === 0 ? (
             [1, 2, 3].map((index) => (
               <Card key={index} className="border-border-subtle">
                 <CardContent className="p-4 animate-pulse">
@@ -342,11 +380,12 @@ export default function EventsPage() {
                 </CardContent>
               </Card>
             ))
-          ) : events.length > 0 ? (
-            events.map((event) => {
+          ) : filteredEvents.length > 0 ? (
+            filteredEvents.map((event) => {
               const meta = eventTypeToDisplay(event.eventType, t, presentation)
               const payloadSummaryText = summarizePayloadText(event.payload)
               const payloadSummaryItems = summarizePayload(event.payload, t)
+              const capabilityId = payloadSummaryItems.find((item) => item.label === 'Capability')?.value || ''
               return (
                 <Card key={event.id} className="border-border-subtle">
                   <CardContent className="p-4">
@@ -412,6 +451,15 @@ export default function EventsPage() {
                         >
                           {t('events.filterSameType')}
                         </Button>
+                        {capabilityId ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setCapabilityQuery(capabilityId)}
+                          >
+                            Filter capability
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
                           variant="secondary"

@@ -1,202 +1,80 @@
-/**
- * Session Repository 测试
- */
-
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { v4 as uuid } from 'uuid'
-
-// Mock sql
-vi.mock('../../lib/db', () => ({
-  sql: vi.fn(),
-}))
-
-// Mock logger
-vi.mock('../../lib/logger', () => ({
-  logPaginationLimit: vi.fn(),
-  createLogger: vi.fn().mockReturnValue({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}))
-
-import { sql } from '../../lib/db'
-import * as sessionRepository from '../../repositories/session.repository'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('SessionRepository', () => {
-  const mockSql = sql as unknown as ReturnType<typeof vi.fn>
-  const testOrgId = uuid()
-  const testUserId = uuid()
-  const testAgentId = uuid()
+  let dbPath = ''
 
-  beforeEach(() => {
-    vi.clearAllMocks()
+  beforeEach(async () => {
+    dbPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'semibot-session-repo-')), 'semibot.db')
+    process.env.SEMIBOT_DB_PATH = dbPath
+    vi.resetModules()
   })
 
-  describe('create', () => {
-    it('应该成功创建 Session', async () => {
-      const mockSession = {
-        id: uuid(),
-        org_id: testOrgId,
-        user_id: testUserId,
-        agent_id: testAgentId,
-        title: 'Test Session',
-        is_active: true,
-        created_at: new Date().toISOString(),
-      }
-
-      mockSql.mockResolvedValueOnce([mockSession])
-
-      const result = await sessionRepository.create({
-        orgId: testOrgId,
-        userId: testUserId,
-        agentId: testAgentId,
-        title: 'Test Session',
-      })
-
-      expect(result).toBeDefined()
-      expect(result.title).toBe('Test Session')
-      expect(result.org_id).toBe(testOrgId)
-    })
+  afterEach(async () => {
+    const { closeLocalDb } = await import('../../lib/db-local')
+    closeLocalDb()
+    await fs.rm(path.dirname(dbPath), { recursive: true, force: true })
+    delete process.env.SEMIBOT_DB_PATH
+    vi.resetModules()
   })
 
-  describe('findById', () => {
-    it('应该返回存在的 Session', async () => {
-      const sessionId = uuid()
-      const mockSession = {
-        id: sessionId,
-        org_id: testOrgId,
-        title: 'Test Session',
-      }
+  it('creates and fetches sessions', async () => {
+    const sessionRepository = await import('../../repositories/session.repository')
 
-      mockSql.mockResolvedValueOnce([mockSession])
-
-      const result = await sessionRepository.findById(sessionId)
-
-      expect(result).toBeDefined()
-      expect(result?.id).toBe(sessionId)
+    const created = await sessionRepository.create({
+      userId: 'user-1',
+      agentId: 'agent-1',
+      title: 'Test Session',
     })
 
-    it('应该返回 null 如果不存在', async () => {
-      mockSql.mockResolvedValueOnce([])
+    expect(created.title).toBe('Test Session')
+    expect(created.org_id).toBe('local')
 
-      const result = await sessionRepository.findById(uuid())
-
-      expect(result).toBeNull()
-    })
+    const found = await sessionRepository.findById(created.id)
+    expect(found?.id).toBe(created.id)
   })
 
-  describe('findByIdAndOrg', () => {
-    it('应该只返回属于指定组织的 Session', async () => {
-      const sessionId = uuid()
-      const mockSession = {
-        id: sessionId,
-        org_id: testOrgId,
-        title: 'Test Session',
-      }
+  it('filters sessions by user and paginates', async () => {
+    const sessionRepository = await import('../../repositories/session.repository')
 
-      mockSql.mockResolvedValueOnce([mockSession])
+    await sessionRepository.create({ userId: 'user-1', agentId: 'agent-1', title: 'Session 1' })
+    await sessionRepository.create({ userId: 'user-1', agentId: 'agent-1', title: 'Session 2' })
+    await sessionRepository.create({ userId: 'user-2', agentId: 'agent-1', title: 'Other user' })
 
-      const result = await sessionRepository.findByIdAndOrg(sessionId, testOrgId)
-
-      expect(result).toBeDefined()
-      expect(result?.org_id).toBe(testOrgId)
+    const result = await sessionRepository.findByUserAndOrg({
+      userId: 'user-1',
+      page: 1,
+      limit: 10,
     })
 
-    it('应该返回 null 如果组织不匹配', async () => {
-      mockSql.mockResolvedValueOnce([])
+    expect(result.data).toHaveLength(2)
+    expect(result.meta.total).toBe(2)
 
-      const result = await sessionRepository.findByIdAndOrg(uuid(), uuid())
-
-      expect(result).toBeNull()
+    const paged = await sessionRepository.findByUserAndOrg({
+      userId: 'user-1',
+      page: 1,
+      limit: 1,
     })
+    expect(paged.data).toHaveLength(1)
+    expect(paged.meta.totalPages).toBe(2)
   })
 
-  describe('findByUserAndOrg', () => {
-    it('应该返回用户的所有 Session', async () => {
-      const mockSessions = [
-        { id: uuid(), org_id: testOrgId, user_id: testUserId, title: 'Session 1' },
-        { id: uuid(), org_id: testOrgId, user_id: testUserId, title: 'Session 2' },
-      ]
+  it('updates title and soft deletes sessions', async () => {
+    const sessionRepository = await import('../../repositories/session.repository')
 
-      // sql 片段构建调用（whereClause）
-      mockSql.mockReturnValueOnce([])
-      // 实际查询：COUNT + SELECT
-      mockSql.mockResolvedValueOnce([{ total: '2' }])
-      mockSql.mockResolvedValueOnce(mockSessions)
-
-      const result = await sessionRepository.findByUserAndOrg({
-        orgId: testOrgId,
-        userId: testUserId,
-      })
-
-      expect(result.data).toHaveLength(2)
-      expect(result.meta.total).toBe(2)
+    const created = await sessionRepository.create({
+      userId: 'user-1',
+      agentId: 'agent-1',
+      title: 'Original',
     })
 
-    it('应该支持分页', async () => {
-      const mockSessions = Array.from({ length: 10 }, (_, i) => ({
-        id: uuid(),
-        org_id: testOrgId,
-        user_id: testUserId,
-        title: `Session ${i}`,
-      }))
+    const updated = await sessionRepository.updateTitle(created.id, 'Updated Title')
+    expect(updated?.title).toBe('Updated Title')
 
-      // sql 片段构建调用（whereClause）
-      mockSql.mockReturnValueOnce([])
-      // 实际查询：COUNT + SELECT
-      mockSql.mockResolvedValueOnce([{ total: '25' }])
-      mockSql.mockResolvedValueOnce(mockSessions)
-
-      const result = await sessionRepository.findByUserAndOrg({
-        orgId: testOrgId,
-        userId: testUserId,
-        page: 1,
-        limit: 10,
-      })
-
-      expect(result.data).toHaveLength(10)
-      expect(result.meta.totalPages).toBe(3)
-    })
-  })
-
-  describe('updateTitle', () => {
-    it('应该更新 Session', async () => {
-      const sessionId = uuid()
-      const mockSession = {
-        id: sessionId,
-        org_id: testOrgId,
-        title: 'Updated Title',
-      }
-
-      mockSql.mockResolvedValueOnce([mockSession])
-
-      const result = await sessionRepository.updateTitle(sessionId, testOrgId,
-        'Updated Title',
-      )
-
-      expect(result?.title).toBe('Updated Title')
-    })
-  })
-
-  describe('softDelete', () => {
-    it('应该软删除 Session', async () => {
-      const sessionId = uuid()
-
-      mockSql.mockResolvedValueOnce([{ id: sessionId }])
-
-      const result = await sessionRepository.softDelete(sessionId, testOrgId, testUserId)
-
-      expect(result).toBe(true)
-    })
-
-    it('应该返回 false 如果不存在', async () => {
-      mockSql.mockResolvedValueOnce([])
-
-      const result = await sessionRepository.softDelete(uuid(), testOrgId, testUserId)
-
-      expect(result).toBe(false)
-    })
+    const deleted = await sessionRepository.softDelete(created.id, 'user-1')
+    expect(deleted).toBe(true)
+    expect(await sessionRepository.findById(created.id)).toBeNull()
   })
 })

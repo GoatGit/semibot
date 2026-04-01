@@ -124,7 +124,7 @@ export default function GatewayConversationListPage() {
 
       const conversationsRes = await apiClient.get<RuntimeGatewayConversationsResponse>(
         '/runtime/channels/conversations',
-        { params: { limit: 100 } }
+        { params: { limit: 20 } }
       )
       const conversations = Array.isArray(conversationsRes.data?.conversations)
         ? conversationsRes.data!.conversations!

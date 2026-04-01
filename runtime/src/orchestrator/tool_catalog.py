@@ -214,6 +214,11 @@ def build_registry_tool_catalog(registry: "SkillRegistry") -> list[ToolCatalogEn
                 parameters=dict(getattr(tool, "parameters", {}) or {}),
                 metadata={
                     "source": source_type,
+                    **(
+                        {"search_hint": str(getattr(tool, "search_hint", "") or "").strip()}
+                        if str(getattr(tool, "search_hint", "") or "").strip()
+                        else {}
+                    ),
                     **additional,
                 },
             )

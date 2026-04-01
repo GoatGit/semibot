@@ -164,7 +164,11 @@ export class WSServer {
       agent_config: Record<string, unknown>
       mcp_servers: Array<Record<string, unknown>>
       skill_index: Array<Record<string, unknown>>
+      user_invoked?: boolean
+      user_invoked_skill_ids?: string[]
       sub_agents: Array<Record<string, unknown>>
+      capabilities?: Array<unknown>
+      skillContext?: Array<unknown>
     }
   ): void {
     this.send(userId, { type: 'start_session', data })

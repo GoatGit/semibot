@@ -17,6 +17,9 @@ import type { SkillPackage } from '../repositories/skill-package.repository'
 export interface SkillIndexEntry {
   name: string
   description: string
+  whenToUse: string
+  executionContext?: string
+  effort?: string
   packagePath: string
   files: string[]
 }
@@ -55,6 +58,47 @@ async function listSkillFiles(packagePath: string): Promise<string[]> {
   return files
 }
 
+async function readFrontmatterFields(packagePath: string): Promise<{
+  whenToUse: string
+  executionContext?: string
+  effort?: string
+}> {
+  const skillPath = path.join(packagePath, 'SKILL.md')
+  if (!(await fs.pathExists(skillPath))) {
+    return { whenToUse: '' }
+  }
+  let raw = ''
+  try {
+    raw = await fs.readFile(skillPath, 'utf8')
+  } catch {
+    return { whenToUse: '' }
+  }
+  const lines = raw.split(/\r?\n/)
+  if (lines[0]?.trim() !== '---') {
+    return { whenToUse: '' }
+  }
+  const end = lines.findIndex((line, idx) => idx > 0 && line.trim() === '---')
+  if (end <= 0) {
+    return { whenToUse: '' }
+  }
+  const frontmatter = lines.slice(1, end)
+  const fields = {
+    whenToUse: '',
+    executionContext: undefined as string | undefined,
+    effort: undefined as string | undefined,
+  }
+  for (const line of frontmatter) {
+    const match = line.match(/^\s*([A-Za-z0-9_-]+)\s*:\s*(.+?)\s*$/)
+    if (!match) continue
+    const key = match[1]
+    const value = match[2].replace(/^['"]|['"]$/g, '').trim()
+    if (key === 'when_to_use') fields.whenToUse = value
+    if (key === 'context') fields.executionContext = value
+    if (key === 'effort') fields.effort = value
+  }
+  return fields
+}
+
 /**
  * 构建单个 skill 的文件摘要
  */
@@ -88,10 +132,14 @@ export async function buildSkillIndexEntry(
   pkg: SkillPackage
 ): Promise<SkillIndexEntry> {
   const files = await listSkillFiles(pkg.packagePath)
+  const frontmatter = await readFrontmatterFields(pkg.packagePath)
 
   return {
     name: definition.name,
     description: definition.description || '',
+    whenToUse: frontmatter.whenToUse,
+    executionContext: frontmatter.executionContext,
+    effort: frontmatter.effort,
     packagePath: pkg.packagePath,
     files,
   }
@@ -108,9 +156,12 @@ export function buildSkillIndexXml(entries: SkillIndexEntry[]): string {
   const skillTags = entries.map((entry) => {
     const fileList = formatFileList(entry.files)
     const desc = entry.description ? `\n    ${entry.description}` : ''
+    const whenToUse = entry.whenToUse ? `\n    when_to_use: ${entry.whenToUse}` : ''
+    const executionContext = entry.executionContext ? `\n    execution_context: ${entry.executionContext}` : ''
+    const effort = entry.effort ? `\n    effort: ${entry.effort}` : ''
     const files = fileList ? `\n    文件: ${fileList}` : ''
 
-    return `  <skill name="${escapeXml(entry.name)}" path="${escapeXml(entry.packagePath)}">${desc}${files}\n  </skill>`
+    return `  <skill name="${escapeXml(entry.name)}" scope="skill" path="${escapeXml(entry.packagePath)}">${desc}${whenToUse}${executionContext}${effort}${files}\n  </skill>`
   })
 
   return `<available_skills>

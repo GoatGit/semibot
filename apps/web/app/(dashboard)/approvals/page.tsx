@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Select } from '@/components/ui/Select'
+import { Input } from '@/components/ui/Input'
 import { EmptyStateActions } from '@/components/ui/EmptyStateActions'
 import { InlineErrorAlert } from '@/components/ui/InlineErrorAlert'
 import { PageHelpStrip } from '@/components/ui/PageHelpStrip'
@@ -48,6 +49,9 @@ function buildApprovalDetail(
   if (approval.toolName) {
     parts.push(t('approvals.detail.tool', { tool: `\`${approval.toolName}\`` }))
   }
+  if (approval.capabilityId) {
+    parts.push(`Capability: \`${approval.capabilityId}\``)
+  }
   if (approval.action) {
     parts.push(t('approvals.detail.action', { action: `\`${approval.action}\`` }))
   }
@@ -88,7 +92,9 @@ export default function ApprovalsPage() {
   const isValidStatus = (value: string | null): value is 'all' | ApprovalRecord['status'] =>
     value === 'all' || value === 'pending' || value === 'approved' || value === 'rejected' || value === 'expired'
   const queryStatus = searchParams.get('status')
+  const queryCapability = searchParams.get('capability')
   const [status, setStatus] = useState<'all' | ApprovalRecord['status']>(isValidStatus(queryStatus) ? queryStatus : 'all')
+  const [capabilityQuery, setCapabilityQuery] = useState(queryCapability ?? '')
   const [resolvingId, setResolvingId] = useState<string | null>(null)
   const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -108,26 +114,46 @@ export default function ApprovalsPage() {
   }, [queryStatus])
 
   useEffect(() => {
-    void loadApprovals({ status, limit: 100 })
-  }, [loadApprovals, status])
+    const next = queryCapability ?? ''
+    setCapabilityQuery((current) => (current === next ? current : next))
+  }, [queryCapability])
+
+  useEffect(() => {
+    void loadApprovals({ status, capability: capabilityQuery.trim() || undefined, limit: 100 })
+  }, [capabilityQuery, loadApprovals, status])
 
   const updateStatus = (next: 'all' | ApprovalRecord['status']) => {
     setStatus(next)
     const params = new URLSearchParams(searchParams.toString())
     if (next === 'all') params.delete('status')
     else params.set('status', next)
+    if (capabilityQuery.trim()) params.set('capability', capabilityQuery.trim())
+    else params.delete('capability')
     const query = params.toString()
     router.replace(query ? `/approvals?${query}` : '/approvals', { scroll: false })
   }
 
+  const updateCapabilityQuery = (next: string) => {
+    setCapabilityQuery(next)
+    const params = new URLSearchParams(searchParams.toString())
+    if (status === 'all') params.delete('status')
+    else params.set('status', status)
+    if (next.trim()) params.set('capability', next.trim())
+    else params.delete('capability')
+    const query = params.toString()
+    router.replace(query ? `/approvals?${query}` : '/approvals', { scroll: false })
+  }
+
+  const filteredApprovals = approvals
+
   const stats = useMemo(() => {
-    const pending = approvals.filter((item) => item.status === 'pending').length
-    return { pending, total: approvals.length }
-  }, [approvals])
+    const pending = filteredApprovals.filter((item) => item.status === 'pending').length
+    return { pending, total: filteredApprovals.length }
+  }, [filteredApprovals])
 
   const pendingIds = useMemo(
-    () => approvals.filter((item) => item.status === 'pending').map((item) => item.id),
-    [approvals]
+    () => filteredApprovals.filter((item) => item.status === 'pending').map((item) => item.id),
+    [filteredApprovals]
   )
 
   const handleResolve = async (id: string, decision: 'approve' | 'reject') => {
@@ -135,7 +161,7 @@ export default function ApprovalsPage() {
       setActionError(null)
       setResolvingId(id)
       await resolveApproval(id, decision)
-      await loadApprovals({ status, limit: 100 })
+      await loadApprovals({ status, capability: capabilityQuery.trim() || undefined, limit: 100 })
     } catch (err) {
       setActionError(err instanceof Error ? err.message : t('approvals.error.action'))
     } finally {
@@ -150,7 +176,7 @@ export default function ApprovalsPage() {
     try {
       const action = decision === 'approve' ? 'approve' : 'reject'
       await Promise.all(pendingIds.map((id) => resolveApproval(id, action)))
-      await loadApprovals({ status, limit: 100 })
+      await loadApprovals({ status, capability: capabilityQuery.trim() || undefined, limit: 100 })
     } catch (err) {
       setActionError(err instanceof Error ? err.message : t('approvals.error.action'))
     } finally {
@@ -192,7 +218,7 @@ export default function ApprovalsPage() {
             <Button
               variant="secondary"
               leftIcon={<RefreshCw size={16} />}
-              onClick={() => void loadApprovals({ status, limit: 100 })}
+              onClick={() => void loadApprovals({ status, capability: capabilityQuery.trim() || undefined, limit: 100 })}
               disabled={isLoading}
             >
               {t('common.refresh')}
@@ -205,7 +231,14 @@ export default function ApprovalsPage() {
         <Card className="border-border-default relative z-10">
           <CardContent className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="max-w-xs flex-1">
+              <div className="flex flex-1 flex-wrap items-center gap-3">
+                <div className="max-w-xs min-w-[180px] flex-1">
+                  <Input
+                    value={capabilityQuery}
+                    onChange={(event) => updateCapabilityQuery(event.target.value)}
+                    placeholder="Filter by capability ID"
+                  />
+                </div>
                 <Select
                   value={status}
                   options={statusOptions}
@@ -250,7 +283,7 @@ export default function ApprovalsPage() {
         )}
 
         <div className="space-y-3">
-          {isLoading && approvals.length === 0 ? (
+          {isLoading && filteredApprovals.length === 0 ? (
             [1, 2, 3].map((item) => (
               <Card key={item} className="border-border-subtle">
                 <CardContent className="p-4 animate-pulse">
@@ -259,8 +292,8 @@ export default function ApprovalsPage() {
                 </CardContent>
               </Card>
             ))
-          ) : approvals.length > 0 ? (
-            approvals.map((approval) => {
+          ) : filteredApprovals.length > 0 ? (
+            filteredApprovals.map((approval) => {
               const detailText = buildApprovalDetail(approval, t)
               const orchestrationTrace = extractSkillOrchestrationTrace(approval)
               const sessionId = extractApprovalSessionId(approval)

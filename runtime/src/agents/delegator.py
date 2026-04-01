@@ -53,16 +53,61 @@ class SubAgentDelegator:
         self.max_depth = max_depth
         self.current_depth = current_depth
 
-        # 构建 sub_agent_id → SubAgentDefinition 的索引
-        self._sub_agent_map: dict[str, SubAgentDefinition] = {
-            sa.id: sa for sa in runtime_context.available_sub_agents
-        }
+    def _resolve_sub_agent_definition(self, sub_agent_id: str) -> SubAgentDefinition | None:
+        get_sub_agent_definition = getattr(self.runtime_context, "get_sub_agent_definition", None)
+        if callable(get_sub_agent_definition):
+            try:
+                item = get_sub_agent_definition(sub_agent_id)
+            except Exception:
+                item = None
+            if item is not None:
+                return item
+        return next(
+            (
+                item
+                for item in getattr(self.runtime_context, "available_sub_agents", []) or []
+                if str(getattr(item, "id", "") or "").strip() == str(sub_agent_id or "").strip()
+            ),
+            None,
+        )
+
+    def _get_available_sub_agent_ids(self) -> list[str]:
+        get_sub_agent_summaries = getattr(self.runtime_context, "get_sub_agent_summaries", None)
+        if callable(get_sub_agent_summaries):
+            try:
+                return [
+                    str(item.get("id") or "").strip()
+                    for item in get_sub_agent_summaries()
+                    if str(item.get("id") or "").strip()
+                ]
+            except Exception:
+                pass
+        return [
+            str(getattr(item, "id", "") or "").strip()
+            for item in getattr(self.runtime_context, "available_sub_agents", []) or []
+            if str(getattr(item, "id", "") or "").strip()
+        ]
+
+    def _resolve_timeout_seconds(self, sub_agent_id: str, timeout_seconds: float | None) -> float:
+        if isinstance(timeout_seconds, (int, float)) and float(timeout_seconds) > 0:
+            return float(timeout_seconds)
+        get_sub_agent_capability = getattr(self.runtime_context, "get_sub_agent_capability", None)
+        if callable(get_sub_agent_capability):
+            try:
+                descriptor = get_sub_agent_capability(sub_agent_id)
+            except Exception:
+                descriptor = None
+            timeout_ms = getattr(descriptor, "constraints", {}).get("timeoutMs") if descriptor is not None else None
+            if isinstance(timeout_ms, (int, float)) and timeout_ms > 0:
+                return float(timeout_ms) / 1000.0
+        return float(SUB_AGENT_EXECUTION_TIMEOUT)
 
     async def delegate(
         self,
         sub_agent_id: str,
         task: str,
         context: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         """
         委派任务给子 Agent。
@@ -76,6 +121,7 @@ class SubAgentDelegator:
             {"result": ..., "agent_id": ..., "error": ...}
         """
         context = context or {}
+        execution_timeout_seconds = self._resolve_timeout_seconds(sub_agent_id, timeout_seconds)
 
         # 1. 深度检查
         if self.current_depth >= self.max_depth:
@@ -93,13 +139,13 @@ class SubAgentDelegator:
             }
 
         # 2. 验证子 Agent 存在
-        sub_agent_def = self._sub_agent_map.get(sub_agent_id)
+        sub_agent_def = self._resolve_sub_agent_definition(sub_agent_id)
         if not sub_agent_def:
             logger.error(
                 "SubAgent not found in candidate pool",
                 extra={
                     "sub_agent_id": sub_agent_id,
-                    "available": list(self._sub_agent_map.keys()),
+                    "available": self._get_available_sub_agent_ids(),
                 },
             )
             return {
@@ -196,7 +242,7 @@ class SubAgentDelegator:
             # 10. 执行子 Agent（带超时）
             result = await asyncio.wait_for(
                 sub_graph.ainvoke(initial_state),
-                timeout=SUB_AGENT_EXECUTION_TIMEOUT,
+                timeout=execution_timeout_seconds,
             )
 
             # 11. 提取结果
@@ -228,11 +274,11 @@ class SubAgentDelegator:
                 "SubAgent execution timed out",
                 extra={
                     "sub_agent_id": sub_agent_id,
-                    "timeout": SUB_AGENT_EXECUTION_TIMEOUT,
+                    "timeout": execution_timeout_seconds,
                 },
             )
             return {
-                "error": f"SubAgent execution timed out ({SUB_AGENT_EXECUTION_TIMEOUT}s)",
+                "error": f"SubAgent execution timed out ({execution_timeout_seconds}s)",
                 "agent_id": sub_agent_id,
             }
         except Exception as e:

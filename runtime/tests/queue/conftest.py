@@ -24,6 +24,9 @@ if "src.constants.config" not in sys.modules:
     if "src.constants" not in sys.modules:
         _constants_mod = type(sys)("src.constants")
         _constants_mod.config = _config
+        for _name in dir(_config):
+            if _name.isupper():
+                setattr(_constants_mod, _name, getattr(_config, _name))
         sys.modules["src.constants"] = _constants_mod
 
 # Load queue modules

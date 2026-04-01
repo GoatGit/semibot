@@ -7,10 +7,12 @@ from src.orchestrator.unified_executor import UnifiedActionExecutor, ExecutionMe
 from src.orchestrator.context import (
     RuntimeSessionContext,
     AgentConfig,
+    CapabilityDescriptor,
     SkillDefinition,
     ToolDefinition,
     McpServerDefinition,
     RuntimePolicy,
+    SubAgentDefinition,
 )
 from src.orchestrator.state import PlanStep, ToolCallResult
 from src.orchestrator.capability import CapabilityGraph
@@ -108,6 +110,54 @@ def executor(runtime_context, mock_skill_registry, mock_mcp_client):
 
 
 @pytest.fixture
+def sub_agent_executor(runtime_context, mock_skill_registry):
+    runtime_context.available_sub_agents = [
+        SubAgentDefinition(
+            id="agent_research",
+            name="Research Agent",
+            description="Handles delegated research tasks",
+        )
+    ]
+    mock_delegator = MagicMock()
+    mock_delegator.delegate = AsyncMock(
+        return_value={
+            "result": "delegated result",
+            "agent_id": "agent_research",
+            "agent_name": "Research Agent",
+        }
+    )
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+        sub_agent_delegator=mock_delegator,
+    )
+    return executor, mock_delegator
+
+
+def test_build_sub_agent_delegator_from_capability_only_context(runtime_context, mock_skill_registry):
+    runtime_context.available_sub_agents = []
+    runtime_context.capabilities = [
+        CapabilityDescriptor(
+            id="agent:agent_research",
+            kind="sub_agent",
+            name="subagent:agent_research",
+            display_name="Research Agent",
+            description="Handles delegated research tasks",
+            source={"type": "agent", "agentId": "agent_research"},
+            metadata={"sub_agent_id": "agent_research"},
+        )
+    ]
+    runtime_context._explicit_capabilities_provided = True
+
+    executor = UnifiedActionExecutor(
+        runtime_context=runtime_context,
+        skill_registry=mock_skill_registry,
+    )
+
+    assert executor.sub_agent_delegator is not None
+
+
+@pytest.fixture
 def file_io_executor(runtime_context, mock_skill_registry):
     runtime_context.available_tools.append(
         ToolDefinition(
@@ -159,6 +209,24 @@ async def test_execute_tool(executor, mock_skill_registry):
     assert result.tool_name == "test_tool"
     assert result.metadata["capability_type"] == "tool"
 
+    mock_skill_registry.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_by_capability_id(executor, mock_skill_registry):
+    action = PlanStep(
+        id="step_1",
+        title="Test action",
+        tool=None,
+        capability_id="builtin:test_tool",
+        params={"input": "test"},
+    )
+
+    result = await executor.execute(action)
+
+    assert result.success is True
+    assert result.tool_name == "test_tool"
+    assert result.capability_id == "builtin:test_tool"
     mock_skill_registry.execute.assert_called_once()
 
 
@@ -235,6 +303,27 @@ async def test_execute_mcp_tool(executor, mock_mcp_client):
     assert result.metadata["mcp_server_id"] == "mcp_1"
     assert result.metadata["mcp_server_name"] == "test_mcp"
 
+    mock_mcp_client.call_tool.assert_called_once_with(
+        server_id="mcp_1",
+        tool_name="mcp_tool",
+        arguments={"input": "test"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_mcp_tool_by_capability_id(executor, mock_mcp_client):
+    action = PlanStep(
+        id="step_1",
+        title="Test action",
+        tool=None,
+        capability_id="mcp:mcp_1:mcp_tool",
+        params={"input": "test"},
+    )
+
+    result = await executor.execute(action)
+
+    assert result.success is True
+    assert result.capability_id == "mcp:mcp_1:mcp_tool"
     mock_mcp_client.call_tool.assert_called_once_with(
         server_id="mcp_1",
         tool_name="mcp_tool",
@@ -434,6 +523,49 @@ def test_build_metadata_file_io_write_stays_high_risk(file_io_executor):
     assert metadata.is_high_risk is True
     assert metadata.requires_approval is True
     assert metadata.additional["risk_level"] == "high"
+
+
+def test_build_metadata_sub_agent_includes_contract_fields(sub_agent_executor):
+    executor, _ = sub_agent_executor
+    capability = executor.capability_graph.get_capability("agent:agent_research")
+
+    metadata = executor._build_metadata(
+        capability,
+        "subagent:agent_research",
+        {"task": "Investigate"},
+    )
+
+    assert metadata.capability_type == "sub_agent"
+    assert metadata.additional["risk_level"] == "medium"
+    assert metadata.additional["timeout_ms"] == 120_000
+
+
+@pytest.mark.asyncio
+async def test_execute_sub_agent_uses_unified_executor_route(sub_agent_executor):
+    executor, mock_delegator = sub_agent_executor
+    action = PlanStep(
+        id="step_1",
+        title="Delegate research",
+        tool="subagent:agent_research",
+        capability_id="agent:agent_research",
+        params={
+            "task": "Research topic X",
+            "context": {"memory": "prior notes"},
+        },
+    )
+
+    result = await executor.execute(action)
+
+    assert result.success is True
+    assert result.capability_id == "agent:agent_research"
+    assert result.metadata["capability_type"] == "sub_agent"
+    assert result.metadata["delegate"] is True
+    mock_delegator.delegate.assert_awaited_once_with(
+        sub_agent_id="agent_research",
+        task="Research topic X",
+        context={"memory": "prior notes"},
+        timeout_seconds=120.0,
+    )
 
 
 @pytest.mark.asyncio

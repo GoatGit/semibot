@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 from typing import Any
 
 from src.security.api_key_cipher import decrypt_api_keys
 from src.session.runtime_adapter import RuntimeAdapter
 from src.session.semigraph_adapter import SemiGraphAdapter
+from src.skills.source_loader import (
+    apply_skill_visibility,
+    compact_skill_summary,
+    dedupe_skill_index,
+)
 from src.utils.logging import get_logger
 from src.ws.client import ControlPlaneClient
 
@@ -37,6 +43,7 @@ class SessionManager:
             return
 
         data = self._filter_skill_index_by_requirements(data)
+        data = self._dedupe_and_filter_skill_index(data)
         data = await self._enrich_skill_payloads(session_id, data)
 
         runtime_type = str(data.get("runtime_type", "semigraph"))
@@ -104,7 +111,7 @@ class SessionManager:
             },
         )
         copied_data = dict(data)
-        copied_data["skill_index"] = enriched
+        copied_data["skill_index"] = [self._compact_skill_summary(item) for item in enriched]
         return copied_data
 
     async def stop_session(self, data: dict[str, Any]) -> None:
@@ -123,7 +130,7 @@ class SessionManager:
         if ready_event and not ready_event.is_set():
             try:
                 await asyncio.wait_for(ready_event.wait(), timeout=15)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("session_start_wait_timeout", extra={"session_id": session_id})
                 await self.client.send_sse_event(
                     session_id,
@@ -217,6 +224,7 @@ class SessionManager:
 
             binaries = requires.get("binaries")
             env_vars = requires.get("env_vars")
+            python_requires = requires.get("python")
 
             missing_binaries = [
                 b for b in binaries
@@ -226,8 +234,12 @@ class SessionManager:
                 k for k in env_vars
                 if isinstance(k, str) and k.strip() and not os.getenv(k.strip())
             ] if isinstance(env_vars, list) else []
+            missing_python = [
+                spec for spec in python_requires
+                if isinstance(spec, str) and spec.strip() and not self._python_requirement_satisfied(spec.strip())
+            ] if isinstance(python_requires, list) else []
 
-            if missing_binaries or missing_envs:
+            if missing_binaries or missing_envs or missing_python:
                 logger.warning(
                     "skill_requirements_unmet_skip",
                     extra={
@@ -235,6 +247,7 @@ class SessionManager:
                         "skill_id": skill.get("id"),
                         "missing_binaries": missing_binaries,
                         "missing_env_vars": missing_envs,
+                        "missing_python": missing_python,
                     },
                 )
                 continue
@@ -247,6 +260,68 @@ class SessionManager:
         copied = dict(data)
         copied["skill_index"] = filtered
         return copied
+
+    def _dedupe_and_filter_skill_index(self, data: dict[str, Any]) -> dict[str, Any]:
+        raw_skills = data.get("skill_index")
+        if not isinstance(raw_skills, list):
+            return data
+        deduped = self._dedupe_skill_index([item for item in raw_skills if isinstance(item, dict)])
+        explicit_ids = data.get("user_invoked_skill_ids")
+        visible = self._filter_skill_index_by_visibility(
+            deduped,
+            user_invoked=bool(data.get("user_invoked", False)),
+            explicitly_invoked_skill_ids=explicit_ids if isinstance(explicit_ids, list) else None,
+        )
+        copied = dict(data)
+        copied["skill_index"] = visible
+        return copied
+
+    def _dedupe_skill_index(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return dedupe_skill_index(records)
+
+    def _filter_skill_index_by_visibility(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        user_invoked: bool,
+        explicitly_invoked_skill_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        visible = apply_skill_visibility(
+            records,
+            user_invoked=user_invoked,
+            explicitly_invoked_skill_ids=explicitly_invoked_skill_ids,
+        )
+        for copied in visible:
+            if bool(copied.get("disable_model_invocation", False)) and copied.get("visible_to_model") is False:
+                logger.info(
+                    "skill_hidden_from_model",
+                    extra={
+                        "session_id": self.init_data.get("session_id"),
+                        "skill_id": copied.get("skill_id") or copied.get("id") or copied.get("name"),
+                    },
+                )
+        return visible
+
+    def _compact_skill_summary(self, record: dict[str, Any]) -> dict[str, Any]:
+        summary = compact_skill_summary(record)
+        copied = dict(record)
+        copied.update(summary)
+        return copied
+
+    @staticmethod
+    def _python_requirement_satisfied(spec: str) -> bool:
+        normalized = str(spec or "").strip()
+        if not normalized:
+            return True
+        if normalized.endswith("+"):
+            raw = normalized[:-1]
+            try:
+                required = tuple(int(part) for part in raw.split(".") if part.strip())
+            except Exception:
+                return True
+            current = sys.version_info[: len(required)]
+            return current >= required
+        return True
 
     def _create_adapter(self, runtime_type: str, session_id: str, data: dict[str, Any]) -> RuntimeAdapter:
         if runtime_type not in SUPPORTED_RUNTIME_TYPES:

@@ -16,3 +16,4 @@ export * from './webhook';
 export * from './error';
 export * from './studio';
 export * from './production';
+export * from './capability';

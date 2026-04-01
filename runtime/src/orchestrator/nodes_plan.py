@@ -6,6 +6,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from src.orchestrator.tool_catalog import build_catalog_cards
 from src.llm.provider_compat import resolve_plan_execution_strategy
 from src.orchestrator.context_budget import PLAN_BUDGET, _env_int
 from src.orchestrator.execution import parse_plan_response
@@ -19,6 +20,8 @@ from src.orchestrator.nodes_shared import (
 )
 from src.orchestrator.nodes_stateflow import _build_execution_state_for_planner
 from src.orchestrator.state import AgentState, ExecutionPlan, Message, PlanStep, resolve_time_context
+from src.skills.skill_context_extractor import extract_skill_scaffold
+from src.skills.skill_resource_locator import locate_skill_resources
 from src.skills.skill_index_prompt import build_skill_index_entries, format_skills_for_prompt
 from src.events.runtime_emitter import emit_runtime_event
 from src.utils.logging import get_logger
@@ -145,6 +148,8 @@ def _merge_dynamic_registry_schemas(
     available_schemas: list[dict[str, Any]],
     runtime_context: Any,
 ) -> list[dict[str, Any]]:
+    from src.orchestrator.tool_catalog import expand_catalog_entry_for_llm
+
     if not runtime_context:
         return available_schemas
     metadata = getattr(runtime_context, "metadata", None)
@@ -182,6 +187,7 @@ def _merge_dynamic_registry_schemas(
         for item in merged
         if isinstance(item, dict)
     }
+
     for schema in fresh:
         if not isinstance(schema, dict):
             continue
@@ -190,6 +196,25 @@ def _merge_dynamic_registry_schemas(
             continue
         if name in blocked_skill_names:
             continue
+        get_tool_catalog_entry = getattr(runtime_context, "get_tool_catalog_entry", None)
+        entry = None
+        if callable(get_tool_catalog_entry):
+            try:
+                entry = get_tool_catalog_entry(name)
+            except Exception:
+                entry = None
+        if entry is not None:
+            source_type = str(getattr(entry, "source_type", "") or "").strip().lower()
+            metadata_map = dict(getattr(entry, "metadata", {}) or {})
+            shape = str(metadata_map.get("shape") or "").strip().lower()
+            if source_type == "cli" and shape == "group":
+                for projected in expand_catalog_entry_for_llm(entry):
+                    projected_name = str(getattr(projected, "tool_name", "") or "").strip()
+                    if not projected_name or projected_name in existing:
+                        continue
+                    merged.append(projected.to_tool_schema())
+                    existing.add(projected_name)
+                continue
         if not name or name in existing:
             continue
         merged.append(schema)
@@ -212,6 +237,52 @@ async def _execute_plan_tool(
     tool_call: dict[str, Any],
     runtime_context: Any | None,
 ) -> dict[str, Any]:
+    from src.orchestrator.context import ToolCatalogEntry
+
+    def _normalize_text(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    def _score_catalog_card(card: dict[str, Any], query: str) -> int:
+        needle = _normalize_text(query)
+        if not needle:
+            return 0
+        name = _normalize_text(card.get("toolName"))
+        display_name = _normalize_text(card.get("displayName"))
+        summary = _normalize_text(card.get("summary"))
+        score = 0
+        if needle == name:
+            score += 120
+        if needle in name:
+            score += 80
+        if needle in display_name:
+            score += 50
+        if needle in summary:
+            score += 25
+        for token in needle.split():
+            if token and token in name:
+                score += 20
+            if token and token in summary:
+                score += 8
+        return score
+
+    def _resolve_catalog_entry(query: str) -> ToolCatalogEntry | None:
+        if runtime_context is None or not query:
+            return None
+        get_entry = getattr(runtime_context, "get_tool_catalog_entry", None)
+        if callable(get_entry):
+            with suppress(Exception):
+                resolved = get_entry(query)
+                if resolved is not None:
+                    return resolved
+        get_catalog = getattr(runtime_context, "get_tool_catalog", None)
+        if not callable(get_catalog):
+            return None
+        with suppress(Exception):
+            for item in get_catalog() or []:
+                if str(getattr(item, "actual_tool_name", "")).strip() == query:
+                    return item
+        return None
+
     function = tool_call.get("function") or {}
     tool_name = str(function.get("name") or "").strip()
     args, args_error = _parse_tool_call_arguments(function.get("arguments"))
@@ -242,14 +313,72 @@ async def _execute_plan_tool(
             "success": True,
             "skill_id": skill_id,
             "content": content + suffix,
+            "scaffold": extract_skill_scaffold(skill_id, content),
+            "resources": locate_skill_resources(skill_item),
+        }
+
+    if tool_name == "tool_search":
+        query = str(args.get("query") or "").strip()
+        source_type = str(args.get("source_type") or "").strip().lower() or None
+        limit_raw = args.get("limit", 8)
+        try:
+            limit = max(1, min(int(limit_raw or 8), 20))
+        except Exception:
+            limit = 8
+        include_parameters = bool(args.get("include_parameters", False))
+        if runtime_context is None:
+            return {"success": False, "error": "tool_search requires runtime_context"}
+        catalog_cards = build_catalog_cards(runtime_context)
+        items: list[dict[str, Any]] = []
+        for card in catalog_cards:
+            if not isinstance(card, dict):
+                continue
+            if source_type and str(card.get("sourceType") or "").strip().lower() != source_type:
+                continue
+            score = _score_catalog_card(card, query)
+            if query and score <= 0:
+                continue
+            item = dict(card)
+            item["score"] = score
+            if include_parameters:
+                entry = _resolve_catalog_entry(str(card.get("toolId") or card.get("toolName") or ""))
+                if entry is not None:
+                    item["parameters"] = dict(getattr(entry, "parameters", {}) or {})
+                    item["actualToolName"] = str(getattr(entry, "actual_tool_name", "") or "")
+            items.append(item)
+        items.sort(key=lambda item: (-int(item.get("score") or 0), _normalize_text(item.get("toolName"))))
+        return {
+            "success": True,
+            "query": query,
+            "total_matches": len(items),
+            "items": items[:limit],
+        }
+
+    if tool_name == "read_tool_schema":
+        tool_id = str(args.get("tool_id") or args.get("tool_name") or "").strip()
+        if not tool_id:
+            return {"success": False, "error": "Missing required argument: tool_id"}
+        entry = _resolve_catalog_entry(tool_id)
+        if entry is None:
+            return {"success": False, "error": f"Tool '{tool_id}' not found in current runtime catalog"}
+        return {
+            "success": True,
+            "tool_id": getattr(entry, "tool_id", ""),
+            "tool_name": getattr(entry, "tool_name", ""),
+            "actual_tool_name": getattr(entry, "actual_tool_name", ""),
+            "display_name": getattr(entry, "display_name", ""),
+            "description": getattr(entry, "description", "") or "",
+            "source_type": getattr(entry, "source_type", ""),
+            "provider_id": getattr(entry, "provider_id", None),
+            "parameters": dict(getattr(entry, "parameters", {}) or {}),
+            "metadata": dict(getattr(entry, "metadata", {}) or {}),
         }
 
     if tool_name == "inspect_sub_agent":
         agent_id = str(args.get("agent_id") or "").strip()
-        sub_agents = getattr(runtime_context, "available_sub_agents", []) if runtime_context is not None else []
-        for item in sub_agents or []:
-            if str(getattr(item, "id", "")).strip() != agent_id:
-                continue
+        get_sub_agent_definition = getattr(runtime_context, "get_sub_agent_definition", None)
+        item = get_sub_agent_definition(agent_id) if callable(get_sub_agent_definition) else None
+        if item is not None:
             mcp_servers = getattr(item, "mcp_servers", []) or []
             supported_tools: list[str] = []
             for server in mcp_servers:
@@ -265,6 +394,17 @@ async def _execute_plan_tool(
                 "description": getattr(item, "description", ""),
                 "capabilities": list(getattr(item, "skills", []) or []),
                 "supported_tools": supported_tools,
+            }
+        get_sub_agent_summary = getattr(runtime_context, "get_sub_agent_summary", None)
+        summary = get_sub_agent_summary(agent_id) if callable(get_sub_agent_summary) else None
+        if isinstance(summary, dict):
+            return {
+                "success": True,
+                "id": str(summary.get("id") or ""),
+                "name": str(summary.get("name") or ""),
+                "description": str(summary.get("description") or ""),
+                "capabilities": [],
+                "supported_tools": [],
             }
         return {"success": False, "error": f"Sub-agent '{agent_id}' not found"}
 
@@ -390,6 +530,8 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         available_execution_capabilities=ctx.available_execution_capability_names,
         planning_limits={"remaining_iterations": ctx.remaining_iteration_budget, "max_iterations": ctx.max_iterations},
         runtime_context=ctx.runtime_context,
+        planner_tool_catalog_cards=ctx.planner_tool_catalog_cards,
+        planner_core_tool_schemas=ctx.planner_core_tool_schemas,
         memory_context=ctx.effective_memory,
         failure_reflection=ctx.failure_reflection,
         sub_agents_for_planner=ctx.sub_agents_for_planner,
@@ -399,6 +541,36 @@ async def plan_node(state: AgentState, context: dict[str, Any]) -> dict[str, Any
         current_timezone=ctx.session_current_timezone,
     )
     plan_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_search",
+                "description": "Search the current runtime tool catalog to find relevant execution tools before planning.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Tool search query"},
+                        "source_type": {"type": "string", "enum": ["builtin", "cli", "mcp"], "description": "Optional source filter"},
+                        "limit": {"type": "integer", "description": "Maximum number of search results", "default": 8},
+                        "include_parameters": {"type": "boolean", "description": "Include parameter schema in results", "default": False},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_tool_schema",
+                "description": "Read the parameter schema and metadata for a specific tool in the current runtime catalog.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tool_id": {"type": "string", "description": "Tool ID or tool name from the catalog"},
+                    },
+                    "required": ["tool_id"],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {

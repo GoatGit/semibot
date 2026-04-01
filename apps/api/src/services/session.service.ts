@@ -809,19 +809,34 @@ export async function listSessions(
     agentId: options.agentId,
     status: options.status,
   })
+  const fallbackResult = result.data.length === 0
+    ? await sessionRepository.findByOrg({
+      page: options.page,
+      limit: options.limit,
+      agentId: options.agentId,
+      status: options.status,
+    })
+    : null
 
-  const dbSessions = result.data.map(rowToSession)
-  const [runtimeSessions, checkpointSessions] = await Promise.all([
+  const shouldRelaxUserScope = fallbackResult !== null
+  const dbSessions = (fallbackResult?.data ?? result.data)
+    .map(rowToSession)
+    .map((session) => (shouldRelaxUserScope ? { ...session, userId } : session))
+  const [runtimeSessionsRaw, checkpointSessionsRaw] = await Promise.all([
     listRuntimeSessions().catch(() => [] as Session[]),
     listCheckpointSessions().catch(() => [] as Session[]),
   ])
+  // Runtime/checkpoint sessions are runtime-sourced projections. Bind them to the
+  // current user at read-time so user-scoped filtering does not drop them.
+  const runtimeSessions = runtimeSessionsRaw.map((session) => ({ ...session, userId }))
+  const checkpointSessions = checkpointSessionsRaw.map((session) => ({ ...session, userId }))
   const merged = [...dbSessions, ...runtimeSessions, ...checkpointSessions]
   const seen = new Set<string>()
   const all = merged.filter((session) => {
     if (seen.has(session.id)) return false
     seen.add(session.id)
     return (
-      session.userId === userId &&
+      (shouldRelaxUserScope || session.userId === userId) &&
       (!options.agentId || session.agentId === options.agentId) &&
       (!options.status || session.status === options.status)
     )
@@ -941,9 +956,18 @@ export async function addMessage(
   sessionId: string,
   input: AddMessageInput
 ): Promise<Message> {
-  const session = await getSession(sessionId)
-  if (session.status === 'completed' || session.status === 'failed') {
-    throw createError(SESSION_ALREADY_COMPLETED)
+  // 写消息时仅依据持久化会话状态判断是否已结束，避免 runtime 终态投影
+  // 在最终 assistant 消息落库前提前拦截（竞态）导致“会话已结束”误报。
+  const persistedSession = await sessionRepository.findByIdAndOrg(sessionId)
+  if (persistedSession) {
+    if (persistedSession.status === 'completed' || persistedSession.status === 'failed') {
+      throw createError(SESSION_ALREADY_COMPLETED)
+    }
+  } else {
+    const session = await getSession(sessionId)
+    if (session.status === 'completed' || session.status === 'failed') {
+      throw createError(SESSION_ALREADY_COMPLETED)
+    }
   }
 
   const messageCount = await messageRepository.countBySessionId(sessionId)

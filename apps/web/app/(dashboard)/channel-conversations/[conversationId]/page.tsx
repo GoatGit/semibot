@@ -418,7 +418,10 @@ export default function GatewayConversationDetailPage() {
 
           <Card className="border-border-default">
             <CardContent className="p-5">
-              <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.channelDetail.context')}</h2>
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold text-text-primary">{t('dashboard.channelDetail.context')}</h2>
+                <p className="text-xs text-text-secondary">{t('dashboard.channelDetail.contextHelp')}</p>
+              </div>
               {selectedRun && (
                 <div className="mt-4 rounded-lg border border-border-subtle bg-bg-surface px-3 py-3">
                   <div className="flex items-center justify-between gap-2">

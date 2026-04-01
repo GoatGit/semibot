@@ -72,6 +72,12 @@ const eventDispatcher = new lark.EventDispatcher({})
     'im.message.receive_v1': async (data) => {
       await forwardEvent('im.message.receive_v1', data)
     },
+    'im.message.message_read_v1': async () => {
+      // Ignore read receipts for now. They are not part of gateway execution flow.
+    },
+    'im.chat.access_event.bot_p2p_chat_entered_v1': async () => {
+      // Ignore bot-entered events for now. They are informational only.
+    },
   })
 
 wsClient.start({ eventDispatcher })

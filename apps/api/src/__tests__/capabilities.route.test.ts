@@ -1,43 +1,57 @@
-import express from 'express'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-async function startTestServer(): Promise<{
-  baseUrl: string
-  close: () => Promise<void>
-}> {
+async function getRouteHandler(path: string, method: 'get' | 'post') {
   const { default: capabilitiesRouter } = await import('../routes/v1/capabilities')
-  const app = express()
-  app.use(express.json())
-  app.use(capabilitiesRouter)
-  const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
-    const listening = app.listen(0, '127.0.0.1', () => resolve(listening))
+  const layer = capabilitiesRouter.stack.find((item) => item.route?.path === path && item.route?.methods?.[method])
+  if (!layer?.route?.stack?.length) {
+    throw new Error(`route handler not found for ${method.toUpperCase()} ${path}`)
+  }
+  return layer.route.stack[layer.route.stack.length - 1]?.handle
+}
+
+async function invokeRoute(
+  path: string,
+  method: 'get' | 'post',
+  req: Record<string, unknown> = {}
+): Promise<{ statusCode: number; payload: unknown }> {
+  const handler = await getRouteHandler(path, method)
+  const responseState: { statusCode: number; payload: unknown } = {
+    statusCode: 200,
+    payload: undefined,
+  }
+  let settle: (() => void) | null = null
+  const completed = new Promise<void>((resolve) => {
+    settle = resolve
   })
-  const address = server.address()
-  if (!address || typeof address === 'string') {
-    throw new Error('failed to bind test server')
-  }
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    close: async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()))
-      })
+  const res = {
+    status(code: number) {
+      responseState.statusCode = code
+      return this
     },
-  }
+    json(payload: unknown) {
+      responseState.payload = payload
+      settle?.()
+      return this
+    },
+  } as never
+
+  handler(req as never, res, (error?: unknown) => {
+    if (error) throw error
+  })
+  await completed
+  return responseState
 }
 
 describe('capabilities route', () => {
-  const realFetch = globalThis.fetch
+  const originalEnv = { ...process.env }
 
   beforeEach(() => {
-    process.env.SEMIBOT_ENABLE_AUTH = 'false'
-    process.env.RUNTIME_URL = 'http://runtime.test'
+    process.env = { ...originalEnv, SEMIBOT_ENABLE_AUTH: 'false', RUNTIME_URL: 'http://runtime.test' }
     vi.restoreAllMocks()
   })
 
   afterEach(() => {
-    delete process.env.SEMIBOT_ENABLE_AUTH
-    delete process.env.RUNTIME_URL
+    process.env = { ...originalEnv }
   })
 
   it('returns 200 when legacy capability install succeeds', async () => {
@@ -56,30 +70,23 @@ describe('capabilities route', () => {
       })
     )
 
-    const server = await startTestServer()
-    try {
-      const response = await realFetch(`${server.baseUrl}/install`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          missingCapability: {
-            intent: 'authenticated_browser_session',
-            reason: 'Need a logged-in browser',
-          },
-        }),
-      })
+    const response = await invokeRoute('/install', 'post', {
+      body: {
+        missingCapability: {
+          intent: 'authenticated_browser_session',
+          reason: 'Need a logged-in browser',
+        },
+      },
+    })
 
-      expect(response.status).toBe(200)
-      const payload = (await response.json()) as {
-        success: boolean
-        data?: { resolution_mode?: string; registry_name?: string }
-      }
-      expect(payload.success).toBe(true)
-      expect(payload.data?.resolution_mode).toBe('install')
-      expect(payload.data?.registry_name).toBe('foo/browser-helper@cli')
-    } finally {
-      await server.close()
+    expect(response.statusCode).toBe(200)
+    const payload = response.payload as {
+      success: boolean
+      data?: { resolution_mode?: string; registry_name?: string }
     }
+    expect(payload.success).toBe(true)
+    expect(payload.data?.resolution_mode).toBe('install')
+    expect(payload.data?.registry_name).toBe('foo/browser-helper@cli')
   })
 
   it('falls back across runtime URLs for legacy install', async () => {
@@ -102,29 +109,22 @@ describe('capabilities route', () => {
         })
     )
 
-    const server = await startTestServer()
-    try {
-      const response = await realFetch(`${server.baseUrl}/install`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          missingCapability: {
-            intent: 'authenticated_browser_session',
-            reason: 'Need a logged-in browser',
-          },
-        }),
-      })
+    const response = await invokeRoute('/install', 'post', {
+      body: {
+        missingCapability: {
+          intent: 'authenticated_browser_session',
+          reason: 'Need a logged-in browser',
+        },
+      },
+    })
 
-      expect(response.status).toBe(200)
-      const payload = (await response.json()) as {
-        success: boolean
-        data?: { resolution_mode?: string }
-      }
-      expect(payload.success).toBe(true)
-      expect(payload.data?.resolution_mode).toBe('install')
-    } finally {
-      await server.close()
+    expect(response.statusCode).toBe(200)
+    const payload = response.payload as {
+      success: boolean
+      data?: { resolution_mode?: string }
     }
+    expect(payload.success).toBe(true)
+    expect(payload.data?.resolution_mode).toBe('install')
   })
 
   it('proxies resolve-missing to runtime', async () => {
@@ -143,34 +143,27 @@ describe('capabilities route', () => {
       })
     )
 
-    const server = await startTestServer()
-    try {
-      const response = await realFetch(`${server.baseUrl}/resolve-missing`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          missingCapability: {
-            intent: 'authenticated_browser_session',
-            reason: 'Need a logged-in browser',
-          },
-          taskId: 'task_1',
-          sessionId: 'sess_1',
-          taskText: 'find AI news',
-          currentShortlistToolIds: ['builtin:file_io'],
-        }),
-      })
+    const response = await invokeRoute('/resolve-missing', 'post', {
+      body: {
+        missingCapability: {
+          intent: 'authenticated_browser_session',
+          reason: 'Need a logged-in browser',
+        },
+        taskId: 'task_1',
+        sessionId: 'sess_1',
+        taskText: 'find AI news',
+        currentShortlistToolIds: ['builtin:file_io'],
+      },
+    })
 
-      expect(response.status).toBe(200)
-      const payload = (await response.json()) as {
-        success: boolean
-        data?: { install_request_id?: string; registry_name?: string }
-      }
-      expect(payload.success).toBe(true)
-      expect(payload.data?.install_request_id).toBe('cinst_123')
-      expect(payload.data?.registry_name).toBe('foo/browser-helper@cli')
-    } finally {
-      await server.close()
+    expect(response.statusCode).toBe(200)
+    const payload = response.payload as {
+      success: boolean
+      data?: { install_request_id?: string; registry_name?: string }
     }
+    expect(payload.success).toBe(true)
+    expect(payload.data?.install_request_id).toBe('cinst_123')
+    expect(payload.data?.registry_name).toBe('foo/browser-helper@cli')
   })
 
   it('proxies approve-install, install-status, install-history, and retry-task to runtime', async () => {
@@ -197,39 +190,34 @@ describe('capabilities route', () => {
       })
     vi.stubGlobal('fetch', fetchMock)
 
-    const server = await startTestServer()
-    try {
-      const approve = await realFetch(`${server.baseUrl}/approve-install`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ installRequestId: 'cinst_123', approved: true }),
-      })
-      expect(approve.status).toBe(200)
-      expect((await approve.json()) as { success: boolean }).toMatchObject({ success: true })
+    const approve = await invokeRoute('/approve-install', 'post', {
+      body: { installRequestId: 'cinst_123', approved: true },
+    })
+    expect(approve.statusCode).toBe(200)
+    expect(approve.payload as { success: boolean }).toMatchObject({ success: true })
 
-      const statusRes = await realFetch(`${server.baseUrl}/install-status/cinst_123`)
-      expect(statusRes.status).toBe(200)
-      expect((await statusRes.json()) as { success: boolean }).toMatchObject({ success: true })
+    const statusRes = await invokeRoute('/install-status/:installRequestId', 'get', {
+      params: { installRequestId: 'cinst_123' },
+    })
+    expect(statusRes.statusCode).toBe(200)
+    expect(statusRes.payload as { success: boolean }).toMatchObject({ success: true })
 
-      const historyRes = await realFetch(`${server.baseUrl}/install-history?sessionId=sess_1`)
-      expect(historyRes.status).toBe(200)
-      expect((await historyRes.json()) as { success: boolean }).toMatchObject({ success: true })
+    const historyRes = await invokeRoute('/install-history', 'get', {
+      query: { sessionId: 'sess_1' },
+    })
+    expect(historyRes.statusCode).toBe(200)
+    expect(historyRes.payload as { success: boolean }).toMatchObject({ success: true })
 
-      const retry = await realFetch(`${server.baseUrl}/retry-task`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ installRequestId: 'cinst_123' }),
-      })
-      expect(retry.status).toBe(200)
-      const retryPayload = (await retry.json()) as {
-        success: boolean
-        data?: { metadata?: { retry_result?: { status?: string } } }
-      }
-      expect(retryPayload.success).toBe(true)
-      expect(retryPayload.data?.metadata?.retry_result?.status).toBe('success')
-    } finally {
-      await server.close()
+    const retry = await invokeRoute('/retry-task', 'post', {
+      body: { installRequestId: 'cinst_123' },
+    })
+    expect(retry.statusCode).toBe(200)
+    const retryPayload = retry.payload as {
+      success: boolean
+      data?: { metadata?: { retry_result?: { status?: string } } }
     }
+    expect(retryPayload.success).toBe(true)
+    expect(retryPayload.data?.metadata?.retry_result?.status).toBe('success')
   })
 
   it('maps structured install failures to HTTP errors', async () => {
@@ -247,28 +235,21 @@ describe('capabilities route', () => {
       })
     )
 
-    const server = await startTestServer()
-    try {
-      const response = await realFetch(`${server.baseUrl}/resolve-missing`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          missingCapability: {
-            intent: 'authenticated_browser_session',
-            reason: 'Need a logged-in browser',
-          },
-        }),
-      })
+    const response = await invokeRoute('/resolve-missing', 'post', {
+      body: {
+        missingCapability: {
+          intent: 'authenticated_browser_session',
+          reason: 'Need a logged-in browser',
+        },
+      },
+    })
 
-      expect(response.status).toBe(404)
-      const payload = (await response.json()) as {
-        success: boolean
-        error?: { code?: string }
-      }
-      expect(payload.success).toBe(false)
-      expect(payload.error?.code).toBe('CAPABILITY_CANDIDATE_NOT_FOUND')
-    } finally {
-      await server.close()
+    expect(response.statusCode).toBe(404)
+    const payload = response.payload as {
+      success: boolean
+      error?: { code?: string }
     }
+    expect(payload.success).toBe(false)
+    expect(payload.error?.code).toBe('CAPABILITY_CANDIDATE_NOT_FOUND')
   })
 })

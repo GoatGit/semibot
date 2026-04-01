@@ -154,6 +154,26 @@ describe('chat direct runtime skill index', () => {
           { status: 200, headers: { 'content-type': 'application/json' } }
         )
       }
+      if (input.endsWith('/v1/tools/catalog')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                tool_id: 'builtin:search',
+                tool_name: 'search',
+                actual_tool_name: 'search',
+                display_name: 'search',
+                description: 'Builtin search',
+                source_type: 'builtin',
+                provider_id: 'builtin',
+                parameters: { type: 'object', properties: { query: { type: 'string' } } },
+                metadata: { risk_level: 'low', requires_approval: false },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
       if (input.includes('/api/v1/chat/sessions/')) {
         return new Response(
           JSON.stringify({
@@ -170,24 +190,105 @@ describe('chat direct runtime skill index', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { handleChat } = await import('../services/chat.service')
-    await handleChat('user-1', 'sess-1', { message: '使用deep-research技能研究腾讯股票' }, createMockRes())
+    await handleChat(
+      'user-1',
+      'sess-1',
+      { message: '使用deep-research技能研究腾讯股票', userInvoked: true, userInvokedSkillIds: ['deep-research'] },
+      createMockRes()
+    )
 
     const runtimeCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/v1/chat/sessions/'))
     expect(runtimeCall).toBeTruthy()
     const body = JSON.parse(String(runtimeCall?.[1]?.body || '{}')) as {
       skill_index?: Array<{ id?: string }>
+      capabilities?: Array<{ id?: string }>
+      skillContext?: Array<{ skillId?: string }>
       attempt_id?: string
       user_message_id?: string
+      user_invoked?: boolean
+      user_invoked_skill_ids?: string[]
     }
     const ids = Array.isArray(body.skill_index) ? body.skill_index.map((row) => String(row.id || '')) : []
+    const capabilityIds = Array.isArray(body.capabilities) ? body.capabilities.map((row) => String(row.id || '')) : []
+    const skillContextIds = Array.isArray(body.skillContext) ? body.skillContext.map((row) => String(row.skillId || '')) : []
     expect(ids).toContain('deep-research')
+    expect(skillContextIds).toContain('deep-research')
+    expect(capabilityIds).toContain('builtin:search')
     expect(body.attempt_id).toBe('att-1')
     expect(body.user_message_id).toBe('msg-user-1')
+    expect(body.user_invoked).toBe(true)
+    expect(body.user_invoked_skill_ids).toEqual(['deep-research'])
     expect(mockSessionService.claimRuntimeAttemptLease).toHaveBeenCalledWith(expect.objectContaining({
       attemptId: 'att-1',
       expectedStatuses: ['queued', 'running'],
     }))
     expect(mockSessionService.heartbeatRuntimeAttempt).toHaveBeenCalled()
+  })
+
+  it('sends runtime sub_agents for configured sub-agents in direct mode', async () => {
+    mockAgentService.getAgent.mockImplementation(async (agentId: string) => {
+      if (agentId === 'agent-system') {
+        return {
+          id: 'agent-system',
+          name: '系统助手',
+          systemPrompt: 'You are a helpful AI assistant.',
+          config: { model: 'gpt-4o', temperature: 0.7, maxTokens: 4096 },
+          skills: [],
+          subAgents: ['sub-1'],
+          isSystem: true,
+        }
+      }
+      if (agentId === 'sub-1') {
+        return {
+          id: 'sub-1',
+          name: 'Research SubAgent',
+          description: 'Research helper',
+          systemPrompt: 'Research deeply.',
+          config: { model: 'gpt-4o-mini', temperature: 0.2, maxTokens: 2048 },
+          skills: ['deep-research'],
+          subAgents: [],
+          isSystem: false,
+        }
+      }
+      throw new Error(`unexpected agent: ${agentId}`)
+    })
+
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.endsWith('/v1/skills')) {
+        return new Response(JSON.stringify({ metadata: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (input.endsWith('/v1/tools/catalog')) {
+        return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (input.includes('/api/v1/chat/sessions/')) {
+        return new Response(
+          JSON.stringify({ status: 'completed', final_response: 'ok', error: null, runtime_events: [] }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+      throw new Error(`unexpected fetch url: ${input}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { handleChat } = await import('../services/chat.service')
+    await handleChat('user-1', 'sess-1', { message: 'delegate this task' }, createMockRes())
+
+    const runtimeCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/v1/chat/sessions/'))
+    const body = JSON.parse(String(runtimeCall?.[1]?.body || '{}')) as {
+      sub_agents?: Array<{ id?: string; name?: string }>
+      capabilities?: Array<{
+        id?: string
+        constraints?: { timeoutMs?: number }
+        metadata?: { system_prompt?: string; model?: string; skills?: string[] }
+      }>
+    }
+    expect(body.sub_agents?.map((item) => item.id)).toContain('sub-1')
+    expect(body.capabilities?.map((item) => item.id)).toContain('agent:sub-1')
+    const subAgentCapability = body.capabilities?.find((item) => item.id === 'agent:sub-1')
+    expect(subAgentCapability?.constraints?.timeoutMs).toBe(120000)
+    expect(subAgentCapability?.metadata?.system_prompt).toBe('Research deeply.')
+    expect(subAgentCapability?.metadata?.model).toBe('gpt-4o')
+    expect(subAgentCapability?.metadata?.skills).toEqual(['deep-research'])
   })
 
   it('injects chunk expansion block from prior session document context', async () => {

@@ -77,3 +77,30 @@ def test_execution_advisor_describes_script_interfaces(tmp_path: Path) -> None:
     assert len(descriptions) == 1
     assert "scripts/research_engine.py:" in descriptions[0]
     assert "usage:" in descriptions[0].lower()
+
+
+def test_execution_advisor_does_not_execute_script_when_parsing_help(tmp_path: Path) -> None:
+    skill_root = tmp_path / "deep-research"
+    scripts_dir = skill_root / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    marker = tmp_path / "side_effect_marker.txt"
+    (scripts_dir / "research_engine.py").write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                f"Path(r'{marker}').write_text('executed', encoding='utf-8')",
+                "import argparse",
+                "parser = argparse.ArgumentParser()",
+                "parser.add_argument('--query', '-q', required=True)",
+                "parser.parse_args()",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    advisor = ExecutionAdvisor()
+    advisory = advisor.check_script_help(skill_root, "scripts/research_engine.py", ["--query", "ai"])
+
+    assert advisory.level in {"ok", "warning", "info"}
+    assert marker.exists() is False
