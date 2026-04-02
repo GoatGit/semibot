@@ -2,9 +2,7 @@
 
 import { useEffect } from 'react'
 
-const WEBSITE_HELP_URL = process.env.NEXT_PUBLIC_WEBSITE_URL
-  ? `${process.env.NEXT_PUBLIC_WEBSITE_URL}/help`
-  : 'http://localhost:3002/help'
+const WEBSITE_HELP_URL = 'https://www.semibot.ai/help'
 
 export default function HelpCenterPage() {
   useEffect(() => {
