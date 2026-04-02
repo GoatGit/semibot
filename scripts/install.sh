@@ -82,11 +82,11 @@ append_init_args() {
 }
 
 render_init_summary() {
-  python3 - <<'PY'
+  python3 - "$1" <<'PY'
 import json
 import sys
 
-payload = json.loads(sys.stdin.read())
+payload = json.loads(sys.argv[1])
 product = payload.get("product") or {}
 created = product.get("created_files") or []
 updated = product.get("updated_files") or []
@@ -109,11 +109,11 @@ PY
 }
 
 render_doctor_summary() {
-  python3 - <<'PY'
+  python3 - "$1" <<'PY'
 import json
 import sys
 
-payload = json.loads(sys.stdin.read())
+payload = json.loads(sys.argv[1])
 summary = payload.get("summary") or {}
 updates = payload.get("updates") or {}
 active_release = ((payload.get("product") or {}).get("release") or {}).get("active_version")
@@ -153,7 +153,7 @@ run_launcher_json() {
   fi
 
   if [[ "$summary_kind" == "init" ]]; then
-    if ! printf '%s' "$payload" | render_init_summary; then
+    if ! render_init_summary "$payload"; then
       printf '%s\n' "$payload"
       return 0
     fi
@@ -161,7 +161,7 @@ run_launcher_json() {
   fi
 
   if [[ "$summary_kind" == "doctor" ]]; then
-    if ! printf '%s' "$payload" | render_doctor_summary; then
+    if ! render_doctor_summary "$payload"; then
       printf '%s\n' "$payload"
       return 0
     fi
@@ -177,7 +177,7 @@ run_post_install_bootstrap() {
 
   append_init_args
   echo "[semibot-install] bootstrapping install-mode config"
-  run_launcher_json init SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json init "${INIT_ARGS[@]}"
+  run_launcher_json init env SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json init "${INIT_ARGS[@]}"
 }
 
 verify_release_metadata() {
@@ -343,7 +343,7 @@ copy_release_workspace() {
     fi
 
     echo "[semibot-install] running first doctor check"
-    if ! run_launcher_json doctor SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json doctor; then
+    if ! run_launcher_json doctor env SEMIBOT_HOME="$SEMIBOT_HOME" "$launcher" --json doctor; then
       echo "[semibot-install] doctor reported issues; continue with semibot ui after reviewing output"
     fi
   fi

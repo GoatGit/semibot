@@ -114,6 +114,13 @@ def normalize_absolute_symlinks(root: Path) -> list[str]:
 
 
 normalized_runtime_venv_links = normalize_absolute_symlinks(workspace_dir / "runtime" / ".venv")
+web_vendor_chunks_dir = workspace_dir / "apps" / "web" / ".next" / "server" / "vendor-chunks"
+
+
+def has_files(root: Path) -> bool:
+    return root.exists() and any(path.is_file() for path in root.iterdir())
+
+
 artifacts = {
     "runtime_entry": workspace_dir / "runtime" / "main.py",
     "runtime_launcher": workspace_dir / "runtime" / "scripts" / "semibot",
@@ -123,7 +130,7 @@ artifacts = {
     "runtime_venv_python": workspace_dir / "runtime" / ".venv" / "bin" / "python",
     "api_entry": workspace_dir / "apps" / "api" / "dist" / "index.js",
     "api_node_modules": workspace_dir / "apps" / "api" / "node_modules",
-    "web_build_id": workspace_dir / "apps" / "web" / ".next" / "BUILD_ID",
+    "web_build_manifest": workspace_dir / "apps" / "web" / ".next" / "build-manifest.json",
     "web_node_modules": workspace_dir / "apps" / "web" / "node_modules",
     "root_package": workspace_dir / "package.json",
     "pnpm_lock": workspace_dir / "pnpm-lock.yaml",
@@ -137,12 +144,14 @@ required_artifacts = {
     "runtime_venv_python": include_runtime_venv,
     "api_entry": True,
     "api_node_modules": include_node_modules,
-    "web_build_id": True,
+    "web_build_manifest": True,
     "web_node_modules": include_node_modules,
     "root_package": True,
     "pnpm_lock": True,
+    "web_vendor_chunks_nonempty": True,
 }
 artifact_checks = {key: value.exists() for key, value in artifacts.items()}
+artifact_checks["web_vendor_chunks_nonempty"] = has_files(web_vendor_chunks_dir)
 manifest = {
     "version": os.environ["VERSION_ENV"],
     "built_at": datetime.now(UTC).isoformat(),
@@ -152,6 +161,10 @@ manifest = {
     "artifacts": {key: str(value.relative_to(release_dir)) for key, value in artifacts.items()},
     "artifact_checks": artifact_checks,
     "artifact_required": required_artifacts,
+    "artifact_details": {
+        "web_vendor_chunks_dir": str(web_vendor_chunks_dir.relative_to(release_dir)),
+        "web_vendor_chunks_count": sum(1 for path in web_vendor_chunks_dir.iterdir() if path.is_file()) if web_vendor_chunks_dir.exists() else 0,
+    },
 }
 try:
     manifest["git_commit"] = subprocess.check_output(
